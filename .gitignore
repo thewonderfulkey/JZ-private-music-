@@ -1,0 +1,40 @@
+# ===== JZ Music 项目 .gitignore（第一版） =====
+
+# 忽略根目录说明文档（用户指定：README 不上传）
+/00-README.md
+
+# 嵌套 git 仓库（子项目自带 .git 一律不纳入）
+**/.git/
+**/.git
+.git/
+
+# JavaScript/TypeScript 依赖
+node_modules/
+**/node_modules/
+
+# Python 依赖与缓存
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.python-venv/
+
+# LDDC 桌面程序运行时（PyInstaller 打包的 DLL 集合，体积大且可从源码重建）
+03-构建服务API/歌词搜索-LDDC工具/LDDC/_internal/
+
+# 构建产物
+build/
+dist/
+.gradle/
+DerivedData/
+Pods/
+*.o
+*.a
+
+# IDE / 系统
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
