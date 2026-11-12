@@ -4,7 +4,11 @@
 #   pwsh -File .\tools\dev.ps1                 # 完整流程
 #   pwsh -File .\tools\dev.ps1 -SkipSmoke      # 只构建+验证，不启模拟器
 #   pwsh -File .\tools\dev.ps1 -SkipNotify     # 不往飞书发
-#   pwsh -File .\tools\dev.ps1 -Note "修了识曲取消"   # 追加一句到飞书消息
+#   pwsh -File .\tools\dev.ps1 -Note "修了识曲取消"   # 追加一句到失败卡片 / 回退文本
+#   pwsh -File .\tools\dev.ps1 -Label "识曲双通道打分" # 群里 APK 文件名带上主题
+#
+# 通知口径：成功时群里只收到**一条**消息 —— APK 文件本身（文件名 = JZ音乐助手-v<版本>-<Label>.apk）；
+#           飞书的文件消息不能带正文、卡片也不支持文件块，所以说明只在失败时以卡片形式发。
 #
 # 退出码：0 = 全通过；1 = 构建/验证/冒烟任一失败（失败会自动发飞书）
 param(
@@ -13,7 +17,9 @@ param(
     [switch]$SkipSmoke,
     [switch]$SkipNotify,
     [switch]$KeepEmulator,
-    [string]$Note = ""
+    [string]$Note = "",
+    # 群里显示的 APK 文件名后缀（简短主题，如 "识曲双通道打分"）；留空则只有版本号
+    [string]$Label = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,8 +33,14 @@ $relApk = Join-Path $root "releases\JZ音乐助手-v$versionName.apk"
 function Notify($title, $body, [switch]$Fail) {
     if ($SkipNotify) { return }
     $larkArgs = @('tools\notify\lark.py', '--title', $title, '--body', $body)
-    if ($Fail) { $larkArgs += '--fail' }
-    if (Test-Path $apk) { $larkArgs += @('--apk', (Resolve-Path $apk).Path) }
+    if ($Fail) {
+        # 失败：一条红色卡片（不带文件）
+        $larkArgs += '--fail'
+    } elseif (Test-Path $apk) {
+        # 成功：一条消息就是 APK 本身，文件名带版本 [+主题]
+        $display = "JZ音乐助手-v$versionName" + $(if ($Label) { "-$Label" } else { "" }) + ".apk"
+        $larkArgs += @('--apk', (Resolve-Path $apk).Path, '--name', $display)
+    }
     Push-Location $root
     try { & python @larkArgs } finally { Pop-Location }
 }

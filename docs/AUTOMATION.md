@@ -76,8 +76,23 @@ pwsh -File .\tools\smoke\smoke.ps1 -Apk releases\JZ音乐助手-v2.1.92.apk
 手动发：
 
 ```powershell
-python tools\notify\lark.py --title "v2.1.93 已出包" --body "改了什么…" --apk releases\JZ音乐助手-v2.1.93.apk
+# 成功：群里只收到一条 APK（文件名可自定义，带版本与主题）
+python tools\notify\lark.py --title "v2.1.93 已出包" ^
+    --apk releases\JZ音乐助手-v2.1.93.apk --name "JZ音乐助手-v2.1.93-识曲双通道打分.apk"
+
+# 失败：一条红色卡片
+python tools\notify\lark.py --title "v2.1.93 冒烟失败" --body "…" --fail
+
+# 想在文件之后补一条说明卡（默认不发）
+python tools\notify\lark.py --title "…" --apk … --note
 ```
+
+**为什么不是"一条带说明的文件"**：飞书的文件消息不能带正文，消息卡片也不支持 `file` 块
+（实测返回 `11310 unsupported type of block`）。所以「一次交付一条消息」的落地方式是：
+**只发 APK，文件名带版本 + 主题**；说明留在 `docs/changelog/`，失败才发卡片。
+
+凭据存放：`app_secret` 优先取环境变量 `LARK_APP_SECRET`（`setx` 已写入用户环境），
+其次 `.lark/secret.env`（gitignore），最后才是 `.lark/config.json`（现已清空 secret）。
 
 ### 踩过的三个错误码（按这个顺序排查）
 
