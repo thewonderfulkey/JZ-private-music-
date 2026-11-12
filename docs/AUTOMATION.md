@@ -74,6 +74,16 @@ pwsh -File .\tools\smoke\smoke.ps1 -Apk releases\JZ音乐助手-v2.1.92.apk
 python tools\notify\lark.py --title "v2.1.93 已出包" --body "改了什么…" --apk releases\JZ音乐助手-v2.1.93.apk
 ```
 
+### 踩过的三个错误码（按这个顺序排查）
+
+| 错误码 / 现象 | 含义 | 处理 |
+|---|---|---|
+| `99991672` …`im:resource` | 缺上传文件的权限 | 开放平台 → 权限管理 → 开通 `im:resource`（或 `im:resource:upload`） |
+| `234007 App does not enable bot feature` | **应用没启用机器人能力** | 应用能力 → 添加应用能力 → **机器人**；然后**重新创建版本并发布**（加能力必须发新版才生效） |
+| 群里「添加机器人」搜不到应用 | 群机器人搜索只搜机器人广场，自建应用不在广场 | 飞书搜索框搜应用名 → 打开应用 → 添加到群；或群设置 → 群机器人 → 添加机器人 → 翻「自建应用」分组 |
+| `99991672` …`im:chat.members:write_only` | 想用 API 把机器人拉进群 | 开通 `im:chat` 或 `im:chat.members:write_only`，脚本会自动尝试拉群 |
+| `230002` 之类"机器人不在群" | 机器人还没进群 | 按上一行处理；`lark.py` 每次发文件前会先 best-effort 拉一次群 |
+
 ## 4. 我（Agent）的标准动作
 
 1. 改代码 → `tools/dev.ps1 -SkipNotify`；

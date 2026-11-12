@@ -117,6 +117,32 @@ def fmt(text):
     return text.replace("\r\n", "\n").strip()
 
 
+def ensure_bot_in_chat(token, chat_id, app_id):
+    """尽量把自建应用的机器人拉进群（需要 im:chat 或 im:chat.members:write_only）。
+
+    失败不阻断流程：把服务端原话打出来，方便判断是"缺权限"还是"已经在群里"。
+    """
+    if not chat_id or not app_id:
+        return False
+    body = {"id_list": [app_id]}
+    req = urllib.request.Request(
+        f"{API}/im/v1/chats/{chat_id}/members?member_id_type=app_id",
+        data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/json; charset=utf-8"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        print("bot in chat:", json.dumps(resp, ensure_ascii=False)[:200])
+        return resp.get("code") == 0
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        print(f"机器人进群跳过（HTTP {e.code}）：{detail[:260]}", file=sys.stderr)
+    except Exception as e:
+        print(f"机器人进群跳过：{e}", file=sys.stderr)
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--title", required=True)
@@ -151,6 +177,7 @@ def main():
     if apk_path and os.path.exists(apk_path) and cfg.get("app_id") and cfg.get("app_secret"):
         try:
             token = tenant_token(cfg)
+            ensure_bot_in_chat(token, chat_id, cfg["app_id"])
             key = upload_file(token, apk_path)
             msg_id = send_message(token, chat_id, "file", {"file_key": key})
             print("file message:", msg_id)
@@ -159,7 +186,7 @@ def main():
             print(f"文件发送失败（回退到纯文本）：{e}", file=sys.stderr)
 
     if not sent_file and apk_path:
-        text += "\n（未配置应用凭据，APK 未随消息发送）"
+        text += "\n（APK 未随消息发送，原因见上面日志）"
 
     send_webhook(cfg, text)
     print("OK")
