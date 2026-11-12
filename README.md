@@ -52,13 +52,18 @@ Private_music/
 
 ```powershell
 cd D:\Projects\Private_music
-pwsh -File .\tools\build.ps1              # 构建 release
+pwsh -File .\tools\build.ps1              # 只构建 release
 pwsh -File .\tools\build.ps1 -Clean       # 先 clean
 pwsh -File .\tools\build.ps1 -Publish     # 构建并复制到 releases\
+
+pwsh -File .\tools\dev.ps1                # 一条命令：构建 → 静态验证 → 模拟器冒烟 → 飞书通知
 ```
 
 脚本会先打印「项目根目录 / 构建目录 / 工具链 / 缓存 / 版本」，确认路径无误再编译。
 产物：`android\app\build\outputs\apk\release\app-release.apk` → `releases\JZ音乐助手-v<版本>.apk`。
+
+自动化细节见 [docs/AUTOMATION.md](docs/AUTOMATION.md)：模拟器冒烟覆盖启动/崩溃/导航/版本，
+飞书发到群「音乐软件开发」，失败会带截图与 logcat 留在 `tools\smoke\out\`。
 
 ## 核心能力
 
@@ -86,3 +91,4 @@ pwsh -File .\tools\build.ps1 -Publish     # 构建并复制到 releases\
 - 改代码前读：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 改识曲读：[docs/RECOGNITION.md](docs/RECOGNITION.md)
 - 出包发版读：[docs/RELEASE.md](docs/RELEASE.md)
+- 自动化与通知：[docs/AUTOMATION.md](docs/AUTOMATION.md)

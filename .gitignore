@@ -3,6 +3,12 @@
 # 项目内工具链与 Gradle 缓存（体积大，可从 C 盘安装位置重建）
 .build/
 
+# 飞书 webhook / 应用凭据（含密钥，绝不入库）
+.lark/
+
+# 冒烟测试产物（截图、uiautomator XML、logcat）
+tools/smoke/out/
+
 # 构建产物
 android/app/build/
 android/build/
