@@ -250,7 +250,7 @@ object AppState {
      * v2.1.94：冒烟包专用——跑一次真实搜索，把「每个平台返回多少条 / 有没有报错」打进 logcat。
      * 中文没法用 adb input 输入，所以用 intent 注入关键词。
      */
-    fun searchForTest(keyword: String) {
+    fun searchForTest(keyword: String, playFirst: Boolean = false) {
         tab.value = MainTab.HOME
         searchActive.value = true
         search(keyword)
@@ -271,6 +271,15 @@ object AppState {
                 "JZ_TEST",
                 "SEARCH kw=$keyword platforms=${SearchService.platforms.size} $detail errors=${errors.ifEmpty { "-" }}"
             )
+            // 冒烟用：顺手播第一首，让播放悬浮栏出现，便于验证「最近识过」是否贴底
+            if (playFirst) {
+                val first = searchResults.value.asSequence().flatMap { it.songs.asSequence() }
+                    .firstOrNull { it.name.isNotBlank() }
+                if (first != null) {
+                    android.util.Log.i("JZ_TEST", "PLAY first=${first.name}/${first.singer}/${first.platform.name}")
+                    openSong(first, queue = listOf(first), allowCrossRetry = true)
+                }
+            }
         }
     }
 
@@ -463,6 +472,8 @@ object AppState {
             } else {
                 recHits.value = hits
                 recPhase.value = RecPhase.RESULT
+                // 冒烟也要能验证「最近识过」列表：把首条记进历史（与真实识别一致）
+                hits.firstOrNull()?.let { rememberHit(it) }
             }
             val top = hits.firstOrNull()
             android.util.Log.i(

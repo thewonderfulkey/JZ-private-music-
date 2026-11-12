@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -275,8 +276,9 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                         }
                     }
                 }
+                // v2.1.95：恢复四平台后「4 平台并发」会换行，占位也没有信息量——去掉，
+                // 左侧每个平台自己的条数已经说明一切
                 Spacer(Modifier.weight(1f))
-                Text("${searchPlatforms.size} 平台并发", fontSize = 11.sp, color = p.text3)
             }
         }
 
@@ -1554,8 +1556,17 @@ fun DarkSongRow(
                 style = TextStyle(shadow = Shadow(Color(0xFFF7F5F0).copy(alpha = 0.85f), Offset(0f, 1f), 3f))
             )
         }
+        // v2.1.95：时长与平台标签都定宽、各自居中/右对齐。
+        // 之前两者宽度随内容变（04:23 / --:-- / QQ / 网易），红心和标签的横向位置每行都不一样。
         if (showDuration) {
-            Text(song.durationText, color = p.text3, fontSize = 11.sp)
+            Text(
+                song.durationText,
+                color = p.text3,
+                fontSize = 11.sp,
+                modifier = Modifier.width(42.dp),
+                textAlign = TextAlign.End,
+                maxLines = 1
+            )
             Spacer(Modifier.width(8.dp))
         }
         FavoriteBtn(song = song)
@@ -1565,9 +1576,12 @@ fun DarkSongRow(
                 song.platform.shortName,
                 color = p.accent2,
                 fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
                 modifier = Modifier
+                    .width(44.dp)
                     .background(p.accent.copy(alpha = 0.14f), RoundedCornerShape(50))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .padding(vertical = 2.dp)
             )
         }
     }

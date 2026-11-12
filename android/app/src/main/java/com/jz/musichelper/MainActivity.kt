@@ -98,8 +98,9 @@ class MainActivity : ComponentActivity() {
             // v2.1.94：搜索注入——冒烟里验证"四个平台各返回多少条"（中文没法用 adb input 输）
             val searchKw = intent?.getStringExtra("jz_test_search")
             if (!searchKw.isNullOrBlank()) {
+                val playFirst = intent?.getStringExtra("jz_test_play") == "1"
                 window.decorView.postDelayed({
-                    com.jz.musichelper.ui.AppState.searchForTest(searchKw)
+                    com.jz.musichelper.ui.AppState.searchForTest(searchKw, playFirst)
                 }, 400)
             }
             val fixture = intent?.getStringExtra("jz_test_pcm")

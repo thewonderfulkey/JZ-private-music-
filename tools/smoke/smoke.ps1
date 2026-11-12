@@ -263,7 +263,7 @@ if ($Variant -eq 'smoke') {
     Write-Host '==> 搜索平台覆盖（四平台条数）'
     & $adb shell am force-stop $pkg | Out-Null
     & $adb logcat -c | Out-Null
-    & $adb shell am start -W -n $activity --es jz_test_search "我很想爱他" 2>&1 | Out-Null
+    & $adb shell am start -W -n $activity --es jz_test_search "我很想爱他" --es jz_test_play "1" 2>&1 | Out-Null
     $sline = ''
     $sw3 = [Diagnostics.Stopwatch]::StartNew()
     while ($sw3.Elapsed.TotalSeconds -lt 45) {
@@ -283,6 +283,15 @@ if ($Variant -eq 'smoke') {
         Step '酷狗搜索非 0 条' ($gm.Success -and [int]$gm.Groups[1].Value -gt 0) $(if ($gm.Success) { "KUGOU=$($gm.Groups[1].Value)" } else { '未解析到' })
         Step 'QQ/网易有结果' (($qm.Success -and [int]$qm.Groups[1].Value -gt 0) -and ($nm.Success -and [int]$nm.Groups[1].Value -gt 0)) $sline
         Shot '05-search' | Out-Null
+        # 等第一首起播，出播放悬浮栏；再进识曲页截图，检查「最近识过」是否贴底
+        Start-Sleep -Seconds 4
+        if (TapText '识曲') {
+            Start-Sleep -Seconds 2
+            Shot '06-recog-flush' | Out-Null
+            $rx = UiDump '06-recog-flush'
+            $hasList = (& $python $uidump --file $rx --has '最近识过' 2>&1 | Out-String).Trim()
+            Step '识曲页（含悬浮栏）渲染' ($hasList -match 'FOUND') $hasList
+        }
     }
 }
 

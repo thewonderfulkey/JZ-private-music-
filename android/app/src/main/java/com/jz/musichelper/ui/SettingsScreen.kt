@@ -475,9 +475,20 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 .background(p.surface2, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            Text("JZ的音乐助手 v2.1.94", fontSize = 14.sp, color = p.text)
+            Text("JZ的音乐助手 v2.1.95", fontSize = 14.sp, color = p.text)
             Spacer(Modifier.height(6.dp))
             Text("本版更新", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "四个细节：① 识曲页的「最近识过」改成贴底排列，最后一条正好落在播放悬浮栏上沿，不再留一大片空白。" +
+                    "② 搜索结果头上的「N 平台并发」去掉——四平台恢复后它会换行，而且左侧每个平台自己的条数已经够看。" +
+                    "③ 酷我的歌不再显示 --:--：酷我接口给的时长是秒数，以前按 mm:ss 解析所以全是 0。" +
+                    "④ 结果行的时长与平台标签改成定宽对齐，红心、时长、标签从此每行都在同一条竖线上。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("上一版（v2.1.94）", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(
                 "按你反馈的六个问题修：① 原唱印收紧——只有「歌手对得上、歌名是裸名（没有 Live／DJ混音版／演唱会 这类后缀）、" +
@@ -492,31 +503,6 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 color = p.text2
             )
             Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.93）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "识曲的两处判定修正：① 酷狗的原唱标记除了 1（原唱）与 2（翻唱），实测还会返回 4——" +
-                    "《晴天》的演唱会 Live CD 版、《我们都一样》的综艺收录版都是 4，语义是「原唱，但不是这张录音室录音」；" +
-                    "以前把 4 当成未知，会让现场版抢到录音室版前面，现在按「现场收录」轻微降权。" +
-                    "② 双通道打分里，专辑是演唱会/综艺的条目本来就扣分，两处一起收口后，" +
-                    "「原唱但现场版」不会再压过「原唱录音室版」。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.92）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "听歌识曲改成「两条通道都跑完，再按统一评分选最可信的一条」。以前是酷狗一有结果就直接返回，" +
-                    "于是酷狗把歌认成别人的翻唱时，网易手里的原唱根本没机会参与比较——张杰《我们都一样》一直播成翻唱就是这个原因。" +
-                    "现在等酷狗与网易都回来（约 12 秒），把两边候选按同一首歌归并后统一打分：酷狗的原唱标记、歌名是否裸名、" +
-                    "专辑是否正式发行（同名合集与现场综艺专辑扣分）、时长互证、两条通道是否互证、通道内位次，各占一份权重，取最高分。" +
-                    "例：酷狗给《我们都一样》的翻唱（无原唱标记、专辑名就叫《我们都一样》）得负分，网易给张杰《明天过后》302s 与" +
-                    "《One Chance》303s 两条正式专辑互相印证，得 62 分，于是采用网易。结果卡上会写明「识别依据：酷狗 xx ／ 网易 xx」，" +
-                    "同批候选也按分数排列。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
             Text("声明", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(

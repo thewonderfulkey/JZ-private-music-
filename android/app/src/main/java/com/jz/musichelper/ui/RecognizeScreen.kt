@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -253,12 +255,6 @@ fun RecognizePage() {
             if (phase != RecPhase.PREPARE && phase != RecPhase.EMPTY &&
                 phase != RecPhase.ERROR && phase != RecPhase.NOPERM
             ) Spacer(Modifier.weight(1f))
-            // 页脚：把下方余白收成"版面留白"而不是空着（说明数据怎么处理，不堆装饰）
-            Text(
-                "${seconds} 秒采样只用于曲库比对，本机不留存",
-                fontSize = 10.5.sp,
-                color = p.text3.copy(alpha = 0.85f)
-            )
         }
         Spacer(Modifier.height(10.dp))
     }
@@ -773,15 +769,17 @@ private fun RecentBlock(
                 Text("点一条直接播放", fontSize = 10.5.sp, color = p.text3.copy(alpha = 0.85f))
             }
             Spacer(Modifier.height(4.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+            // v2.1.95：改成 LazyColumn + Arrangement.Bottom——条目少时整列贴底，
+            // 最后一条正好落在播放悬浮栏上沿（之前是顶对齐，列表下面留一大片空白，看着断成两截）。
+            // 末尾 80dp 是给悬浮栏让位（栏高约 80dp，压在底栏之上）。
+            LazyColumn(
+                // v2.1.95：weight(1f) 必须有——只写 fillMaxWidth 时高度=内容高，
+                // Arrangement.Bottom 没有多余空间可分配，列表还是顶对齐（第一版就踩了这个坑）
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.Bottom
             ) {
-                recent.forEach { h -> HitRow(h) { onPlay(h) } }
-                // v2.1.85：底部让位——播放悬浮栏高约 72dp（宽度/5，且压在底栏之上），
-                // 留 84dp 才能保证"最近识过"最后一条不被播放条压住（与首页/收藏/下载/历史的 60dp 口径同源，这里按实测多留一圈）
-                Spacer(Modifier.height(84.dp))
+                items(recent) { h -> HitRow(h) { onPlay(h) } }
+                item { Spacer(Modifier.height(64.dp)) }
             }
         }
     }
@@ -841,3 +839,4 @@ private fun InkButton(
         )
     }
 }
+

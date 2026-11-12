@@ -1,0 +1,32 @@
+PASS  build.gradle 版本  | vc=153 vn=2.1.95
+PASS  APK badging 版本  | 153/2.1.95
+PASS  包名
+PASS  minSdk/targetSdk
+PASS  关于页标题 v2.1.95
+PASS  关于页保留 v2.1.94
+PASS  签名证书 SHA-256 一致
+PASS  apksigner 通过
+PASS  zip 完整性  | testzip=None
+PASS  条目数（≥180）  | 186 条
+PASS  体积量级  | 29,875,521 B
+PASS  assets/recognizer.html 一致
+PASS  assets/afp_wasm_b64.js 一致
+PASS  assets/sandbox.bundle.js 一致
+PASS  最近识过用 LazyColumn
+PASS  列表贴底（Arrangement.Bottom）
+PASS  列表必须有 weight(1f)（否则 Bottom 不生效）
+PASS  底部让位 64dp（实测严丝合缝）
+FAIL  旧的 84dp/页脚已移除
+FAIL  已移除「N 平台并发」文案
+PASS  时长先按秒数解析
+PASS  时长定宽右对齐
+FAIL  平台标签定宽居中
+PASS  HomeScreen 引入 TextAlign
+PASS  dex 含「JZ的音乐助手 v2.1.95」
+PASS  dex 含「上一版（v2.1.94）」
+PASS  dex 不含旧主标题 v2.1.94
+FAIL  dex 已无「平台并发」
+
+合计 28 项：PASS 24 / FAIL 4
+release APK: 29,875,521 B  MD5 4846D9EDD010CA5697BBF0435A16B411
+

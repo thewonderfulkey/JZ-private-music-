@@ -244,7 +244,12 @@ class KuwoSearchAdapter : SearchAdapter {
     }
 
     private fun parseDuration(s: String): Int {
-        val parts = s.split(":")
+        val t = s.trim()
+        if (t.isEmpty()) return 0
+        // v2.1.95：酷我 r.s 的 DURATION 是**秒数**（实测 262、334…），不是 mm:ss。
+        // 之前直接按 ":" 切，纯数字落进 else 分支返回 0 → 搜索结果里酷我的歌时长全显示 --:--
+        t.toIntOrNull()?.let { return if (it in 1..36000) it else 0 }
+        val parts = t.split(":")
         return when (parts.size) {
             2 -> parts[0].toIntOrNull()?.times(60)?.plus(parts[1].toIntOrNull() ?: 0) ?: 0
             3 -> {
