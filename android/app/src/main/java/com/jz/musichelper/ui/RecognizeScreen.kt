@@ -221,6 +221,7 @@ fun RecognizePage() {
                     busy = busy,
                     noExact = AppState.recNoExact.value,
                     note = errMsg,
+                    scoreNote = AppState.recScoreNote.value,
                     versions = AppState.recVersions.value,
                     originals = AppState.recOriginals.value,
                     versionsBusy = AppState.recVersionsBusy.value,
@@ -417,6 +418,7 @@ private fun ResultBlock(
     busy: Boolean,
     noExact: Boolean,
     note: String,
+    scoreNote: String,
     versions: List<com.jz.musichelper.model.Song>,
     originals: Set<String>,
     versionsBusy: Boolean,
@@ -484,6 +486,17 @@ private fun ResultBlock(
                     lineHeight = 17.sp,
                     color = p.text3,
                     maxLines = 1
+                )
+            }
+            // v2.1.92：把双通道打分的结论摊开写——酷狗多少分、网易多少分、最终采用谁
+            if (scoreNote.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    scoreNote,
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = p.text3.copy(alpha = 0.9f),
+                    maxLines = 2
                 )
             }
         }

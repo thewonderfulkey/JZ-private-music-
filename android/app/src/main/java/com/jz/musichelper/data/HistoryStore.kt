@@ -146,7 +146,11 @@ object HistoryStore {
                 com.jz.musichelper.network.RecognizeAdapter.Hit(
                     title = title,
                     artist = o.optString("artist"),
-                    album = o.optString("album")
+                    album = o.optString("album"),
+                    durationSec = o.optInt("durationSec", 0),
+                    source = o.optString("source"),
+                    score = o.optInt("score", 0),
+                    isOriginal = o.optInt("isOriginal", -1)
                 )
             }
         }.getOrDefault(emptyList()).take(maxRecHistory)
@@ -160,6 +164,10 @@ object HistoryStore {
                     .put("title", it.title)
                     .put("artist", it.artist)
                     .put("album", it.album)
+                    .put("durationSec", it.durationSec)
+                    .put("source", it.source)
+                    .put("score", it.score)
+                    .put("isOriginal", it.isOriginal)
             )
         }
         prefs.edit().putString(KEY_REC_HISTORY, arr.toString()).apply()

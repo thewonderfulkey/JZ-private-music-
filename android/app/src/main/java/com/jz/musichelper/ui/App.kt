@@ -117,8 +117,11 @@ import com.jz.musichelper.network.LyricsService
 import com.jz.musichelper.network.NameMatch
 import com.jz.musichelper.network.NetworkProbe
 import com.jz.musichelper.network.RecognizeAdapter
+import com.jz.musichelper.network.RecognizeScore
 import com.jz.musichelper.network.NeteaseFingerprint
 import com.jz.musichelper.network.NeteaseRecognizer
+import com.jz.musichelper.network.asCand
+import com.jz.musichelper.network.toHit
 import com.jz.musichelper.network.SearchService
 import com.jz.musichelper.network.SameSongCrossResolver
 import com.jz.musichelper.network.SourcePicker
@@ -185,6 +188,8 @@ object AppState {
     val recProgress = mutableStateOf(0f)
     val recHits = mutableStateOf<List<RecognizeAdapter.Hit>>(emptyList())
     val recError = mutableStateOf("")
+    // v2.1.92：双通道打分的"识别依据"（酷狗 xx ／ 网易 xx → 采用谁），显示在结果卡上
+    val recScoreNote = mutableStateOf("")
     // v2.1.85：识别结果的「其他版本」——按歌名重新检索各平台，原唱（=识别到的这位歌手）排最上方
     val recVersions = mutableStateOf<List<Song>>(emptyList())
     // v2.1.90：「原唱」判定结果（歌曲 key 集合），App 排序与界面小印共用这一份，避免两处口径漂移
@@ -203,6 +208,8 @@ object AppState {
     private var consecutiveFailures = 0                    // 连续无源失败次数（自动跳过无源歌的上限控制）
     private const val AUTO_SKIP_MAX = 3                    // 无源时自动切歌最多连跳 3 首，避免空列表死循环
     private const val AUTO_SKIP_DELAY_MS = 600L            // 失败提示展示时长，再自动切下一首
+    // v2.1.92：网易通道最长等待——WebView 起不来或网络打摆子时只走酷狗，不把整次识别拖死
+    private const val NETEASE_WAIT_MS = 7_000L
     // v2.1.84：识曲点「播放」时先顶出来的占位歌曲 ID 前缀（只存活到真正候选解析完成）
     private const val PENDING_HIT_PREFIX = "__pending__:"
     // v2.1.29：无源时换源重试参数——每首歌走完三级解析：本平台后端 → 妖狐酷我 → 搜索同曲全平台候选；
@@ -243,6 +250,7 @@ object AppState {
     fun openRecognize() {
         recPhase.value = RecPhase.PREPARE
         recError.value = ""
+        recScoreNote.value = ""
         recHits.value = emptyList()
         recLevel.value = 0f
         recProgress.value = 0f
@@ -286,6 +294,7 @@ object AppState {
         recJob?.cancel()
         recHits.value = emptyList()
         recError.value = ""
+        recScoreNote.value = ""
         clearRecVersions()
         recLevel.value = 0f
         recProgress.value = 0f
@@ -294,25 +303,14 @@ object AppState {
             // 录自己正在放的歌必然认成当前歌曲，先按停本机播放
             if (PlayerManager.isPlaying.value) PlayerManager.pause()
 
-            // 6 秒快照 → 提前问酷狗。用 CompletableDeferred 交接数据（跨线程，join 后可见），
-            // 不用裸 var：录音线程写、主协程读，裸 var 没有可见性保证。
-            val earlySignal = kotlinx.coroutines.CompletableDeferred<ByteArray?>()
-            var earlyHits: List<RecognizeAdapter.Hit> = emptyList()
-            val earlyJob = launch {
-                val pcm6 = earlySignal.await() ?: return@launch
-                val got = runCatching {
-                    RecognizeAdapter.Judge.rankCandidates(RecognizeAdapter.recognize(pcm6))
-                }.getOrDefault(emptyList())
-                if (got.isNotEmpty()) {
-                    earlyHits = got
-                    VoiceCapture.cancel()   // 已经认出来了，不再多录
-                }
-            }
+            // v2.1.92：不再"6 秒酷狗命中就立刻收工"。
+            // 那条捷径的代价是：酷狗把歌认成别人的翻唱时直接错到底（张杰《我们都一样》一直播成翻唱），
+            // 而网易手里的原唱根本没机会参与比较。现在录满窗口，两条通道都跑完再统一打分。
             val cap = try {
                 VoiceCapture.record(
                     seconds = maxOf(recSeconds.value, VoiceCapture.MIN_SECONDS),
-                    partialAtSeconds = VoiceCapture.EARLY_SECONDS,
-                    onPartial = { pcm6 -> earlySignal.complete(pcm6) },
+                    partialAtSeconds = 0,
+                    onPartial = { },
                     onLevel = { recLevel.value = it },
                     onProgress = { recProgress.value = it }
                 )
@@ -321,15 +319,6 @@ object AppState {
             } catch (e: Exception) {
                 recError.value = recHint(e)
                 recPhase.value = RecPhase.ERROR
-                return@launch
-            } finally {
-                // 录得比快照点还短 / 中途被取消：别让 earlyJob 空等
-                if (!earlySignal.isCompleted) earlySignal.complete(null)
-            }
-            runCatching { earlyJob.join() }
-            if (earlyHits.isNotEmpty()) {
-                recHits.value = earlyHits
-                recPhase.value = RecPhase.RESULT
                 return@launch
             }
             if (cap.pcm.size < VoiceCapture.SAMPLE_RATE * 2) {
@@ -346,22 +335,23 @@ object AppState {
             }
             recPhase.value = RecPhase.THINK
             val hits = try {
-                // 两条通道并行：酷狗吃 8k 裸 PCM，网易吃本地指纹；酷狗优先，网易兜底
+                // 两条通道并行：酷狗吃 8k 裸 PCM，网易吃本地指纹（12 秒窗口）。
+                // v2.1.92：两边都等回来，统一交给 RecognizeScore 打分选最可信的一条。
                 val kugouDeferred = async {
-                    runCatching { RecognizeAdapter.recognize(cap.pcm) }.getOrNull()
+                    runCatching { RecognizeAdapter.recognize(cap.pcm) }.getOrNull().orEmpty()
                 }
                 val neteaseDeferred = async {
-                    val fp = runCatching { NeteaseFingerprint.encode(cap.raw, cap.sourceRate) }.getOrNull()
+                    // 网易指纹只认 12 秒窗口：用户选 15/20 秒时也只取前 12 秒，避免指纹口径漂移
+                    val pcm12 = trimToSeconds(cap.raw, cap.sourceRate, NeteaseFingerprint.WINDOW_SECONDS)
+                    val fp = runCatching { NeteaseFingerprint.encode(pcm12, cap.sourceRate) }.getOrNull()
                     if (fp.isNullOrBlank()) emptyList()
                     else runCatching { NeteaseRecognizer.recognize(fp) }.getOrDefault(emptyList())
                 }
-                val kugou = RecognizeAdapter.Judge.rankCandidates(kugouDeferred.await().orEmpty())
-                if (kugou.isNotEmpty()) {
-                    neteaseDeferred.cancel()
-                    kugou
-                } else {
-                    RecognizeAdapter.Judge.rankNetease(neteaseDeferred.await())
-                }
+                val kugou = kugouDeferred.await()
+                // 网易最多等 7 秒：WebView 起不来时只走酷狗，不把整次识别拖死
+                val netease = withTimeoutOrNull(NETEASE_WAIT_MS) { neteaseDeferred.await() }.orEmpty()
+                if (neteaseDeferred.isActive) neteaseDeferred.cancel()
+                fuseRecognize(kugou, netease)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -377,6 +367,29 @@ object AppState {
                 recPhase.value = RecPhase.RESULT
             }
         }
+    }
+
+    /**
+     * v2.1.92：两条通道 → 一份排序结果。
+     * 打分规则全部在 RecognizeScore 里（纯函数、可单测），这里只做协议转换与"识别依据"落库。
+     */
+    private fun fuseRecognize(
+        kugou: List<RecognizeAdapter.Hit>,
+        netease: List<RecognizeAdapter.Hit>
+    ): List<RecognizeAdapter.Hit> {
+        val fused = RecognizeScore.fuse(
+            kugou.map { it.asCand() },
+            netease.map { it.asCand() }
+        ) ?: return emptyList()
+        recScoreNote.value = fused.note
+        return fused.ranked.map { it.rep.toHit(it.score) }
+    }
+
+    /** 只保留前 N 秒的原始 PCM（16bit 单声道）；不足则原样返回 */
+    private fun trimToSeconds(raw: ByteArray, rate: Int, seconds: Int): ByteArray {
+        if (rate <= 0 || raw.isEmpty()) return raw
+        val want = rate * 2 * seconds
+        return if (raw.size > want) raw.copyOf(want) else raw
     }
 
     /** 异常 → 一句人话（不暴露英文异常、不把"被占用"说成"未授权"） */

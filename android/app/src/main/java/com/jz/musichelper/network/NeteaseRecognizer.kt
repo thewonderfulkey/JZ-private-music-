@@ -75,7 +75,18 @@ object NeteaseRecognizer {
             } else ""
             val album = song.optJSONObject("album")?.optString("name", "").orEmpty().trim()
             if (out.any { it.title == title && it.artist == artist }) continue
-            out.add(RecognizeAdapter.Hit(title, artist, album))
+            // v2.1.92：网易给 duration（毫秒），带出去参与"同一版录音"的互证
+            val durMs = song.optLong("duration", 0L)
+            out.add(
+                RecognizeAdapter.Hit(
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    durationSec = if (durMs > 0) (durMs / 1000).toInt() else 0,
+                    source = RecognizeScore.SOURCE_NETEASE,
+                    rank = out.size
+                )
+            )
             if (out.size >= 5) break
         }
         return out

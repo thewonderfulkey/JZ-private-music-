@@ -24,8 +24,27 @@ object RecognizeAdapter {
     private const val APPID = "3116"
     private const val CLIENTVER = "11070"
 
-    /** 识别到的一首歌（只保留够搜索用的字段） */
-    data class Hit(val title: String, val artist: String, val album: String = "")
+    /**
+     * 识别到的一首歌。
+     *
+     * v2.1.92：除搜索要用的歌名/歌手/专辑，再带上打分需要的证据——通道来源、通道内位次、
+     * 时长、酷狗的 is_original 标记，以及融合后的评分。字段都有默认值，旧调用点不用改。
+     */
+    data class Hit(
+        val title: String,
+        val artist: String,
+        val album: String = "",
+        /** 时长（秒），0 = 通道没给 */
+        val durationSec: Int = 0,
+        /** kugou / netease；空 = 未知（v2.1.91 之前的历史数据） */
+        val source: String = "",
+        /** 双通道融合评分（v2.1.92 起写入，供界面显示与排查） */
+        val score: Int = 0,
+        /** 仅酷狗：1 原唱 / 2 翻唱·他人版本 / 0 未知 / -1 通道不提供 */
+        val isOriginal: Int = -1,
+        /** 通道内位次（0 = 该通道第一条） */
+        val rank: Int = 0
+    )
 
     object Judge {
         /** 歌名里带这些词 = 编曲/现场/翻唱类版本，本身就不是录音室原版 */
@@ -177,7 +196,27 @@ object RecognizeAdapter {
             val album = o.optJSONArray("album")?.optJSONObject(0)?.optString("albumname", "").orEmpty()
             // 同歌同歌手去重（multi_result 会给多个版本）
             if (out.any { it.title == title && it.artist == artist }) continue
-            out.add(Hit(title, artist, album))
+            // v2.1.92：把打分要用的证据一起带出去。
+            //  · timelength_* 是毫秒，优先 320k 那一档，没有就依次退
+            //  · is_original：1=原唱、2=翻唱/他人版本、0=未知
+            //    （2026-11-12 实测《晴天》：周杰伦=1、凌霄(庄云霄)=2、小柒=0）
+            val durMs = intArrayOf(
+                o.optInt("timelength_320", 0),
+                o.optInt("timelength_128", 0),
+                o.optInt("timelength_high", 0),
+                o.optInt("timelength_other", 0)
+            ).firstOrNull { it > 0 } ?: 0
+            out.add(
+                Hit(
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    durationSec = if (durMs > 0) durMs / 1000 else 0,
+                    source = RecognizeScore.SOURCE_KUGOU,
+                    isOriginal = o.optInt("is_original", 0),
+                    rank = out.size
+                )
+            )
             if (out.size >= 5) break
         }
         return out

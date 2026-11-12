@@ -4,7 +4,7 @@ Android 端音乐聚合播放器：四平台检索（酷我 / QQ / 网易云 / �
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v2.1.91**（versionCode 149） |
+| 当前版本 | **v2.1.92**（versionCode 150） |
 | 包名 | `com.jz.musichelper` |
 | 最低 / 目标 SDK | 26 / 34（compileSdk 34） |
 | 技术栈 | Kotlin + Jetpack Compose（Material3）、OkHttp、Coil、MediaPlayer |
@@ -34,6 +34,10 @@ Private_music/
 │   ├── build.ps1             一键构建
 │   ├── verify/               出包静态验证脚本与历史输出
 │   └── probes/               接口探活、规则回归、界面 mock 脚本
+├── .build/                   **构建工具链（默认忽略，不入库）**
+│   ├── toolchain/jdk-17      JDK 17（自带，不依赖 C 盘安装）
+│   ├── toolchain/gradle-8.9  Gradle 8.9（自带）
+│   └── gradle-home/          GRADLE_USER_HOME（依赖缓存，离线可编）
 ├── services/                 本地服务（第三方，非本仓库维护）
 │   ├── netease-api/          网易云 API（api-enhanced）
 │   ├── lrc-api/              LrcApi 歌词服务
@@ -43,15 +47,18 @@ Private_music/
 
 ## 快速开始
 
-```powershell
-# 构建 release APK（自动设置 JAVA_HOME / Gradle）
-pwsh -File .\tools\build.ps1
+构建工具链已放进项目：`.build\toolchain\jdk-17` + `.build\toolchain\gradle-8.9`，
+`GRADLE_USER_HOME` 指向 `.build\gradle-home`，**不依赖 C 盘的 JDK/Gradle 安装**（缺失时才回退）。
 
-# 指定任务 / 先 clean
-pwsh -File .\tools\build.ps1 -Task assembleDebug -Clean
+```powershell
+cd D:\Projects\Private_music
+pwsh -File .\tools\build.ps1              # 构建 release
+pwsh -File .\tools\build.ps1 -Clean       # 先 clean
+pwsh -File .\tools\build.ps1 -Publish     # 构建并复制到 releases\
 ```
 
-产物：`android\app\build\outputs\apk\release\app-release.apk` → 复制为 `releases\JZ音乐助手-v<版本>.apk`。
+脚本会先打印「项目根目录 / 构建目录 / 工具链 / 缓存 / 版本」，确认路径无误再编译。
+产物：`android\app\build\outputs\apk\release\app-release.apk` → `releases\JZ音乐助手-v<版本>.apk`。
 
 ## 核心能力
 

@@ -1,5 +1,8 @@
 # ===== JZ Music .gitignore（v2 结构）=====
 
+# 项目内工具链与 Gradle 缓存（体积大，可从 C 盘安装位置重建）
+.build/
+
 # 构建产物
 android/app/build/
 android/build/
