@@ -64,9 +64,14 @@ pwsh -File .\tools\smoke\smoke.ps1 -Apk releases\JZ音乐助手-v2.1.92.apk
 配置在 `.lark/config.json`（**已 gitignore，含 webhook 与 app secret，不要提交**）：
 
 - 自定义机器人 webhook → 发**文本**消息到群「音乐软件开发」（已验证）；
-- 自建应用（`app_id` / `app_secret`）→ 先上传 APK 作为文件消息，再补一条文字说明。
-  需要：① 权限 `im:resource`（上传）+ `im:message`（发消息）；② **应用要启用「机器人」能力**，
-  否则上传会返回 `234007 App does not enable bot feature`；③ 权限变更后要「创建版本并发布」才生效。
+- 自建应用（`app_id` / `app_secret`）→ 先上传 APK 作为文件消息，再补一条文字说明（已验证：
+  `bot in chat: code 0` + `file message: om_…`）。
+
+首次接入只有一步需要人工：**机器人必须由人在客户端拉进群**（群设置 → 群机器人 → 添加机器人），
+飞书不允许机器人把自己加进群（`232011`）。之后脚本每次发文件前会 best-effort 校验一次成员关系，已在群则跳过。
+
+所需权限：`im:resource`（上传）、`im:message` 或 `im:message:send_as_bot`（发消息）、
+`im:chat.members:write_only`（成员校验/加人）；**应用能力里要启用「机器人」**，且每次改能力/权限都要重新发版。
 
 手动发：
 
