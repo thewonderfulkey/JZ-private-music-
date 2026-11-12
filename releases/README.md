@@ -5,7 +5,7 @@
 3. 每版同时写 `docs/changelog/note_v<版本>.md`；本目录不再单独写说明。
 4. 签名：Android Debug 证书（SHA-256 `916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac`），
    **所有版本必须同签**，否则用户无法覆盖安装。
-5. GitHub 不同步（按项目所有者要求）；如需发布，另行确认。
+5. GitHub 同步：仓库 `thewonderfulkey/JZ-private-music-`，发布时 `git push` + 新建 Release（APK + 源码 zip）。
 
 ## 版本表
 
@@ -30,5 +30,6 @@
 | v2.1.79 | 137 | 桌面歌词：去进度条 + 真实逐字时间 | archive |
 | v2.1.74–2.1.78 | 132–136 | 桌面歌词上线与迭代 | archive |
 | v2.1.73 | 131 | 平板/横屏自适应（归档基准版） | archive |
+
 
 

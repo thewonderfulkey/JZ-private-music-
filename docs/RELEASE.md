@@ -76,3 +76,17 @@ v2.1.92：<一句话主题>
 | 关于页版本与 APK 不一致 | 只改了一处 versionName |
 | 构建成功但装上是旧包 | `app/build/outputs` 里有多个产物，取最新的 `app-release.apk` |
 | 桌面歌词不出现 | 先看设置页「桌面歌词」状态行给出的原因（权限/系统拦截） |
+
+## 7. 发布到 GitHub
+
+`powershell
+cd D:\Projects\Private_music
+git -c http.proxy= -c https.proxy= push origin main
+git -c http.proxy= -c https.proxy= push origin v<版本>
+python tools\release_github.py --tag v<版本> --name "第 N 版 v<版本>" 
+    --body-file .build\release_body.md --asset releases\<apk> --asset .build\<源码zip>
+`
+
+> 本机 git 全局配了 http.proxy=http://127.0.0.1:7890，代理没开时所有 github 操作都会报
+> "Failed to connect to 127.0.0.1:7890"（之前一直以为是 TLS 问题）。命令里带 -c http.proxy= 绕过即可。
+> 凭据在 Windows 凭据管理器（git credential manager），git credential fill 可取到 PAT 供 API 用。
