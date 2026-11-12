@@ -475,9 +475,21 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 .background(p.surface2, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            Text("JZ的音乐助手 v2.1.92", fontSize = 14.sp, color = p.text)
+            Text("JZ的音乐助手 v2.1.93", fontSize = 14.sp, color = p.text)
             Spacer(Modifier.height(6.dp))
             Text("本版更新", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "识曲的两处判定修正：① 酷狗的原唱标记除了 1（原唱）与 2（翻唱），实测还会返回 4——" +
+                    "《晴天》的演唱会 Live CD 版、《我们都一样》的综艺收录版都是 4，语义是「原唱，但不是这张录音室录音」；" +
+                    "以前把 4 当成未知，会让现场版抢到录音室版前面，现在按「现场收录」轻微降权。" +
+                    "② 双通道打分里，专辑是演唱会/综艺的条目本来就扣分，两处一起收口后，" +
+                    "「原唱但现场版」不会再压过「原唱录音室版」。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("上一版（v2.1.92）", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(
                 "听歌识曲改成「两条通道都跑完，再按统一评分选最可信的一条」。以前是酷狗一有结果就直接返回，" +
@@ -535,17 +547,6 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 fontSize = 12.sp,
                 color = p.text2
             )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.87）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "补齐酷我源的封面与歌词：① 搜索结果直接取酷我返回的 MVPIC 曲图（img1 的 wmvpic 路径），" +
-                    "约八成酷我歌曲现在有真封面；字段为空时仍走原兜底。" +
-                    "② 酷我歌曲改用酷我官方歌词接口（平台 ID 精确匹配、行级时间），取不到词再回退 LDDC 双源。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
             Text("声明", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(

@@ -12,6 +12,7 @@
 # 退出码：0 = 全部通过；1 = 有失败项（日志与截图可直接给开发看）
 param(
     [string]$Apk = "",
+    [ValidateSet('release', 'smoke')][string]$Variant = 'smoke',
     [string]$AvdName = "jz_smoke",
     [string]$SystemImage = "system-images;android-34;google_apis;x86_64",
     [int]$BootTimeoutSec = 480,
@@ -43,7 +44,11 @@ if (-not (Test-Path $emulator)) { throw "emulator 未安装：$emulator（先跑
 
 # ---- 取 APK ----
 if (-not $Apk) {
-    $Apk = Join-Path $root 'android\app\build\outputs\apk\release\app-release.apk'
+    # smoke 变体带测试注入口（assets/fixtures）；release 是发布包，不含钩子
+    $Apk = Join-Path $root "android\app\build\outputs\apk\$Variant\app-$Variant.apk"
+    if (-not (Test-Path $Apk)) {
+        $Apk = Join-Path $root 'android\app\build\outputs\apk\release\app-release.apk'
+    }
 } elseif (-not [System.IO.Path]::IsPathRooted($Apk)) {
     $Apk = Join-Path $root $Apk
 }
@@ -81,17 +86,30 @@ $devices = (& $adb devices) -split "`n" | Where-Object { $_ -match '\tdevice$' }
 $startedEmulator = $false
 if (-not $devices -and -not $Reuse) {
     Write-Host '==> 启动模拟器（首次冷启动可能要 2~4 分钟）' -ForegroundColor Cyan
-    $avds = & $avdTool list avd 2>&1 | Out-String
-    if ($avds -notmatch [regex]::Escape($AvdName)) {
+    # 直接看 .ini 是否存在，不用 avdmanager list（它会去拉远端仓库，慢且可能失败）
+    if (-not (Test-Path (Join-Path $avdHome "$AvdName.ini"))) {
         Write-Host "==> 创建 AVD $AvdName（放在项目 .build\avd，不污染 C 盘）"
         'no' | & $avdTool create avd -n $AvdName -k $SystemImage -d pixel_5 --force 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "AVD 创建失败（$SystemImage）" }
+        if (-not (Test-Path (Join-Path $avdHome "$AvdName.ini"))) { throw "AVD 创建失败（$SystemImage）" }
     }
     $emArgs = @('-avd', $AvdName, '-no-window', '-no-audio', '-no-boot-anim', '-no-snapshot',
                 '-gpu', 'swiftshader_indirect', '-netdelay', 'none', '-netspeed', 'full')
     $emuLog = Join-Path $outDir 'emulator.log'
-    $script:emuProc = Start-Process -FilePath $emulator -ArgumentList $emArgs `
-        -RedirectStandardOutput $emuLog -RedirectStandardError "$emuLog.err" -WindowStyle Hidden -PassThru
+    # 必须"分离"启动：Start-Process 会让模拟器继承本进程的 stdout 管道，
+    # 外层若用 `| Select-Object` 之类的管道，会一直等不到 EOF 而挂住。
+    # 用 Win32_Process.Create 起一个完全脱离的 cmd，输出重定向到文件。
+    $argLine = ($emArgs | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' '
+    # WMI 起的进程不继承本进程环境变量，所以把 ANDROID_AVD_HOME / SDK 显式写在命令行里
+    $cmdLine = "cmd.exe /c `"set ANDROID_AVD_HOME=$avdHome&& set ANDROID_SDK_ROOT=$sdk&& set ANDROID_HOME=$sdk&& `"$emulator`" $argLine > `"$emuLog`" 2>&1`""
+    $created = $null
+    try {
+        $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine }
+    } catch {
+        Write-Host "  CIM 启动失败，回退 Start-Process：$($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    if (-not $created -or $created.ReturnValue -ne 0) {
+        Start-Process -FilePath $emulator -ArgumentList $emArgs -WindowStyle Hidden | Out-Null
+    }
     $startedEmulator = $true
 }
 if ($Reuse -and -not $devices) { throw '-Reuse 指定了复用设备，但没有已连接的设备' }
@@ -102,8 +120,9 @@ $booted = $false
 $deviceUp = $false
 while ($sw.Elapsed.TotalSeconds -lt $BootTimeoutSec) {
     # 模拟器进程挂了就别干等（AVD 名字错、WHPX 没开、镜像缺失都会走这里）
-    if ($startedEmulator -and $script:emuProc -and $script:emuProc.HasExited) {
-        Write-Host "==> 模拟器进程退出（exit $($script:emuProc.ExitCode)），日志末尾：" -ForegroundColor Red
+    if ($startedEmulator -and $sw.Elapsed.TotalSeconds -gt 20 -and
+        -not (Get-Process -Name emulator, qemu-system-x86_64 -ErrorAction SilentlyContinue)) {
+        Write-Host '==> 模拟器进程已退出，日志末尾：' -ForegroundColor Red
         if (Test-Path $emuLog) { Get-Content -LiteralPath $emuLog -Tail 12 | ForEach-Object { Write-Host "    $_" } }
         Step '设备启动完成' $false 'emulator 进程退出'
         exit 1
@@ -239,7 +258,44 @@ if (TapText '设置') {
     Step '关于页版本正确' $false '找不到「设置」标签'
 }
 
-# ---- 8. 结果 ----
+# ---- 8. 识曲全链路（仅 smoke 变体：assets/fixtures 注入）----
+if ($Variant -eq 'smoke') {
+    Write-Host '==> 识曲全链路（固定 PCM 注入）'
+    $recCases = @(
+        @{ Fixture = 'qingtian_8k.pcm';        Title = '晴天';     Artist = '周杰伦'; Expect = '采用酷狗' },
+        # 两通道都给出张杰时，结论是「双通道互证」而不是「采用网易」——两种都算对
+        @{ Fixture = 'womendouyiyang_8k.pcm';  Title = '我们都一样'; Artist = '张杰';   Expect = '采用网易|双通道互证' }
+    )
+    foreach ($case in $recCases) {
+        $tag = $case.Fixture -replace '\.pcm$', ''
+        & $adb shell am force-stop $pkg | Out-Null
+        & $adb logcat -c | Out-Null
+        & $adb shell am start -W -n $activity --es jz_test_pcm $case.Fixture 2>&1 | Out-Null
+        # 轮询 JZ_TEST 日志，最多 40 秒（WebView 预热 2.5s + 两通道请求）
+        $line = ''
+        $sw2 = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw2.Elapsed.TotalSeconds -lt 40) {
+            $l = (& $adb logcat -d -s JZ_TEST 2>&1 | Out-String)
+            $m = [regex]::Match($l, 'RECOG fixture=\S+.*')
+            if ($m.Success) { $line = $m.Value.Trim(); break }
+            Start-Sleep -Seconds 2
+        }
+        Step "识曲[$tag] 出结果" ($line -ne '') $line
+        if ($line) {
+            Step "识曲[$tag] 命中 $($case.Title)/$($case.Artist)" ($line -match [regex]::Escape("top=$($case.Title)/$($case.Artist)")) $line
+            Step "识曲[$tag] 通道结论（$($case.Expect)）" ($line -match $case.Expect) $line
+            Start-Sleep -Milliseconds 500
+            $ui = UiDump "04-recog-$tag"
+            $hit = (& $python $uidump --file $ui --has $case.Artist 2>&1 | Out-String).Trim()
+            Step "识曲[$tag] 结果卡显示 $($case.Artist)" ($hit -match 'FOUND') $hit
+            Shot "04-recog-$tag" | Out-Null
+        }
+    }
+} else {
+    Write-Host '==> 识曲全链路：release 包不含测试钩子，跳过' -ForegroundColor Yellow
+}
+
+# ---- 9. 结果 ----
 $fail = $script:steps | Where-Object { -not $_.Ok }
 Write-Host ''
 Write-Host '========================= 冒烟结果 =========================' -ForegroundColor DarkGray

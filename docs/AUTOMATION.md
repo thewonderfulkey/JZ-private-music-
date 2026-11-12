@@ -42,19 +42,31 @@ pwsh -File .\tools\smoke\smoke.ps1 -Apk releases\JZ音乐助手-v2.1.92.apk
 - 用 WHPX 加速（`Windows Hypervisor Platform accelerator is operational`），冷启动约 10~20 秒（本机实测）；
 - 输出：`tools\smoke\out\v<版本>\` —— `01-home.png` `02-recognize.png` `03-settings.png`、各页 uiautomator XML、`smoke.log`、`logcat-tail.txt`。
 
-**当前断言（10 项）**：设备启动、安装成功、设备版本与构建一致、Activity 启动、无 FATAL、无 ANR、进程存活、底部六格导航、识曲页渲染、关于页版本正确。
+**当前断言（18 项）**：设备启动、安装成功、设备版本与构建一致、Activity 启动、无 FATAL、无 ANR、进程存活、底部六格导航、识曲页渲染、关于页版本正确，以及**识曲两组各 4 项**（出结果 / 命中歌名歌手 / 通道结论 / 结果卡显示）。
 
-**能覆盖**：启动崩溃、白屏/黑屏、页面渲染缺失、导航错乱、版本号漏同步、安装/签名问题。
-**不能覆盖**：麦克风采集与识曲链路（模拟器没有真实声源）、息屏/Doze 行为、桌面歌词悬浮窗、真实网络波动下的取流表现。
+**识曲怎么在模拟器里测**（模拟器没有真实声源）：
+
+- 冒烟用的是 `smoke` 变体（`app/build/outputs/apk/smoke/app-smoke.apk`）——与 release 同源同签，
+  只多一个编译期开关 `RECOG_TEST_HOOK=true` 和 `assets/fixtures/` 两段 12s/8k PCM；
+- 触发：`adb shell am start -n com.jz.musichelper/.MainActivity --es jz_test_pcm qingtian_8k.pcm`；
+- 结果同时写进 logcat（tag `JZ_TEST`）与界面结果卡，冒烟脚本两边都断言；
+- 正式包 `RECOG_TEST_HOOK=false`：`jz_test_pcm` 字符串与 fixtures 资产都不会进 release 包（验证脚本会查）。
+
+样本由 `tools/smoke/make_fixtures.py` 生成（妖狐酷我直链 → miniaudio 解码 → 8k 单声道），
+当前两段：`qingtian_8k.pcm`（晴天/周杰伦）、`womendouyiyang_8k.pcm`（我们都一样/张杰）。
+
+**能覆盖**：启动崩溃、白屏/黑屏、页面渲染缺失、导航错乱、版本号漏同步、安装/签名问题、**识曲双通道与打分结论**。
+**不能覆盖**：真实麦克风采集（模拟器无真实声源，用注入替代）、息屏/Doze、桌面歌词悬浮窗、真实网络抖动下的取流。
 这几项仍需要在真机上点一遍（见 `docs/HANDOFF.md` 的验收清单）。
 
 ## 3. 飞书通知（tools/notify/lark.py）
 
-配置在 `.lark/config.json`（**已 gitignore，含 webhook 地址，不要提交**）：
+配置在 `.lark/config.json`（**已 gitignore，含 webhook 与 app secret，不要提交**）：
 
-- 已配好自定义机器人 webhook → 发**文本**消息到群「音乐软件开发」；
-- 想连 APK 文件一起发：填 `app_id` / `app_secret`（飞书自建应用，开通 `im:message`、`im:resource`，
-  并把机器人拉进群）。脚本会自动先传文件再补一条文字说明；没有凭据时只发文字。
+- 自定义机器人 webhook → 发**文本**消息到群「音乐软件开发」（已验证）；
+- 自建应用（`app_id` / `app_secret`）→ 先上传 APK 作为文件消息，再补一条文字说明。
+  需要：① 权限 `im:resource`（上传）+ `im:message`（发消息）；② **应用要启用「机器人」能力**，
+  否则上传会返回 `234007 App does not enable bot feature`；③ 权限变更后要「创建版本并发布」才生效。
 
 手动发：
 

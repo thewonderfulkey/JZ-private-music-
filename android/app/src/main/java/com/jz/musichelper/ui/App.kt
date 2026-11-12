@@ -392,6 +392,53 @@ object AppState {
         return if (raw.size > want) raw.copyOf(want) else raw
     }
 
+    /**
+     * v2.1.93：冒烟包专用——把 assets/fixtures/<name> 的 12 秒 8k 单声道 PCM 当成"刚录完的音"，
+     * 直接走两条通道 + 统一打分，结果写回同一套界面状态（结果卡、识别依据、同批候选），
+     * 这样模拟器可以断言「识别 → 打分 → 结论」而不需要真实麦克风。
+     *
+     * 只在 smoke 变体里被调用（BuildConfig.RECOG_TEST_HOOK）；正式包不会走到。
+     */
+    fun startRecognizeWithFixture(context: android.content.Context, name: String) {
+        recJob?.cancel()
+        recHits.value = emptyList()
+        recError.value = ""
+        recScoreNote.value = ""
+        clearRecVersions()
+        tab.value = MainTab.RECOGNIZE        // 挂上识曲页，网易的 WebView 才会 attach
+        recPhase.value = RecPhase.THINK
+        recJob = globalScope.launch {
+            delay(2_500)                      // 等 WebView 把 afp 引擎编译好
+            val pcm = runCatching {
+                context.assets.open("fixtures/$name").use { it.readBytes() }
+            }.getOrNull()
+            if (pcm == null || pcm.size < VoiceCapture.SAMPLE_RATE * 2) {
+                recError.value = "测试注入：读不到 fixtures/$name"
+                recPhase.value = RecPhase.EMPTY
+                return@launch
+            }
+            val kugou = runCatching { RecognizeAdapter.recognize(pcm) }.getOrDefault(emptyList())
+            val netease = runCatching {
+                val fp = NeteaseFingerprint.encode(pcm, VoiceCapture.SAMPLE_RATE)
+                if (fp.isNullOrBlank()) emptyList() else NeteaseRecognizer.recognize(fp)
+            }.getOrDefault(emptyList())
+            val hits = fuseRecognize(kugou, netease)
+            if (hits.isEmpty()) {
+                recError.value = "测试注入：两条通道都没对上"
+                recPhase.value = RecPhase.EMPTY
+            } else {
+                recHits.value = hits
+                recPhase.value = RecPhase.RESULT
+            }
+            val top = hits.firstOrNull()
+            android.util.Log.i(
+                "JZ_TEST",
+                "RECOG fixture=$name kg=${kugou.size} ne=${netease.size} " +
+                    "note=${recScoreNote.value} top=${top?.title}/${top?.artist}/${top?.album}/${top?.score}"
+            )
+        }
+    }
+
     /** 异常 → 一句人话（不暴露英文异常、不把"被占用"说成"未授权"） */
     private fun recHint(e: Throwable): String = when (e) {
         is ApiError.HTTP -> when {

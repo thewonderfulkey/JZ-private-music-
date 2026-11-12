@@ -12,8 +12,8 @@ android {
         applicationId = "com.jz.musichelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 150
-        versionName = "2.1.92"
+        versionCode = 151
+        versionName = "2.1.93"
     }
 
     buildTypes {
@@ -22,7 +22,21 @@ android {
             // 用 debug 签名：保证发布产物可直接安装（个人分发场景），且 release 体积远小于 debug
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // v2.1.93：测试注入入口不进正式包（编译期常量，MainActivity 里那段会被折叠掉）
+            buildConfigField("boolean", "RECOG_TEST_HOOK", "false")
         }
+        // v2.1.93 冒烟包：与 release 同源同签，只多一个「用 assets 里的固定 PCM 走识曲」的入口，
+        // 让模拟器在没有真实声源的情况下也能跑通「识别 → 双通道打分 → 结果卡」。
+        // 产物：app/build/outputs/apk/smoke/app-smoke.apk（不发布，只给冒烟脚本用）
+        create("smoke") {
+            initWith(getByName("release"))
+            buildConfigField("boolean", "RECOG_TEST_HOOK", "true")
+            matchingFallbacks += listOf("release")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

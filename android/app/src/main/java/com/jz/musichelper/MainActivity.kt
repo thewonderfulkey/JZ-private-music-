@@ -91,6 +91,17 @@ class MainActivity : ComponentActivity() {
         // v2.1.71：装好第一次打开就自动向系统申请「不受电池优化限制」——
         // 这是"息屏/后台能继续联网取歌"的系统级开关，不申请的话 Doze 会冻结后台网络。
         window.decorView.post { ensureBatteryWhitelist() }
+        // v2.1.93：冒烟包专用入口——用 assets/fixtures 里的固定 PCM 走一遍识曲，
+        // 供模拟器自动化断言。RECOG_TEST_HOOK 是编译期常量（release=false），
+        // 正式包里这段分支会被编译器去掉。
+        if (BuildConfig.RECOG_TEST_HOOK) {
+            val fixture = intent?.getStringExtra("jz_test_pcm")
+            if (!fixture.isNullOrBlank()) {
+                window.decorView.postDelayed({
+                    com.jz.musichelper.ui.AppState.startRecognizeWithFixture(applicationContext, fixture)
+                }, 600)
+            }
+        }
     }
 
     /**

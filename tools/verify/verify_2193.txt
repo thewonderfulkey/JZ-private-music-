@@ -1,0 +1,61 @@
+PASS  build.gradle 版本  | vc=151 vn=2.1.93
+PASS  APK badging 版本  | 151/2.1.93
+PASS  包名
+PASS  minSdk/targetSdk
+PASS  关于页标题 v2.1.93
+PASS  关于页保留 v2.1.92 段落
+PASS  关于页无 v2.1.92 主标题残留
+PASS  签名证书 SHA-256 与既定一致
+PASS  apksigner verify 通过
+PASS  zip 完整性  | testzip=None
+PASS  条目数（应 ≥ 180）  | 186 条
+PASS  体积量级（29.6~30.4MB）  | 29,859,137 B
+PASS  assets/recognizer.html 与源码一致  | 1,784 B
+PASS  assets/afp_wasm_b64.js 与源码一致  | 308,272 B
+PASS  assets/sandbox.bundle.js 与源码一致  | 89,115 B
+PASS  release 关闭钩子（RECOG_TEST_HOOK=false）
+PASS  smoke 变体开启钩子（RECOG_TEST_HOOK=true）
+PASS  buildConfig 已启用
+PASS  MainActivity 有注入入口
+PASS  App 有 startRecognizeWithFixture
+PASS  注入路径走同一套打分
+PASS  注入结果打 JZ_TEST 日志
+PASS  release dex 不含 jz_test_pcm
+PASS  release 包不含 fixtures 资产
+PASS  smoke 包带两个 PCM 样本  | {'assets/fixtures/qingtian_8k.pcm': 192000, 'assets/fixtures/womendouyiyang_8k.pcm': 192000}
+PASS  样本长度 = 12s@8k@16bit（192000 B）
+PASS  smoke dex 含 jz_test_pcm
+PASS  RecognizeScore：fuse 入口
+PASS  RecognizeScore：单条打分
+PASS  RecognizeScore：身份级加成
+PASS  RecognizeScore：跨通道互证 +50
+PASS  RecognizeScore：多正式专辑+时长互证 +22
+PASS  RecognizeScore：原唱标记 +45
+PASS  RecognizeScore：翻唱标记 -30
+PASS  RecognizeScore：现场收录（is_original=4）-8
+PASS  App：网易等待上限 7s
+PASS  App：网易只取前 12 秒
+PASS  App：已去掉 6 秒命中即返回
+PASS  Hit 字段 val durationSec
+PASS  Hit 字段 val source
+PASS  Hit 字段 val score
+PASS  Hit 字段 val isOriginal
+PASS  Hit 字段 val rank
+PASS  酷狗解析带 is_original
+PASS  网易解析带 duration
+PASS  dex 含「JZ的音乐助手 v2.1.93」
+PASS  dex 含「上一版（v2.1.92）」
+PASS  dex 含「识别依据：酷狗」
+PASS  dex 含「双通道互证」
+PASS  dex 含「两条通道都没对上」
+PASS  dex 含「点一下麦克风，开始听」
+PASS  dex 已无旧主标题 v2.1.92
+PASS  dex 含 RecognizeScore 类
+PASS  清单含 INTERNET
+PASS  清单含 RECORD_AUDIO
+PASS  清单含 SYSTEM_ALERT_WINDOW
+PASS  本版更新正文无 ASCII 双引号  | 5 段字面量 / 10 个引号
+
+合计 57 项：PASS 57 / FAIL 0
+release APK: 29,859,137 B  MD5 3DF55161F98A9B639AFA8C5336E9851D
+smoke   APK: 30,218,429 B

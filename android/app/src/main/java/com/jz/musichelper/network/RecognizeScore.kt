@@ -122,9 +122,12 @@ object RecognizeScore {
     fun memberScore(c: Cand): Int {
         var s = 0
         // ① 原唱标记（只有酷狗给）
+        //    v2.1.93：实测出现第 4 种取值（《晴天》周杰伦的演唱会 Live CD 版、《我们都一样》张杰的
+        //    综艺收录版都是 4），语义是"原唱，但不是这张录音室录音"，所以轻降权而不是加分。
         s += when (c.isOriginal) {
             1 -> 45
             2 -> -30
+            4 -> -8
             else -> 0
         }
         // ② 歌名是否裸名

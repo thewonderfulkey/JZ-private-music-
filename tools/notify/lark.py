@@ -17,6 +17,7 @@ import json
 import mimetypes
 import os
 import sys
+import urllib.error
 import urllib.request
 import uuid
 
@@ -86,8 +87,12 @@ def upload_file(token, path):
         f"{API}/im/v1/files", data=body, method="POST",
         headers={"Authorization": f"Bearer {token}",
                  "Content-Type": f"multipart/form-data; boundary={boundary}"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        resp = json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"上传文件 HTTP {e.code}：{body}")
     if resp.get("code") != 0:
         raise RuntimeError(f"上传文件失败：{resp}")
     return resp["data"]["file_key"]

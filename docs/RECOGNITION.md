@@ -53,6 +53,7 @@ identityKey = norm(StudioPick.coreName(title)) + "|" + norm(firstArtist(artist))
 |---|---|
 | `is_original == 1` | +45 |
 | `is_original == 2` | −30 |
+| `is_original == 4` | −8（v2.1.93） |
 | 歌名裸名 | +12 |
 | 歌名带版本说明 | −35 |
 | 正式专辑 | +15 |
@@ -102,7 +103,30 @@ python tools\probes\kugou_from_wav.py
 
 改权重的原则：**先看夹具 A/B 是否仍然正确，再看排序是否被"同名合集"翻盘**。不要为了单个案例加特判。
 
-## 6. 结果卡上的那行字是排查入口
+## 6. 在模拟器里跑识曲（测试钩子，v2.1.93）
+
+模拟器没有真实声源，所以留了一条**只在 smoke 变体**里的注入通道：
+
+```powershell
+# 1) 编冒烟包（与 release 同源同签，只多一个编译期开关）
+pwsh -File tools\build.ps1 -Task assembleSmoke
+# 2) 装 + 注入一段 12s/8k PCM
+adb install -r android\app\build\outputs\apk\smoke\app-smoke.apk
+adb shell am start -n com.jz.musichelper/.MainActivity --es jz_test_pcm qingtian_8k.pcm
+# 3) 看结论（同时也会画在结果卡上）
+adb logcat -d -s JZ_TEST
+# RECOG fixture=qingtian_8k.pcm kg=5 ne=2 note=识别依据：酷狗 83 ／ 网易 40 → 采用酷狗 top=晴天/周杰伦/叶惠美/83
+```
+
+- 样本在 `android/app/src/smoke/assets/fixtures/`（只有 smoke 变体打进去），
+  由 `tools/smoke/make_fixtures.py` 从妖狐酷我直链生成；
+- `MainActivity` 里的调用被 `BuildConfig.RECOG_TEST_HOOK` 包着，release 包是 `false`（编译期常量），
+  所以 `jz_test_pcm` 字符串、fixtures 资产都不会出现在正式包（`verify_2193.py` 会断言）；
+- 注入走的是**同一条** `fuseRecognize`，不是另写一套逻辑，所以测出来的结论就是真机结论。
+
+新增样本：把歌加进 `make_fixtures.py` 的 `SONGS`，重跑脚本，再拷到 `src/smoke/assets/fixtures/`。
+
+## 7. 结果卡上的那行字是排查入口
 
 真机上识别不对时，先看「识别依据」的两个分数：
 

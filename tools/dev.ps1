@@ -54,6 +54,17 @@ if ($LASTEXITCODE -ne 0) {
 }
 $buildSec = [int]$sw.Elapsed.TotalSeconds
 
+# 冒烟用的是带测试注入入口的 smoke 变体（与 release 同源同签，只多一个 PCM 注入开关）
+if (-not $SkipSmoke) {
+    Write-Host '  另编 smoke 变体（供识曲注入测试）' -ForegroundColor DarkGray
+    & pwsh -NoProfile -File (Join-Path $root 'tools\build.ps1') -Task assembleSmoke *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'smoke 变体构建失败' -ForegroundColor Red
+        Notify "v$versionName smoke 变体构建失败" "assembleSmoke 返回 $LASTEXITCODE。$Note" -Fail
+        exit 1
+    }
+}
+
 # ---------- 2. 静态验证 ----------
 Write-Host ''
 Write-Host '【2/3】静态验证' -ForegroundColor Cyan
@@ -83,7 +94,7 @@ Write-Host '【3/3】模拟器冒烟' -ForegroundColor Cyan
 $smokeLine = '已跳过'
 $smokeOk = $true
 if (-not $SkipSmoke) {
-    $smokeArgs = @('-NoProfile', '-File', (Join-Path $root 'tools\smoke\smoke.ps1'), '-Apk', $apk)
+    $smokeArgs = @('-NoProfile', '-File', (Join-Path $root 'tools\smoke\smoke.ps1'), '-Variant', 'smoke')
     if ($KeepEmulator) { $smokeArgs += '-KeepEmulator' }
     & pwsh @smokeArgs
     $smokeOk = ($LASTEXITCODE -eq 0)
