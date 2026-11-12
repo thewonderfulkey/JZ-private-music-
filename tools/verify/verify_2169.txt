@@ -1,0 +1,31 @@
+APK bytes: 29601583
+MD5: 50B7C997C8939474FD86A5090A2922AC
+package: name='com.jz.musichelper' versionCode='127' versionName='2.1.69' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
+uses-permission: name='android.permission.WAKE_LOCK'
+uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+uses-permission: name='android.permission.SCHEDULE_EXACT_ALARM'
+uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+uses-permission: name='com.jz.musichelper.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+launchable-activity: name='com.jz.musichelper.MainActivity'  label='' icon=''
+uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+apksigner rc: 0
+Signer #1 certificate SHA-256 digest: 916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac
+zip entries: 183 testzip: None
+assert TrackEndAlarm存在 True
+assert 闹铃已排 True
+assert 闹铃已取消 True
+assert 接收器已声明 True
+assert 精确闹铃权限 True
+assert 探测走IO True
+assert 探测不再阻塞主线程调用 True
+assert 息屏按等网络处理 True
+assert 看门狗 True
+assert 播完统一入口 True
+assert 闹铃处理 True
+assert 亮屏卡末尾兜底 True
+assert 关于版本 True
+assert 诊断状态行 True

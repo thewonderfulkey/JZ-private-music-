@@ -1,0 +1,65 @@
+SIZE 29634383 bytes  MD5 607F03F6E122B6228AE05173165F709A
+PASS badging package
+PASS versionCode=137  | 137
+PASS versionName=2.1.79  | 2.1.79
+PASS SYSTEM_ALERT_WINDOW
+PASS FOREGROUND_SERVICE
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+PASS dex has LyricsBarAction
+PASS dex has DesktopLyricsView
+PASS dex has LyricWord
+PASS dex has krcToLines
+PASS dex has qrcToLines
+PASS dex has cleanLine
+PASS dex has setWordTiming
+PASS dex has 2.1.79
+PASS dex no old about 2.1.78
+PASS dex about says 字数均分 no longer
+PASS dex about says 去掉底边进度条
+PASS dex about says KRC / QRC
+PASS dex has theme 素纸 #FBF7ED
+PASS dex has theme 夜墨 #24211D
+PASS src no drawProgress fn
+PASS src no drawProgress call
+PASS src no LinearGradient import
+PASS src no Shader import
+PASS src no progress shader
+PASS src barHeight no 16dp reserved
+PASS src has LyricWord import
+PASS src has buildCharTimes
+PASS src has charFill
+PASS src has setWordTiming
+PASS src has setPosition
+PASS src uses timed fill
+PASS src timed guard
+PASS src keeps ratio fallback
+PASS src char step splits word dur
+PASS src tick 100ms
+PASS src tickOnce pushes words
+PASS src tickOnce pushes position
+PASS src tickOnce ratio only as fallback
+PASS src LyricWord data class
+PASS src LyricLine has words default
+PASS src cleanLine public
+PASS src parseLrc uses cleanLine
+PASS src krcToLines
+PASS src qrcToLines
+PASS src krc abs time = lineStart + s
+PASS src qrc adaptive base
+PASS src fetchKgLines
+PASS src fetchQqLines
+PASS src kg uses krcToLines
+PASS src qq uses qrcToLines
+PASS src fetchOne returns word lines
+PASS src about 2.1.79
+PASS MainActivity declared
+PASS PlayerService declared
+PASS TrackEndReceiver declared
+PASS PlayerService mediaPlayback type
+FAIL adb device present  | devices=0 (gap if 0)
+
+RESULT: FAILED: adb device present

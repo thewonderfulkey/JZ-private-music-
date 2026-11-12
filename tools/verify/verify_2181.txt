@@ -1,0 +1,50 @@
+SIZE 29667179 bytes  MD5 BD820514A62FF90D91A84AF3774875D7
+PASS badging package
+PASS versionCode=139  | 139
+PASS versionName=2.1.81  | 2.1.81
+PASS RECORD_AUDIO permission
+PASS SYSTEM_ALERT_WINDOW kept
+PASS FOREGROUND_SERVICE kept
+PASS launchable activity
+PASS minSdk 26
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+PASS dex has RecognizeAdapter
+PASS dex has RecognizeEntryBar
+PASS dex has RecognizeOverlay
+PASS dex has VoiceCapture
+PASS dex has open/closeRecognize
+PASS dex has recPhase/recError
+PASS dex has gateway endpoint
+PASS dex has kg salt
+PASS dex has KuGou/11490 UA
+PASS dex about says 2.1.81
+PASS dex no old about 2.1.80
+PASS dex has 听歌识曲 label
+PASS dex has new bar subtitle
+PASS dex no old bar subtitle
+PASS dex has 正在聆听
+PASS dex has NOPERM state text
+PASS dex has 再授一次
+PASS dex has 再听一次
+PASS dex has 去播放
+PASS dex has decimate2 fallback
+PASS dex has human-readable error hint
+PASS dex has mic-occupied hint
+PASS dex has network hint
+PASS dex has DesktopLyricsView kept
+PASS dex has krcToLines kept
+PASS manifest RECORD_AUDIO declared
+PASS manifest PlayerService kept
+PASS manifest TrackEndReceiver kept
+PASS manifest foregroundServiceType=mediaPlayback(0x2)
+FAIL adb device present  | List of devices attached
+
+SIZE_BYTES=29667179
+MD5=BD820514A62FF90D91A84AF3774875D7
+
+FAILS: 1
+  - adb device present

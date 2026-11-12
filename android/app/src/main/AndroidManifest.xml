@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v2.1.5 #5：媒体播放前台服务（息屏/Doze 下保活，自动连播不被冻结） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- v2.1.67：息屏保活——前台服务只能免于被回收，挡不住 CPU 休眠；
+         持有一把 PARTIAL_WAKE_LOCK，播完到下一首取流完成这段 CPU 才不会睡过去 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- v2.1.68：Doze 白名单——不放行的话锁屏久了后台联网会被掐，播完取不到下一首（设置页有申请入口） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- v2.1.69：曲终闹铃——息屏进 Doze 后播完回调可能送不到，按曲目时长排一次到点唤醒，
+         到点核对进度确实到底就直接推进下一首（未获授权时退化为非精确闹铃，仍可唤醒） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- v2.1.74：桌面歌词——在桌面/其他应用之上显示歌词滚动栏（悬浮窗，26+ 用 TYPE_APPLICATION_OVERLAY）。
+         该权限属于「特殊权限」，必须在 App 前台由用户点击后跳系统设置页授权，不能在后台弹申请框 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!-- v2.1.80：听歌识曲——麦克风采集 8kHz/单声道/16bit PCM（10 秒上限，仅在内存中使用，不落盘不上传留存） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.JZMusicHelper">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- v2.1.5 #5：媒体播放前台服务 -->
+        <service
+            android:name=".data.PlayerService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- v2.1.69：曲终唤醒（Doze 下播完回调送不到时推进下一首） -->
+        <receiver
+            android:name=".data.TrackEndReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

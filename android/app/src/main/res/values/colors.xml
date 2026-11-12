@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v2.1.50：窗口底色=纸色。此前主题用系统默认白底，冷启动到 Compose 首帧之间是一整块
+         纯白（实拍白屏 1.67s 的主因之一）；改纸色后这段时间与开场画卷的纸底同色，白屏消失。 -->
+    <color name="jz_paper">#FAF5EC</color>
+</resources>

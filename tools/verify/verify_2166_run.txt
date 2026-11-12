@@ -1,0 +1,19 @@
+APK: C:\Users\17948\DoubaoWork\chats\2026-10-22\new-chat-1\JZMusicHelperAndroid\app\build\outputs\apk\release\app-release.apk
+SIZE: 29585055 bytes
+MD5: 430A835AD67C1C03E7FF7081C4A62816
+build-tools: 34.0.0
+package: name='com.jz.musichelper' versionCode='124' versionName='2.1.66' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+sdkVersion:'26'
+targetSdkVersion:'34'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
+uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+uses-permission: name='com.jz.musichelper.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+launchable-activity: name='com.jz.musichelper.MainActivity'  label='' icon=''
+uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+apksigner rc=1
+zip entries: 183 | testzip: OK
+Settings 声明存在: True | 旧版本史已清: True | 底部 60dp: True
+gradle 版本: vc 124 / 2.1.66

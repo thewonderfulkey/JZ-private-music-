@@ -1,0 +1,57 @@
+SIZE 29667179 bytes  MD5 D0FCBEF85B24352760257B415C6D51E6
+PASS badging package
+PASS versionCode=141  | 141
+PASS versionName=2.1.83  | 2.1.83
+PASS RECORD_AUDIO permission
+PASS SYSTEM_ALERT_WINDOW kept
+PASS FOREGROUND_SERVICE kept
+PASS launchable activity
+PASS minSdk 26
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+PASS dex has RecognizePage
+PASS dex has playRecognizedHit
+PASS dex has recPlayBusy/recRecent
+PASS dex has 识曲 tab label
+PASS dex has idle hint
+PASS dex has 最近识过
+PASS dex has busy button
+PASS dex has 其他版本
+PASS dex has 第一次用 hint
+PASS dex has 三件小事 tips
+PASS dex has replay hint
+PASS dex has privacy footer
+PASS dex no old overlay class
+PASS dex no old entry bar class
+PASS dex no old search-jump toast
+PASS dex no old bar subtitle
+PASS dex has RecognizeAdapter
+PASS dex has VoiceCapture
+PASS dex has to8k resampler
+PASS dex has gateway endpoint
+PASS dex has kg salt
+PASS dex has KuGou/11490 UA
+PASS dex has DB hint
+PASS dex has silence-threshold hint
+PASS dex has kugou-miss copy
+PASS dex has no-candidate copy
+PASS dex about says 2.1.83
+PASS dex no old about 2.1.82
+PASS dex has 正在聆听
+PASS dex has NOPERM copy
+PASS dex has DesktopLyricsView kept
+PASS dex has krcToLines kept
+PASS manifest RECORD_AUDIO declared
+PASS manifest PlayerService kept
+PASS manifest TrackEndReceiver kept
+PASS manifest foregroundServiceType=mediaPlayback(0x2)
+FAIL adb device present  | List of devices attached
+
+SIZE_BYTES=29667179
+MD5=D0FCBEF85B24352760257B415C6D51E6
+
+FAILS: 1
+  - adb device present

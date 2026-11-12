@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v2.1.54：冷启动「盖住了但没盖满」。
+         Android 12+ 的系统启动画面会在 windowBackground 上再叠一枚 App 图标（录屏里纸色圆角卡中间那圈耳机图标），
+         卡片按图标尺寸展开落屏时四角与状态栏还透出桌面壁纸 —— 就是"遮住了但是没有完全遮住"。
+         这里把启动画面底色也改成纸色、图标换成全透明、动画时长归零、窗口进场动画去掉：
+         点开即整屏一张空纸，没有图标、没有缩放、没有壁纸露出。 -->
+    <style name="Theme.JZMusicHelper" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/jz_paper</item>
+        <item name="android:windowSplashScreenBackground">@color/jz_paper</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/jz_paper</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

@@ -1,0 +1,23 @@
+SIZE 29634383 bytes  MD5 BE0B8D4124AC05E3CBA79514063925D1
+PASS badging package
+PASS versionCode=133  | 133
+PASS versionName=2.1.75  | 2.1.75
+PASS SYSTEM_ALERT_WINDOW
+PASS FOREGROUND_SERVICE
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+PASS dex has DesktopLyrics
+PASS dex has DesktopLyricsView
+PASS dex has 2.1.75
+PASS dex has lastError path
+PASS dex no 2.1.74 version string
+PASS MainActivity declared
+PASS PlayerService declared
+PASS TrackEndReceiver declared
+PASS PlayerService mediaPlayback type
+FAIL adb device present  | devices=0 (gap if 0)
+
+RESULT: FAILED: adb device present

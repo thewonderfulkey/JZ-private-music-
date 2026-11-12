@@ -1,0 +1,16 @@
+SIZE: 29585079 bytes
+MD5: 841E3C804B3BFA3E1D1D1EE4C90A9AE5
+package: name='com.jz.musichelper' versionCode='125' versionName='2.1.67' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+sdkVersion:'26'
+targetSdkVersion:'34'
+uses-permission: name='android.permission.WAKE_LOCK'
+launchable-activity: name='com.jz.musichelper.MainActivity'  label='' icon=''
+WAKE_LOCK 在清单: True
+权限数: 8
+zip entries: 183 | testzip: OK
+AppState.startAutoContinue 定义: True
+组合内已无 completed 收集: True
+MainActivity 启动监听: True
+服务持有 PARTIAL_WAKE_LOCK: True
+清单声明 WAKE_LOCK: True
+关于页版本: True | 精简声明仍在: True

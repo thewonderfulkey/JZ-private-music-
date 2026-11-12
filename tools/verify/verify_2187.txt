@@ -1,0 +1,45 @@
+PASS  APK 存在且大小合理  29699947 B / MD5 E0A233663BD7E83C96FD553DC0944610
+PASS  zip 完整性（无损坏条目）  first_bad=None
+PASS  含 classes*.dex  entries=183
+PASS  内嵌两款字体仍在（按字节数核对）  ttf=[5857936, 19310488]
+PASS  badging 包名 com.jz.musichelper  
+PASS  badging versionCode 145  
+PASS  badging versionName 2.1.87  
+PASS  签名有效且为既有 debug 证书  Signer #1 certificate MD5 digest: 7ec8bc370515dc2d4b5d69dc61e5cfc6
+PASS  dex 含版本号 2.1.87  
+PASS  dex 含酷我封面 base wmvpic  
+PASS  dex 含 img1.kuwo.cn  
+PASS  dex 含酷我歌词端点  
+PASS  dex 含 httpsStatus 参数  
+PASS  dex 含 MVPIC 字段名  
+PASS  dex 含 KwLyrics 类  
+PASS  dex 含来源标签「酷我」  
+PASS  酷我搜索读取 MVPIC 字段  
+PASS  MVPIC 拼 img1 的 wmvpic 直链  
+PASS  酷我 Song 不再写死 null 封面  
+PASS  MVPIC 空值仍为 null（保留 QQ 兜底）  
+PASS  KwLyrics 只接受纯数字 rid  
+PASS  KwLyrics 校验 code==200  
+PASS  KwLyrics 判空防 data:{}（不是报错）  
+PASS  KwLyrics 复用统一清洗 cleanLine  
+PASS  KwLyrics 时间秒→毫秒  
+PASS  KwLyrics 按时间重排  
+PASS  LyricsService 酷我优先分派  
+PASS  LyricsService 酷我空词回退 LDDC  
+PASS  LyricsService 来源标签区分  
+PASS  歌词缓存 key 未变（不破坏原有缓存）  
+PASS  build.gradle versionCode 145  
+PASS  build.gradle versionName 2.1.87  
+PASS  build.gradle 未残留 2.1.86  
+PASS  设置-关于 主标题 v2.1.87  
+PASS  关于本版更新写的是封面+歌词  
+PASS  关于保留上一版 v2.1.86 段落  
+PASS  未残留 v2.1.86 主标题  
+PASS  未残留 v2.1.85 段落  
+PASS  LDDC 双源仍在（非酷我歌曲走原路径）  
+PASS  CoverResolver 兜底仍然存在  
+PASS  酷我搜索仍带 vipver 老客户端参数  
+PASS  酷我变体过滤未动  
+PASS  酷我取流适配器未动  
+
+SUMMARY  PASS=43  FAIL=0  (adb 真机冒烟缺口：本机 adb devices 恒空、无 AVD；酷我封面/歌词为真实接口，需真机联网复验)

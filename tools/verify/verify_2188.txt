@@ -1,0 +1,15 @@
+== v2.1.88 静态验证：14 PASS / 0 FAIL ==
+PASS  zip 完整性 (破损条目=None)
+PASS  dex 数量 (2 个：classes.dex,classes2.dex)
+PASS  产物体积量级 (29699947 B)
+PASS  包名/版本 (('com.jz.musichelper', '146', '2.1.88'))
+PASS  minSdk/targetSdk 
+PASS  签名校验 (rc=0)
+PASS  证书指纹一致 
+PASS  关于页版本号已同步 
+PASS  本版更新文案已落地 
+PASS  旧的硬编码『3 平台并发』已移除 
+PASS  平台并发模板串存在 
+PASS  酷我变体/大小写改动类名存在 
+PASS  Ranker 类存在 
+PASS  识曲链路类存在 

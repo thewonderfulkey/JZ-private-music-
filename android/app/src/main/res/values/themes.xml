@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v2.1.50：补 windowBackground = 纸色。此前只有一行 style、窗口底色沿用系统白，
+         冷启动到 Compose 首帧之间整块纯白（实拍 1.67s 白屏）；改纸色后与开场画卷纸底同色，白屏消失。 -->
+    <style name="Theme.JZMusicHelper" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/jz_paper</item>
+    </style>
+</resources>

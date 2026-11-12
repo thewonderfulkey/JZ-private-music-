@@ -1,0 +1,17 @@
+PASS  zip 完整性  testzip=None
+PASS  dex 数量 >= 2  dex=['classes.dex', 'classes2.dex']
+PASS  体积量级 ~29.7MB  29699943 bytes
+PASS  package 名  
+PASS  versionCode 147  
+PASS  versionName 2.1.89  
+PASS  minSdk 26  
+PASS  targetSdk 34  
+PASS  签名校验 rc=0  rc=0
+PASS  证书 SHA-256 一致  
+PASS  dex 含文案：录音室版  
+PASS  dex 含文案：同歌手  
+PASS  dex 含文案：2.1.89  
+PASS  dex 含文案：异口同声  
+PASS  dex 含文案：第一位歌手  
+
+TOTAL: 15 PASS / 0 FAIL

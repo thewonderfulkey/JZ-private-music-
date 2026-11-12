@@ -1,0 +1,8 @@
+zip_entries=183
+zip_broken=none
+dex=classes.dex,classes2.dex
+dex_has_DesktopLyrics=True
+dex_has_DesktopLyricsView=True
+dex_has_version_2.1.74=True
+size=29634383
+md5=269B8353BCB53EDFEBD60A149CABCD53

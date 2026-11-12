@@ -1,0 +1,9 @@
+zip_test=OK entries=183
+has_font=True(19310488) has__S=True(5857936)
+dex_has(2.1.64)=True
+dex_has(256..600)=False
+dex_has(48..255)=False
+dex_has(体积校验)=True
+dex_has(换源中)=True
+dex_has(requestedQuality)=True
+size=29585051 md5=A0414CFE96A39B8893C2288A622C6E1D

@@ -1,0 +1,7 @@
+apk mtime = 00:57:51
+size=17843747 (17.02 MB)
+prev_v2161=17843747 delta=+0
+badging| package: name='com.jz.musichelper' versionCode='120' versionName='2.1.62' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+signer| Signer #1 certificate SHA-256 digest: 916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac
+zip| testzip=OK entries=182 dex_with_2162=['classes2.dex']
+md5=4D558C99AA70979DF551AB63488E516F

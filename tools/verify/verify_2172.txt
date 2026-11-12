@@ -1,0 +1,19 @@
+APK: C:\Users\17948\DoubaoWork\chats\2026-10-22\new-chat-1\JZMusicHelperAndroid\app\build\outputs\apk\release\app-release.apk
+SIZE: 29601583
+MD5: 1457598DAB378EA0EBAC6FE1D10CB09D
+ENTRIES: 183
+True  缓存多槽保留
+True  窗口预取 3 首保留
+True  首次启动自动申请保留
+True  设置页白名单卡片常驻
+True  白名单卡片有标题
+True  未放行时显示去允许
+True  已放行时显示查看设置
+True  状态会随返回刷新
+True  设置页仍无播放日志
+True  关于页 v2.1.72
+True  build vc130 / 2.1.72
+True  zip 无损坏
+True  条目数正常
+True  DEX 含白名单 action
+ALL_PASS: True

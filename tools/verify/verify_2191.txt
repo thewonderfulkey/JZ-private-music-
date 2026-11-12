@@ -1,0 +1,23 @@
+PASS  build.gradle 版本  | vc=149 vn=2.1.91
+PASS  APK badging 版本  | 149/2.1.91
+PASS  包名
+PASS  minSdk/targetSdk
+PASS  设置-关于版本文案
+PASS  签名证书 SHA-256
+PASS  apksigner verify 通过
+PASS  zip 完整性  | testzip=None
+PASS  体积量级（29.6~30.2MB）  | 29,859,137 B
+PASS  上一版体积对照  | 2.1.90 = 29,699,943 B
+PASS  assets/recognizer.html 打入且与源码一致  | 1,784 B
+PASS  assets/afp_wasm_b64.js 打入且与源码一致  | 308,272 B
+PASS  assets/sandbox.bundle.js 打入且与源码一致  | 89,115 B
+PASS  dex 含文案「两条通道都没对上」
+PASS  dex 含文案「JZ的音乐助手 v2.1.91」
+PASS  dex 含文案「上一版（v2.1.90）」
+PASS  dex 含文案「点一下麦克风，开始听」
+PASS  dex 含文案「酷狗＋网易」
+PASS  清单含 INTERNET
+PASS  清单含 RECORD_AUDIO
+PASS  本版更新正文无 ASCII 双引号
+
+合计 21 项：PASS 21 / FAIL 0

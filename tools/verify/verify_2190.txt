@@ -1,0 +1,24 @@
+PASS APK 存在且量级合理  — 29699943 B, MD5 EE39DA680EA99242014177E5D7F0C79F
+PASS 包名
+PASS versionCode=148
+PASS versionName=2.1.90
+PASS minSdk 26 / target 34
+PASS gradle 同步 148/2.1.90
+PASS 关于页标题 v2.1.90
+PASS 签名可验证  — exit 0, SHA-256 916ad2328810c691...
+PASS 签名证书与历史一致  — 916ad2328810c691
+PASS zip 完整性  — 损坏条目 None
+PASS 含 classes.dex
+PASS dex 含 v2.1.90 标题
+PASS dex 含「原唱」小印文案
+PASS dex 含 D 口径说明关键句
+PASS dex 含 上一版 v2.1.89 条目
+PASS RecognizeScreen 不再写「录音室版」小印
+PASS RecognizeScreen 小印来自 originals 集合
+PASS App 写入 recOriginals
+PASS App 按歌手+专辑+时长去重
+PASS Judge 含 canonicalSingers
+PASS Judge 含 isVarietyAlbum
+PASS A 分支用 ±3s 聚簇
+
+22 PASS / 0 FAIL  |  29699943 B  |  MD5 EE39DA680EA99242014177E5D7F0C79F

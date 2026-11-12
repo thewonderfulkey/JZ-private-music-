@@ -1,0 +1,48 @@
+PASS  APK 存在且大小合理  29699947 B / MD5 1CCCEE0EF6B5CE030374ECD83B0B5BE8
+PASS  zip 完整性（无损坏条目）  first_bad=None
+PASS  含 classes.dex  entries=183
+PASS  内嵌两款字体仍在（资源名已混淆，按字节数核对）  ttf=[5857936, 19310488]
+PASS  dex 含版本号 2.1.86  
+PASS  dex 含新眉标「识 所 得」  
+PASS  dex 含主操作文案「播放这首歌」  
+PASS  dex 含「看看其他版本」  
+PASS  dex 含「正在找其他版本…」  
+PASS  dex 含「其他版本」  
+PASS  dex 含「原唱」标记  
+PASS  dex 含「同批候选」  
+PASS  dex 含 PlayCache 类  
+PASS  dex 含缓存切源日志标记  
+PASS  结果签：方角 + 纸色 + 1px 淡墨线（无圆角）  
+PASS  结果签内边距 16/16/12/12  
+PASS  歌名 26sp / 行高 33sp  
+PASS  朱砂小印 SealMark 19dp  
+PASS  书页式小标题 SectionHead  
+PASS  次级动作为文字链 TextLink  
+PASS  主操作是唯一墨块 44dp + PlayArrow  
+PASS  结果块内无圆角（RoundedCornerShape 不进入结果区）  
+PASS  结果态麦克风缩到 0.72  
+PASS  结果态舞台下间距收到 10dp  
+PASS  版本行：朱砂细签 + 原唱印 + 发丝线  
+PASS  版本行行距 10/9  
+PASS  结果区可滚 + 84dp 让位  
+PASS  noExact 说明用朱砂细签而非错误框  
+PASS  App.kt 严格歌手匹配（sameBoth 为空不硬播）  
+PASS  App.kt 已有 loadRecVersions/clearRecVersions  
+PASS  App.kt 原唱优先排序  
+PASS  App.kt 缓存挂接 attach  
+PASS  App.kt 缓存切源（从当前位置续播）  
+PASS  App.kt 播完释放缓存  
+PASS  PlayerScreen 进度条渲染缓存段  
+PASS  PlayCache 单槽落盘 + 清理  
+PASS  PlayCache 不落内存（只存路径）  
+PASS  PlayerManager play 支持 startAtMs  
+PASS  MainActivity 初始化 PlayCache  
+PASS  build.gradle versionCode 144  
+PASS  build.gradle versionName 2.1.86  
+PASS  设置-关于 版本 2.1.86  
+PASS  设置-关于 本版更新写的是版式重做  
+PASS  设置-关于 保留上一版 v2.1.85 段落  
+PASS  未残留 v2.1.85 关于页主标题  
+PASS  build.gradle 未残留 2.1.85  
+
+SUMMARY  PASS=46  FAIL=0  (adb 真机冒烟缺口：本机 adb devices 恒空、无 AVD)

@@ -1,0 +1,31 @@
+SIZE 29634383 bytes  MD5 68102B4C97986C333D39407CA4ABDA63
+PASS badging package
+PASS versionCode=135  | 135
+PASS versionName=2.1.77  | 2.1.77
+PASS SYSTEM_ALERT_WINDOW
+PASS FOREGROUND_SERVICE
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+dex sizes: {'classes.dex': 32298956, 'classes2.dex': 10499148}
+PASS dex has LyricsBarAction
+PASS dex has DesktopLyricsView
+PASS dex has 2.1.77
+PASS dex has theme 素纸 #FBF7ED
+PASS dex has theme 旧黄 #F2E5C4
+PASS dex has theme 夜墨 #24211D
+PASS dex has prefs key dl_theme
+PASS dex has prefs key dl_lock
+PASS dex has about copy 逐字
+PASS dex no 2.1.76 about string
+PASS dex dropped old paper #FFFBF7ED
+PASS dex has 308dp width const
+PASS MainActivity declared
+PASS PlayerService declared
+PASS TrackEndReceiver declared
+PASS PlayerService mediaPlayback type
+FAIL adb device present  | devices=0 (gap if 0)
+
+RESULT: FAILED: adb device present

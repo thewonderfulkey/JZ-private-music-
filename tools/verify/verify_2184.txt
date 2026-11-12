@@ -1,0 +1,78 @@
+SIZE 29683559 bytes  MD5 DA3973C28F552BCC6A3441A581F76810
+PASS badging package
+PASS versionCode=142  | 142
+PASS versionName=2.1.84  | 2.1.84
+PASS RECORD_AUDIO permission
+PASS SYSTEM_ALERT_WINDOW kept
+PASS FOREGROUND_SERVICE kept
+PASS launchable activity
+PASS minSdk 26
+PASS apksigner Verifies
+PASS v2 scheme true
+PASS single signer
+PASS zip integrity  | broken=None entries=183
+PASS entry count sane  | 183 entries
+PASS dex has cancel-on-tap hint
+PASS dex has think-cancel hint
+PASS dex has duration button copy
+PASS dex has DurationButton
+PASS dex has DurationMenu
+PASS dex has dynamic footer
+PASS dex no hardcoded 十秒 footer
+PASS dex has instant-player placeholder prefix
+PASS dex has rec history pref key
+PASS dex has rec seconds pref key
+PASS dex has recHistoryMax 50
+PASS dex has recent-list tap hint
+PASS dex has about says 2.1.84
+PASS dex no old about 2.1.83
+PASS dex has RecognizePage
+PASS dex has playRecognizedHit
+PASS dex has recPlayBusy/recRecent
+PASS dex has 识曲 tab label
+PASS dex has idle hint
+PASS dex has 最近识过
+PASS dex has busy button
+PASS dex has 其他版本
+PASS dex has 第一次用 hint
+PASS dex has 三件小事 tips
+PASS dex has replay hint
+PASS dex no old overlay class
+PASS dex no old entry bar class
+PASS dex no old search-jump toast
+PASS dex no old bar subtitle
+PASS dex has RecognizeAdapter
+PASS dex has VoiceCapture
+PASS dex has to8k resampler
+PASS dex has gateway endpoint
+PASS dex has kg salt
+PASS dex has KuGou/11490 UA
+PASS dex has DB hint
+PASS dex has silence-threshold hint
+PASS dex has kugou-miss copy
+PASS dex has no-candidate copy
+PASS dex has 正在聆听
+PASS dex has NOPERM copy
+PASS dex has DesktopLyricsView kept
+PASS dex has krcToLines kept
+PASS manifest RECORD_AUDIO declared
+PASS manifest PlayerService kept
+PASS manifest TrackEndReceiver kept
+PASS manifest foregroundServiceType=mediaPlayback(0x2)
+FAIL adb device present  | List of devices attached
+PASS src duration options 5/10/15/20
+PASS src no old top-right 听十秒 Text
+PASS src mic tap cancels while listening
+PASS src startRecognize uses recSeconds
+PASS src playRecognizedHit shows placeholder first
+PASS src rememberHit persists
+PASS src recRecent loads from store
+PASS src VoiceCapture has NO leftover finishEarly
+PASS src VoiceCapture min/max seconds
+PASS src HistoryStore rec max 50
+
+SIZE_BYTES=29683559
+MD5=DA3973C28F552BCC6A3441A581F76810
+
+FAILS: 1
+  - adb device present

@@ -1,0 +1,17 @@
+apk=C:\Users\17948\DoubaoWork\chats\2026-10-22\new-chat-1\JZMusicHelperAndroid\app\build\outputs\apk\release\app-release.apk
+size=17843747 (17.02 MB)
+prev_v2160=17843747 delta=+0
+badging| package: name='com.jz.musichelper' versionCode='119' versionName='2.1.61' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+badging| sdkVersion:'26'
+badging| targetSdkVersion:'34'
+perm| uses-permission: name='android.permission.INTERNET'
+perm| uses-permission: name='android.permission.POST_NOTIFICATIONS'
+perm| uses-permission: name='android.permission.FOREGROUND_SERVICE'
+perm| uses-permission: name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
+perm| uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+perm| uses-permission: name='com.jz.musichelper.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+perm| uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+signer| Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
+signer| Signer #1 certificate SHA-256 digest: 916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac
+zip| testzip=OK entries=182 dex_with_2161=['classes2.dex']
+md5=AE59F594404A1D5806DA086C034DB363

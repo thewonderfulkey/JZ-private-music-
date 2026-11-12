@@ -1,0 +1,19 @@
+BAD_ENTRY= None
+ENTRIES= 172
+---- SIG ----
+Verifies
+Verified using v2 scheme (APK Signature Scheme v2): true
+Number of signers: 1
+Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
+Signer #1 certificate SHA-256 digest: 916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac
+---- ERR ----
+v2148_badging.err.txt bytes=0
+v2148_apksigner.err.txt bytes=0
+---- PERM ----
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'
+uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+uses-permission: name='com.jz.musichelper.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'

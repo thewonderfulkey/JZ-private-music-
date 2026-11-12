@@ -1,0 +1,20 @@
+APK: C:\Users\17948\DoubaoWork\chats\2026-10-22\new-chat-1\JZMusicHelperAndroid\app\build\outputs\apk\release\app-release.apk
+SIZE: 29601583
+MD5: 986E2944AA235C99A636962DB52ED2C3
+ENTRIES: 183
+True  NextTrackCache 有固定缓存名 next.bin
+True  NextTrackCache 有 match/download
+True  App 抽出 resolveSourceOnce
+True  App 有 prefetchNext
+True  App 有 playFromCache
+True  成功起播清红字
+True  advance 优先本地缓存
+True  等待续播不再要求亮屏
+True  q 形参为 QualityLevel
+True  PlayerManager 本地路径分支
+True  MainActivity 初始化缓存
+True  关于页 v2.1.70
+True  build vc128 / 2.1.70
+True  zip 无损坏条目
+True  条目数与上版同量级(>=170)
+ALL_PASS: True

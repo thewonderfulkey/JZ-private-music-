@@ -1,0 +1,19 @@
+APK: C:\Users\17948\DoubaoWork\chats\2026-10-22\new-chat-1\JZMusicHelperAndroid\app\build\outputs\apk\release\app-release.apk
+SIZE: 29601583
+MD5: 0D52C85807A26019EAF7357017120E30
+ENTRIES: 183
+True  缓存改为多槽(MAX_SLOTS)
+True  缓存按 key 分槽
+True  窗口预取 3 首
+True  预取遍历缺失项
+True  启动自动申请电池豁免
+True  最多次数限制 3
+True  设置页已移除播放日志
+True  未放行时才出现后台连播入口
+True  关于页 v2.1.71
+True  build vc129 / 2.1.71
+True  zip 无损坏
+True  条目数正常
+True  DEX 含新逻辑
+True  DEX 含豁免申请 action
+ALL_PASS: True
