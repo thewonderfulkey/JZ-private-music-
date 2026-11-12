@@ -83,8 +83,9 @@ python tools\notify\lark.py --title "v2.1.93 已出包" --body "改了什么…"
 | `232025 Bot ability is not activated` | 同上，但发生在**拉机器人进群**时 | 同上 |
 | `99991672` …`im:message` / `im:message:send_as_bot` | 缺"以机器人身份发消息"的权限 | 权限管理 → 开通 `im:message` 或 `im:message:send_as_bot` |
 | 群里「添加机器人」搜不到应用 | 群机器人搜索只搜机器人广场，自建应用不在广场 | 飞书搜索框搜应用名 → 打开应用 → 添加到群；或群设置 → 群机器人 → 添加机器人 → 翻「自建应用」分组 |
+| `232011 Operator can NOT be out of the chat` | 机器人不在群里，且**飞书不允许机器人把自己拉进群** | 必须由人在客户端添加：群设置 → 群机器人 → 添加机器人 → 选应用（或飞书搜索应用名 → 详情页「添加到群聊」） |
+| `230002 Bot/User can NOT be out of the chat` | 同上（发消息时） | 同上 |
 | `99991672` …`im:chat.members:write_only` | 想用 API 把机器人拉进群 | 开通 `im:chat` 或 `im:chat.members:write_only`，脚本会自动尝试拉群 |
-| `230002` 之类"机器人不在群" | 机器人还没进群 | 按上一行处理；`lark.py` 每次发文件前会先 best-effort 拉一次群 |
 
 ## 4. 我（Agent）的标准动作
 

@@ -137,7 +137,10 @@ def ensure_bot_in_chat(token, chat_id, app_id):
         return resp.get("code") == 0
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")
-        print(f"机器人进群跳过（HTTP {e.code}）：{detail[:260]}", file=sys.stderr)
+        if "232011" in detail:
+            print("机器人还没进群：飞书不允许机器人把自己拉进群，请在客户端把应用添加到群（群设置 → 群机器人 → 添加机器人）", file=sys.stderr)
+        else:
+            print(f"机器人进群跳过（HTTP {e.code}）：{detail[:260]}", file=sys.stderr)
     except Exception as e:
         print(f"机器人进群跳过：{e}", file=sys.stderr)
     return False
