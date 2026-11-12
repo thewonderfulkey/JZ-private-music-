@@ -248,6 +248,41 @@ class YaohuKuwoAdapter : StreamSourceAdapter {
     }
 }
 
+// ---------- 酷狗 ----------
+
+/**
+ * v2.1.94：酷狗官方 playInfo（hash 直查）。
+ * 实测 `https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=<HASH>` 匿名 200，
+ * 直接给 sharefs.kugou.com 的音频直链（带短期签名，交给 StreamVerifier 校验容器与体积）。
+ */
+class KugouPlayInfoAdapter : StreamSourceAdapter {
+    override val name = "酷狗官方"
+    override val platform = MusicPlatform.KUGOU
+
+    override suspend fun resolve(song: Song, quality: QualityLevel): StreamSource {
+        val hash = song.platformID.trim()
+        if (hash.isEmpty()) throw ApiError.Parse("酷狗：无 hash")
+        val url = "https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=$hash"
+        val json = ApiClient.getJson(
+            url,
+            headers = mapOf("Referer" to "https://m.kugou.com/"),
+            timeoutSec = 12
+        )
+        val stream = json.optString("url", "")
+        if (stream.isEmpty()) {
+            throw ApiError.Parse("酷狗未返回 URL（付费/版权曲常如此，码 ${json.optInt("errcode", -1)}）")
+        }
+        // 与其它后端同口径：不信自报，用 Range 探测真实容器与体积
+        val facts = StreamVerifier.inspect(stream) ?: throw ApiError.HTTP(0)
+        val (q, fmt) = QualityFacts.of(facts, song.durationSec)
+        return StreamSource(
+            stream, name, platform, q, fmt, "酷狗官方 playInfo（hash 直查）", directId = false,
+            kbps = QualityFacts.kbps(facts.totalBytes, song.durationSec),
+            totalBytes = facts.totalBytes
+        )
+    }
+}
+
 // ---------- 后端注册表 ----------
 object SourceRegistry {
 
@@ -255,7 +290,8 @@ object SourceRegistry {
         CyapiQQAdapter(),
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
-        YaohuKuwoAdapter()
+        YaohuKuwoAdapter(),
+        KugouPlayInfoAdapter()
     )
 
     // 某首歌可用的后端：同平台后端 + 跨平台搜索式后端

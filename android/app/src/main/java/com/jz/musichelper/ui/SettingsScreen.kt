@@ -475,9 +475,24 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 .background(p.surface2, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            Text("JZ的音乐助手 v2.1.93", fontSize = 14.sp, color = p.text)
+            Text("JZ的音乐助手 v2.1.94", fontSize = 14.sp, color = p.text)
             Spacer(Modifier.height(6.dp))
             Text("本版更新", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "按你反馈的六个问题修：① 原唱印收紧——只有「歌手对得上、歌名是裸名（没有 Live／DJ混音版／演唱会 这类后缀）、" +
+                    "专辑是正式专辑（不是现场综艺、也不是同名合集）、时长正常」才盖印，之前 Live／DJ／演唱会版全被误标的问题解决。" +
+                    "② 酷我搜索修好：匿名搜索结果现在整页都是 DJ／翻唱，旧逻辑把它们全过滤掉，界面就显示 0 首；" +
+                    "现在取 50 条、有原曲只给原曲，没有原曲退回变体，不会再 0 条。③ 酷狗接入：搜索换了宿主" +
+                    "（旧域名证书不匹配，一直静默失败），并补上取流后端（官方 playInfo，按 hash 直查），现在是 4 平台并发。" +
+                    "④ 封面补齐：网易云搜索只给 picId，现在用 song/detail 换成真封面；QQ／酷我／酷狗各自直出，仍缺的走同曲兜底。" +
+                    "⑤ 识曲期间彻底禁止自动起播：缓存切本地源、自动连播、兜底重试都统一在播放入口拦住。" +
+                    "⑥ 识别结果里若同批候选还有别的歌手，结果卡会提示可以换。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("上一版（v2.1.93）", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(
                 "识曲的两处判定修正：① 酷狗的原唱标记除了 1（原唱）与 2（翻唱），实测还会返回 4——" +
@@ -499,51 +514,6 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     "例：酷狗给《我们都一样》的翻唱（无原唱标记、专辑名就叫《我们都一样》）得负分，网易给张杰《明天过后》302s 与" +
                     "《One Chance》303s 两条正式专辑互相印证，得 62 分，于是采用网易。结果卡上会写明「识别依据：酷狗 xx ／ 网易 xx」，" +
                     "同批候选也按分数排列。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.91）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "识曲改成酷狗＋网易两条通道互为兜底：先录 6 秒就问一次酷狗，认出就立刻出结果；" +
-                    "6 秒没对上，继续录满 12 秒，再用完整片段同时打酷狗与网易——酷狗优先，酷狗找不到才用网易，" +
-                    "网易也没结果时酷狗已经用更长的片段又跑了一遍，两边互为后手。" +
-                    "网易这一路不需要 key：指纹由端上网易自家的 afp 引擎算出来（随包带约 400KB 引擎资源），" +
-                    "再用它召回网易曲库的中文元数据；候选会按「非现场／非改编、专辑不等于歌名、标题最短」排序后再取第一。" +
-                    "识曲时长档位同步收成 12／15／20 秒，旧设置里的 5 秒、10 秒按 12 秒处理。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.90）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "「原唱」判定重做：① 恢复只标「原唱」这一处小印，上一版把「录音室版」当成独立标记，结果同名翻唱几乎全被标上；" +
-                    "② 识曲命中的本身就是录音室版时，按识曲歌手标（这种情形可信）；③ 命中的是综艺／现场／改编版时，改用" +
-                    "「同一位歌手有 ≥2 张不同的正式专辑、且这几条时长互相 ≤3 秒」推断：同一版录音被反复收录才算原唱，" +
-                    "专辑名就等于歌名的同名合集（橘子妹、胡小斐、解昕怡这类）不会再被误标；推不出来就不标，宁可不标也不标错。" +
-                    "另外识曲改为先读指纹接口返回的多条候选、优先取非综艺／非改编的那条（原来直接取第 1 条）。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.89）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "识曲不再被综艺／翻唱版锁死：旧逻辑用「歌名＋全部歌手」检索，网易对这个词只回一条节目 Live，" +
-                    "原唱进不了候选池。现在先按「歌名＋第一位歌手」检索，并在识别命中综艺／现场／DJ 版时不再锁定那位翻唱歌手，" +
-                    "改在同曲的录音室版里择优起播。",
-                fontSize = 12.sp,
-                color = p.text2
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("上一版（v2.1.88）", fontSize = 12.sp, color = p.text3)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                "① 识曲命中即可播：同曲判定从「歌名整串相等」改为「核心歌名相等」（剥掉 (feat. xxx)、" +
-                    "「- Orchestra Ver. -」这类括号/后缀）。② 搜索平台行标出每个平台本次返回的条数，" +
-                    "「N 平台并发」按实际注册平台自动计数。③ 修酷我英文关键词匹配的大小写问题。",
                 fontSize = 12.sp,
                 color = p.text2
             )

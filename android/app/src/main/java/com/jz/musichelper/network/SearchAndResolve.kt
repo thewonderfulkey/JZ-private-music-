@@ -16,10 +16,12 @@ object SearchService {
     private val adapters: List<SearchAdapter> = listOf(
         QQSearchAdapter(),
         NeteaseSearchAdapter(),
-        KuwoSearchAdapter()
-        // v2.1.9：废弃酷狗——取流后端从未实现（SourceRegistry 无酷狗适配器，跨平台兜底为空），
-        // 官方三接口匿名全被风控（wwwapi 30020 / mobilecdn Access Deny / m.kugou url 为空），
-        // 第三方通道（妖狐/gdstudio/oiapi/V7）实测全不可用，修取流无现成实现，按用户拍板废弃
+        KuwoSearchAdapter(),
+        // v2.1.94：酷狗回来了。
+        // 当年废弃是因为"搜索能连、取流没有后端"；现在两条都通了：
+        //  · 搜索换宿主 mobiles.kugou.com（旧 mobilecdn 证书域名不匹配）；
+        //  · 取流用官方 playInfo（hash 直查，匿名 200 给 sharefs.kugou.com 直链）。
+        KugouSearchAdapter()
     )
 
     private const val PER_SOURCE_TIMEOUT_MS = 8_000L   // v2.1.9：6s→8s，酷我慢网/大响应（rn=20≈45KB）更稳

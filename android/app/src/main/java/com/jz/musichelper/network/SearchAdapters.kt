@@ -71,11 +71,35 @@ class NeteaseSearchAdapter : SearchAdapter {
             val albumObj = item.optJSONObject("album")
             val album = albumObj?.optString("name", "") ?: ""
             val durMs = item.optLong("duration", 0)
-            // 封面：/api/search/get 只返回 picId 无 picUrl，且 p1.music.126.net/{picId}.jpg 实测全 404（死路）
-            // → 置空交给第 2 级「QQ 同歌名+歌手复用」，QQ 也找不到才落本地渐变占位
+            // 封面：/api/search/get 只返回 picId 无 picUrl，且 p1.music.126.net/{picId}.jpg 实测全 404（死路）。
+            // v2.1.94：搜完补一次 /api/song/detail?ids=[...]（一次最多 20 首），那里有 album.picUrl，
+            // 网易云的歌自己就有封面，不再依赖 QQ 撞名兜底。
             songs.add(Song(MusicPlatform.NETEASE, id.toString(), name, artists, album, (durMs / 1000).toInt(), null))
         }
+        fillCovers(songs)
         return songs
+    }
+
+    /** v2.1.94：用 song/detail 批量补封面（20 首一次请求；失败就跳过，不影响搜索） */
+    private suspend fun fillCovers(songs: MutableList<Song>) {
+        if (songs.isEmpty()) return
+        val ids = songs.take(20).joinToString(",") { it.platformID }
+        val url = "https://music.163.com/api/song/detail?ids=[$ids]"
+        val json = runCatching {
+            ApiClient.getJson(url, headers = mapOf("Referer" to "https://music.163.com/"))
+        }.getOrNull() ?: return
+        val arr = json.optJSONArray("songs") ?: return
+        val pics = HashMap<String, String>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val pic = o.optJSONObject("album")?.optString("picUrl", "").orEmpty()
+            if (pic.isNotEmpty()) pics[o.optLong("id", -1).toString()] = pic
+        }
+        if (pics.isEmpty()) return
+        for (i in songs.indices) {
+            val p = pics[songs[i].platformID] ?: continue
+            if (songs[i].picUrl.isNullOrBlank()) songs[i] = songs[i].copy(picUrl = p)
+        }
     }
 }
 
@@ -90,7 +114,8 @@ class KuwoSearchAdapter : SearchAdapter {
         // 不带时对歌手查询返回集为 UGC 翻唱/节目/DJ（实测"蔡健雅" rn=50 全 50 条无原曲、翻 5 页 0 原曲），
         // 带后头部即官方原曲（实测 rn=20 保留 16 条原曲：无底洞/陌生人/思念/纪念/抛物线等）；
         // rn 保持 20 + 相关性过滤（歌手/歌名含词 + 变体剔除）
-        val rn = minOf(limit, 20)
+        // v2.1.94：rn 由 20 提到 50——匿名 r.s 头部现在大量是 DJ/翻唱，取 20 条可能被过滤光
+        val rn = minOf(limit, 50)
         val url = "https://search.kuwo.cn/r.s?all=${urlEncode(keyword)}&ft=music&rn=$rn&pn=1&rformat=json&encoding=utf8&vipver=MUSIC_8.7.8.0_WX"
         val text = ApiClient.get(url, headers = mapOf("Referer" to "https://www.kuwo.cn/"))
         val records = extractAbsList(text)
@@ -98,23 +123,28 @@ class KuwoSearchAdapter : SearchAdapter {
         // 混排，原来直接 name.contains(kw)：用户输小写时整平台一条都匹配不上，界面就表现为"酷我 0 条"。
         val kw = loose(keyword)
         val songs = mutableListOf<Song>()
+        val variants = mutableListOf<Song>()
         for (item in records) {
-            val name = item["SONGNAME"]?.trim().orEmpty()
+            // 酷我 r.s 里歌名两个字段都可能出现（新版 NAME / 老版 SONGNAME），两个都读
+            val name = (item["SONGNAME"] ?: item["NAME"])?.trim().orEmpty()
             val rawRid = item["MUSICRID"].orEmpty().replace("MUSIC_", "")
             if (name.isEmpty() || rawRid.isEmpty()) continue
             val artist = item["ARTIST"].orEmpty()
-            // 相关性过滤：仅保留歌手或歌名含搜索词、且非变体标记的原曲（伴奏/KTV/现场/DJ 等一律剔除）
+            // 相关性过滤：仅保留歌手或歌名含搜索词
             if (kw.isNotEmpty() && !loose(name).contains(kw) && !loose(artist).contains(kw)) continue
-            if (isKuwoVariant(name)) continue
             val album = item["ALBUM"].orEmpty()
             val dur = parseDuration(item["DURATION"].orEmpty())
             // v2.1.87：MVPIC 是酷我曲图路径（形如 324/s4s36/41/926857763.jpg），直接拼 img1 的 wmvpic 出图；
             // 该字段实测约 78% 有值（60 条抽样 47 条有），空值仍交给 CoverResolver 走 QQ 兜底。
             val mvpic = item["MVPIC"]?.trim().orEmpty().trimStart('/')
             val pic = if (mvpic.isNotEmpty()) "https://img1.kuwo.cn/wmvpic/$mvpic" else null
-            songs.add(Song(MusicPlatform.KUWO, rawRid, name, artist, album, dur, pic))
+            val song = Song(MusicPlatform.KUWO, rawRid, name, artist, album, dur, pic)
+            // v2.1.94：变体（DJ/伴奏/现场/翻唱…）不再直接丢。之前整页都是变体时全被过滤，
+            // 界面就显示"酷我 0 首"，看起来像接口挂了。
+            if (isKuwoVariant(name)) variants.add(song) else songs.add(song)
         }
-        return songs
+        // 有原曲只给原曲；全是变体时退回变体——宁可少而杂，也不要 0 条
+        return if (songs.isNotEmpty()) songs else variants
     }
 
     /** 相关性比较用的宽松归一化：小写 + 多空白压成一个 + 去首尾（v2.1.88） */
@@ -142,15 +172,46 @@ class KuwoSearchAdapter : SearchAdapter {
         return chunks.mapNotNull { parseSingleQuotedDict(it) }
     }
 
+    /**
+     * 按顶层逗号切 "abslist" 里的记录。
+     *
+     * v2.1.94 修的两个致命点：
+     *  ① 原实现把 `{` `}` 直接吞掉了 —— 切出来的片段不以 `{` 开头，
+     *     下游 parseSingleQuotedDict 判定"不是字典"全部返回 null，
+     *     于是酷我**永远** 0 条（界面一直显示"酷我 0"）。
+     *  ② 没考虑引号：值里出现 `{`/`}`/`,`（歌词、简介里很常见）会把层级算错。
+     * 现在括号照抄进片段，并且引号内的字符一律当普通文本、不参与层级与切分。
+     */
     private fun splitTopLevel(s: String): List<String> {
         val inner = s.removePrefix("[").removeSuffix("]")
         var depth = 0
+        var inQuote = false
+        var escaped = false
         var current = StringBuilder()
         val chunks = mutableListOf<String>()
         for (ch in inner) {
+            if (inQuote) {
+                current.append(ch)
+                when {
+                    escaped -> escaped = false
+                    ch == '\\' -> escaped = true
+                    ch == '\'' -> inQuote = false
+                }
+                continue
+            }
             when (ch) {
-                '[', '{' -> depth++
-                ']', '}' -> depth--
+                '\'' -> {
+                    inQuote = true
+                    current.append(ch)
+                }
+                '[', '{' -> {
+                    depth++
+                    current.append(ch)
+                }
+                ']', '}' -> {
+                    depth--
+                    current.append(ch)
+                }
                 ',' -> if (depth == 0) {
                     val c = current.toString()
                     if (c.isNotBlank()) chunks.add(c)
@@ -198,12 +259,14 @@ class KuwoSearchAdapter : SearchAdapter {
 }
 
 // ---------- 酷狗搜索 ----------
-// https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=关键词&page=1&pagesize=10&showtype=1
+// v2.1.94：宿主从 mobilecdn.kugou.com 换成 mobiles.kugou.com。
+// 前者证书与域名不匹配（SSL: Hostname mismatch），OkHttp 直接抛异常 → 整个平台空。
+// 换宿主后 200，trans_param.union_cover 有值，封面可用。
 class KugouSearchAdapter : SearchAdapter {
     override val platform = MusicPlatform.KUGOU
 
     override suspend fun search(keyword: String, limit: Int): List<Song> {
-        val url = "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=${urlEncode(keyword)}&page=1&pagesize=$limit&showtype=1"
+        val url = "https://mobiles.kugou.com/api/v3/search/song?format=json&keyword=${urlEncode(keyword)}&page=1&pagesize=$limit&showtype=1"
         val json = ApiClient.getJson(url, headers = mapOf("Referer" to "https://www.kugou.com/"))
         val list = json.optJSONObject("data")?.optJSONArray("info") ?: JSONArray()
         val songs = mutableListOf<Song>()

@@ -258,7 +258,35 @@ if (TapText '设置') {
     Step '关于页版本正确' $false '找不到「设置」标签'
 }
 
-# ---- 8. 识曲全链路（仅 smoke 变体：assets/fixtures 注入）----
+# ---- 8. 搜索平台覆盖（仅 smoke 变体：intent 注入中文关键词）----
+if ($Variant -eq 'smoke') {
+    Write-Host '==> 搜索平台覆盖（四平台条数）'
+    & $adb shell am force-stop $pkg | Out-Null
+    & $adb logcat -c | Out-Null
+    & $adb shell am start -W -n $activity --es jz_test_search "我很想爱他" 2>&1 | Out-Null
+    $sline = ''
+    $sw3 = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw3.Elapsed.TotalSeconds -lt 45) {
+        $l = (& $adb logcat -d -s JZ_TEST 2>&1 | Out-String)
+        $mm = [regex]::Match($l, 'SEARCH kw=\S+.*')
+        if ($mm.Success) { $sline = $mm.Value.Trim(); break }
+        Start-Sleep -Seconds 2
+    }
+    Step '搜索出结果' ($sline -ne '') $sline
+    if ($sline) {
+        Step '四平台并发' ($sline -match 'platforms=4') $sline
+        $qm = [regex]::Match($sline, 'QQ=(\d+)')
+        $km = [regex]::Match($sline, 'KUWO=(\d+)')
+        $gm = [regex]::Match($sline, 'KUGOU=(\d+)')
+        $nm = [regex]::Match($sline, 'NETEASE=(\d+)')
+        Step '酷我搜索非 0 条' ($km.Success -and [int]$km.Groups[1].Value -gt 0) $(if ($km.Success) { "KUWO=$($km.Groups[1].Value)" } else { '未解析到' })
+        Step '酷狗搜索非 0 条' ($gm.Success -and [int]$gm.Groups[1].Value -gt 0) $(if ($gm.Success) { "KUGOU=$($gm.Groups[1].Value)" } else { '未解析到' })
+        Step 'QQ/网易有结果' (($qm.Success -and [int]$qm.Groups[1].Value -gt 0) -and ($nm.Success -and [int]$nm.Groups[1].Value -gt 0)) $sline
+        Shot '05-search' | Out-Null
+    }
+}
+
+# ---- 9. 识曲全链路（仅 smoke 变体：assets/fixtures 注入）----
 if ($Variant -eq 'smoke') {
     Write-Host '==> 识曲全链路（固定 PCM 注入）'
     $recCases = @(

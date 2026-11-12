@@ -62,12 +62,29 @@ object PlayerManager {
      * v2.1.85：startAtMs 用于"缓存好了把播放源从网络切到本地文件"——切过去时从当前位置接着放，
      * 不回到 0 秒、不打断听感。
      */
+    /**
+     * v2.1.94：识曲期间禁止任何自动起播。
+     * 用户实测"点识曲后正常暂停了，但录到一半歌又自己响起来"——来源不止一处：
+     * 缓存落盘后切本地源、自动连播、取流兜底重试，最终都会走到 play()。
+     * 统一在入口拦住，比逐个调用点堵更可靠。
+     */
+    @Volatile
+    private var holdReason: String? = null
+
+    fun holdPlayback(reason: String) { holdReason = reason }
+
+    fun releaseHold() { holdReason = null }
+
     fun play(
         url: String,
         expectedDurationSec: Int? = null,
         sourceLabel: String? = null,
         startAtMs: Long = 0L
     ) {
+        holdReason?.let {
+            android.util.Log.i("JZ_PLAY", "play blocked by $it: ${url.take(80)}")
+            return
+        }
         // v2.1.5 #5：播放即拉起前台服务（息屏/Doze 下保活，连播链路不被冻结）；
         // 服务已运行时仅刷新通知；后台自动连播时服务仍在运行，不会触发后台启动限制
         PlayerService.start(appContext)

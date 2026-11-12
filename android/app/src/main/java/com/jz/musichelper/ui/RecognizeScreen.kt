@@ -499,6 +499,21 @@ private fun ResultBlock(
                     maxLines = 2
                 )
             }
+            // v2.1.94：指纹可能把翻唱认成原唱（例如《我很想爱他》把林俊杰版认成 Twins），
+            // 同批候选里还有别的歌手时，明确给一条换人提示。
+            val altArtist = others.firstOrNull()?.artist?.trim().orEmpty()
+            if (altArtist.isNotBlank() &&
+                !hit.artist.contains(altArtist) && !altArtist.contains(hit.artist)
+            ) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "如果不是 $altArtist 唱的，看下面「同批候选」",
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = p.text3.copy(alpha = 0.75f),
+                    maxLines = 2
+                )
+            }
         }
 
         // 同名但没有这一位歌手的版本：先说清发生了什么（左侧一道朱砂细签，和"错误框"区分开）

@@ -246,6 +246,34 @@ object AppState {
         }
     }
 
+    /**
+     * v2.1.94：冒烟包专用——跑一次真实搜索，把「每个平台返回多少条 / 有没有报错」打进 logcat。
+     * 中文没法用 adb input 输入，所以用 intent 注入关键词。
+     */
+    fun searchForTest(keyword: String) {
+        tab.value = MainTab.HOME
+        searchActive.value = true
+        search(keyword)
+        globalScope.launch {
+            var waited = 0
+            while (waited < 15_000 && searching.value) {
+                delay(200)
+                waited += 200
+            }
+            delay(400)
+            val detail = SearchService.platforms.joinToString(" ") { p ->
+                val r = searchResults.value.firstOrNull { it.platform == p }
+                "${p.name}=${r?.songs?.size ?: -1}"
+            }
+            val errors = searchResults.value.mapNotNull { r -> r.error?.let { "${r.platform.name}:$it" } }
+                .joinToString("|")
+            android.util.Log.i(
+                "JZ_TEST",
+                "SEARCH kw=$keyword platforms=${SearchService.platforms.size} $detail errors=${errors.ifEmpty { "-" }}"
+            )
+        }
+    }
+
     /** 打开识曲页（只重置界面态；是否开录由页面上的麦克风决定） */
     fun openRecognize() {
         recPhase.value = RecPhase.PREPARE
@@ -300,7 +328,10 @@ object AppState {
         recProgress.value = 0f
         recPhase.value = RecPhase.LISTEN
         recJob = globalScope.launch {
-            // 录自己正在放的歌必然认成当前歌曲，先按停本机播放
+            // 录自己正在放的歌必然认成当前歌曲，先按停本机播放。
+            // v2.1.94：先挂闸门再暂停——否则缓存落盘切本地源 / 自动连播 / 兜底重试会在录制中途把歌放起来。
+            PlayerManager.holdPlayback("recognize")
+            try {
             if (PlayerManager.isPlaying.value) PlayerManager.pause()
 
             // v2.1.92：不再"6 秒酷狗命中就立刻收工"。
@@ -365,6 +396,9 @@ object AppState {
             } else {
                 recHits.value = hits
                 recPhase.value = RecPhase.RESULT
+            }
+            } finally {
+                PlayerManager.releaseHold()
             }
         }
     }
@@ -642,13 +676,18 @@ object AppState {
                 val hitVariant = RecognizeAdapter.Judge.isVariantHit(hit.title, hit.album)
                 val canonicalSingers =
                     if (hitVariant) RecognizeAdapter.Judge.canonicalSingers(same, hit.title) else emptySet()
+                // v2.1.94：原唱不再"歌手对上就算"，统一走 Judge.isStudioOriginal
+                // （裸名 + 非现场/综艺 + 正式专辑 + 时长正常），否则 Live/DJ/演唱会版全会被盖印
+                val singerHints: List<String> =
+                    if (canonicalSingers.isNotEmpty()) canonicalSingers.toList() else tokens
                 val isOriginal = { s: Song ->
-                    val sn = normForMatch(s.singer)
-                    if (!hitVariant) {
-                        tokens.isNotEmpty() && tokens.any { sn.contains(it) || it.contains(sn) }
-                    } else {
-                        canonicalSingers.any { sn.contains(it) || it.contains(sn) }
-                    }
+                    RecognizeAdapter.Judge.isStudioOriginal(
+                        name = s.name,
+                        singer = s.singer,
+                        album = s.album,
+                        durationSec = s.durationSec,
+                        singerHints = singerHints
+                    )
                 }
                 // 正式专辑（专辑名不是歌名本身、也不是现场/综艺）——只用于把可靠的版本排前面
                 val isFormal = { s: Song ->

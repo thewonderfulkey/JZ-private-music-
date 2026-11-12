@@ -111,6 +111,38 @@ object RecognizeAdapter {
         fun normName(s: String): String = norm(s)
 
         /**
+         * v2.1.94：「原唱」标记的唯一口径（用户要求：不是歌手对上就算原唱）。
+         *
+         * 必须**同时**满足：
+         *   ① 歌手对得上（识别歌手；命中综艺/现场版时用 canonicalSingers 推出来的歌手）
+         *   ② 歌名是裸名：没有 (Live)/(DJ混音版)/(2016…演唱会) 这类后缀
+         *   ③ 歌名里不含现场/伴奏/DJ/翻唱/混音/串烧等标记
+         *   ④ 专辑是正式专辑：不是现场/综艺节目，且专辑名不等于歌名（同名合集不算）
+         *   ⑤ 时长正常（不是片段）
+         *
+         * 之前只判①，于是「我们都一样 (Live)」「我们都一样 (DJ混音版)」「2016张杰演唱会」
+         * 全被盖了原唱印。
+         */
+        fun isStudioOriginal(
+            name: String,
+            singer: String,
+            album: String,
+            durationSec: Int,
+            singerHints: Collection<String>
+        ): Boolean {
+            if (singerHints.isEmpty()) return false
+            val sn = norm(singer)
+            if (sn.isEmpty()) return false
+            if (singerHints.none { sn.contains(it) || it.contains(sn) }) return false
+            if (!StudioPick.isCleanTitle(name)) return false
+            if (VARIANT_TITLE.containsMatchIn(name)) return false
+            if (isVarietyAlbum(album) || StudioPick.isLiveAlbum(album)) return false
+            if (isSameAlbumAsTitle(album, name)) return false
+            if (durationSec in 1..59) return false
+            return true
+        }
+
+        /**
          * v2.1.90「原唱」判定 A 分支——只在识曲本身命中的是综艺/现场/改编版时用：
          * 同一歌手有 ≥2 张不同的**正式专辑**（专辑名不是歌名本身、不是现场/综艺），
          * 且这些条目的时长互相 ≤3 秒 → 说明是同一版录音被反复收录，即录音室原版。

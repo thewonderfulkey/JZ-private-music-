@@ -1,0 +1,54 @@
+PASS  build.gradle 版本  | vc=152 vn=2.1.94
+PASS  APK badging 版本  | 152/2.1.94
+PASS  包名
+PASS  minSdk/targetSdk
+PASS  关于页标题 v2.1.94
+PASS  关于页保留 v2.1.93
+PASS  关于页无旧主标题 v2.1.93
+PASS  签名证书 SHA-256 与既定一致
+PASS  apksigner verify 通过
+PASS  zip 完整性  | testzip=None
+PASS  条目数（≥180）  | 186 条
+PASS  体积量级（29.6~30.4MB）  | 29,859,133 B
+PASS  assets/recognizer.html 一致
+PASS  assets/afp_wasm_b64.js 一致
+PASS  assets/sandbox.bundle.js 一致
+PASS  SearchService 注册了酷狗
+PASS  不再是 3 平台
+PASS  酷狗搜索换宿主 mobiles.kugou.com
+PASS  酷狗旧宿主已移除
+PASS  酷狗取流注册进 SourceRegistry
+PASS  酷狗取流用 playInfo
+PASS  splitTopLevel 保留大括号
+PASS  splitTopLevel 引号感知
+PASS  酷我 rn=50
+PASS  酷我变体兜底
+PASS  酷我歌名兼容 NAME/SONGNAME
+PASS  网易封面走 song/detail
+PASS  网易封面回填
+PASS  酷我封面 MVPIC 仍在
+PASS  酷狗封面 union_cover 仍在
+PASS  Judge 有 isStudioOriginal
+PASS  原唱要求裸名
+PASS  原唱排除现场/综艺专辑
+PASS  原唱排除同名合集
+PASS  App 改用新口径
+PASS  旧口径已移除
+PASS  PlayerManager 有播放闸门
+PASS  play() 入口拦截
+PASS  识曲挂闸门
+PASS  识曲解闸门
+PASS  结果卡有换人提示
+PASS  dex 含「JZ的音乐助手 v2.1.94」
+PASS  dex 含「上一版（v2.1.93）」
+PASS  dex 含「识别依据：酷狗」
+PASS  dex 含「看下面「同批候选」」
+PASS  dex 含 KugouPlayInfoAdapter
+PASS  dex 含 isStudioOriginal
+PASS  清单含 INTERNET
+PASS  清单含 RECORD_AUDIO
+PASS  清单含 SYSTEM_ALERT_WINDOW
+
+合计 50 项：PASS 50 / FAIL 0
+release APK: 29,859,133 B  MD5 991E65C45F1575E65966178E347BDE01
+

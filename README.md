@@ -4,7 +4,7 @@ Android 端音乐聚合播放器：四平台检索（酷我 / QQ / 网易云 / �
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v2.1.93**（versionCode 151） |
+| 当前版本 | **v2.1.94**（versionCode 152） |
 | 包名 | `com.jz.musichelper` |
 | 最低 / 目标 SDK | 26 / 34（compileSdk 34） |
 | 技术栈 | Kotlin + Jetpack Compose（Material3）、OkHttp、Coil、MediaPlayer |
@@ -92,3 +92,4 @@ pwsh -File .\tools\dev.ps1                # 一条命令：构建 → 静态验�
 - 改识曲读：[docs/RECOGNITION.md](docs/RECOGNITION.md)
 - 出包发版读：[docs/RELEASE.md](docs/RELEASE.md)
 - 自动化与通知：[docs/AUTOMATION.md](docs/AUTOMATION.md)
+
