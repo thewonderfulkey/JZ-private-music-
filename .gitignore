@@ -6,6 +6,9 @@
 # 飞书 webhook / 应用凭据（含密钥，绝不入库）
 .lark/
 
+# 运行日志（现在默认写进项目里的 logs/，只在本机排查用，不入库）
+logs/
+
 # 冒烟测试产物（截图、uiautomator XML、logcat）
 tools/smoke/out/
 
@@ -47,6 +50,14 @@ tmp/
 scratch/
 *.log
 !docs/**/*.log
+
+# 发布用的大二进制（单个 138–145 MB，超仓库单文件上限；只作为 GitHub Release 资产上传）
+releases/windows/*.exe
+
+# 桌面版构建产物（app-image / jar / 安装包都能从源码重建，不入库）
+desktop/build/
+desktop/.gradle/
+desktop/.kotlin/
 
 # 第三方服务源码（vendored：本地可运行、上游可重新拉取，不入本仓库）
 services/

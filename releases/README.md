@@ -7,6 +7,15 @@
    **所有版本必须同签**，否则用户无法覆盖安装。
 5. GitHub 同步：仓库 `thewonderfulkey/JZ-private-music-`，发布时 `git push` + 新建 Release（APK + 源码 zip）。
 
+## Windows 桌面版
+
+| 产物 | 用途 |
+|---|---|
+| `windows\JZ Music Setup-<版本>.exe` | **对外主发**：双击安装成一个 `JZ Music` 文件夹（程序 + Download + Log + Cache + Data + Backup + 说明 + 卸载器） |
+| `windows\JZ Music-<版本>-portable.exe` | 老分发方式：单文件免安装，首跑解包到 `%LOCALAPPDATA%` |
+
+安装/卸载/静默参数：`--silent --dir="D:\JZ Music" --no-launch`；详见 `docs/INSTALL.md`。
+
 ## 版本表
 
 | 版本 | versionCode | 主题 | APK |

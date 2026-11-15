@@ -1,0 +1,505 @@
+package com.jz.musichelper.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.jz.musichelper.data.AppEnv
+import com.jz.musichelper.data.DesktopLyrics
+import com.jz.musichelper.data.HistoryStore
+import com.jz.musichelper.data.PlayLog
+import com.jz.musichelper.model.QualityLevel
+import com.jz.musichelper.ui.theme.InkTitleFont
+import com.jz.musichelper.ui.theme.LocalPalette
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+// ===== 设置页：音质 + 主题（水墨单主题展示）+ 数据管理 + 关于 =====
+@Composable
+fun SettingsScreen(modifier: Modifier = Modifier) {
+    val p = LocalPalette.current
+    var quality by remember { mutableStateOf(HistoryStore.loadQuality()) }
+
+    // v2.1.66：底部留白与播放悬浮栏同一口径——悬浮栏高度 = 屏宽 1/5（约 82dp），
+    // 出现时留 96dp（栏高 + 14dp 呼吸），未出现时留 60dp（与其他列表页一致），末行不再被压住
+    val playerShown = AppState.lastSong.value != null
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 18.dp, end = 18.dp, bottom = if (playerShown) 96.dp else 60.dp)
+    ) {
+        // 左上角返回按钮 + 标题
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 8.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(p.accent.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
+                    .inkClickable { AppState.tab.value = MainTab.HOME },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = p.accent2,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Text(
+                "设置",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = InkTitleFont,
+                color = p.text,
+                modifier = Modifier.padding(start = 8.dp, top = 6.dp)
+            )
+        }
+
+        // 主题（水墨 · 简约山水：全 App 统一水墨风格，无切换）
+        Text("主题外观", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(Color(0x2E2E2A24), Color(0x002E2A24)),
+                            radius = 500f
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(Modifier.size(12.dp).background(p.accent, CircleShape))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("水墨 · 简约山水", color = p.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("米白纸底 · 墨色点缀（参考概念图 v2 第 5 格）", color = p.text3, fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // 下载设置
+        Text("下载设置", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(6.dp))
+        Text("默认音质", color = p.text2, fontSize = 13.sp)
+        QualityLevel.entries.forEach { q ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                RadioButton(
+                    selected = quality == q,
+                    onClick = {
+                        quality = q
+                        HistoryStore.saveQuality(q)
+                    },
+                    colors = RadioButtonDefaults.colors(selectedColor = p.accent, unselectedColor = p.text3)
+                )
+                Text(q.displayName, color = p.text, fontSize = 14.sp)
+                if (q == QualityLevel.HIGH || q == QualityLevel.LOSSLESS) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (q == QualityLevel.HIGH) "320k" else "FLAC",
+                        color = p.text3,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // 保存位置
+        Text("保存位置", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Text("下载的音乐保存在：", color = p.text2, fontSize = 13.sp)
+            Text(
+                AppEnv.downloadDir.absolutePath,
+                color = p.accent2,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("可在资源管理器里直接打开，支持导入其他播放器。", color = p.text3, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // 数据管理
+        Text("数据管理", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            Text(
+                "清空搜索历史",
+                fontSize = 14.sp,
+                color = Color(0xFFC0392B),
+                modifier = Modifier
+                    .inkClickable {
+                        HistoryStore.clearSearchHistory()
+                        toast("已清空搜索历史")
+                    }
+                    .padding(vertical = 12.dp)
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // 异常诊断（全局未捕获异常在此展示，方便反馈根因）
+        val lastError = remember {
+            com.jz.musichelper.data.AppEnv.prefs("jz_music_prefs")
+                .getString("last_error", null)
+        }
+        val lastErrorTime = remember {
+            com.jz.musichelper.data.AppEnv.prefs("jz_music_prefs")
+                .getLong("last_error_time", 0L)
+        }
+        if (lastError != null) {
+            Text("异常诊断", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(p.surface2, RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Text(
+                    "最近一次未捕获异常：" + if (lastErrorTime > 0)
+                        SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(lastErrorTime))
+                    else "时间未知",
+                    fontSize = 12.sp,
+                    color = p.text,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    lastError,
+                    fontSize = 10.sp,
+                    color = p.text2,
+                    maxLines = 14
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "将以上内容发给开发者即可定位问题；点击下方按钮可清空。",
+                    fontSize = 11.sp,
+                    color = p.text3
+                )
+                Text(
+                    "清空诊断",
+                    fontSize = 13.sp,
+                    color = Color(0xFFC0392B),
+                    modifier = Modifier
+                        .inkClickable {
+                            com.jz.musichelper.data.AppEnv.prefs("jz_music_prefs")
+                                .edit().remove("last_error").apply()
+                        }
+                        .padding(top = 8.dp)
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+
+        // 桌面歌词（v2.1.74）：开关 + 实时授权状态 + 去授权 / 重置位置。
+        // 与播放页右上角三点菜单共用同一个开关状态（DesktopLyrics.enabled）。
+        val dlOn by DesktopLyrics.enabled.collectAsState()
+        val dlAllowed by DesktopLyrics.canOverlay.collectAsState()
+        Text("桌面歌词", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("在桌面显示滚动歌词", fontSize = 14.sp, color = p.text, fontWeight = FontWeight.Medium)
+                    Text(
+                        "退到桌面或切到其他应用时，屏幕底部出现一栏歌词，跟着播放滚动；App 内不显示。",
+                        fontSize = 12.sp,
+                        color = p.text3
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = dlOn,
+                    onCheckedChange = { on ->
+                        if (on) {
+                            if (DesktopLyrics.toggleFromUi(true)) {
+                                toast("桌面歌词已开启，回到桌面（或切到别的应用）播放时即可看到")
+                            } else {
+                                toast("需要「显示在其他应用上层」权限")
+                                DesktopLyrics.openOverlaySettings()
+                            }
+                        } else {
+                            DesktopLyrics.toggleFromUi(false)
+                        }
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = p.surface,
+                        checkedTrackColor = p.accent,
+                        uncheckedThumbColor = p.surface,
+                        uncheckedTrackColor = p.text3.copy(alpha = 0.4f)
+                    )
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            val dlError by DesktopLyrics.lastError.collectAsState()
+            Text(
+                when {
+                    !dlAllowed -> "未授权：系统里需允许「显示在其他应用上层 / 显示悬浮窗」，否则歌词不会出现。"
+                    dlOn -> "已开启：回到桌面即可看到；拖动歌词栏可调整位置，松手自动留出边距。"
+                    else -> "已授权，当前未开启。"
+                },
+                fontSize = 12.sp,
+                color = if (dlAllowed) p.text2 else Color(0xFF9A4A24)
+            )
+            dlError?.let { msg ->
+                Spacer(Modifier.height(4.dp))
+                Text(msg, fontSize = 12.sp, color = Color(0xFF9A4A24))
+            }
+            Spacer(Modifier.height(10.dp))
+            val dlTheme by DesktopLyrics.theme.collectAsState()
+            val dlFont by DesktopLyrics.fontStep.collectAsState()
+            val dlLocked by DesktopLyrics.locked.collectAsState()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("纸色", fontSize = 13.sp, color = p.text2)
+                Spacer(Modifier.width(10.dp))
+                listOf("素纸", "旧黄", "夜墨").forEachIndexed { i, name ->
+                    Text(
+                        name,
+                        fontSize = 12.sp,
+                        color = if (dlTheme == i) p.surface else p.text3,
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .background(if (dlTheme == i) p.accent2 else p.surface, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                            .inkClickable { DesktopLyrics.setTheme(i) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("字号", fontSize = 13.sp, color = p.text2)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "A-",
+                    fontSize = 14.sp,
+                    color = if (dlFont > -2) p.accent2 else p.text3.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .inkClickable { DesktopLyrics.adjustFontStep(-1) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+                Text(
+                    when (dlFont) {
+                        -2 -> "很小"; -1 -> "偏小"; 0 -> "标准"; 1 -> "偏大"; else -> "很大"
+                    },
+                    fontSize = 12.sp,
+                    color = p.text3
+                )
+                Text(
+                    "A+",
+                    fontSize = 14.sp,
+                    color = if (dlFont < 2) p.accent2 else p.text3.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .inkClickable { DesktopLyrics.adjustFontStep(1) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (dlLocked) "已锁定" else "可拖动",
+                    fontSize = 12.sp,
+                    color = p.text3,
+                    modifier = Modifier
+                        .inkClickable { DesktopLyrics.toggleLock() }
+                        .padding(vertical = 2.dp)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "点一下歌词栏会浮出工具条：上一句 / 暂停 / 下一句 / 字号 / 锁定 / 关闭，3 秒不操作自动收起。" +
+                    "长句会自动缩字号或折行，不再出现省略号。",
+                fontSize = 12.sp,
+                color = p.text3
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "去授权",
+                    fontSize = 13.sp,
+                    color = p.accent2,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .inkClickable {
+                            if (!DesktopLyrics.openOverlaySettings()) {
+                                toast("没找到系统权限页，请到「设置-应用-权限」里手动开启")
+                            }
+                        }
+                        .padding(vertical = 2.dp)
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "重置位置",
+                    fontSize = 13.sp,
+                    color = p.text3,
+                    modifier = Modifier
+                        .inkClickable {
+                            DesktopLyrics.resetPosition()
+                            toast("桌面歌词已恢复默认位置")
+                        }
+                        .padding(vertical = 2.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // 后台连播 / 电池优化白名单：v2.1.73 起常驻设置页，随时可自查与补授权。
+        // 首次启动仍会自动弹系统授权框，这里只是兜底入口（也方便换机后自己确认状态）。
+        // 后台连播与存储：Windows 没有 Doze / 电池优化，进程常驻即照常连播。
+        // 这里换成桌面真正有用的两项：说明 + 一键打开缓存/下载目录。
+        Text("后台连播与存储", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Text("无需电池白名单", fontSize = 14.sp, color = p.text, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "窗口最小化或切到别的应用时，播放与自动连播照常进行；一首播完会继续取下一首。" +
+                    "缓存与预取都在本机，取不到网时也能接着唱已经缓存好的几首。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "打开缓存目录",
+                    fontSize = 13.sp,
+                    color = p.accent2,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .inkClickable { AppEnv.openDir(AppEnv.cacheDir) }
+                        .padding(vertical = 2.dp)
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "打开下载目录",
+                    fontSize = 13.sp,
+                    color = p.accent2,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .inkClickable { AppEnv.openDir(AppEnv.musicDir) }
+                        .padding(vertical = 2.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("关于", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.surface2, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Text("JZ的音乐助手 v2.1.95", fontSize = 14.sp, color = p.text)
+            Spacer(Modifier.height(6.dp))
+            Text("本版更新", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "四个细节：① 识曲页的「最近识过」改成贴底排列，最后一条正好落在播放悬浮栏上沿，不再留一大片空白。" +
+                    "② 搜索结果头上的「N 平台并发」去掉——四平台恢复后它会换行，而且左侧每个平台自己的条数已经够看。" +
+                    "③ 酷我的歌不再显示 --:--：酷我接口给的时长是秒数，以前按 mm:ss 解析所以全是 0。" +
+                    "④ 结果行的时长与平台标签改成定宽对齐，红心、时长、标签从此每行都在同一条竖线上。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("上一版（v2.1.94）", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "按你反馈的六个问题修：① 原唱印收紧——只有「歌手对得上、歌名是裸名（没有 Live／DJ混音版／演唱会 这类后缀）、" +
+                    "专辑是正式专辑（不是现场综艺、也不是同名合集）、时长正常」才盖印，之前 Live／DJ／演唱会版全被误标的问题解决。" +
+                    "② 酷我搜索修好：匿名搜索结果现在整页都是 DJ／翻唱，旧逻辑把它们全过滤掉，界面就显示 0 首；" +
+                    "现在取 50 条、有原曲只给原曲，没有原曲退回变体，不会再 0 条。③ 酷狗接入：搜索换了宿主" +
+                    "（旧域名证书不匹配，一直静默失败），并补上取流后端（官方 playInfo，按 hash 直查），现在是 4 平台并发。" +
+                    "④ 封面补齐：网易云搜索只给 picId，现在用 song/detail 换成真封面；QQ／酷我／酷狗各自直出，仍缺的走同曲兜底。" +
+                    "⑤ 识曲期间彻底禁止自动起播：缓存切本地源、自动连播、兜底重试都统一在播放入口拦住。" +
+                    "⑥ 识别结果里若同批候选还有别的歌手，结果卡会提示可以换。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("声明", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "1. 音乐源为酷我 / QQ / 网易等第三方接口的聚合结果，仅供个人学习与测试，请支持正版音乐。\n" +
+                    "2. 本应用不存储、不传播任何音频文件，仅提供检索、试听与本地缓存。\n" +
+                    "3. 曲库版权与接口可用性随时变化，个别歌曲缺少某档音质属正常现象。",
+                fontSize = 12.sp,
+                color = p.text2,
+                lineHeight = 18.sp
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}

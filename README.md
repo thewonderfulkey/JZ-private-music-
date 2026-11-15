@@ -20,7 +20,8 @@ Private_music/
 │   ├── app/src/main/         Kotlin 源码 / 资源 / 网易 afp 指纹引擎 assets
 │   ├── build.gradle.kts      版本号、依赖、签名配置
 │   └── settings.gradle.kts
-├── releases/                 交付物：只留最新 APK + 交付说明
+├── releases/                 交付物：只留最新 APK + 安装包；windows\ 为桌面版产物
+├── desktop/                  **Windows 桌面版工程（Compose Desktop）**
 ├── docs/
 │   ├── HANDOFF.md            接手说明（历史、缺口、路线）
 │   ├── ARCHITECTURE.md       工程结构与模块职责
@@ -32,6 +33,9 @@ Private_music/
 │   └── changelog/            逐版交付说明（v2.1.26 起，note_*.md）
 ├── tools/
 │   ├── build.ps1             一键构建
+│   ├── build-desktop.ps1     Windows 桌面版构建
+│   ├── build-setup.ps1       Windows 安装包构建（Setup.exe）
+│   ├── setup/                安装器 / 卸载器源码 + 用户说明文档
 │   ├── verify/               出包静态验证脚本与历史输出
 │   └── probes/               接口探活、规则回归、界面 mock 脚本
 ├── .build/                   **构建工具链（默认忽略，不入库）**
@@ -65,6 +69,44 @@ pwsh -File .\tools\dev.ps1                # 一条命令：构建 → 静态验�
 自动化细节见 [docs/AUTOMATION.md](docs/AUTOMATION.md)：模拟器冒烟覆盖启动/崩溃/导航/版本，
 飞书发到群「音乐软件开发」，失败会带截图与 logcat 留在 `tools\smoke\out\`。
 
+
+## Windows 桌面版 JZ Music（PC 版式）
+
+同一套网络层 / 播放引擎 / 歌词逻辑（PC 端不做听歌识曲），界面按 PC 音乐客户端（网易云 / QQ 音乐 / 酷狗 PC）的结构：
+**左侧栏导航 + 宽内容区（卡片/表格）+ 右侧正在播放（大封面/逐字歌词/队列）+ 底部播放条**，保留水墨视觉。
+
+```powershell
+pwsh -File .\tools\build-setup.ps1                # 打安装包（对外分发用这个）
+pwsh -File .\tools\build-desktop.ps1              # 编译 + 打包便携版
+pwsh -File .\tools\build-desktop.ps1 -Run         # 开发模式直跑
+pwsh -File .\tools\build-desktop.ps1 -Publish     # app-image 打进 releases\windows\
+pwsh -File .\tools\build-portable-exe.ps1         # 再压成单文件 exe（老分发方式）
+```
+
+产物：**`releases\windows\JZ Music Setup-<版本>.exe`（双击安装）**。
+装完就是一个 **`JZ Music` 文件夹**（默认 `D:\JZ Music`）：
+
+```
+JZ Music\
+├── JZ Music.exe          主程序
+├── app\  runtime\        程序本体 + 自带 JRE
+├── Download\             下载的音乐自动保存到这里
+├── Log\                  运行日志（desktop.log / play.log / crash.log）
+├── Cache\                播放缓存（可随时清）
+├── Data\                 设置 / 收藏 / 历史 / 下载记录
+├── Backup\               一键备份
+├── 说明\                 使用说明 / 更新日志 / 卸载说明 / 常见问题
+└── 卸载 JZ Music.exe
+```
+
+安装 / 卸载 / 静默参数与构建细节见 [docs/INSTALL.md](docs/INSTALL.md)；
+免安装单文件 `JZ Music-<版本>-portable.exe` 仍在（首跑解包到 `%LOCALAPPDATA%`）。
+工程与平台层对照见 [docs/DESKTOP-WINDOWS.md](docs/DESKTOP-WINDOWS.md)。
+
+- 播放：FFmpeg（javacv）解码 + Java Sound 输出，mp3/flac/m4a/ogg/wav 全覆盖
+- 桌面歌词：置顶透明独立窗口 + Java2D 自绘（纸签/逐字染色/工具条/拖动吸边）
+- 识曲：酷狗通道（网易 afp 是 WebView 里的 wasm，桌面无可用 WebView，见文档"已知差异"）
+
 ## 核心能力
 
 | 模块 | 说明 |
@@ -91,6 +133,8 @@ pwsh -File .\tools\dev.ps1                # 一条命令：构建 → 静态验�
 - 改代码前读：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 改识曲读：[docs/RECOGNITION.md](docs/RECOGNITION.md)
 - 出包发版读：[docs/RELEASE.md](docs/RELEASE.md)
+- Windows 桌面版：[docs/DESKTOP-WINDOWS.md](docs/DESKTOP-WINDOWS.md)
+- Windows 安装包 / 文件夹结构：[docs/INSTALL.md](docs/INSTALL.md)
 - 自动化与通知：[docs/AUTOMATION.md](docs/AUTOMATION.md)
 
 
