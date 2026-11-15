@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build-ipa:
     name: build unsigned ipa
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       ARTIFACT_DIR: out
@@ -124,7 +124,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          BODY=$(printf '版本：v%s（versionCode %s）\n大小：%s MB\nSHA-256：%s\n构建：GitHub Actions · macos-14 · run #%s\n说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。' \
+          BODY=$(printf '版本：v%s（versionCode %s）\n大小：%s MB\nSHA-256：%s\n构建：GitHub Actions · macos-15 · run #%s\n说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。' \
             "$VERSION" "$CODE" "${{ steps.pkg.outputs.mb }}" "${{ steps.pkg.outputs.sha }}" "$GITHUB_RUN_NUMBER")
           python3 tools/notify/lark.py \
             --title "iOS v${VERSION} 已出包（未签名 IPA）" \
