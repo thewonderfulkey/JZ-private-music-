@@ -5,7 +5,7 @@ name: iOS IPA
 #   2) 上传到飞书群（走 tools/notify/lark.py 的机器人文件消息）
 #
 # 为什么是"未签名 IPA"：签名需要 Apple 开发者证书 + provisioning profile，
-# 这两样不在仓库里。未签名包用 Sideloadly / AltStore / 爱思助手 自签后即可安装，
+# 这两样不在仓库里。未签名包用 Sideloadly / AltStore 自签后即可安装，
 # 适合自用分发；要出正式签名包，见文末"签名"说明。
 
 on:
@@ -43,24 +43,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 环境信息（Xcode / Swift / 版本号）
-        id: env
+        id: meta
         run: |
           set -euo pipefail
           xcodebuild -version
           swift --version || true
-          VERSION=$(grep -oE 'versionName[[:space:]]*=[[:space:]]*"[^"]+"' android/app/build.gradle.kts \
-                    | head -1 | sed -E 's/.*"([^"]+)"/\1/')
-          CODE=$(grep -oE 'versionCode[[:space:]]*=[[:space:]]*[0-9]+' android/app/build.gradle.kts \
-                 | head -1 | grep -oE '[0-9]+')
+          VERSION=$(grep -oE 'versionName[[:space:]]*=[[:space:]]*"[^"]+"' android/app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)"/\1/')
+          CODE=$(grep -oE 'versionCode[[:space:]]*=[[:space:]]*[0-9]+' android/app/build.gradle.kts | head -1 | grep -oE '[0-9]+')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CODE=$CODE" >> "$GITHUB_ENV"
           echo "版本：v$VERSION（versionCode $CODE）"
 
       - name: 编译（未签名，device arm64）
         run: |
           set -euo pipefail
           mkdir -p build
+          set +e
           xcodebuild \
             -project ios/JZMusicHelper.xcodeproj \
             -target JZMusicHelper \
@@ -72,13 +72,14 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             ENABLE_BITCODE=NO \
             ONLY_ACTIVE_ARCH=NO \
-            2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: .*(deprecated|unused)|BUILD (SUCCEEDED|FAILED)" || true
-          # 上面用 tee 保留完整日志，这里单独判成败
-          grep -q "BUILD SUCCEEDED" build/xcodebuild.log || {
-            echo "::error::xcodebuild 失败，最后 40 行："
-            tail -40 build/xcodebuild.log
+            2>&1 | tee build/xcodebuild.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          set -e
+          if ! grep -q "BUILD SUCCEEDED" build/xcodebuild.log; then
+            echo "::error::xcodebuild 失败"
+            grep -E "error:" build/xcodebuild.log | head -50 || true
+            tail -30 build/xcodebuild.log
             exit 1
-          }
+          fi
 
       - name: 打包成 IPA
         id: pkg
@@ -86,31 +87,34 @@ jobs:
           set -euo pipefail
           APP=$(find build/ios/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           [ -n "$APP" ] || { echo "::error::没找到 .app 产物"; exit 1; }
-          rm -rf "$ARTIFACT_DIR" && mkdir -p "$ARTIFACT_DIR/Payload"
+          rm -rf "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR/Payload"
           cp -R "$APP" "$ARTIFACT_DIR/Payload/"
           IPA="JZ-Music-v${VERSION}-ios-unsigned.ipa"
           (cd "$ARTIFACT_DIR" && zip -qry "$IPA" Payload)
           SIZE=$(stat -f%z "$ARTIFACT_DIR/$IPA")
           SHA=$(shasum -a 256 "$ARTIFACT_DIR/$IPA" | cut -d' ' -f1)
+          MB=$(( SIZE / 1024 / 1024 ))
           echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "mb=$MB" >> "$GITHUB_OUTPUT"
           {
             echo "### iOS IPA（未签名）"
             echo ""
             echo "| 项 | 值 |"
             echo "|---|---|"
             echo "| 文件 | \`$IPA\` |"
-            echo "| 大小 | $((SIZE/1024/1024)) MB |"
+            echo "| 大小 | ${MB} MB |"
             echo "| SHA-256 | \`$SHA\` |"
-            echo "| 版本 | v$VERSION（versionCode $CODE）|"
+            echo "| 版本 | v${VERSION}（versionCode ${CODE}）|"
             echo "| 运行 | [第 $GITHUB_RUN_NUMBER 次]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 留存 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JZ-Music-v${{ steps.env.outputs.version }}-ios-ipa
+          name: JZ-Music-v${{ steps.meta.outputs.version }}-ios-ipa
           path: out/*.ipa
           if-no-files-found: error
           retention-days: 14
@@ -120,15 +124,13 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          BODY=$(printf '版本：v%s（versionCode %s）\n大小：%s MB\nSHA-256：%s\n构建：GitHub Actions · macos-14 · run #%s\n说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。' \
+            "$VERSION" "$CODE" "${{ steps.pkg.outputs.mb }}" "${{ steps.pkg.outputs.sha }}" "$GITHUB_RUN_NUMBER")
           python3 tools/notify/lark.py \
             --title "iOS v${VERSION} 已出包（未签名 IPA）" \
             --file "out/${{ steps.pkg.outputs.ipa }}" \
             --name "${{ steps.pkg.outputs.ipa }}" \
-            --body "版本：v${VERSION}（versionCode ${CODE}）
-大小：$(( ${{ steps.pkg.outputs.size }} / 1024 / 1024 )) MB
-SHA-256：${{ steps.pkg.outputs.sha }}
-构建：GitHub Actions · macos-14 · run #${{ github.run_number }}
-说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。"
+            --body "$BODY"
 
       - name: 飞书未配置时的提示
         if: ${{ env.LARK_APP_ID == '' }}
@@ -138,11 +140,8 @@ SHA-256：${{ steps.pkg.outputs.sha }}
         if: failure() && env.LARK_APP_ID != ''
         continue-on-error: true
         run: |
-          python3 tools/notify/lark.py --fail \
-            --title "iOS 构建失败" \
-            --body "版本：v${VERSION}
-运行：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-（日志见该次运行）"
+          BODY=$(printf '版本：v%s\n运行：%s/%s/actions/runs/%s' "$VERSION" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          python3 tools/notify/lark.py --fail --title "iOS 构建失败" --body "$BODY"
 
       - name: 失败时附上编译日志
         if: failure()
@@ -153,11 +152,7 @@ SHA-256：${{ steps.pkg.outputs.sha }}
           if-no-files-found: ignore
           retention-days: 7
 
-# ── 要出签名 IPA 时（需要 Apple Developer 账号）──────────────────────────────
-# 在仓库 Secrets 里加：
-#   IOS_CERT_P12_BASE64   导出的 .p12（含私钥）base64
-#   IOS_CERT_PASSWORD     .p12 密码
-#   IOS_PROFILE_BASE64    .mobileprovision base64
-#   IOS_TEAM_ID           团队 ID
-# 然后把上面"编译"换成 xcodebuild archive + -exportArchive（exportOptions.plist
-# 里 method 用 development 或 app-store），并把导出目录里的 .ipa 交给飞书步骤。
+# 要出签名 IPA 时（需要 Apple Developer 账号），在仓库 Secrets 里加：
+#   IOS_CERT_P12_BASE64  IOS_CERT_PASSWORD  IOS_PROFILE_BASE64  IOS_TEAM_ID
+# 然后把"编译"换成 xcodebuild archive + -exportArchive（exportOptions.plist 里
+# method 用 development 或 app-store），再把导出的 .ipa 交给飞书步骤。
