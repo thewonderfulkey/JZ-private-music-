@@ -18,7 +18,7 @@ struct SettingsView: View {
                 Section("下载设置") {
                     Picker("默认音质", selection: Binding(
                         get: { defaultQuality },
-                        set: { defaultQuality = $0 }
+                        set: { defaultQualityRaw = $0.rawValue }
                     )) {
                         ForEach(QualityLevel.allCases, id: \.self) { q in
                             Text(q.displayName).tag(q)

@@ -114,7 +114,7 @@ struct DownloadRow: View {
 
             if item.status == .completed {
                 HStack {
-                    Text(item.localPath.map { "已保存到文件 App" } ?? "")
+                    Text(item.localPath != nil ? "已保存到文件 App" : "")
                         .font(.caption)
                         .foregroundColor(.green)
                     Spacer()

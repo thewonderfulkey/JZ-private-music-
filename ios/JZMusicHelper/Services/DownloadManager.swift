@@ -80,7 +80,7 @@ final class DownloadManager: NSObject, ObservableObject {
         request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
 
-        let session = useBackground ? backgroundSession : foregroundSession
+        let session: URLSession = useBackground ? backgroundSession : foregroundSession
         let task = session.downloadTask(with: request)
         item.status = .downloading
         appendOrUpdate(item)
@@ -135,7 +135,7 @@ final class DownloadManager: NSObject, ObservableObject {
         request.timeoutInterval = 300
         request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
-        let session = useBackground ? backgroundSession : foregroundSession
+        let session: URLSession = useBackground ? backgroundSession : foregroundSession
         let task = session.downloadTask(with: request)
         newItem.status = .downloading
         appendOrUpdate(newItem)
@@ -249,7 +249,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         DispatchQueue.main.async {
             self.backgroundTaskCount = 0
-            AppDelegate.shared.completeBackgroundSession(for: session.configuration.identifier ?? "")
+            AppDelegate.completeBackgroundSession(for: session.configuration.identifier ?? "")
         }
     }
 
@@ -286,8 +286,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     /// 由 DownloadManager.urlSessionDidFinishEvents 调用，执行系统要求的收尾回调。
-    func completeBackgroundSession(for identifier: String) {
-        AppDelegate.backgroundCompletionHandlers[identifier]?()
-        AppDelegate.backgroundCompletionHandlers[identifier] = nil
+    static func completeBackgroundSession(for identifier: String) {
+        backgroundCompletionHandlers[identifier]?()
+        backgroundCompletionHandlers[identifier] = nil
     }
 }
