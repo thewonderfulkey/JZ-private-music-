@@ -60,5 +60,5 @@ desktop/.gradle/
 desktop/.kotlin/
 
 # 第三方服务源码（vendored：本地可运行、上游可重新拉取，不入本仓库）
-services/
+/services/
 
