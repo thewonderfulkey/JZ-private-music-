@@ -54,7 +54,7 @@ jobs:
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "CODE=$CODE" >> "$GITHUB_ENV"
-          echo "版本：v$VERSION（versionCode $CODE）"
+          echo "版本：v${VERSION}（versionCode ${CODE}）"
 
       - name: 编译（未签名，device arm64）
         run: |
