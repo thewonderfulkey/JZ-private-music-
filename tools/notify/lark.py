@@ -36,11 +36,14 @@ API = "https://open.feishu.cn/open-apis"
 
 
 def load_config():
-    if not os.path.exists(CONFIG):
-        print(f"缺少配置文件：{CONFIG}", file=sys.stderr)
-        sys.exit(2)
-    with open(CONFIG, encoding="utf-8") as f:
-        cfg = json.load(f)
+    # CI（GitHub Actions）里没有 .lark/ 目录：配置全部走环境变量，缺文件不报错
+    cfg = {}
+    if os.path.exists(CONFIG):
+        with open(CONFIG, encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        print(f"未找到 {CONFIG}，改用环境变量 LARK_APP_ID / LARK_APP_SECRET / LARK_CHAT_ID",
+              file=sys.stderr)
 
     # secret 优先环境变量（不进任何文件），其次 .lark/secret.env（gitignore），最后 config（兼容旧配置）
     env_file = {}
@@ -53,6 +56,7 @@ def load_config():
     cfg["app_id"] = os.environ.get("LARK_APP_ID") or env_file.get("LARK_APP_ID") or cfg.get("app_id", "")
     cfg["app_secret"] = (os.environ.get("LARK_APP_SECRET") or env_file.get("LARK_APP_SECRET")
                          or cfg.get("app_secret", ""))
+    cfg["chat_id"] = os.environ.get("LARK_CHAT_ID") or cfg.get("chat_id", "")
     return cfg
 
 
@@ -92,7 +96,7 @@ def upload_file(token, path, display_name):
     """multipart 上传，返回 file_key；display_name 决定群里看到的文件名"""
     boundary = "----JZ" + uuid.uuid4().hex
     name = display_name or os.path.basename(path)
-    mime = mimetypes.guess_type(name)[0] or "application/vnd.android.package-archive"
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     content = open(path, "rb").read()
 
     def field(k, v):
@@ -163,7 +167,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--title", required=True)
     ap.add_argument("--body", default="")
-    ap.add_argument("--apk", default="")
+    ap.add_argument("--apk", default="", help="要发的文件（apk / ipa / dmg 均可）")
+    ap.add_argument("--file", dest="file", default="", help="同 --apk，语义更清楚（优先）")
     ap.add_argument("--name", default="", help="群里显示的文件名（默认用本地文件名）")
     ap.add_argument("--chat", default="", help="覆盖配置里的 chat_id")
     ap.add_argument("--fail", action="store_true", help="失败通知：发红色卡片")
@@ -174,26 +179,27 @@ def main():
     chat_id = args.chat or cfg.get("chat_id", "")
     title = fmt_title(args.title, args.fail)
 
-    apk_path = args.apk
+    apk_path = args.file or args.apk
     if apk_path and not os.path.isabs(apk_path):
         apk_path = os.path.join(ROOT, apk_path)
     has_apk = bool(apk_path) and os.path.exists(apk_path) and not args.fail
+    file_ext = os.path.splitext(apk_path)[1].lower() if apk_path else ""
 
     # 回退用的纯文本（机器人不可用时至少把结论发出去）
     fallback = title + "\n" + (args.body or "")
     if apk_path:
-        fallback += f"\nAPK：{args.name or os.path.basename(apk_path)}（{os.path.getsize(apk_path):,} B）" \
-                    if os.path.exists(apk_path) else f"\nAPK 未找到：{apk_path}"
+        fallback += f"\n文件：{args.name or os.path.basename(apk_path)}（{os.path.getsize(apk_path):,} B）" \
+                    if os.path.exists(apk_path) else f"\n文件未找到：{apk_path}"
 
     try:
         token = tenant_token(cfg)
         ensure_bot_in_chat(token, chat_id, cfg["app_id"])
 
         if has_apk:
-            # 一条消息 = APK 本身，文件名带版本与主题
+            # 一条消息 = 文件本身，文件名带版本与主题
             display = args.name or os.path.basename(apk_path)
-            if not display.lower().endswith(".apk"):
-                display += ".apk"
+            if file_ext and not display.lower().endswith(file_ext):
+                display += file_ext
             key = upload_file(token, apk_path, display)
             mid = send_message(token, chat_id, "file", {"file_key": key})
             md5 = hashlib.md5(open(apk_path, "rb").read()).hexdigest().upper()
