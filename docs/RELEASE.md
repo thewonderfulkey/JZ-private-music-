@@ -161,3 +161,10 @@ python tools\release_github.py --tag v<版本> --name "第 N 版 v<版本>"
 另外：`xcodebuild -target` 不能配 `-derivedDataPath`（会报 "The flag -scheme ... is required"），
 用 `SYMROOT`/`OBJROOT` 指定产物目录；`run:` 块里含中文的多行字符串要改用 `printf`，
 否则 YAML 会把未缩进的续行当成新节点。
+
+**额度与费用（私有仓库）**：GitHub Actions 的 2,000 分钟/月免费额度只被私有仓库消耗，
+macOS runner 按 **10 倍**计入（Linux 1× / Windows 2×），每个 job 不足一分钟按一分钟算。
+本工作流一次构建约 36 秒 → 计 1 分钟 → 消耗约 **10 分钟额度/次**，即约 200 次/月；
+产物 0.29 MB，远低于 500 MB artifact 配额。超出额度时默认直接失败（不会自动扣钱），
+只有在账户里开启 spending limit 才会按 macOS $0.062/分钟计费。
+把仓库改成 **public** 则标准 runner（含 macOS）完全免费、不限次数——前提是源码可以公开。
