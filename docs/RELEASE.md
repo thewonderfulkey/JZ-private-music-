@@ -90,3 +90,25 @@ python tools\release_github.py --tag v<版本> --name "第 N 版 v<版本>"
 > 本机 git 全局配了 http.proxy=http://127.0.0.1:7890，代理没开时所有 github 操作都会报
 > "Failed to connect to 127.0.0.1:7890"（之前一直以为是 TLS 问题）。命令里带 -c http.proxy= 绕过即可。
 > 凭据在 Windows 凭据管理器（git credential manager），git credential fill 可取到 PAT 供 API 用。
+
+### Windows 桌面版资产（和 APK 放同一个 Release）
+
+仓库**不存 exe**：单个 138–145 MB，超过 GitHub 单文件 100 MB 上限（`.gitignore` 里
+`releases/windows/*.exe` 已挡），构建产物只作为 Release 资产上传。命名跟 Android 资产保持同一风格：
+
+| 资产 | 来源脚本 | 说明 |
+|---|---|---|
+| `JZ-Music-v<版本>-windows-x64-setup.exe` | `tools/build-setup.ps1` | 推荐：双击安装，自带 JRE，装完有 Download / Log / Cache / Data / Backup / 说明 + 卸载程序 |
+| `JZ-Music-v<版本>-windows-x64-portable.exe` | `tools/build-portable-exe.ps1` | 免安装单文件，首次运行解包到 `%LOCALAPPDATA%\JZ Music\app-<版本>-<指纹>` |
+
+版本号与 Android 同源（`android/app/build.gradle.kts` 的 `versionName`），所以同一个 Release 里
+apk 与 exe 的版本号始终一致。上传仍用 `tools/release_github.py`，`--asset` 可给多次；
+同名资产会先删再传，**整段命令可重复执行**（幂等）。
+
+两条实测经验：
+
+1. `release_github.py` 只负责"建 Release / 传资产"，**不会改已有 Release 的标题和正文**；
+   正文要补 Windows 段落，单独 `PATCH /repos/{owner}/{repo}/releases/{id}`（`body` 字段）。
+2. 脚本用 urllib，会读 Windows 注册表里的系统代理（本机是那个没开的 127.0.0.1:7890），
+   表现为连不上/超时。在同一个进程里先设 `$env:no_proxy='*'` 再跑即可；145 MB 上传约 15–20 分钟，别中途打断。
+
