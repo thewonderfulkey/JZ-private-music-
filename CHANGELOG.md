@@ -1,3 +1,12 @@
+## v2.1.95 · Windows 桌面版（2026-11-16）
+**PC 端首发：同一套引擎，原生桌面程序**
+
+- 新增 Windows 桌面版（Compose Desktop）：四平台搜索 / 多后端取流 / 逐字歌词 / 下载 / 托盘常驻 / 单实例
+- 「更换下载位置」改为应用内纸墨风选择器（替换系统 JFileChooser）；盘符根目录禁止当下载目录
+- 发布口径统一：Release 只放 `JZ-Music-v<版本>.apk` + `JZ-Music-v<版本>-windows-x64.exe` + GitHub 自动生成的 Source code；
+  不再上传安装器 / 带 portable 后缀的副本 / 自打源码 zip（见 `docs/RELEASE.md` §7）
+- README 改成面向普通用户：能做什么 / 亮点 / 稀缺 / 核心难点；工程细节归到 `docs/`
+
 ## v2.1.95 · 2026-11-12
 **四个界面细节**
 

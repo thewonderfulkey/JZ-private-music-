@@ -1,140 +1,81 @@
 # JZ 音乐助手（JZ Music）
 
-Android 端音乐聚合播放器：四平台检索（酷我 / QQ / 网易云 / 酷狗）、多后端取流兜底、逐字时间歌词、桌面歌词悬浮栏、听歌识曲（酷狗 + 网易双通道按评分融合）。
+**一个客户端，四家曲库：QQ 音乐、网易云、酷我、酷狗。手机和电脑都能用，不用登录，也没有广告。**
 
-| 项 | 值 |
+搜一次，四家一起找；这首歌在某家没版权、放不出来，就自动换到有它的那家。歌词逐字跟着唱，
+电脑上还能单独浮一条桌面歌词；手机端还能「听歌识曲」。
+
+![电脑版：发现页、正在播放与逐字歌词](docs/images/pc-home.png)
+
+![电脑版：一次搜索，四家结果](docs/images/pc-search.png)
+
+## 能做什么
+
+| 功能 | 说明 |
 |---|---|
-| 当前版本 | **v2.1.95**（versionCode 153） |
-| 包名 | `com.jz.musichelper` |
-| 最低 / 目标 SDK | 26 / 34（compileSdk 34） |
-| 技术栈 | Kotlin + Jetpack Compose（Material3）、OkHttp、Coil、MediaPlayer |
-| 构建 | Gradle 8.9 + JDK 17（无 gradlew，脚本见 `tools/build.ps1`） |
-| 签名 | Android Debug 证书（SHA-256 `916ad232…`，**不可更换**，否则无法覆盖安装） |
-| 分发 | 仅本地：`releases/` 只保留最新一版 APK；GitHub 暂不同步 |
+| **四家一起搜** | 一个搜索框同时搜 QQ 音乐 / 网易云 / 酷我 / 酷狗，结果按可信度排好，并标出各家各有多少条 |
+| **放不出来就换家** | 某首歌在当前平台没有可用音源时，自动用别家的同一首补上，不用你自己去切 |
+| **逐字歌词** | 唱到哪个字亮哪个字（毫秒级），手机和电脑一样；电脑上还能把歌词浮在桌面上 |
+| **听歌识曲** | 手机端录 10 秒，给出歌名 / 歌手，并尽量判断是原唱还是翻唱，附上判断依据 |
+| **下载** | 三档音质（标准 128k / 高品 320k / 无损 FLAC），有下载管理，能删、能改下载目录 |
+| **日常** | 收藏、最近播放、搜索历史、一键备份；电脑端可收进托盘，关掉窗口也继续放 |
+| **电脑版排版** | 左侧栏导航 + 宽内容区 + 右侧正在播放和歌词 + 底部播放条，按电脑客户端的习惯来 |
 
-## 目录结构
+## 亮点
 
-```
-Private_music/
-├── android/                  Android 工程（可直接构建）
-│   ├── app/src/main/         Kotlin 源码 / 资源 / 网易 afp 指纹引擎 assets
-│   ├── build.gradle.kts      版本号、依赖、签名配置
-│   └── settings.gradle.kts
-├── releases/                 交付物：只留最新 APK + 安装包；windows\ 为桌面版产物
-├── desktop/                  **Windows 桌面版工程（Compose Desktop）**
-├── docs/
-│   ├── HANDOFF.md            接手说明（历史、缺口、路线）
-│   ├── ARCHITECTURE.md       工程结构与模块职责
-│   ├── RECOGNITION.md        听歌识曲：链路、打分模型、测试夹具
-│   ├── RELEASE.md            构建 / 验证 / 交付流程
-│   ├── design/               UI 设计文档、功能基线、桌面歌词方案
-│   ├── recognition/          识曲免费通道探活报告
-│   ├── api/                  各平台接口调研与逆向对照
-│   └── changelog/            逐版交付说明（v2.1.26 起，note_*.md）
-├── tools/
-│   ├── build.ps1             一键构建
-│   ├── build-desktop.ps1     Windows 桌面版构建
-│   ├── build-setup.ps1       Windows 安装包构建（Setup.exe）
-│   ├── setup/                安装器 / 卸载器源码 + 用户说明文档
-│   ├── verify/               出包静态验证脚本与历史输出
-│   └── probes/               接口探活、规则回归、界面 mock 脚本
-├── .build/                   **构建工具链（默认忽略，不入库）**
-│   ├── toolchain/jdk-17      JDK 17（自带，不依赖 C 盘安装）
-│   ├── toolchain/gradle-8.9  Gradle 8.9（自带）
-│   └── gradle-home/          GRADLE_USER_HOME（依赖缓存，离线可编）
-├── services/                 本地服务（第三方，非本仓库维护）
-│   ├── netease-api/          网易云 API（api-enhanced）
-│   ├── lrc-api/              LrcApi 歌词服务
-│   └── lddc/                 LDDC 歌词搜索工具
-└── archive/                  历史资产：旧 APK、源码 zip、iOS 工程、调研包
-```
+- **不用开四个 App**：想听一首歌，搜一次就够，哪家有就放哪家。
+- **不打断你**：一首歌放不出来，它自己换源接着放，不会弹个错误让你自己处理。
+- **歌词真的逐字**：不是整句一起变色，而是跟着唱到哪个字亮哪个字；电脑上歌词可以浮在桌面最上层。
+- **电脑版跟手**：滚动、拖动、悬浮反馈都是原生桌面程序的手感，不是网页包一层；托盘常驻、单实例、关窗继续放。
+- **干净**：没有开屏广告、没有登录弹窗、没有会员等级，打开就能用。
 
-## 快速开始
+## 稀缺（大多数播放器没有的）
 
-构建工具链已放进项目：`.build\toolchain\jdk-17` + `.build\toolchain\gradle-8.9`，
-`GRADLE_USER_HOME` 指向 `.build\gradle-home`，**不依赖 C 盘的 JDK/Gradle 安装**（缺失时才回退）。
+- **一个播放器管四家曲库，而且会"跨平台补位"**：官方客户端只搜自家曲库；常见的聚合搜索工具大多只把结果列出来，
+  真到播放还是"没源就是没源"。这里在取流阶段就会换到有源的那家。
+- **识曲分原唱 / 翻唱，并把依据摆出来**：多数识曲只丢给你"最像的一首"，翻唱、Live、DJ 版混在一起；
+  这里会把候选按「是否原唱、歌名是否干净、是否正式专辑、时长是否吻合、两条通道是否互证」打分，再告诉你凭什么是它。
+- **电脑版是原生程序，不是网页套壳**：手机和电脑共用同一套取流 / 歌词 / 播放逻辑，电脑端编译成真正的桌面程序
+  （Compose Desktop + FFmpeg 解码），不是 Electron 或 WebView 套一层。
+- **从界面到边角都是同一套水墨风格**：连托盘右键菜单、桌面歌词条、甚至"更换下载位置"的选文件夹弹窗都是自己画的纸墨样式，
+  不是给系统灰控件换个颜色。
+- **不用登录、没有会员墙、没有广告位**。
 
-```powershell
-cd D:\Projects\Private_music
-pwsh -File .\tools\build.ps1              # 只构建 release
-pwsh -File .\tools\build.ps1 -Clean       # 先 clean
-pwsh -File .\tools\build.ps1 -Publish     # 构建并复制到 releases\
+## 做这个难在哪
 
-pwsh -File .\tools\dev.ps1                # 一条命令：构建 → 静态验证 → 模拟器冒烟 → 飞书通知
-```
+- **音源是"活"的**：各平台的搜索和取流接口一直在变，直链还有时效；同一首歌往往有原唱、翻唱、Live、DJ 好几个版本。
+  所以程序里做了多条取流通道，一条不行换下一条，并且会按文件体积反过来校验音质——避免"标着无损、实际是 128k"。
+- **识曲要"听得出原唱"**：把 10 秒录音算成音频指纹，酷狗、网易两条通道各给一批候选，再统一打分比较。
+  这一步没有现成方案，是拿真实样本一条条试出来的（比如同一段伴奏的翻唱会被排除）。
+- **逐字歌词要自己对齐**：三家给的歌词格式完全不同（普通 LRC、酷狗 KRC、QQ QRC），要把它们对到同一条时间轴上，
+  再按毫秒插值染色；手机和电脑用同一份歌词逻辑，画法却要各写一遍。
+- **两端做到"像同一个 App"**：手机上用 Canvas 画的水墨效果，电脑上要用 Skia / Java2D 重画；
+  桌面端的悬浮歌词窗、托盘菜单、无边框窗口、高清屏缩放都得自己处理系统差异。
 
-脚本会先打印「项目根目录 / 构建目录 / 工具链 / 缓存 / 版本」，确认路径无误再编译。
-产物：`android\app\build\outputs\apk\release\app-release.apk` → `releases\JZ音乐助手-v<版本>.apk`。
+## 下载
 
-自动化细节见 [docs/AUTOMATION.md](docs/AUTOMATION.md)：模拟器冒烟覆盖启动/崩溃/导航/版本，
-飞书发到群「音乐软件开发」，失败会带截图与 logcat 留在 `tools\smoke\out\`。
+| 平台 | 文件 | 说明 |
+|---|---|---|
+| Windows 10 / 11 | `JZ-Music-v2.1.95-windows-x64.exe` | 约 139 MB，免安装单文件，自带运行环境，双击即用 |
+| Android 8.0+ | `JZ-Music-v2.1.95.apk` | 约 29 MB，覆盖安装即可 |
 
+全部文件在 [最新发布（Releases）](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)，源码在同一页的 **Source code**。
 
-## Windows 桌面版 JZ Music（PC 版式）
+- **Windows**：首次启动会把程序解开到 `%LOCALAPPDATA%\JZ Music\app-<版本>`，之后秒开；
+  程序没有数字签名，Windows 首次运行会提示「未知发布者」，点「更多信息 → 仍要运行」即可。
+- **Android**：签名和历次版本一致，可以直接覆盖安装；请不要装其它渠道改过的包。
 
-同一套网络层 / 播放引擎 / 歌词逻辑（PC 端不做听歌识曲），界面按 PC 音乐客户端（网易云 / QQ 音乐 / 酷狗 PC）的结构：
-**左侧栏导航 + 宽内容区（卡片/表格）+ 右侧正在播放（大封面/逐字歌词/队列）+ 底部播放条**，保留水墨视觉。
+## 已知限制
 
-```powershell
-pwsh -File .\tools\build-setup.ps1                # 打安装包（对外分发用这个）
-pwsh -File .\tools\build-desktop.ps1              # 编译 + 打包便携版
-pwsh -File .\tools\build-desktop.ps1 -Run         # 开发模式直跑
-pwsh -File .\tools\build-desktop.ps1 -Publish     # app-image 打进 releases\windows\
-pwsh -File .\tools\build-portable-exe.ps1         # 再压成单文件 exe（老分发方式）
-```
+- 只有 Android 和 Windows，没有 iOS / macOS。
+- 听歌识曲只有手机端（电脑版没有麦克风链路）。
+- 依赖各平台公开接口：哪天对方改接口，某些歌可能暂时没有可用音源；程序会尝试换平台，但不保证一定有。
+- 付费 / 独家曲目拿到才有，拿不到就是没有。
+- Windows 版没有数字签名；Android 用固定证书签名，所以必须一直用同一个证书，不能换。
 
-产物：**`releases\windows\JZ Music Setup-<版本>.exe`（双击安装）**。
-装完就是一个 **`JZ Music` 文件夹**（默认 `D:\JZ Music`）：
+## 关于
 
-```
-JZ Music\
-├── JZ Music.exe          主程序
-├── app\  runtime\        程序本体 + 自带 JRE
-├── Download\             下载的音乐自动保存到这里
-├── Log\                  运行日志（desktop.log / play.log / crash.log）
-├── Cache\                播放缓存（可随时清）
-├── Data\                 设置 / 收藏 / 历史 / 下载记录
-├── Backup\               一键备份
-├── 说明\                 使用说明 / 更新日志 / 卸载说明 / 常见问题
-└── 卸载 JZ Music.exe
-```
+个人做的音乐播放器，目标很朴素：**一个客户端，听完四家的歌**，界面按自己喜欢的纸墨风格重做。
 
-安装 / 卸载 / 静默参数与构建细节见 [docs/INSTALL.md](docs/INSTALL.md)；
-免安装单文件 `JZ Music-<版本>-portable.exe` 仍在（首跑解包到 `%LOCALAPPDATA%`）。
-工程与平台层对照见 [docs/DESKTOP-WINDOWS.md](docs/DESKTOP-WINDOWS.md)。
-
-- 播放：FFmpeg（javacv）解码 + Java Sound 输出，mp3/flac/m4a/ogg/wav 全覆盖
-- 桌面歌词：置顶透明独立窗口 + Java2D 自绘（纸签/逐字染色/工具条/拖动吸边）
-- 识曲：酷狗通道（网易 afp 是 WebView 里的 wasm，桌面无可用 WebView，见文档"已知差异"）
-
-## 核心能力
-
-| 模块 | 说明 |
-|---|---|
-| 搜索 | 四平台并发 + `SearchRanker` 全局排序；无源歌曲自动隐藏；平台行标出各平台条数 |
-| 取流 | 10 个后端多路解析，按音质挑源，失败换源；连续无源自动跳过（上限 3） |
-| 播放 | 前台服务 + WAKE_LOCK + Doze 白名单 + 曲终闹铃；三态循环、自动连播、整首缓存、下一首预取 |
-| 歌词 | 酷我官方接口 → LDDC（酷狗 KRC / QQ QRC，含逐字时间）；4h 缓存 + 并发去重 |
-| 桌面歌词 | 悬浮窗 + 原生 Canvas 自绘；逐字染色、三纸色、五档字号、工具条、拖动吸边 |
-| 听歌识曲 | 酷狗指纹（8k PCM）+ 网易 afp（WebView 本地指纹），**按统一评分选更可信的候选** |
-| 下载 | 四档音质、下载管理、本地删除 |
-
-## 约定
-
-1. **本目录是唯一主目录**，后续改动只落在这里；GitHub 只在明确要求时同步。
-2. `releases/` 只保留最新一版 APK，旧包进 `archive/apk/`。
-3. 签名证书沿用历史 debug 证书，**不要换**。
-4. 每版必须留下 `docs/changelog/note_v<版本>.md`（改了什么 / 根因 / 实测 / 验证 / 缺口）。
-5. 没有真机时，静态验证 + 桌面侧接口实测是下限，**不能当"已验证"**。
-
-## 文档索引
-
-- 接手先读：[docs/HANDOFF.md](docs/HANDOFF.md)
-- 改代码前读：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- 改识曲读：[docs/RECOGNITION.md](docs/RECOGNITION.md)
-- 出包发版读：[docs/RELEASE.md](docs/RELEASE.md)
-- Windows 桌面版：[docs/DESKTOP-WINDOWS.md](docs/DESKTOP-WINDOWS.md)
-- Windows 安装包 / 文件夹结构：[docs/INSTALL.md](docs/INSTALL.md)
-- 自动化与通知：[docs/AUTOMATION.md](docs/AUTOMATION.md)
-
-
+想自己编译、看工程结构或发版流程，从这里进：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（结构）、
+[docs/HANDOFF.md](docs/HANDOFF.md)（接手说明）、[docs/RELEASE.md](docs/RELEASE.md)（构建与发版）。

@@ -46,7 +46,8 @@ python tools\verify\verify_2192.py
 
 ## 4. 交付
 
-1. `releases/` 只保留最新 APK：`JZ音乐助手-v<版本>.apk`，旧的移到 `archive/apk/`；
+1. `releases/` 只保留最新 APK：`JZ音乐助手-v<版本>.apk`（发布到 GitHub 时资产名改成 `JZ-Music-v<版本>.apk`），
+   旧的移到 `archive/apk/`；Windows 单文件 exe 走 `releases\windows\`，发布时改名 `JZ-Music-v<版本>-windows-x64.exe`；
 2. 写 `docs/changelog/note_v<版本>.md`，固定六段：
    - 这版改了什么（用户视角一句话）
    - 根因 / 为什么这么改（能贴实测数据就贴）
@@ -54,7 +55,7 @@ python tools\verify\verify_2192.py
    - 验证结果（PASS 表 + 明确缺口）
    - 30 秒自查步骤
    - 口径提醒（还有哪些"一句话就能改"的取舍没做）
-3. `README.md` 的版本表、`CHANGELOG.md` 追加一条；
+3. `README.md` 的「下载」段落版本号与文件名、`CHANGELOG.md` 追加一条；
 4. 本地 git 提交（GitHub 仅在明确要求时同步）。
 
 ## 5. 提交信息规范
@@ -84,31 +85,42 @@ cd D:\Projects\Private_music
 git -c http.proxy= -c https.proxy= push origin main
 git -c http.proxy= -c https.proxy= push origin v<版本>
 python tools\release_github.py --tag v<版本> --name "第 N 版 v<版本>" 
-    --body-file .build\release_body.md --asset releases\<apk> --asset .build\<源码zip>
+    --body-file .build\release_body.md --asset releases\JZ-Music-v<版本>.apk --asset releases\windows\JZ-Music-v<版本>-windows-x64.exe
 `
 
 > 本机 git 全局配了 http.proxy=http://127.0.0.1:7890，代理没开时所有 github 操作都会报
 > "Failed to connect to 127.0.0.1:7890"（之前一直以为是 TLS 问题）。命令里带 -c http.proxy= 绕过即可。
 > 凭据在 Windows 凭据管理器（git credential manager），git credential fill 可取到 PAT 供 API 用。
 
-### Windows 桌面版资产（和 APK 放同一个 Release）
+### Release 里只放三样东西（固定口径）
 
-仓库**不存 exe**：单个 138–145 MB，超过 GitHub 单文件 100 MB 上限（`.gitignore` 里
-`releases/windows/*.exe` 已挡），构建产物只作为 Release 资产上传。命名跟 Android 资产保持同一风格：
+1. **Android APK**：`JZ-Music-v<版本>.apk`
+2. **Windows 程序**：`JZ-Music-v<版本>-windows-x64.exe`（**单个 exe、非安装器**，双击即用）
+3. **源码**：GitHub 在 Release 页面自动生成的 `Source code (zip / tar.gz)`，不用自己传
 
-| 资产 | 来源脚本 | 说明 |
-|---|---|---|
-| `JZ-Music-v<版本>-windows-x64-setup.exe` | `tools/build-setup.ps1` | 推荐：双击安装，自带 JRE，装完有 Download / Log / Cache / Data / Backup / 说明 + 卸载程序 |
-| `JZ-Music-v<版本>-windows-x64-portable.exe` | `tools/build-portable-exe.ps1` | 免安装单文件，首次运行解包到 `%LOCALAPPDATA%\JZ Music\app-<版本>-<指纹>` |
+不要上传的东西（以前传过，已废弃）：
 
-版本号与 Android 同源（`android/app/build.gradle.kts` 的 `versionName`），所以同一个 Release 里
-apk 与 exe 的版本号始终一致。上传仍用 `tools/release_github.py`，`--asset` 可给多次；
-同名资产会先删再传，**整段命令可重复执行**（幂等）。
+| 不上传 | 为什么 |
+|---|---|
+| `JZ Music Setup-<版本>.exe`（安装器） | 用户装个播放器不该先跑安装器；单文件 exe 已经够用，两套分发只会让人选错 |
+| `...-portable.exe`（带 portable 后缀的那份） | 就是第 2 条那个程序，名字里不需要 `portable`，多一个词反而像"另一个版本" |
+| `*-android-source-*.zip`（自己打的源码包） | GitHub 自动生成 Source code，重复传一份没有意义，还会和 tag 不一致 |
+
+- 仓库**不存 exe**：单个 138–145 MB，超过 GitHub 单文件 100 MB 上限（`.gitignore` 里
+  `releases/windows/*.exe` 已挡），exe 只作为 Release 资产上传。
+- 版本号与 Android 同源（`android/app/build.gradle.kts` 的 `versionName`），所以同一 Release 里
+  apk 与 exe 版本号必然一致。
+- **tag 必须包含这一版的实际代码**：Release 的 Source code 是从 tag 出的快照，
+  tag 落后于 `main` 时源码包里就会缺东西（例如少了 `desktop/`）。发版时先确认 `git rev-parse v<版本>`
+  指向当前要发布的提交；需要改就用 `git tag -f` + `git push -f origin v<版本>`。
+
+上传仍用 `tools/release_github.py`，`--asset` 可给多次；同名资产会先删再传，**整段命令可重复执行**（幂等）。
+上传前想清掉旧资产（比如上面三种废弃资产），直接 `DELETE /repos/{owner}/{repo}/releases/assets/{id}`。
 
 两条实测经验：
 
 1. `release_github.py` 只负责"建 Release / 传资产"，**不会改已有 Release 的标题和正文**；
-   正文要补 Windows 段落，单独 `PATCH /repos/{owner}/{repo}/releases/{id}`（`body` 字段）。
+   正文要改，单独 `PATCH /repos/{owner}/{repo}/releases/{id}`（`body` 字段）。
 2. 脚本用 urllib，会读 Windows 注册表里的系统代理（本机是那个没开的 127.0.0.1:7890），
    表现为连不上/超时。在同一个进程里先设 `$env:no_proxy='*'` 再跑即可；145 MB 上传约 15–20 分钟，别中途打断。
 

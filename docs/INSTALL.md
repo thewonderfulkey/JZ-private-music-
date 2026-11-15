@@ -1,5 +1,9 @@
 # Windows 安装版（安装包 / 文件夹结构）
 
+> **对外只发单文件 exe**（`JZ-Music-v<版本>-windows-x64.exe`，免安装、双击即用），
+> 这份文档讲的是**可选的本地安装版**：想要"一个 JZ Music 文件夹 + Download/Log/Data + 卸载程序"
+> 的形态时用它，见 `tools/build-setup.ps1`。安装包不上传 GitHub Release（口径见 `RELEASE.md` §7）。
+
 > 目标：交付一个 **`JZ Music` 文件夹**，里面有 `JZ Music.exe`、自动建好的 `Download`（下载的音乐）
 > 与 `Log`（日志）等用户目录。双击安装包即可，卸载就是删文件夹（或走设置→应用）。
 
@@ -7,8 +11,8 @@
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| **安装包** | `releases\windows\JZ Music Setup-<版本>.exe` | 双击安装；内嵌整份 app-image + 卸载程序 + 说明文档 |
-| 免安装单文件 | `releases\windows\JZ Music-<版本>-portable.exe` | 老分发方式，首跑解包到 `%LOCALAPPDATA%` |
+| **单文件 exe（对外的那个）** | `releases\windows\JZ Music-<版本>-portable.exe` | 免安装，双击即用；首跑解包到 `%LOCALAPPDATA%`；发布时改名为 `JZ-Music-v<版本>-windows-x64.exe` |
+| 安装包（可选，只在本地用） | `releases\windows\JZ Music Setup-<版本>.exe` | 双击安装；内嵌整份 app-image + 卸载程序 + 说明文档 |
 | 脚本版安装 | `tools\setup\Setup.ps1` | 无 GUI / 批量部署用，从 app-image 直接铺目录 |
 
 安装包本身就是「自解压 + 安装动作」：`payload.zip`（jpackage app-image）作为资源嵌在 exe 里，
