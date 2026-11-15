@@ -124,3 +124,40 @@ python tools\release_github.py --tag v<版本> --name "第 N 版 v<版本>"
 2. 脚本用 urllib，会读 Windows 注册表里的系统代理（本机是那个没开的 127.0.0.1:7890），
    表现为连不上/超时。在同一个进程里先设 `$env:no_proxy='*'` 再跑即可；145 MB 上传约 15–20 分钟，别中途打断。
 
+
+## 8. iOS：GitHub Actions 出未签名 IPA → 飞书群
+
+`ios/` 是 SwiftUI 工程（`.xcodeproj` 手写，无第三方依赖）。`.github/workflows/ios-ipa.yml`
+在 **macos-15** 上编译成 **未签名 arm64 IPA**，产物两处落地：
+
+1. Actions artifact：`JZ-Music-v<版本>-ios-ipa`（私有仓库，登录后可下载，保留 14 天）；
+2. 飞书群：一条**文件消息**（复用 `tools/notify/lark.py` 的机器人通道）。
+
+触发方式：push `ios/**`、`tools/notify/lark.py` 或改工作流本身；也可在 Actions 页手动 Run。
+
+| 项 | 值 |
+|---|---|
+| 产物名 | `JZ-Music-v<版本>-ios-unsigned.ipa` |
+| 版本来源 | `android/app/build.gradle.kts` 的 `versionName`（与 APK / EXE 同源） |
+| 编译 | `xcodebuild -target JZMusicHelper -sdk iphoneos CODE_SIGNING_ALLOWED=NO`，`SYMROOT/OBJROOT` 固定产物目录 |
+| 打包 | `Payload/<App>.app` → zip → `.ipa` |
+
+**为什么要未签名**：签名要 Apple 开发者证书 + provisioning profile，仓库里没有。
+未签名包用 Sideloadly / AltStore / 爱思助手 自签后即可安装（iOS 16+，个人自用）。
+出正式签名包时在仓库加 `IOS_CERT_P12_BASE64` / `IOS_CERT_PASSWORD` / `IOS_PROFILE_BASE64` / `IOS_TEAM_ID`，
+把"编译"步骤换成 `xcodebuild archive` + `-exportArchive`（工作流末尾有注释说明）。
+
+**飞书凭据**：CI 里没有 `.lark/`（已 gitignore），改读仓库 Secrets：
+`LARK_APP_ID`、`LARK_APP_SECRET`、`LARK_CHAT_ID`。三个缺任一就跳过推送（不报错，IPA 仍在 artifact）。
+机器人必须已经在群里（飞书不允许机器人自己进群）。
+
+**两个已经踩过的坑**：
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| `The configuration 'macos-14-arm64-us-xl' is not supported`，run 1 秒内 cancelled | 本账号的 `macos-14` 标签不可用；用 `macos-15`（`macos-latest` 也可以） |
+| `Build input files cannot be found: .../Services/*.swift` | `.gitignore` 里 `services/` 没锚定，把 `ios/JZMusicHelper/Services/` 一起忽略了；改成 `/services/` |
+
+另外：`xcodebuild -target` 不能配 `-derivedDataPath`（会报 "The flag -scheme ... is required"），
+用 `SYMROOT`/`OBJROOT` 指定产物目录；`run:` 块里含中文的多行字符串要改用 `printf`，
+否则 YAML 会把未缩进的续行当成新节点。
