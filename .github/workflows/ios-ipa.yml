@@ -66,7 +66,8 @@ jobs:
             -target JZMusicHelper \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath build/ios \
+            SYMROOT="$PWD/build/products" \
+            OBJROOT="$PWD/build/obj" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -85,7 +86,7 @@ jobs:
         id: pkg
         run: |
           set -euo pipefail
-          APP=$(find build/ios/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          APP=$(find build/products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           [ -n "$APP" ] || { echo "::error::没找到 .app 产物"; exit 1; }
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR/Payload"
