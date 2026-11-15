@@ -1,0 +1,22 @@
+name: runner-probe
+
+# 临时探测：这台账号到底能用哪个 macOS runner 标签（验证完即删）
+on:
+  push:
+    paths:
+      - ".github/workflows/runner-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: hello
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version || true
