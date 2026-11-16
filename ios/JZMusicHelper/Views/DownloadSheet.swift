@@ -37,7 +37,6 @@ struct DownloadSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .onDismiss { flow.dismiss() }
     }
 
     // MARK: 歌头

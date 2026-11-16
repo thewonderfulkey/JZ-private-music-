@@ -85,7 +85,8 @@ struct RootTabView: View {
         // 下载面板挂在 TabView 外壳上：播放页、搜索结果、资料库都往这里送一首歌，
         // 任何一处都不要自己弹 sheet（否则同一时刻能出现两个音质选择）。
         .sheet(isPresented: Binding(get: { downloadFlow.isPresented },
-                                    set: { downloadFlow.isPresented = $0 })) {
+                                    set: { downloadFlow.isPresented = $0 }),
+               onDismiss: { downloadFlow.dismiss() }) {
             DownloadSheet()
                 .environment(downloadFlow)
                 .environment(settings)
