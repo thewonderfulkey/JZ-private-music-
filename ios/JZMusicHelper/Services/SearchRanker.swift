@@ -11,7 +11,7 @@ import Foundation
 //   平台位次先验：各平台第 1~4 名 +10 / +6 / +3 / +1
 //   同分按平台优先级 QQ → 网易 → 酷我 → 酷狗，再按原始顺序
 //
-// 唯一与 Android 不同的地方（移植时判定为 Android 侧缺陷，见 docs/ios/IOS-FEATURE-PARITY.md §12）：
+// 唯一与 Android 不同的地方（移植时判定为 Android 侧缺陷，见 docs/ios/IOS-NETWORK.md §3.2）：
 //   「标题只是查询串的一部分」这条封顶判断在 Android 里是区分大小写的
 //   （`phrase.contains(title)`，而 title 已被 uppercased），用户输小写时永远不生效。
 //   这里改成大小写不敏感，行为只在"本来该封顶却没封顶"的情况下变化。

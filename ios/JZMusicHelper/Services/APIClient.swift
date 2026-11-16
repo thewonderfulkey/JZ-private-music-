@@ -5,7 +5,7 @@ import Foundation
 // 与 Android `ApiClient.kt` 同口径：移动 UA + 默认 Referer + Accept，每类调用可覆盖超时。
 // Android 用 OkHttp 的 hostnameVerifier 给 `mobilecdn.kugou.com` 开过一个洞（该域名证书不匹配）；
 // iOS 这边**不开 ATS 例外**——酷狗搜索已改用 `mobiles.kugou.com`（证书正常），
-// 所以这个洞不需要带过来（见 docs/ios/IOS-FEATURE-PARITY.md）。
+// 所以这个洞不需要带过来（见 docs/ios/IOS-NETWORK.md §3.3）。
 final class APIClient {
 
     static let shared = APIClient()

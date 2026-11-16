@@ -169,6 +169,7 @@
 | [IOS-IA-SCREENS.md](IOS-IA-SCREENS.md) | 5 Tab 信息架构 + 12 个逐页设计（布局图、交互表、五态、无障碍、iPad） |
 | [IOS-FEATURE-PARITY.md](IOS-FEATURE-PARITY.md) | 132 条 APK 功能 → iOS 落点；Android 独有的 12 项替代方案；必须保留的技术口径 |
 | [mockups/](mockups/) | 5 张 393×852 视觉稿（PNG）+ 可再渲染的 HTML 源 |
+| [IOS-NETWORK.md](IOS-NETWORK.md) | **网络层已落码的实现与实测**：文件职责、四平台搜索/取流实测表（2026-11-16）、三处有意偏离 Android 的理由、CI 验证方式、还没做的部分 |
 | 本文件 | 已拍板事项（§0）、系统能力、Info.plist、审核风险、分发与自签（§4）、分期、验收 |
 
 ---

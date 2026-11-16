@@ -320,7 +320,19 @@ def search_kuwo(kw: str, limit: int = 20) -> list[dict]:
         return []
     records = [d for d in (_kuwo_parse_dict(c) for c in _kuwo_split_top_level(rest[open_i : close_i + 1])) if d]
     loose = lambda s: re.sub(r"\s+", " ", s.lower()).strip()  # noqa: E731
-    lk = loose(kw)
+
+    # 相关性过滤（与 iOS 版 KuwoParser.relevantRecords 一致；Android v2.1.95 是"整串做子串"，
+    # 两词查询必然 0 条 —— 2026-11-16 实测「晴天 周杰伦」旧口径 0 条 / 全词 14 条）
+    tokens = [t for t in loose(kw).split(" ") if t]
+
+    def haystack(item: dict) -> str:
+        return loose((item.get("SONGNAME") or item.get("NAME") or "") + " " + (item.get("ARTIST") or ""))
+
+    if tokens:
+        all_tokens = [r for r in records if all(t in haystack(r) for t in tokens)]
+        any_token = [r for r in records if any(t in haystack(r) for t in tokens)]
+        records = all_tokens if all_tokens else any_token
+
     songs, variants = [], []
     for item in records:
         name = (item.get("SONGNAME") or item.get("NAME") or "").strip()
@@ -328,8 +340,6 @@ def search_kuwo(kw: str, limit: int = 20) -> list[dict]:
         if not name or not rid:
             continue
         artist = item.get("ARTIST") or ""
-        if lk and lk not in loose(name) and lk not in loose(artist):
-            continue
         mvpic = (item.get("MVPIC") or "").strip().lstrip("/")
         song = {
             "platform": "kuwo",
