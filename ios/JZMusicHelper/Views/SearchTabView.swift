@@ -137,6 +137,7 @@ struct SearchTabView: View {
                     }
                 }
                 .padding(.bottom, Tokens.Spacing.xxl)
+                .readableWidth()
             }
             .scrollIndicators(.hidden)
         }

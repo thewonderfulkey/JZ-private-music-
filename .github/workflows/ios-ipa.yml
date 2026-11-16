@@ -46,6 +46,9 @@ jobs:
       - name: 检查手写 pbxproj
         run: python3 tools/ios/check_pbxproj.py
 
+      - name: 检查界面卫生（硬编码字号 / 固定行高）
+        run: python3 tools/ios/check_ui_hygiene.py
+
       - name: 编译网络层 + 跑断言
         run: |
           set -euo pipefail
@@ -70,6 +73,7 @@ jobs:
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
             ios/JZMusicHelper/Services/IntentInbox.swift \
             ios/JZMusicHelper/Services/PlaybackActivityModel.swift \
+            ios/JZMusicHelper/Services/LayoutRules.swift \
             ios/JZMusicHelper/Models/DiscoverCatalog.swift \
             ios/JZMusicHelper/Services/LyricsModel.swift \
             ios/JZMusicHelper/Services/LyricsCleaning.swift \

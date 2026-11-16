@@ -1020,6 +1020,23 @@ do {
           abs(PlaybackActivityRules.staleDate(from: now).timeIntervalSince(now) - 120) < 0.001)
 }
 
+// MARK: - 版式规则（P5 打磨）
+
+section("版式规则：iPad 限宽 / 宽屏判定")
+
+do {
+    check("iPhone 竖屏 393 原样", LayoutRules.contentWidth(available: 393) == 393)
+    check("iPad 竖屏 1024 截到 700", LayoutRules.contentWidth(available: 1024) == 700)
+    check("横屏 852 截到 700", LayoutRules.contentWidth(available: 852) == 700)
+    check("恰好 700 不变", LayoutRules.contentWidth(available: 700) == 700)
+    check("宽度未知给上限", LayoutRules.contentWidth(available: 0) == 700)
+    check("负数给上限", LayoutRules.contentWidth(available: -10) == 700)
+    check("NaN 给上限", LayoutRules.contentWidth(available: .nan) == 700)
+    check("768 算宽屏", LayoutRules.isWide(768))
+    check("393 不算宽屏", !LayoutRules.isWide(393))
+    check("自定义上限生效", LayoutRules.contentWidth(available: 900, max: 600) == 600)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

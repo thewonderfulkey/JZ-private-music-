@@ -56,6 +56,7 @@ struct RecognizeView: View {
             }
             .padding(.top, Tokens.Spacing.m)
             .padding(.bottom, Tokens.Spacing.xxl)
+            .readableWidth()
         }
         .scrollIndicators(.hidden)
         // 网易指纹引擎（WKWebView 跑 wasm）必须挂在视图层级里才保证执行 JS
@@ -346,7 +347,7 @@ struct RecognizeView: View {
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
         }
-        .frame(height: Tokens.Size.songRowHeight)
+        .frame(minHeight: Tokens.Size.songRowHeight)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(song.name)，\(song.singer)\(isStudio ? "，原唱" : "")")

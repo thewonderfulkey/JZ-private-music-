@@ -30,6 +30,7 @@ struct DiscoverView: View {
             }
             .padding(.top, Tokens.Spacing.xs)
             .padding(.bottom, Tokens.Spacing.xxl)
+            .readableWidth()
         }
         .scrollIndicators(.hidden)
         .navigationTitle("发现")
@@ -297,7 +298,7 @@ struct ChartRow: View {
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
         }
-        .frame(height: Tokens.Size.songRowHeight)
+        .frame(minHeight: Tokens.Size.songRowHeight)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("第 \(rank) 名，\(song.name)，\(song.singer)，\(song.durationText)")

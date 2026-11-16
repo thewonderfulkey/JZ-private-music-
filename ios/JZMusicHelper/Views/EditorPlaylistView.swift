@@ -39,6 +39,7 @@ struct EditorPlaylistView: View {
                 }
             }
             .padding(.bottom, Tokens.Spacing.xxl)
+            .readableWidth()
         }
         .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
@@ -140,7 +141,7 @@ struct EditorPlaylistView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .frame(height: Tokens.Size.songRowHeight)
+            .frame(minHeight: Tokens.Size.songRowHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

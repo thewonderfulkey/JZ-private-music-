@@ -78,6 +78,9 @@
 		B0000000000000000000004B /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004B /* LiveActivityController.swift */; };
 		B0000000000000000000004C /* PlaybackActivityModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000049 /* PlaybackActivityModel.swift */; };
 		B0000000000000000000004D /* PlaybackActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004A /* PlaybackActivity.swift */; };
+		B0000000000000000000004E /* ReadableWidth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004C /* ReadableWidth.swift */; };
+		B0000000000000000000004F /* CoverImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004D /* CoverImageCache.swift */; };
+		B00000000000000000000050 /* LayoutRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004E /* LayoutRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -150,6 +153,9 @@
 		F00000000000000000000049 /* PlaybackActivityModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackActivityModel.swift; sourceTree = "<group>"; };
 		F0000000000000000000004A /* PlaybackActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackActivity.swift; sourceTree = "<group>"; };
 		F0000000000000000000004B /* LiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityController.swift; sourceTree = "<group>"; };
+		F0000000000000000000004C /* ReadableWidth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadableWidth.swift; sourceTree = "<group>"; };
+		F0000000000000000000004D /* CoverImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverImageCache.swift; sourceTree = "<group>"; };
+		F0000000000000000000004E /* LayoutRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -246,6 +252,8 @@
 				F00000000000000000000049 /* PlaybackActivityModel.swift */,
 				F0000000000000000000004A /* PlaybackActivity.swift */,
 				F0000000000000000000004B /* LiveActivityController.swift */,
+				F0000000000000000000004D /* CoverImageCache.swift */,
+				F0000000000000000000004E /* LayoutRules.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -269,6 +277,7 @@
 				F00000000000000000000034 /* DownloadSheet.swift */,
 				F00000000000000000000038 /* EditorPlaylistView.swift */,
 				F00000000000000000000039 /* HotChartView.swift */,
+				F0000000000000000000004C /* ReadableWidth.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -497,6 +506,9 @@
 				B00000000000000000000049 /* PlaybackActivityModel.swift in Sources */,
 				B0000000000000000000004A /* PlaybackActivity.swift in Sources */,
 				B0000000000000000000004B /* LiveActivityController.swift in Sources */,
+				B0000000000000000000004E /* ReadableWidth.swift in Sources */,
+				B0000000000000000000004F /* CoverImageCache.swift in Sources */,
+				B00000000000000000000050 /* LayoutRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

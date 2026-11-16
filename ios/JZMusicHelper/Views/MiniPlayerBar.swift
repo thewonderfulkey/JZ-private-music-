@@ -36,7 +36,7 @@ struct MiniPlayerBar: View {
             }
             .padding(.leading, 8)
             .padding(.trailing, 4)
-            .frame(height: 56)
+            .frame(minHeight: 56)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(alignment: .bottom) {
                 GeometryReader { geo in

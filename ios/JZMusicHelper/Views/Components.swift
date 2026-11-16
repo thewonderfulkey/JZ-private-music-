@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 全局组件（设计稿 §2）
 
@@ -20,6 +21,7 @@ struct SongArtwork: View {
     var radius: CGFloat = Tokens.Radius.artworkSmall
 
     @State private var resolvedURL: String?
+    @State private var image: UIImage?
 
     private var url: URL? {
         (resolvedURL ?? song.picURL).flatMap { $0.isEmpty ? nil : URL(string: $0) }
@@ -27,23 +29,27 @@ struct SongArtwork: View {
 
     var body: some View {
         Group {
-            if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image): image.resizable().scaledToFill()
-                    case .failure: placeholder
-                    default: placeholder
-                    }
-                }
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 placeholder
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .task(id: song.id) {
+        .task(id: song.id) { await load() }
+    }
+
+    /// 封面走内存缓存：滚动离开再回来不重新下载（AsyncImage 会重下）
+    private func load() async {
+        if image != nil { return }
+        if resolvedURL == nil {
             resolvedURL = await CoverResolver.shared.coverURL(for: song)
         }
+        guard let url else { return }
+        image = await CoverImageCache.shared.image(for: url)
     }
 
     private var placeholder: some View {
@@ -101,9 +107,12 @@ struct SongRow: View {
                 }
             }
         }
-        .frame(height: Tokens.Size.songRowHeight)
+        // 行高用 minHeight 而不是 height：Dynamic Type 最大档（AX5）时行要能长高，不能截断
+        .frame(minHeight: Tokens.Size.songRowHeight)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(song.name)，\(song.singer)，\(song.durationText)")
+        .accessibilityHint("轻点播放")
     }
 
     private var secondaryText: String {
@@ -373,7 +382,7 @@ struct PendingFeatureRow: View {
             }
             Spacer()
         }
-        .frame(height: Tokens.Size.songRowHeight)
+        .frame(minHeight: Tokens.Size.songRowHeight)
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .accessibilityElement(children: .combine)
     }

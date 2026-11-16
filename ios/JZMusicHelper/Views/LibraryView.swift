@@ -71,6 +71,7 @@ struct LibraryView: View {
                         }
                     }
                     .padding(.bottom, Tokens.Spacing.xxl)
+                    .readableWidth()
                 }
                 .scrollIndicators(.hidden)
             }

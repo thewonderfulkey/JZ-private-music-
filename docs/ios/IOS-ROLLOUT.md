@@ -100,7 +100,7 @@
 | **P2 下载**（已落码，待装机验收 · [IOS-DOWNLOADS.md](IOS-DOWNLOADS.md)） | 音质选择 + 后台下载 + 校验 + 下载页 + Files 可见 | 能下载并按档位校验 | 断网/切后台/杀进程三种情况都有正确状态；坏文件不会入库 |
 | **P3 识曲**（双通道已落码，待装机 · [IOS-RECOGNIZE.md](IOS-RECOGNIZE.md)） | 麦克风 + 酷狗/网易双通道 + 打分 + 结果页 + 其他版本 + 最近识过 | 能识出原唱/翻唱 | 10 段真实样本，原唱判定与 Android 一致；无权限路径完整 |
 | **P4 系统面**（分享 + App Intents 已落码 · [IOS-SYSTEM.md](IOS-SYSTEM.md)；Live Activity / Widget 待建 Extension target） | Live Activity（锁屏歌词/灵动岛）+ Widget + App Intents + 分享 | iOS 独占体验 | 锁屏歌词跟随换行；灵动岛三态正常；功耗可接受（30 分钟播放耗电 <5%） |
-| **P5 打磨** | 无障碍全流程 VoiceOver、Dynamic Type AX5、Dark Mode、iPad、性能 | 可交付自签包 | §5 验收表全绿 |
+| **P5 打磨**（已落码 · [IOS-POLISH.md](IOS-POLISH.md)） | 无障碍全流程 VoiceOver、Dynamic Type AX5、Dark Mode、iPad、性能 | 可交付自签包 | §5 验收表全绿 |
 
 **工程顺序提醒**：P1 之前必须先落地 `AudioSession + NowPlaying + RemoteCommand` 三件套（否则"能播但锁屏不显示"会被误判为播放 bug）。
 
@@ -177,6 +177,7 @@
 | [IOS-RECOGNIZE.md](IOS-RECOGNIZE.md) | **识曲（P3 双通道）**：麦克风采集 → 酷狗/网易指纹 → 统一打分 → 结果页与其他版本 |
 | [IOS-CLOSEOUT.md](IOS-CLOSEOUT.md) | **收尾项**：队列追加（播放全部补满）、下载列表播本地文件、设置四个开关被引擎消费、编辑精选按新旧轮换 |
 | [IOS-SYSTEM.md](IOS-SYSTEM.md) | **系统面（P4 第一段）**：分享（ShareLink + 文案口径）、三个 App Intents 与 IntentInbox 信箱、AppRouter 全局路由；Live Activity/Widget 的建 target 风险清单 |
+| [IOS-POLISH.md](IOS-POLISH.md) | **P5 打磨**：VoiceOver 覆盖表、Dynamic Type 的 row 高度/语义字体规则、iPad 单列 700、封面内存缓存；两条 CI 门禁（界面卫生 / 工程结构）与装机 5 步 |
 | 本文件 | 已拍板事项（§0）、系统能力、Info.plist、审核风险、分发与自签（§4）、分期、验收 |
 
 ---
