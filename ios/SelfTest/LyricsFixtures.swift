@@ -51,6 +51,10 @@ enum LyricsFixtures {
         ("因为爱情", "因为爱情", "陈奕迅/王菲", "王菲/陈奕迅", 100.000, 100.000, 100.000),
     ]
 
+    /// 酷狗签名的期望 query（固定 mid/clienttime，由 tools/ios/gen_kg_signature.py 算出）
+    static let kgSearchSongQuery = "appid=3116&clienttime=1700000000&clientver=11070&dfid=-&iscorrection=1&keyword=%E6%99%B4%E5%A4%A9%20%E5%91%A8%E6%9D%B0%E4%BC%A6&mid=abcdef0123456789&page=1&pagesize=20&platform=AndroidFilter&sorttype=0&token=&userid=0&uuid=-&signature=cfeaa7ca4091ae75a4ca48e2517baa4f"
+    static let kgLyricQuery = "album_audio_id=123456&appid=3116&clientver=11070&duration=269000&hash=abc123def456&keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6%20-%20%E6%99%B4%E5%A4%A9&lrctxt=1&man=no&signature=64b79f297b3b5e6b86992ebbdd761310"
+
     /// 3DES 单块向量：(明文 hex, 密文 hex)
     static let desVectors: [(plain: String, cipher: String)] = [
         ("4a5a544553543031", "e6ba70094ac5bc6d"),

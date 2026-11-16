@@ -568,6 +568,27 @@ do {
     check("缺失无效", KwLyrics.parseTimeMs(nil) == nil)
 }
 
+// MARK: - 13 酷狗签名（与 Python 参考实现逐字节对照）
+
+section("酷狗签名参数")
+
+do {
+    let search = LddcLyrics.kgQuery(
+        params: [("sorttype", "0"), ("keyword", "晴天 周杰伦"), ("pagesize", "20"), ("page", "1")],
+        module: "SearchSong", mid: "abcdef0123456789", dfid: "-", clientTime: 1700000000)
+    check("SearchSong 查询串逐字节一致", search == LyricsFixtures.kgSearchSongQuery,
+          "\n  got: \(search)\n  exp: \(LyricsFixtures.kgSearchSongQuery)")
+
+    let lyric = LddcLyrics.kgQuery(
+        params: [("album_audio_id", "123456"), ("duration", "269000"),
+                 ("hash", "abc123def456"), ("keyword", "周杰伦 - 晴天"),
+                 ("lrctxt", "1"), ("man", "no")],
+        module: "Lyric", mid: "abcdef0123456789")
+    check("Lyric 查询串逐字节一致（签名只含 appid/clientver+业务参数）",
+          lyric == LyricsFixtures.kgLyricQuery,
+          "\n  got: \(lyric)\n  exp: \(LyricsFixtures.kgLyricQuery)")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

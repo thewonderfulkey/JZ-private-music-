@@ -43,7 +43,7 @@ def read(name: str) -> str:
 
 def main() -> int:
     required = ["krc.b64", "krc.synth.b64", "krc.synth.expect", "qrc.synth.hex",
-                "qrc.synth.expect", "des-vectors.json", "_meta"]
+                "qrc.synth.expect", "des-vectors.json", "kg-sign.json", "_meta"]
     missing = [n for n in required if not (SRC / n).exists()]
     if missing:
         print(f"❌ 缺少 fixture：{missing}\n先跑 python tools/ios/probe_lyrics.py")
@@ -109,6 +109,10 @@ enum LyricsFixtures {{
                                artistScore: Double, total: Double)] = [
 {match_block}
     ]
+
+    /// 酷狗签名的期望 query（固定 mid/clienttime，由 tools/ios/gen_kg_signature.py 算出）
+    static let kgSearchSongQuery = "{read("kg-sign.json") and __import__("json").loads(read("kg-sign.json"))["searchSong"]}"
+    static let kgLyricQuery = "{read("kg-sign.json") and __import__("json").loads(read("kg-sign.json"))["lyric"]}"
 
     /// 3DES 单块向量：(明文 hex, 密文 hex)
     static let desVectors: [(plain: String, cipher: String)] = [
