@@ -467,6 +467,14 @@ final class PlayerEngine {
     }
 
     private func updateNowPlaying() {
+        // 锁屏歌词 / 灵动岛：这里每 0.5 秒被调一次，节流在 PlaybackActivityRules 里
+        LiveActivityController.shared.sync(
+            song: currentSong,
+            isPlaying: isPlaying,
+            currentTime: currentTime,
+            duration: duration,
+            lyric: currentLyricLine?.text)
+
         NowPlayingCenter.shared.update(
             song: currentSong,
             source: source,

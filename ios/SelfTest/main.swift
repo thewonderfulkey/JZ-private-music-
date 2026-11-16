@@ -972,6 +972,54 @@ do {
           SongShare.text(song: shared, source: src))
 }
 
+// MARK: - 锁屏歌词 / 灵动岛（P4 第三段）
+
+section("锁屏活动：进度 / 歌词截断 / 刷新节流")
+
+do {
+    // ① 进度
+    check("一半时长 = 0.5", PlaybackActivityRules.progress(current: 135, duration: 270) == 0.5)
+    check("超出时长夹到 1", PlaybackActivityRules.progress(current: 300, duration: 270) == 1.0)
+    check("负数夹到 0", PlaybackActivityRules.progress(current: -5, duration: 270) == 0.0)
+    check("时长未知给 0", PlaybackActivityRules.progress(current: 30, duration: 0) == 0)
+
+    // ② 歌词截断（锁屏只有一行）
+    check("短句原样", PlaybackActivityRules.shorten("晴天") == "晴天")
+    let longLine = "故事的小黄花从出生那年就飘着童年的荡秋千随记忆一直晃到现在"
+    let shortened = PlaybackActivityRules.shorten(longLine)
+    check("长句截断到上限", shortened.count == PlaybackActivityRules.maxLyricLength, "\(shortened.count)")
+    check("截断以省略号结尾", shortened.hasSuffix("…"))
+    check("前后空白被去掉", PlaybackActivityRules.shorten("  晴天  ") == "晴天")
+
+    // ③ 刷新节流
+    let now = Date()
+    let base = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "A",
+                                        progress: 0.1, isPlaying: true, updatedAt: now)
+    check("第一次一定刷新",
+          PlaybackActivityRules.shouldRefresh(previous: nil, next: base,
+                                              lastUpdate: now.addingTimeInterval(-100), now: now))
+    let sameContent = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "A",
+                                               progress: 0.11, isPlaying: true, updatedAt: now)
+    check("内容没变 1 秒内不刷",
+          !PlaybackActivityRules.shouldRefresh(previous: base, next: sameContent,
+                                               lastUpdate: now.addingTimeInterval(-1), now: now))
+    check("内容没变 6 秒后刷（进度条要对齐）",
+          PlaybackActivityRules.shouldRefresh(previous: base, next: sameContent,
+                                              lastUpdate: now.addingTimeInterval(-7), now: now))
+    let nextLine = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "B",
+                                            progress: 0.2, isPlaying: true, updatedAt: now)
+    check("换歌词行 0.6 秒后立刻刷",
+          PlaybackActivityRules.shouldRefresh(previous: base, next: nextLine,
+                                              lastUpdate: now.addingTimeInterval(-0.6), now: now))
+    check("换歌词行 0.2 秒内仍节流",
+          !PlaybackActivityRules.shouldRefresh(previous: base, next: nextLine,
+                                               lastUpdate: now.addingTimeInterval(-0.2), now: now))
+
+    // ④ 过期时间：App 被杀后锁屏不该永远显示旧歌
+    check("staleDate 是 2 分钟后",
+          abs(PlaybackActivityRules.staleDate(from: now).timeIntervalSince(now) - 120) < 0.001)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

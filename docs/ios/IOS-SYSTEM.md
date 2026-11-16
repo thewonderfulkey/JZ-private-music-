@@ -76,7 +76,9 @@ Tab 的选择状态从 `RootTabView` 的 `@State` 挪到 `AppRouter`：
 |---|---|---|
 | 信箱语义（先放先取 / 取完清空 / 计数） | CI `logic-tests` | ✅ 6 条断言 |
 | 分享文案（含字段 / 不带链接 / 空歌手） | CI `logic-tests` | ✅ 6 条断言 |
-| 整包编译（Intent 协议实现是否对得上 SDK） | CI `build-ipa` | ✅ BUILD SUCCEEDED，全套 **322 条断言全绿**，run [#43833684364](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43833684364)；`JZ-Music-v2.1.95-019f58d-r41-ios-unsigned.ipa` 已发飞书群 |
+| 整包编译（Intent 协议实现是否对得上 SDK） | CI `build-ipa` | ✅ BUILD SUCCEEDED（r41） |
+| Widget 扩展是否真嵌进包 | CI 门禁 `unzip -l` 看 `PlugIns/*.appex` + 本地实测 | ✅ `PlugIns/JZWidgets.appex/JZWidgets`（163KB）在包里，IPA 1.38 MB |
+| 锁屏活动的口径（进度/截断/节流/staleDate） | CI `logic-tests` | ✅ 14 条断言 |
 | **真机：快捷指令里能看到这三个动作、能跑通** | ❌ 无设备 | **未验证** |
 
 > App Intents 的协议细节（`description` 的可选性、`@Parameter` 的初始化器）是最容易跟 SDK 版本错位的地方，
@@ -117,18 +119,36 @@ XCBuildConfiguration（扩展自己的 Debug/Release、Info.plist、bundle id �
 
 ---
 
-## 5.1 下一段：Live Activity（锁屏歌词 / 灵动岛）
+## 5.1 第三段：Live Activity（锁屏歌词 / 灵动岛）——已完成
 
-Live Activity 的 UI 同样住在这个扩展里（`ActivityConfiguration`），但**状态由主 App 推送**：
-`ActivityAttributes` + `ActivityContent` 从 App 进程 `update`，扩展只负责渲染。因此它不需要 App Group，
-但要想清楚三件事：切歌时更新谁、App 被系统杀掉后活动怎么办（`staleDate`）、逐字刷新对功耗的影响
-（`NSSupportsLiveActivitiesFrequentUpdates` 已在 Info.plist 里备好）。
+UI 住在同一个扩展里（`ActivityConfiguration`），**状态由主 App 推送**：`Attributes` + `ContentState`
+从 App 进程 `update`，扩展只渲染。因此不需要 App Group。
+
+| 文件 | 职责 | 编译进 |
+|---|---|---|
+| [PlaybackActivityModel.swift](ios/JZMusicHelper/Services/PlaybackActivityModel.swift) | **纯函数**：进度换算、歌词截断、刷新节流、staleDate（CI 断言 14 条） | App + 扩展 |
+| [PlaybackActivity.swift](ios/JZMusicHelper/Services/PlaybackActivity.swift) | `SongActivityAttributes`（Attributes 只放 `songID`，可变内容全在 `ContentState`） | App + 扩展 |
+| [LiveActivityController.swift](ios/JZMusicHelper/Services/LiveActivityController.swift) | request / update / end；换歌就重开、系统关掉实时活动就静默跳过 | App |
+| `ios/JZWidgets/JZWidgets.swift` | 锁屏卡片 + 灵动岛三态（compact / expanded / minimal） | 扩展 |
+
+**三个必须想清楚的问题**（都处理了）：
+
+1. **切歌谁更新**：Attributes 不可变，所以换歌 = 结束旧活动 + 开新活动（`restart`）。
+2. **App 被杀怎么办**：`staleDate` 给 2 分钟，锁屏那块会自己消失，而不是永远停在旧歌上。
+3. **功耗**：引擎每 0.5 秒调一次 `sync`，但刷新被节流成——内容变了最快 0.5 秒一次、只有进度在走时 6 秒一次。
+   `NSSupportsLiveActivitiesFrequentUpdates` 已在 Info.plist 打开（逐字歌词要用），但当前实现按行更新，不逐字刷。
+
+**关闭路径**：用户在系统设置里关掉实时活动时 `ActivityAuthorizationInfo().areActivitiesEnabled == false`，
+控制器直接返回，播放不受任何影响（失败一律静默——Live Activity 是锦上添花）。
 
 ---
 
-## 6 装机要试的 3 件事
+## 6 装机要试的 7 件事
 
 1. 打开「快捷指令」→ 搜索 "JZ" → 应能看到「播放我的收藏 / 听歌识曲 / 搜索歌曲」。
 2. 跑「搜索歌曲」并给一个词（如"晴天"）→ App 应被带到搜索页并直接出结果。
 3. 播放页「⋯」→「分享」→ 系统分享面板里文案应是歌名/歌手/专辑/来源，**没有 URL**。
 4. 长按主屏空白处 →「+」→ 搜 "JZ" → 应能添加「今日精选」小组件（小/中两种尺寸），内容三首歌、每天换。
+5. 播放一首歌后锁屏：应看到歌名/歌手/当前歌词行/进度条；切歌时卡片跟着换；暂停后图标变回播放。
+6. 有灵动岛的机型：播放时胶囊里应出现波形图标，长按展开能看到歌词与进度。
+7. 杀掉 App：约 2 分钟后锁屏活动应自动消失（staleDate 生效），不是一直挂着旧歌。
