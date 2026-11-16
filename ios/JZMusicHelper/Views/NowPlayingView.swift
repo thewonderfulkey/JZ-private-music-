@@ -72,10 +72,25 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showSourceDetail) {
             SourceDetailView().environment(player)
         }
+        // 音质选择必须挂在**播放页自己**身上：RootTabView 上那个 sheet 挂在根视图，
+        // 播放页（全屏 cover）盖着它的时候根本弹不出来 —— 点「下载」会像没反应。
+        // 两边共用 downloadFlow.isPresented，但 RootTabView 那边加了 `!showPlayer` 的闸门，
+        // 所以同一时刻只有一个是活的。
+        .sheet(isPresented: Binding(get: { downloadFlow.isPresented },
+                                    set: { downloadFlow.isPresented = $0 }),
+               onDismiss: { downloadFlow.dismiss() }) {
+            DownloadSheet()
+                .environment(downloadFlow)
+                .environment(settings)
+                .environment(player)
+        }
         .task {
             Haptics.prepare()
-            // 打开播放页时歌词仍为空 → 再取一次（切歌瞬间取词失败不再等于永久没词）
-            player.reloadLyrics()
+            // 打开播放页时歌词仍为空 → 再取一次（切歌瞬间取词失败不再等于永久没词）。
+            // 只在空的时候重取：已经取到词的歌再走一遍会先把歌词清空，屏幕会闪一下空态。
+            if player.lyrics.isEmpty && !player.isLoadingLyrics {
+                player.reloadLyrics()
+            }
         }
     }
 

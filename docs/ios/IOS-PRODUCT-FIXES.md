@@ -22,6 +22,13 @@
 新增 `TextClean`（`Models/Song.swift`）：还原字面量 `\uXXXX` + 清 `&nbsp;/&amp;/` 零宽字符/BOM，
 并在 `Song.make(...)` 里统一入口清洗，搜索/收藏/下载/锁屏四处都不会再看到反斜杠。
 
+### 另外两处顺手改掉的真机问题（都跟 ③ ⑤ 同一片改动区）
+
+| 问题 | 为什么 | 改法 |
+|---|---|---|
+| 播放页点「下载…」像没反应 | 音质选择 sheet 只挂在 `RootTabView`（根视图）上，而播放页是盖在它上面的模态：根视图弹不出 sheet | 播放页自己再挂一个同一个 `downloadFlow.isPresented` 的 sheet；根视图那个加 `!showPlayer` 闸门，保证同一时刻只有一个活的 |
+| 每次打开播放页，歌词可能闪一下空态 | 打开就无条件 `reloadLyrics()`，而它会先清空 `lyrics` 再去取 | 只在 `lyrics.isEmpty && !isLoadingLyrics` 时重取（已取到的歌直接复用） |
+
 ## 二、改动的文件
 
 ```

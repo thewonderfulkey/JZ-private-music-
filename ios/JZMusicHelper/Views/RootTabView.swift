@@ -78,9 +78,11 @@ struct RootTabView: View {
                 .environment(downloadFlow)
                 .environment(router)
         }
-        // 下载面板挂在 TabView 外壳上：播放页、搜索结果、资料库都往这里送一首歌，
+        // 下载面板挂在 TabView 外壳上：搜索结果、资料库、下载页都往这里送一首歌，
         // 任何一处都不要自己弹 sheet（否则同一时刻能出现两个音质选择）。
-        .sheet(isPresented: Binding(get: { downloadFlow.isPresented },
+        // `!router.showPlayer` 是闸门：播放页是全屏 cover，盖着根视图的时候根视图弹不出 sheet，
+        // 那种情况下由播放页自己的 sheet 负责（见 NowPlayingView），两边共用同一个 isPresented。
+        .sheet(isPresented: Binding(get: { downloadFlow.isPresented && !router.showPlayer },
                                     set: { downloadFlow.isPresented = $0 }),
                onDismiss: { downloadFlow.dismiss() }) {
             DownloadSheet()
