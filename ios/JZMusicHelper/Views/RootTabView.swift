@@ -13,6 +13,7 @@ struct RootTabView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(SettingsStore.self) private var settings
+    @Environment(DownloadFlow.self) private var downloadFlow
     @EnvironmentObject private var downloads: DownloadManager
 
     @State private var selection: AppTab = .discover
@@ -77,8 +78,19 @@ struct RootTabView: View {
                 .environment(player)
                 .environment(library)
                 .environment(settings)
+                .environment(downloadFlow)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
+        }
+        // 下载面板挂在 TabView 外壳上：播放页、搜索结果、资料库都往这里送一首歌，
+        // 任何一处都不要自己弹 sheet（否则同一时刻能出现两个音质选择）。
+        .sheet(isPresented: Binding(get: { downloadFlow.isPresented },
+                                    set: { downloadFlow.isPresented = $0 })) {
+            DownloadSheet()
+                .environment(downloadFlow)
+                .environment(settings)
+                .environment(player)
+                .environmentObject(downloads)
         }
 
     }

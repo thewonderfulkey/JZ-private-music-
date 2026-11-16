@@ -13,6 +13,7 @@ struct LibraryView: View {
 
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
+    @Environment(DownloadFlow.self) private var downloadFlow
 
     @State private var segment: Segment = .favorites
 
@@ -52,6 +53,19 @@ struct LibraryView: View {
                             }
                             .buttonStyle(.plain)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            .contextMenu {
+                                Button {
+                                    downloadFlow.start(song: song, want: player.quality)
+                                } label: {
+                                    Label("下载…", systemImage: "arrow.down.circle")
+                                }
+                                Button {
+                                    library.toggleFavorite(song)
+                                } label: {
+                                    Label(library.isFavorite(song) ? "取消收藏" : "收藏",
+                                          systemImage: library.isFavorite(song) ? "heart.slash" : "heart")
+                                }
+                            }
                             Divider()
                                 .padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                         }

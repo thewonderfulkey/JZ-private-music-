@@ -61,16 +61,25 @@ final class DownloadManager: NSObject, ObservableObject {
     // MARK: - 下载
 
     /// 开始下载（后台会话）。返回条目 id。
+    /// `expectedBytes` 是取流阶段 Range 探到的真实体积：进度条先按它算百分比，
+    /// 落盘后再拿它做 95% 完整性校验（见 `DownloadGuard.isComplete`）。
     @discardableResult
-    func download(song: Song, streamSource: StreamSource, useBackground: Bool = true) -> UUID {
+    func download(song: Song, streamSource: StreamSource, expectedBytes: Int64 = 0,
+                  useBackground: Bool = true) -> UUID {
+        // 同一首歌已经在下就别再排一条（两条任务会抢同一个文件名）
+        if let active = activeItem(for: song) { return active.id }
+
         let ext = Self.extensionForFormat(streamSource.format, url: streamSource.url)
         let fileName = sanitizeFileName("\(song.singer) - \(song.name) [\(song.platform.shortName)/\(streamSource.backendName)].\(ext)")
+        let expected = expectedBytes > 0 ? expectedBytes : streamSource.totalBytes
         var item = DownloadItem(song: song,
                                 streamURL: streamSource.url,
                                 backendName: streamSource.backendName,
                                 quality: streamSource.quality,
                                 fileName: fileName,
-                                status: .pending)
+                                status: .pending,
+                                totalBytes: max(expected, 0),
+                                expectedBytes: expected > 0 ? expected : nil)
         let id = item.id
         guard let url = URL(string: streamSource.url) else {
             item.status = .failed
@@ -91,6 +100,20 @@ final class DownloadManager: NSObject, ObservableObject {
         taskMap[task.taskIdentifier] = id
         task.resume()
         return id
+    }
+
+    // MARK: - 查询
+
+    /// 这首歌是否已经下好了（入口显示"已下载"用）
+    func hasCompleted(song: Song) -> Bool {
+        items.contains { $0.song.id == song.id && $0.status == .completed }
+    }
+
+    /// 这首歌是否正在下（同一首歌不重复入库，避免两条任务抢同一个文件名）
+    func activeItem(for song: Song) -> DownloadItem? {
+        items.first {
+            $0.song.id == song.id && ($0.status == .downloading || $0.status == .pending)
+        }
     }
 
     /// 取消下载
@@ -128,7 +151,9 @@ final class DownloadManager: NSObject, ObservableObject {
         let item = items[idx]
         var newItem = DownloadItem(id: itemID, song: item.song, streamURL: item.streamURL,
                                    backendName: item.backendName, quality: item.quality,
-                                   fileName: item.fileName, status: .pending)
+                                   fileName: item.fileName, status: .pending,
+                                   totalBytes: item.expectedBytes ?? item.totalBytes,
+                                   expectedBytes: item.expectedBytes)
         guard let url = URL(string: item.streamURL) else {
             newItem.status = .failed
             newItem.errorMessage = "无效 URL"
@@ -197,7 +222,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
             var item = self.items[idx]
             item.progress = min(progress, 1.0)
             item.receivedBytes = totalBytesWritten
-            item.totalBytes = totalBytesExpectedToWrite
+            // 服务端不给 Content-Length 时这里是 -1，别把预期体积冲掉（进度条分母要靠它）
+            if totalBytesExpectedToWrite > 0 {
+                item.totalBytes = totalBytesExpectedToWrite
+            }
             self.items[idx] = item
             self.persist()
         }
@@ -217,13 +245,27 @@ extension DownloadManager: URLSessionDownloadDelegate {
                     try? FileManager.default.removeItem(at: destURL!)
                 }
                 try FileManager.default.moveItem(at: location, to: destURL!)
-                item.status = .completed
                 item.localPath = destURL!.path
-                item.progress = 1.0
-                item.finishedAt = Date()
+                var actual: Int64 = 0
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: destURL!.path),
                    let size = attrs[.size] as? Int64 {
+                    actual = size
                     item.totalBytes = size
+                }
+                // 95% 体积防线：取流时探到的体积与实际落盘体积对不上，宁可删掉重下，
+                // 也不要把半截文件留在库里伪装成"下载完成"（Android 同口径）。
+                let expected = item.expectedBytes ?? 0
+                if DownloadGuard.isComplete(actual: actual, expected: expected) {
+                    item.status = .completed
+                    item.progress = 1.0
+                    item.finishedAt = Date()
+                    item.errorMessage = nil
+                } else {
+                    try? FileManager.default.removeItem(at: destURL!)
+                    item.localPath = nil
+                    item.status = .failed
+                    item.progress = 0
+                    item.errorMessage = "文件不完整（\(DownloadGuard.sizeText(actual)) / 预期 \(DownloadGuard.sizeText(expected))），已删除"
                 }
             } catch {
                 item.status = .failed

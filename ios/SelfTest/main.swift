@@ -634,6 +634,39 @@ do {
     check("缓存键 = 歌名|歌手", CoverResolver.cacheKeyFor(kugouNew) == "晴天|周杰伦")
 }
 
+// MARK: - 下载校验（P2）
+
+section("下载校验：95% 体积 / 仅 Wi-Fi / 档位顺序")
+
+do {
+    check("体积刚好 95% 判完整", DownloadGuard.isComplete(actual: 950, expected: 1000))
+    check("体积 94.9% 判不完整", !DownloadGuard.isComplete(actual: 949, expected: 1000))
+    check("实际比预期还大判完整", DownloadGuard.isComplete(actual: 1200, expected: 1000))
+    check("预期未知（0）不做体积判定", DownloadGuard.isComplete(actual: 5_000_000, expected: 0))
+    check("实际为 0 且预期已知判不完整", !DownloadGuard.isComplete(actual: 0, expected: 1000))
+
+    check("缺口比例 5%", abs(DownloadGuard.shortfall(actual: 950, expected: 1000) - 0.05) < 0.0001,
+          "\(DownloadGuard.shortfall(actual: 950, expected: 1000))")
+    check("预期为 0 时缺口为 0", DownloadGuard.shortfall(actual: 100, expected: 0) == 0)
+
+    check("仅 Wi-Fi 且非 Wi-Fi → 拒下",
+          DownloadGuard.refusalReason(wifiOnly: true, onWiFi: false) != nil)
+    check("仅 Wi-Fi 但在 Wi-Fi 上 → 放行",
+          DownloadGuard.refusalReason(wifiOnly: true, onWiFi: true) == nil)
+    check("没开仅 Wi-Fi，蜂窝也放行",
+          DownloadGuard.refusalReason(wifiOnly: false, onWiFi: false) == nil)
+
+    check("档位顺序：无损 → 高品 → 标准",
+          DownloadGuard.qualityOptions() == [.lossless, .high, .standard],
+          "\(DownloadGuard.qualityOptions())")
+
+    check("体积文案 22.7MB", DownloadGuard.sizeText(22_700_000) == "22.7 MB",
+          DownloadGuard.sizeText(22_700_000))
+    check("体积文案 <1MB 用 KB", DownloadGuard.sizeText(520_000) == "520 KB",
+          DownloadGuard.sizeText(520_000))
+    check("体积未知写待核对", DownloadGuard.sizeText(0) == "待核对")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -10,7 +10,8 @@ struct JZMusicHelperApp: App {
     @StateObject private var downloads = DownloadManager.shared
     @State private var player = MainActor.assumeIsolated { PlayerEngine() }
     @State private var library = LibraryStore.shared
-    @State private var settings = SettingsStore()
+    @State private var settings = SettingsStore.shared
+    @State private var downloadFlow = MainActor.assumeIsolated { DownloadFlow() }
 
     init() {
         // 下载完成提示（可选权限，拒绝也不影响下载）
@@ -23,6 +24,7 @@ struct JZMusicHelperApp: App {
                 .environment(player)
                 .environment(library)
                 .environment(settings)
+                .environment(downloadFlow)
                 .environmentObject(downloads)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(Tokens.Palette.vermilion)

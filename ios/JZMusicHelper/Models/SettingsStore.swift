@@ -9,6 +9,10 @@ import SwiftUI
 @Observable
 final class SettingsStore {
 
+    /// 全进程共用一份：下载编排（Service 层）要读「仅 Wi-Fi / 后台下载」两个开关，
+    /// 而这两个开关的 UI 在设置页。共用同一个实例才不会出现"设置里关了、下载还照旧"。
+    static let shared = SettingsStore()
+
     /// 外观：跟随系统 / 浅色 / 深色
     enum Appearance: String, CaseIterable, Identifiable {
         case system, light, dark

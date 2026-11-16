@@ -46,6 +46,9 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var progress: Double
     var receivedBytes: Int64
     var totalBytes: Int64
+    /// 取流阶段用 Range 探到的**预期**体积；落盘后拿它做 95% 完整性校验。
+    /// 可选类型是为了兼容旧记录（downloads.json 里没有这个键，解码不能失败）。
+    var expectedBytes: Int64?
     var createdAt: Date
     var finishedAt: Date?
     var errorMessage: String?
@@ -61,6 +64,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          progress: Double = 0,
          receivedBytes: Int64 = 0,
          totalBytes: Int64 = 0,
+         expectedBytes: Int64? = nil,
          createdAt: Date = Date(),
          finishedAt: Date? = nil,
          errorMessage: String? = nil) {
@@ -75,6 +79,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.progress = progress
         self.receivedBytes = receivedBytes
         self.totalBytes = totalBytes
+        self.expectedBytes = expectedBytes
         self.createdAt = createdAt
         self.finishedAt = finishedAt
         self.errorMessage = errorMessage

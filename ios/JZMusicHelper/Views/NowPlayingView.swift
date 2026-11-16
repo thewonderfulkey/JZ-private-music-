@@ -9,6 +9,7 @@ struct NowPlayingView: View {
 
     @Environment(PlayerEngine.self) private var player
     @Environment(SettingsStore.self) private var settings
+    @Environment(DownloadFlow.self) private var downloadFlow
     @Environment(\.dismiss) private var dismiss
     @State private var showSourceDetail = false
     /// 设计稿 §3.6：开「减弱动态效果」时歌词直接跳行，不做位移过渡
@@ -26,6 +27,12 @@ struct NowPlayingView: View {
     private var bufferedFraction: Double {
         guard player.duration > 0 else { return 0 }
         return min(max(player.bufferedTime / player.duration, 0), 1)
+    }
+
+    /// 当前这首歌是否已经下到本地（决定按钮用实心图标）
+    private var isDownloaded: Bool {
+        guard let song = player.currentSong else { return false }
+        return downloadFlow.isDownloaded(song)
     }
 
     var body: some View {
@@ -102,6 +109,13 @@ struct NowPlayingView: View {
                         showSourceDetail = true
                     } label: {
                         Label("音源详情", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    if let song = player.currentSong {
+                        Button {
+                            downloadFlow.start(song: song, want: player.quality)
+                        } label: {
+                            Label("下载…", systemImage: "arrow.down.circle")
+                        }
                     }
                     if let source = player.source {
                         Section("当前音源") {
@@ -472,13 +486,20 @@ struct NowPlayingView: View {
 
             Spacer()
 
-            // 下载入口（P2 接下载层；先占位但不假装可用）
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 19, weight: .medium))
-                .frame(width: 52, height: 52)
-                .foregroundStyle(.tertiary)
-                .accessibilityLabel("下载（尚未接入）")
-                .accessibilityHidden(false)
+            Button {
+                guard let song = player.currentSong else { return }
+                downloadFlow.start(song: song, want: player.quality)
+            } label: {
+                Image(systemName: isDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle")
+                    .font(.system(size: 19, weight: .medium))
+                    .frame(width: 52, height: 52)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentSong == nil)
+            .foregroundStyle(Color.primary)
+            .opacity(player.currentSong == nil ? 0.35 : 1)
+            .accessibilityLabel(isDownloaded ? "已下载，可重新下载" : "下载")
         }
         .overlay(alignment: .bottom) {
             Text(player.mode.displayName)
