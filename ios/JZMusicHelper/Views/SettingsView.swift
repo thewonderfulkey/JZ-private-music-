@@ -1,93 +1,128 @@
 import SwiftUI
-import UIKit
-import UniformTypeIdentifiers
 
+// MARK: - 设置（设计稿 §3.11）
+//
+// 分组顺序照设计稿：外观 / 播放 / 歌词 / 识曲 / 下载 / 数据 / 关于。
+// 键名与 Android 对齐（见 IOS-FEATURE-PARITY §6–§9）；破坏性操作一律二次确认 + 报数量。
 struct SettingsView: View {
-    @EnvironmentObject var historyStore: HistoryStore
-    @AppStorage("defaultQuality") private var defaultQualityRaw: String = QualityLevel.high.rawValue
-    @AppStorage("useBackgroundDownload") private var useBackgroundDownload: Bool = true
-    /// 歌词服务内存缓存里现在有多少首（进设置页时刷新）
-    @State private var lyricsCacheCount = 0
 
-    private var defaultQuality: QualityLevel {
-        get { QualityLevel(rawValue: defaultQualityRaw) ?? .high }
-        set { defaultQualityRaw = newValue.rawValue }
-    }
+    @Environment(SettingsStore.self) private var settings
+    @Environment(LibraryStore.self) private var library
+    @Environment(PlayerEngine.self) private var player
+    @EnvironmentObject private var downloads: DownloadManager
+
+    @State private var lyricsCacheCount = 0
+    @State private var showClearLyricsConfirm = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("下载设置") {
-                    Picker("默认音质", selection: Binding(
-                        get: { defaultQuality },
-                        set: { defaultQualityRaw = $0.rawValue }
-                    )) {
-                        ForEach(QualityLevel.allCases, id: \.self) { q in
-                            Text(q.displayName).tag(q)
-                        }
-                    }
-                    Toggle("后台下载", isOn: $useBackgroundDownload)
-                    Text("后台下载使用系统后台会话，App 退到后台仍会继续；第三方源链接带签名可能过期导致失败。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+        @Bindable var settings = settings
 
-                Section("保存位置") {
-                    HStack {
-                        Text("文件 App 目录")
-                        Spacer()
-                        Text("我的 iPhone / JZ 音乐")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Button("打开下载目录") {
-                        openDownloadsFolder()
+        Form {
+            Section("外观") {
+                Picker("外观", selection: $settings.appearance) {
+                    ForEach(SettingsStore.Appearance.allCases) { item in
+                        Text(item.displayName).tag(item)
                     }
                 }
+                .pickerStyle(.segmented)
+            }
 
-                Section("数据管理") {
-                    Button("清空搜索历史", role: .destructive) {
-                        historyStore.clearSearchHistory()
+            Section("播放") {
+                Picker("音质偏好", selection: Binding(
+                    get: { player.quality },
+                    set: { player.quality = $0 }
+                )) {
+                    ForEach(QualityLevel.allCases) { level in
+                        Text(level.displayName).tag(level)
                     }
                 }
+                Toggle("无源自动换源", isOn: $settings.autoFallback)
+                Toggle("跨平台补源", isOn: $settings.crossPlatformBackfill)
+                Toggle("无源自动跳过", isOn: $settings.autoSkipDeadSongs)
+                Stepper("连续跳过上限：\(settings.skipLimit) 首",
+                        value: $settings.skipLimit, in: 1...10)
+            }
 
-                Section("歌词") {
-                    LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")
-                    Button("清空歌词缓存", role: .destructive) {
-                        Task {
-                            await LyricsService.shared.clearCache()
-                            lyricsCacheCount = await LyricsService.shared.cachedCount()
-                        }
+            Section("歌词") {
+                Toggle("逐字动画", isOn: $settings.lyricAnimation)
+                Picker("歌词字号", selection: $settings.lyricFontScale) {
+                    ForEach(SettingsStore.LyricFontScale.allCases) { item in
+                        Text(item.displayName).tag(item)
                     }
                 }
-
-                Section("关于") {
-                    LabeledContent("应用", value: "JZ 音乐")
-                    LabeledContent("版本", value: "1.0")
-                    Text("音乐源为第三方接口聚合（酷我/QQ/网易/酷狗系），仅供个人学习测试，请支持正版音乐。接口为实测可用状态，随时可能失效。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")
+                Button("清空歌词缓存", role: .destructive) {
+                    showClearLyricsConfirm = true
                 }
             }
-            .navigationTitle("设置")
-            .task {
-                lyricsCacheCount = await LyricsService.shared.cachedCount()
+
+            Section("识曲") {
+                Picker("聆听时长", selection: $settings.recognizeSeconds) {
+                    Text("12 秒").tag(12)
+                    Text("15 秒").tag(15)
+                    Text("20 秒").tag(20)
+                }
+                .pickerStyle(.segmented)
+                Toggle("识别前暂停本机播放", isOn: $settings.pauseBeforeRecognize)
             }
+
+            Section("下载") {
+                Picker("默认音质", selection: Binding(
+                    get: { player.quality },
+                    set: { player.quality = $0 }
+                )) {
+                    ForEach(QualityLevel.allCases) { level in
+                        Text(level.displayName).tag(level)
+                    }
+                }
+                Toggle("仅 Wi-Fi 下载", isOn: $settings.wifiOnlyDownload)
+                Toggle("后台下载", isOn: $settings.backgroundDownload)
+                LabeledContent("已下载", value: "\(downloads.items.count) 首")
+                LabeledContent("保存位置", value: "文件 › JZ 音乐 › 下载")
+            }
+
+            Section("数据") {
+                Button("清空搜索历史（\(library.searchHistory.count) 条）", role: .destructive) {
+                    library.clearSearchHistory()
+                }
+                Button("清空最近播放（\(library.recentSongs.count) 首）", role: .destructive) {
+                    library.clearRecent()
+                }
+                Button("清空识曲历史（\(library.recognizeHistory.count) 首）", role: .destructive) {
+                    library.clearRecognizeHistory()
+                }
+            }
+
+            Section("关于") {
+                LabeledContent("应用", value: "JZ 音乐")
+                LabeledContent("版本", value: appVersion)
+                Text("音乐与歌词来自第三方公开接口（QQ 音乐 / 网易云 / 酷我 / 酷狗），仅供个人使用；版权归各平台所有。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Tokens.Palette.paper)
+        .navigationTitle("设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            lyricsCacheCount = await LyricsService.shared.cachedCount()
+        }
+        .confirmationDialog("清空 \(lyricsCacheCount) 首歌词缓存？",
+                            isPresented: $showClearLyricsConfirm, titleVisibility: .visible) {
+            Button("清空", role: .destructive) {
+                Task {
+                    await LyricsService.shared.clearCache()
+                    lyricsCacheCount = await LyricsService.shared.cachedCount()
+                }
+            }
+            Button("取消", role: .cancel) {}
         }
     }
 
-    private func openDownloadsFolder() {
-        // 使用 UIDocumentPickerViewController 展示应用沙箱文档目录，
-        // 用户可在其中看到 Downloads/Music 下已下载的音频文件
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let root = scene.windows.first?.rootViewController else { return }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.audio, UTType.item],
-                                                    asCopy: false)
-        picker.allowsMultipleSelection = false
-        root.present(picker, animated: true)
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(version) (\(build))"
     }
-}
-
-#Preview {
-    SettingsView()
 }

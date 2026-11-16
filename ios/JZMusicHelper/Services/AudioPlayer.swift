@@ -42,6 +42,9 @@ final class PlayerEngine {
     private(set) var lyrics: [LyricLine] = []
     private(set) var lyricsSource: String = ""
     private(set) var lyricIndex: Int = -1
+
+    /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
+    private(set) var deadSongKeys: Set<String> = []
     private(set) var isLoadingLyrics = false
     var hasLyrics: Bool { !lyrics.isEmpty }
     var currentLyricLine: LyricLine? {
@@ -322,6 +325,7 @@ final class PlayerEngine {
 
     private func rejectSource(_ source: StreamSource, reason: String) {
         rejectedSourceURLs.insert(source.url)
+        if let song = currentSong { deadSongKeys.insert(song.id) }
         errorText = reason
         consecutiveSkips += 1
         if PlaybackRules.shouldStopAfterSkips(consecutiveSkips) {
@@ -337,6 +341,7 @@ final class PlayerEngine {
     }
 
     private func handleNoSource() {
+        if let song = currentSong { deadSongKeys.insert(song.id) }
         consecutiveSkips += 1
         errorText = PlaybackRules.skipMessage(consecutiveSkips)
         isPlaying = false

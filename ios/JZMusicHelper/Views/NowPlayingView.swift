@@ -8,7 +8,9 @@ import UIKit
 struct NowPlayingView: View {
 
     @Environment(PlayerEngine.self) private var player
+    @Environment(SettingsStore.self) private var settings
     @Environment(\.dismiss) private var dismiss
+    @State private var showSourceDetail = false
     /// 设计稿 §3.6：开「减弱动态效果」时歌词直接跳行，不做位移过渡
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -52,6 +54,9 @@ struct NowPlayingView: View {
         }
         .background(paperBackground.ignoresSafeArea())
         .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showSourceDetail) {
+            SourceDetailView().environment(player)
+        }
     }
 
     private var paperBackground: some View {
@@ -92,6 +97,11 @@ struct NowPlayingView: View {
                                 Label(mode.displayName, systemImage: mode.symbolName)
                             }
                         }
+                    }
+                    Button {
+                        showSourceDetail = true
+                    } label: {
+                        Label("音源详情", systemImage: "antenna.radiowaves.left.and.right")
                     }
                     if let source = player.source {
                         Section("当前音源") {
@@ -186,10 +196,17 @@ struct NowPlayingView: View {
         Group {
             if isCurrent {
                 // 逐字推进要 30fps；用 TimelineView 而不是 0.5s 的时间观察者，否则字是「跳」着亮的
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
-                    Text(currentLineString(line))
-                        .font(.title2.weight(.bold))
+                if settings.lyricAnimation {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
+                        Text(currentLineString(line))
+                            .font(currentLineFont)
+                            .lineSpacing(4)
+                    }
+                } else {
+                    Text(line.text)
+                        .font(currentLineFont)
                         .lineSpacing(4)
+                        .foregroundStyle(Tokens.Palette.vermilion)
                 }
             } else {
                 Text(line.text)
@@ -216,6 +233,14 @@ struct NowPlayingView: View {
         .accessibilityAction {
             guard player.duration > 0 else { return }
             player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
+        }
+    }
+
+    private var currentLineFont: Font {
+        switch settings.lyricFontScale {
+        case .system: return FontRole.lyricCurrent
+        case .large: return .title.weight(.bold)
+        case .extraLarge: return .largeTitle.weight(.bold)
         }
     }
 

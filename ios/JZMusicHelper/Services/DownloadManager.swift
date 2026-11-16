@@ -21,7 +21,11 @@ final class DownloadManager: NSObject, ObservableObject {
     private var backgroundSession: URLSession!
     /// taskIdentifier -> 条目 id（进度回调用）
     private var taskMap: [Int: UUID] = [:]
-    private var historyStore = HistoryStore.shared
+    /// 下载记录的落盘路径（原来借 HistoryStore，现在 Downloads 自己存，避免两个 store 互相依赖）
+    private var recordsURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("downloads.json")
+    }
 
     private override init() {
         super.init()
@@ -146,12 +150,15 @@ final class DownloadManager: NSObject, ObservableObject {
     // MARK: - 持久化
 
     private func loadPersisted() {
-        let saved = historyStore.loadDownloadItems()
+        guard let data = try? Data(contentsOf: recordsURL),
+              let saved = try? JSONDecoder().decode([DownloadItem].self, from: data)
+        else { return }
         items = saved
     }
 
     private func persist() {
-        historyStore.saveDownloadItems(items)
+        guard let data = try? JSONEncoder().encode(items) else { return }
+        try? data.write(to: recordsURL, options: .atomic)
     }
 
     private func appendOrUpdate(_ item: DownloadItem) {

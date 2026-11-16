@@ -5,24 +5,27 @@ import UserNotifications
 struct JZMusicHelperApp: App {
 
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var downloadManager = DownloadManager.shared
-    @StateObject private var playerManager = PlayerManager.shared
-    @StateObject private var historyStore = HistoryStore.shared
+
+    // 下载是 ObservableObject（内部要跑 URLSession delegate），其余是 iOS 17 的 @Observable
+    @StateObject private var downloads = DownloadManager.shared
+    @State private var player = MainActor.assumeIsolated { PlayerEngine() }
+    @State private var library = LibraryStore.shared
+    @State private var settings = SettingsStore()
 
     init() {
-        // 请求通知权限（下载完成提示）
+        // 下载完成提示（可选权限，拒绝也不影响下载）
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
     var body: some Scene {
         WindowGroup {
-            MainTabView()
-                .environmentObject(downloadManager)
-                .environmentObject(playerManager)
-                .environmentObject(historyStore)
-                .onAppear {
-                    historyStore.loadAll()
-                }
+            RootTabView()
+                .environment(player)
+                .environment(library)
+                .environment(settings)
+                .environmentObject(downloads)
+                .preferredColorScheme(settings.appearance.colorScheme)
+                .tint(Tokens.Palette.vermilion)
         }
     }
 }
