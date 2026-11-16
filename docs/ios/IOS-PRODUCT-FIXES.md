@@ -444,3 +444,30 @@ android/app/build.gradle.kts      versionCode 156 / versionName 2.1.98
 4. **同一首再点（⑤）**：正在放这首歌时，回到列表再点它一次 → 直接弹播放页，**不转圈、不重头播**（进度条位置不变）。
 5. **搜索键盘（⑥）**：搜索页点一条历史记录 → 键盘自己收回去，结果完整露出来。
 6. **悬浮条（⑦）**：各 Tab / 搜索结果滚到最底 → 最后一条紧贴播放条上沿，中间没有多余空隙。
+
+## 五、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.1.98-1907d50-r64-ios-unsigned.ipa` |
+| 大小 | 1,732,209 字节（≈1.65 MB） |
+| SHA-256 | `260aa38198cb4ddec69518458e835358ec6e7194ac576f928c6a838f3bd0e4c4` |
+| CI | [run #64](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43916192401)（逻辑断言 **484 / 0 失败** / `BUILD SUCCEEDED` / 插件 `PlugIns/JZWidgets.appex` 在包里 / 已发飞书群） |
+| 提交 | `1907d50`（主改动 `409161e` + 一处告警清理） |
+| 包内自证 | `CFBundleShortVersionString = 2.1.98` / `CFBundleVersion = 156`；二进制里能找到 `alignedToAudio` / `shouldReuseCurrentSong` / `kuwoFallback` / `lyricsFailure` / `playerCoverSide` |
+
+> 认包只认 `1907d50-r64`。r62（4e9b09d）是上一轮的包，里面还是"进度条下面一大截空白 + 歌词取不到 + 最近播放只有一首"。
+>
+> 中途 CI 有一次 `cancelled`：GitHub 的 macOS 托管 runner 排队约 29 分钟没被分配就自动取消了
+> （不是代码问题，重跑一次就绿了）。真要再遇到，直接 Rerun 这个 run 即可。
+
+## 六、本轮 CI 口径说明（给下一轮的我）
+
+- 候选软过滤的真因是**用本机 Python 复刻酷狗搜索 + KRC 解密**跑出来的数据，不是猜的：
+  8 首歌里 4 首（蓝莲花/后来/倔强/我不配）在旧规则下 ±4s 内 **0 个候选**。
+- 本机 WSL 的 Swift 6.0.3 只能 typecheck（Services + SelfTest，桩模块），**Views 只能靠 CI 的 Xcode 构建**；
+  所以改 View 之后先跑 `python .build/parse_swift.py`（tree-sitter 语法）+ `tools/ios/check_ui_hygiene.py` 再推。
+- `git push` 这台机器上要绕两个坑：全局 `http.proxy=127.0.0.1:7890`（Clash 没开就 hang）和
+  GCM 的账号选择框。可用写法：
+  `git -c http.proxy= -c https.proxy= -c credential.helper= -c "credential.helper=store --file=D:/Projects/Private_music/.build/.gcred" push origin main`
+  其中 store 文件用 `.build/try_creds.ps1` 从「GitHub for Visual Studio」那条凭据生成（**路径必须用正斜杠**）。
