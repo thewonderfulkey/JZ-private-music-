@@ -101,11 +101,14 @@ def main() -> int:
         f"\t\t}};\n"
     )
     src = src.replace("/* End PBXGroup section */", group_block + "/* End PBXGroup section */")
-    # 主分组里挂 JZWidgets（在 Recognizer 之后）
+    # 挂到**根分组**（与 JZMusicHelper / Products 同级），不能挂进 JZMusicHelper 组：
+    # 组的 path 是相对父组解析的，挂进去会变成 ios/JZMusicHelper/JZWidgets/…（第一次就是这么错的）
     src = src.replace(
-        "\t\t\t\tG00000000000000000000007 /* Recognizer */,\n",
-        "\t\t\t\tG00000000000000000000007 /* Recognizer */,\n"
-        f"\t\t\t\t{ID['group']} /* JZWidgets */,\n")
+        "\t\t\t\tG00000000000000000000002 /* JZMusicHelper */,\n"
+        "\t\t\t\tG00000000000000000000006 /* Products */,\n",
+        "\t\t\t\tG00000000000000000000002 /* JZMusicHelper */,\n"
+        f"\t\t\t\t{ID['group']} /* JZWidgets */,\n"
+        "\t\t\t\tG00000000000000000000006 /* Products */,\n")
     # 产物分组里挂 .appex
     src = src.replace(
         "\t\t\t\tF00000000000000000000014 /* JZMusicHelper.app */,\n",

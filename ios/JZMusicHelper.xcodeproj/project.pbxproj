@@ -165,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				G00000000000000000000002 /* JZMusicHelper */,
+				G00000000000000000000008 /* JZWidgets */,
 				G00000000000000000000006 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -179,7 +180,6 @@
 				F00000000000000000000012 /* Assets.xcassets */,
 				F00000000000000000000013 /* Info.plist */,
 				G00000000000000000000007 /* Recognizer */,
-				G00000000000000000000008 /* JZWidgets */,
 			);
 			path = JZMusicHelper;
 			sourceTree = "<group>";
