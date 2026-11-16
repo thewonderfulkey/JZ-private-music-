@@ -545,6 +545,12 @@ def main() -> int:
                 fixtures["qrc.expect"] = json.dumps(
                     {"lines": len(lines), "first": lines[0]["text"], "words": len(lines[0]["words"])},
                     ensure_ascii=False)
+                # 真实 QQ QRC 样本（限流时拿不到，拿到就固化成 fixture 给 Swift 断言）
+                fixtures["qrc.real.hex"] = qq["hex"]
+                fixtures["qrc.real.expect"] = json.dumps(
+                    {"lines": len(lines), "first": lines[0]["text"],
+                     "words": len(lines[0]["words"]), "title": title},
+                    ensure_ascii=False)
         except Exception as e:  # noqa: BLE001
             print(f"  ✗ QRC 解密失败：{type(e).__name__}: {e}")
 

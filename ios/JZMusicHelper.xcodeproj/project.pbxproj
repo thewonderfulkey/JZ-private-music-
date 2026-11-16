@@ -43,6 +43,8 @@
 		B00000000000000000000022 /* KwLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000024 /* KwLyrics.swift */; };
 		B00000000000000000000023 /* LyricsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* LyricsService.swift */; };
 		B00000000000000000000024 /* CoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* CoverResolver.swift */; };
+		B00000000000000000000025 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000027 /* Tokens.swift */; };
+		B00000000000000000000026 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000028 /* Haptics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -84,6 +86,8 @@
 		F00000000000000000000024 /* KwLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KwLyrics.swift; sourceTree = "<group>"; };
 		F00000000000000000000025 /* LyricsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsService.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* CoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverResolver.swift; sourceTree = "<group>"; };
+		F00000000000000000000027 /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tokens.swift; sourceTree = "<group>"; };
+		F00000000000000000000028 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -169,6 +173,8 @@
 				F00000000000000000000011 /* SettingsView.swift */,
 				F0000000000000000000001C /* MiniPlayerBar.swift */,
 				F0000000000000000000001D /* NowPlayingView.swift */,
+				F00000000000000000000027 /* Tokens.swift */,
+				F00000000000000000000028 /* Haptics.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -286,6 +292,8 @@
 				B00000000000000000000022 /* KwLyrics.swift in Sources */,
 				B00000000000000000000023 /* LyricsService.swift in Sources */,
 				B00000000000000000000024 /* CoverResolver.swift in Sources */,
+				B00000000000000000000025 /* Tokens.swift in Sources */,
+				B00000000000000000000026 /* Haptics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
