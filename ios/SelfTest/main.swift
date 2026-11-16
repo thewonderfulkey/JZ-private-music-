@@ -781,12 +781,14 @@ do {
     check("互证加 50 分", fused?.ranked.first?.score == 133, "\(fused?.ranked.first?.score ?? -999)")
     check("互证结论", fused?.note.contains("双通道互证") == true, fused?.note ?? "")
 
-    // ④ 酷狗给翻唱、网易给原唱时，原唱那一条要赢
-    let covered = RecognizeScore.fuse(kugou: [kugouCover], netease: [neteaseOriginal])
-    check("原唱身份排在翻唱前", covered?.ranked.first?.rep.title == "晴天",
-          covered?.ranked.first?.rep.title ?? "")
-    check("翻唱身份被压到后面", (covered?.ranked.count ?? 0) >= 1)
-    check("原唱那一条分数更高",
+    // ④ 酷狗给「别人的翻唱」、网易给原唱时，原唱那个身份要排前面
+    let kugouCoverOther = hit("晴天 (Live)", "凌霄", "叶惠美", 269,
+                              RecognizeScore.sourceKugou, 0, 2)
+    let covered = RecognizeScore.fuse(kugou: [kugouCoverOther], netease: [neteaseOriginal])
+    check("翻唱与原唱是两个身份", covered?.ranked.count == 2, "\(covered?.ranked.count ?? -1)")
+    check("原唱身份排第一", covered?.ranked.first?.rep.artist == "周杰伦",
+          covered?.ranked.first?.rep.artist ?? "")
+    check("翻唱身份被压到后面",
           (covered?.ranked.first?.score ?? -999) > (covered?.ranked.last?.score ?? 999),
           "\(covered?.ranked.first?.score ?? -999) vs \(covered?.ranked.last?.score ?? 999)")
 
