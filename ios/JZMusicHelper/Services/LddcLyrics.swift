@@ -248,7 +248,7 @@ enum LddcLyrics {
     }
 
     /// 酷狗签名参数。`module == "Lyric"` 时只含 appid+clientver+业务参数（多塞会签名失配）
-    static func kgQuery(params: [(String, String)], module: String, mid: String, dfid: String) -> String {
+    static func kgQuery(params: [(String, String)], module: String, mid: String, dfid: String = "-") -> String {
         var all = params
         if module == "Lyric" {
             all.append(("appid", "3116"))
