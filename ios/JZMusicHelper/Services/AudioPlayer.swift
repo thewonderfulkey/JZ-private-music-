@@ -67,10 +67,9 @@ final class PlayerEngine {
 
     // MARK: 生命周期
 
-    /// 故意做成 nonisolated：View 的 `@State` 默认值在非隔离上下文里创建引擎，
-    /// 若 init 是 @MainActor 的，这里会踩并发隔离检查。系统面（音频会话/远程命令/进度观察）
-    /// 推迟到第一次真正播放时再装配（见 `attachSystemIfNeeded`），那时一定在主线程。
-    nonisolated init() {
+    /// 系统面（音频会话 / 远程命令 / 进度观察）推迟到第一次真正播放时再装配
+    /// （见 `attachSystemIfNeeded`），这样 View 里创建引擎只付一个 UserDefaults 读取的代价。
+    init() {
         let store = UserDefaults.standard
         let savedMode = store.string(forKey: Self.keyMode).flatMap(PlayMode.init(rawValue:))
         let savedQuality = store.string(forKey: Self.keyQuality).flatMap(QualityLevel.init(rawValue:))

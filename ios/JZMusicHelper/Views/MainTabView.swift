@@ -3,7 +3,9 @@ import SwiftUI
 struct MainTabView: View {
 
     /// 全局播放引擎（@Observable，经 .environment 注入到各页与迷你播放条）
-    @State private var player = PlayerEngine()
+    /// View 的 `@State` 默认值在非隔离上下文里求值；引擎是 @MainActor 的，
+    /// 用 assumeIsolated 桥一下（View 构造一定在主线程，这里不会触发断言）
+    @State private var player = MainActor.assumeIsolated { PlayerEngine() }
     @State private var showNowPlaying = false
 
     var body: some View {

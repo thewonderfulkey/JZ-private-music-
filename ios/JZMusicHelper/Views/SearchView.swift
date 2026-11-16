@@ -221,6 +221,6 @@ struct SongRow: View {
 
 #Preview {
     SearchView()
-        .environment(PlayerEngine())
+        .environment(MainActor.assumeIsolated { PlayerEngine() })
         .environmentObject(HistoryStore())
 }
