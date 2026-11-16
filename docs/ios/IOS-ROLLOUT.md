@@ -170,7 +170,7 @@
 | [IOS-FEATURE-PARITY.md](IOS-FEATURE-PARITY.md) | 132 条 APK 功能 → iOS 落点；Android 独有的 12 项替代方案；必须保留的技术口径 |
 | [mockups/](mockups/) | 5 张 393×852 视觉稿（PNG）+ 可再渲染的 HTML 源 |
 | [IOS-NETWORK.md](IOS-NETWORK.md) | **网络层已落码的实现与实测**：文件职责、四平台搜索/取流实测表（2026-11-16）、三处有意偏离 Android 的理由、CI 验证方式、还没做的部分 |
-| [IOS-LYRICS.md](IOS-LYRICS.md) | **歌词第一段（解密）**：KRC/QRC 解密与逐字解析、繁转简、LRC 与清洗；真实酷狗样本、3DES 向量、两个 SDK 坑；下一段（取词编排与界面）的计划 |
+| [IOS-LYRICS.md](IOS-LYRICS.md) | **歌词（两段都已完成）**：KRC/QRC 解密与逐字解析、繁转简、LRC/清洗；LDDC 双源取词（评分 11 组向量比对、酷狗签名逐字节比对）、酷我官方、4h 缓存、播放页歌词态；两个 SDK 坑与验证边界 |
 | [IOS-PLAYBACK.md](IOS-PLAYBACK.md) | **播放层（P1）**：引擎与三态循环、时长防线、无源跳歌、锁屏/耳机键/打断、迷你条与播放页；与 Android 的口径对照、已知取舍、验证边界、装机验收 6 步 |
 | 本文件 | 已拍板事项（§0）、系统能力、Info.plist、审核风险、分发与自签（§4）、分期、验收 |
 
