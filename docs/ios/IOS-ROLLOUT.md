@@ -52,8 +52,8 @@
 | `NSSupportsLiveActivitiesFrequentUpdates` | `YES`（逐字歌词需要；若审核/功耗有问题则降级为整行） |
 | `UIFileSharingEnabled` | `YES` |
 | `LSSupportsOpeningDocumentsInPlace` | `YES` |
-| `CFBundleDisplayName` | **JZ 音乐**（与安卓「JZ的音乐助手」故意区分：iOS 图标下只能显示 5–6 个字，「JZ的音乐助手」会被截成「JZ的音…」；定稿见 §0 的口径） |
-| `UILaunchScreen` | 纸底色 `#FAF8F3` + 题字图（静态） |
+| `CFBundleDisplayName` |（2026-11-16 已落地：App 内 Info.plist 已是 `JZ 音乐`；图标已换成耳机版 1024 不透明 PNG，sha256 `46e9f5e5…`）**JZ 音乐**（与安卓「JZ的音乐助手」故意区分：iOS 图标下只能显示 5–6 个字，「JZ的音乐助手」会被截成「JZ的音…」；定稿见 §0 的口径） |
+| `UILaunchScreen` | 纸底色（`UIColorName = Paper`，用 Asset Catalog 的 Paper 颜色集）。**题字图暂未加**：需要一个 `题字.pdf/png` 资产，目前仓库里没有；等设计给图再补 `UIImageName` |
 | `UIUserInterfaceStyle` | 不设（跟随系统；App 内再给「外观」三项） |
 | `ITSAppUsesNonExemptEncryption` | `NO`（只做 HTTPS，无自研加密导出；但 KRC/QRC 解密是**解析**不是加密，需在审核说明里写清） |
 | `LSApplicationQueriesSchemes` | 无（不检测其他 App） |
