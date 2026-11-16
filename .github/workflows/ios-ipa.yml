@@ -57,6 +57,7 @@ jobs:
             ios/JZMusicHelper/Services/SourceAdapters.swift \
             ios/JZMusicHelper/Services/SearchService.swift \
             ios/JZMusicHelper/Services/URLResolver.swift \
+            ios/JZMusicHelper/Services/PlaybackRules.swift \
             ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log
           ./build/jz-selftest 2>&1 | tee build/selftest.log
 

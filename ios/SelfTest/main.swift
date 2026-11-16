@@ -280,6 +280,59 @@ do {
     check("时长未知时退回档位桶", DownloadResolver.isExact(unknownDur, want: .standard, durationSec: 0))
 }
 
+// MARK: - 9 播放推进规则（PlaybackRules）
+
+section("PlaybackRules 播放推进")
+
+do {
+    // 单曲循环：还是当前这首（不是停止）
+    check("单曲循环原地重播",
+          PlaybackRules.nextIndex(count: 5, current: 2, mode: .singleLoop, randomIn: { _ in 0 }) == 2)
+
+    // 列表循环：顺序取模，最后一首回到第 0 首
+    check("列表循环前进",
+          PlaybackRules.nextIndex(count: 5, current: 2, mode: .listLoop, randomIn: { _ in 0 }) == 3)
+    check("列表循环末尾回到开头",
+          PlaybackRules.nextIndex(count: 5, current: 4, mode: .listLoop, randomIn: { _ in 0 }) == 0)
+    check("列表循环上一首从 0 绕到末尾",
+          PlaybackRules.previousIndex(count: 5, current: 0, mode: .listLoop, randomIn: { _ in 0 }) == 4)
+
+    // 随机：不允许随机到自己（注入一个"总是返回当前"的随机源来逼出兜底分支）
+    let shuffleSameAsCurrent = PlaybackRules.nextIndex(
+        count: 5, current: 2, mode: .shuffle, randomIn: { _ in 2 })
+    check("随机不会随机到自己", shuffleSameAsCurrent != 2, "got=\(String(describing: shuffleSameAsCurrent))")
+    check("随机只有一首就是它自己",
+          PlaybackRules.nextIndex(count: 1, current: 0, mode: .shuffle, randomIn: { _ in 0 }) == 0)
+    check("空队列没有下一首",
+          PlaybackRules.nextIndex(count: 0, current: 0, mode: .listLoop, randomIn: { _ in 0 }) == nil)
+
+    // 空队列 / 越界不崩
+    check("空队列没有上一首",
+          PlaybackRules.previousIndex(count: 0, current: 3, mode: .shuffle, randomIn: { _ in 0 }) == nil)
+}
+
+do {
+    // 时长防线：差 >5s 才算"不是同一份音频"
+    check("时长一致不拦", !PlaybackRules.durationMismatch(actual: 269, expected: 269))
+    check("差 4s 不拦", !PlaybackRules.durationMismatch(actual: 273, expected: 269))
+    check("差 31s 拦下（现场版冒充原唱）",
+          PlaybackRules.durationMismatch(actual: 300, expected: 269))
+    check("曲目时长未知不拦", !PlaybackRules.durationMismatch(actual: 300, expected: 0))
+    check("实际时长未知不拦", !PlaybackRules.durationMismatch(actual: .nan, expected: 269))
+
+    // 连跳上限 3
+    check("连跳 2 首继续", !PlaybackRules.shouldStopAfterSkips(2))
+    check("连跳 3 首停下", PlaybackRules.shouldStopAfterSkips(3))
+    check("停下的提示是完整句子", PlaybackRules.skipMessage(3).contains("3"))
+
+    // 三态循环顺序：单曲 → 列表 → 随机 → 单曲
+    check("模式循环顺序",
+          PlayMode.singleLoop.cycled() == .listLoop
+          && PlayMode.listLoop.cycled() == .shuffle
+          && PlayMode.shuffle.cycled() == .singleLoop)
+    check("三种模式都有文案", PlayMode.allCases.allSatisfy { !$0.displayName.isEmpty })
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

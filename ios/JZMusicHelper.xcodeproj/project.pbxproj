@@ -29,6 +29,11 @@
 		B00000000000000000000014 /* NameMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* NameMatch.swift */; };
 		B00000000000000000000015 /* StudioPick.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* StudioPick.swift */; };
 		B00000000000000000000016 /* KuwoParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* KuwoParser.swift */; };
+		B00000000000000000000017 /* PlaybackRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000019 /* PlaybackRules.swift */; };
+		B00000000000000000000018 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001A /* AudioPlayer.swift */; };
+		B00000000000000000000019 /* NowPlayingCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001B /* NowPlayingCenter.swift */; };
+		B0000000000000000000001A /* MiniPlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001C /* MiniPlayerBar.swift */; };
+		B0000000000000000000001B /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001D /* NowPlayingView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +61,11 @@
 		F00000000000000000000016 /* NameMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameMatch.swift; sourceTree = "<group>"; };
 		F00000000000000000000017 /* StudioPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPick.swift; sourceTree = "<group>"; };
 		F00000000000000000000018 /* KuwoParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoParser.swift; sourceTree = "<group>"; };
+		F00000000000000000000019 /* PlaybackRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackRules.swift; sourceTree = "<group>"; };
+		F0000000000000000000001A /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		F0000000000000000000001B /* NowPlayingCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingCenter.swift; sourceTree = "<group>"; };
+		F0000000000000000000001C /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
+		F0000000000000000000001D /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +124,9 @@
 				F00000000000000000000016 /* NameMatch.swift */,
 				F00000000000000000000017 /* StudioPick.swift */,
 				F00000000000000000000018 /* KuwoParser.swift */,
+				F00000000000000000000019 /* PlaybackRules.swift */,
+				F0000000000000000000001A /* AudioPlayer.swift */,
+				F0000000000000000000001B /* NowPlayingCenter.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -127,6 +140,8 @@
 				F0000000000000000000000F /* DownloadsView.swift */,
 				F00000000000000000000010 /* HistoryView.swift */,
 				F00000000000000000000011 /* SettingsView.swift */,
+				F0000000000000000000001C /* MiniPlayerBar.swift */,
+				F0000000000000000000001D /* NowPlayingView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -230,6 +245,11 @@
 				B00000000000000000000014 /* NameMatch.swift in Sources */,
 				B00000000000000000000015 /* StudioPick.swift in Sources */,
 				B00000000000000000000016 /* KuwoParser.swift in Sources */,
+				B00000000000000000000017 /* PlaybackRules.swift in Sources */,
+				B00000000000000000000018 /* AudioPlayer.swift in Sources */,
+				B00000000000000000000019 /* NowPlayingCenter.swift in Sources */,
+				B0000000000000000000001A /* MiniPlayerBar.swift in Sources */,
+				B0000000000000000000001B /* NowPlayingView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

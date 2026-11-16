@@ -1,78 +1,129 @@
-"""给手写 pbxproj 加 4 个 Swift 文件（按已占用 ID 动态分配，避免与 Info.plist / app 的 F13/F14 撞车）。
+"""把 Swift 文件登记进手写的 project.pbxproj（幂等，自动分配未占用 ID）。
 
-用法：先 `git checkout -- ios/JZMusicHelper.xcodeproj/project.pbxproj`，再跑本脚本。
+为什么需要脚本：这个工程是手写 pbxproj（没有用 Xcode 生成），ID 必须唯一。
+硬编码 ID 会撞车——历史上 `F…13` 是 Info.plist、`F…14` 是 .app，
+撞了之后的报错是 "Build input file cannot be found: ios/JZMusicHelper/Xxx.swift"，很难一眼看出原因。
+
+用法（在仓库根目录）：
+    python tools/ios/add_pbx_files.py Services AudioPlayer.swift NowPlayingCenter.swift
+    python tools/ios/add_pbx_files.py Views MiniPlayerBar.swift NowPlayingView.swift
+也可以一次给多个分组：
+    python tools/ios/add_pbx_files.py Services A.swift B.swift Views C.swift
+分组名对应 pbxproj 里已有 PBXGroup 的注释名（Services / Views / Models）。
+脚本对已登记的文件会跳过，可以反复执行。
 """
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path
 
 PBX = Path("ios/JZMusicHelper.xcodeproj/project.pbxproj")
-NEW_FILES = ["SearchRanker.swift", "NameMatch.swift", "StudioPick.swift", "KuwoParser.swift"]
-
-src = PBX.read_text(encoding="utf-8")
-
-# 1) 收集已用 ID，按前缀取最大序号
-ids = set(re.findall(r"\b([BFG][0-9A-F]{23})\b", src))
 
 
-def next_ids(prefix: str, count: int) -> list[str]:
-    used = sorted(int(i[1:], 16) for i in ids if i.startswith(prefix))
-    start = (max(used) + 1) if used else 1
-    out = []
-    for k in range(count):
-        cand = f"{prefix}{start + k:023X}"
-        assert len(cand) == 24, cand
-        assert cand not in ids, f"ID 冲突 {cand}"
-        out.append(cand)
-    return out
+def main(argv: list[str]) -> int:
+    if len(argv) < 3:
+        print(__doc__)
+        return 2
+
+    # 解析 "分组 文件 文件 ... 分组 文件 ..."
+    groups: dict[str, list[str]] = {}
+    current: str | None = None
+    for token in argv[1:]:
+        if token.endswith(".swift"):
+            if current is None:
+                print(f"❌ 文件 {token} 前面没有分组名")
+                return 2
+            groups.setdefault(current, []).append(token)
+        else:
+            current = token
+            groups.setdefault(current, [])
+
+    src = PBX.read_text(encoding="utf-8")
+    existing_refs = set(re.findall(r"/\* ([A-Za-z0-9_]+\.swift) \*/ = \{isa = PBXFileReference", src))
+
+    todo: dict[str, list[str]] = {}
+    for group, files in groups.items():
+        missing = [f for f in files if f not in existing_refs]
+        if missing:
+            todo[group] = missing
+    if not todo:
+        print("全部已登记，无需改动")
+        return 0
+
+    def next_id(prefix: str) -> str:
+        used = {int(m, 16) for m in re.findall(rf"\b{prefix}([0-9A-F]{{23}})\b", src)}
+        candidate = (max(used) + 1) if used else 1
+        while f"{prefix}{candidate:023X}" in src:
+            candidate += 1
+        return f"{prefix}{candidate:023X}"
+
+    build_lines = ""
+    ref_lines = ""
+    group_lines: dict[str, str] = {}
+    phase_lines = ""
+
+    for group, files in todo.items():
+        for name in files:
+            b_id, f_id = next_id("B"), next_id("F")
+            build_lines += (
+                f"\t\t{b_id} /* {name} in Sources */ = "
+                f"{{isa = PBXBuildFile; fileRef = {f_id} /* {name} */; }};\n"
+            )
+            ref_lines += (
+                f"\t\t{f_id} /* {name} */ = {{isa = PBXFileReference; "
+                f'lastKnownFileType = sourcecode.swift; path = {name}; sourceTree = "<group>"; }};\n'
+            )
+            group_lines.setdefault(group, "")
+            group_lines[group] += f"\t\t\t\t{f_id} /* {name} */,\n"
+            phase_lines += f"\t\t\t\t{b_id} /* {name} in Sources */,\n"
+            # 立刻把新 ID 写进 src 的临时视图，避免 next_id 重复分配
+            src = src + f"\n/* reserved {b_id} {f_id} */"
+
+    # 1) PBXBuildFile / PBXFileReference：插在各自 section 结束前
+    for marker, lines in (
+        ("/* End PBXBuildFile section */", build_lines),
+        ("/* End PBXFileReference section */", ref_lines),
+    ):
+        assert src.count(marker) == 1, f"{marker} 出现 {src.count(marker)} 次"
+        src = src.replace(marker, lines + marker)
+
+    # 2) 分组 children：在该组 children 列表的收尾 ");" 前插入
+    for group, lines in group_lines.items():
+        pattern = re.compile(
+            rf"(/\* {re.escape(group)} \*/ = \{{\s*\n\s*isa = PBXGroup;\s*\n\s*children = \(\n)(.*?)(\t\t\t\);)",
+            re.S,
+        )
+        m = pattern.search(src)
+        if not m:
+            print(f"❌ 找不到分组 {group}")
+            return 1
+        src = src[: m.end(2)] + lines + src[m.end(2):]
+
+    # 3) Sources build phase：插在 files = ( ... ) 收尾前
+    pattern = re.compile(r"(PBXSourcesBuildPhase;.*?files = \(\n)(.*?)(\t\t\t\);)", re.S)
+    m = pattern.search(src)
+    if not m:
+        print("❌ 找不到 PBXSourcesBuildPhase")
+        return 1
+    src = src[: m.end(2)] + phase_lines + src[m.end(2):]
+
+    # 去掉临时占位注释
+    src = re.sub(r"\n/\* reserved [BF][0-9A-F]{23} [BF][0-9A-F]{23} \*/", "", src)
+
+    # 自检：定义行不得重复
+    defs = re.findall(r"^\t\t([BF][0-9A-F]{23}) /\*", src, flags=re.M)
+    dup = {i for i in defs if defs.count(i) > 1}
+    if dup:
+        print(f"❌ ID 重复：{dup}")
+        return 1
+
+    PBX.write_text(src, encoding="utf-8")
+    for group, files in todo.items():
+        print(f"✓ {group}: {', '.join(files)}")
+    print(f"定义行 {len(defs)}，无重复")
+    return 0
 
 
-b_ids = next_ids("B", len(NEW_FILES))
-f_ids = next_ids("F", len(NEW_FILES))
-print("build ids:", b_ids)
-print("file  ids:", f_ids)
-
-# 2) PBXBuildFile
-build_lines = "".join(
-    f"\t\t{b} /* {n} in Sources */ = {{isa = PBXBuildFile; fileRef = {f} /* {n} */; }};\n"
-    for b, f, n in zip(b_ids, f_ids, NEW_FILES)
-)
-marker = "/* End PBXBuildFile section */"
-assert src.count(marker) == 1
-src = src.replace(marker, build_lines + marker)
-
-# 3) PBXFileReference
-ref_lines = "".join(
-    f"\t\t{f} /* {n} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; "
-    f'path = {n}; sourceTree = "<group>"; }};\n'
-    for f, n in zip(f_ids, NEW_FILES)
-)
-marker = "/* End PBXFileReference section */"
-assert src.count(marker) == 1
-src = src.replace(marker, ref_lines + marker)
-
-# 4) Services group children（锚点：HistoryStore.swift 那行）
-anchor = "\t\t\t\tF0000000000000000000000B /* HistoryStore.swift */,\n"
-assert src.count(anchor) == 1, src.count(anchor)
-group_lines = "".join(f"\t\t\t\t{f} /* {n} */,\n" for f, n in zip(f_ids, NEW_FILES))
-src = src.replace(anchor, anchor + group_lines)
-
-# 5) Sources build phase（锚点：SettingsView.swift in Sources 那行）
-anchor = "\t\t\t\tB00000000000000000000011 /* SettingsView.swift in Sources */,\n"
-assert src.count(anchor) == 1, src.count(anchor)
-phase_lines = "".join(f"\t\t\t\t{b} /* {n} in Sources */,\n" for b, n in zip(b_ids, NEW_FILES))
-src = src.replace(anchor, anchor + phase_lines)
-
-# 6) 自检：ID 不得重复
-all_ids = re.findall(r"\b([BFG][0-9A-F]{23})\b", src)
-dups = {i for i in all_ids if all_ids.count(i) > 1}
-defined = set(re.findall(r"\b([BF][0-9A-F]{23}) /\*", src))
-# 只检查"定义行"重复（引用行会自然重复出现）
-defs = re.findall(r"^\t\t([BF][0-9A-F]{23}) /\*", src, flags=re.M)
-dupdefs = {i for i in defs if defs.count(i) > 1}
-print("定义行数:", len(defs), "重复定义:", dupdefs or "无")
-
-PBX.write_text(src, encoding="utf-8")
-print("写入完成")
-if dupdefs:
-    sys.exit(1)
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

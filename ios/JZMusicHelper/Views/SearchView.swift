@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject var historyStore: HistoryStore
+    @Environment(PlayerEngine.self) private var player
     @State private var keyword = ""
     @State private var songs: [Song] = []
     @State private var platformStatus: [MusicPlatform: PlatformStatus] = [:]
@@ -103,7 +104,17 @@ struct SearchView: View {
             } else {
                 List {
                     ForEach(songs) { song in
-                        SongRow(song: song)
+                        Button {
+                            // 与 Android 一致：单点即播，队列=当前结果整列
+                            if let idx = songs.firstIndex(where: { $0.id == song.id }) {
+                                player.play(queue: songs, startAt: idx)
+                            } else {
+                                player.playSingle(song)
+                            }
+                        } label: {
+                            SongRow(song: song)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .listStyle(.plain)
@@ -210,4 +221,6 @@ struct SongRow: View {
 
 #Preview {
     SearchView()
+        .environment(PlayerEngine())
+        .environmentObject(HistoryStore())
 }
