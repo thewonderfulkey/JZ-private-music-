@@ -10,10 +10,13 @@ enum Zlib {
 
     static func inflate(_ data: Data, maxOutput: Int = 8 * 1024 * 1024) -> Data? {
         guard !data.isEmpty else { return nil }
-        var stream = compression_stream()
-        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK
-        else { return nil }
-        defer { compression_stream_destroy(&stream) }
+
+        // compression_stream 这个 C 结构体在 Swift 里没有零参 init，必须用指针手动建
+        let streamPointer = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
+        defer { streamPointer.deallocate() }
+        guard compression_stream_init(streamPointer, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
+                == COMPRESSION_STATUS_OK else { return nil }
+        defer { compression_stream_destroy(streamPointer) }
 
         let bufferSize = 64 * 1024
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
@@ -22,22 +25,23 @@ enum Zlib {
         var output = Data()
         return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Data? in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return nil }
-            stream.src_ptr = base
-            stream.src_size = data.count
+            streamPointer.pointee.src_ptr = base
+            streamPointer.pointee.src_size = data.count
             while true {
-                stream.dst_ptr = buffer
-                stream.dst_size = bufferSize
-                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                streamPointer.pointee.dst_ptr = buffer
+                streamPointer.pointee.dst_size = bufferSize
+                let status = compression_stream_process(
+                    streamPointer, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
                 switch status {
                 case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
-                    let produced = bufferSize - stream.dst_size
+                    let produced = bufferSize - streamPointer.pointee.dst_size
                     if produced > 0 {
                         output.append(buffer, count: produced)
                         if output.count > maxOutput { return nil }
                     }
                     if status == COMPRESSION_STATUS_END { return output }
-                    // 输入耗尽且没有产出 → 数据被截断，别死循环
-                    if stream.src_size == 0 && produced == 0 { return nil }
+                    // 输入耗尽却没产出 → 数据被截断，别死循环
+                    if streamPointer.pointee.src_size == 0 && produced == 0 { return nil }
                 default:
                     return nil
                 }
@@ -45,7 +49,6 @@ enum Zlib {
         }
     }
 }
-
 // MARK: - 酷狗 KRC / QQ QRC 解密与逐字解析
 //
 // 算法移植自 chenmozhijin/LDDC（GPL-3.0），与 Android `LddcCrypto.kt` 同一套：
@@ -103,7 +106,7 @@ enum LddcCrypto {
         var plain: [UInt8] = []
         var offset = 0
         while offset + 8 <= bytes.count {
-            plain.append(contentsOf: crypt(Array(bytes[offset..<(offset + 8)]), keys))
+            plain.append(contentsOf: tripledesCrypt(Array(bytes[offset..<(offset + 8)]), keys))
             offset += 8
         }
         guard !plain.isEmpty, let data = Zlib.inflate(Data(plain)) else { return nil }
