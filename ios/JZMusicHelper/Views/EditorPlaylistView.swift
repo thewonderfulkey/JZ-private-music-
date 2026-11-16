@@ -96,7 +96,7 @@ struct EditorPlaylistView: View {
                     )
                     .foregroundStyle(.white)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .disabled(preparing || resolvingIndex != nil)
                 .padding(.top, Tokens.Spacing.xxs)
             }
@@ -145,7 +145,7 @@ struct EditorPlaylistView: View {
             .frame(minHeight: Tokens.Size.songRowHeight)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .disabled(resolvingIndex != nil || preparing)
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .accessibilityLabel("第 \(index + 1) 首，\(seed.name)，\(seed.singer)")

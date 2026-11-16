@@ -74,6 +74,8 @@ struct DownloadSheet: View {
             resolving
         case .offer:
             offerView
+        case .started:
+            startedView
         case .failed:
             failed
         }
@@ -86,15 +88,16 @@ struct DownloadSheet: View {
 
             ForEach(DownloadGuard.qualityOptions()) { level in
                 Button {
+                    Haptics.tap()
                     flow.choose(level)
                 } label: {
                     qualityRow(level)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("开始核对\(level.displayName)的音源")
+                .buttonStyle(.press)
+                .accessibilityHint("直接开始下载\(level.displayName)")
             }
 
-            Text("选中后先核对音源与体积，确认无误再下载。取不到该档位会明确告知，不会悄悄降级。")
+            Text("点一下就直接开始下载：先核对音源（跨平台换源，最多 40 秒），拿到的就是这一档才下；\n万一只取到更低档位，会先问你一句，不会悄悄降级。")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.top, Tokens.Spacing.xxs)
@@ -146,7 +149,7 @@ struct DownloadSheet: View {
             Button("取消") { flow.dismiss() }
                 .font(.footnote)
                 .foregroundStyle(Tokens.Palette.vermilion)
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Tokens.Spacing.xl)
@@ -183,14 +186,14 @@ struct DownloadSheet: View {
                         )
                         .foregroundStyle(.white)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
 
                 Button("换个档位") {
                     flow.choose(flow.want == .lossless ? .high : .lossless)
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
 
                 Text(settings.wifiOnlyDownload
                      ? "已开启「仅 Wi-Fi 下载」，蜂窝网络下会被拦下。"
@@ -231,6 +234,36 @@ struct DownloadSheet: View {
         .padding(.vertical, 10)
     }
 
+    private var startedView: some View {
+        VStack(spacing: Tokens.Spacing.s) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 40, weight: .regular))
+                .foregroundStyle(Tokens.Palette.vermilion)
+            Text("已开始下载")
+                .font(FontRole.sectionTitle)
+            if let offer = flow.offer {
+                Text("\(offer.quality.displayName) · \(DownloadGuard.sizeText(offer.source.totalBytes))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Text("可以在「下载」页看进度，完成后会发一条通知。")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+            Button("去看下载") {
+                flow.dismiss()
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Tokens.Palette.vermilion)
+            .buttonStyle(.press)
+            .padding(.top, Tokens.Spacing.xxs)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Tokens.Spacing.xl)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("已开始下载")
+    }
+
     private var failed: some View {
         VStack(spacing: Tokens.Spacing.m) {
             Image(systemName: "exclamationmark.triangle")
@@ -246,7 +279,7 @@ struct DownloadSheet: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Tokens.Spacing.xl)

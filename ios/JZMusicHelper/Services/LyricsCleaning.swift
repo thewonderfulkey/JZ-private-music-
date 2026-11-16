@@ -117,11 +117,15 @@ enum LyricsCleaning {
     // MARK: 定位
 
     /// 当前播放位置对应的歌词行下标（没有则 -1）
+    ///
+    /// 用 `highlightStartMs`（有逐字时间时取第一个字的起点）而不是行时间——
+    /// 否则"行先到、字还没唱"的那几百毫秒会表现为"歌词提前切了"。
+    /// 时间偏移（用户可调 ±600ms）在调用方加进 positionMs，这里保持纯函数。
     static func indexAt(_ lines: [LyricLine], positionMs: Int) -> Int {
         guard !lines.isEmpty else { return -1 }
         var idx = -1
         for (i, line) in lines.enumerated() {
-            if line.timeMs <= positionMs { idx = i } else { break }
+            if line.highlightStartMs <= positionMs { idx = i } else { break }
         }
         return idx
     }

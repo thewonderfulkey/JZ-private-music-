@@ -87,3 +87,58 @@ ios/SelfTest/main.swift                           +17 条断言（文本清洗 8
 5. **迷你条**：播放中回到任意 Tab，底部条上有 ❤ / ⏮ / ⏸ / ⏭ 四个键；**Tab 栏仍然完整可点**（能切到下载、资料库）。
 6. **收藏**：点 ❤ 变实心，进「资料库 › 收藏」能看到这首。
 
+---
+
+# 第二轮整改（2026-11-16 晚，老板 6 项）
+
+## 一、逐条结果
+
+| # | 老板原话 | 根因 / 定位 | 改法 |
+|---|---|---|---|
+| ① | 退出后台后灵动岛还挂着，希望组件进程全杀掉 | 上一版只在"引擎判定没有歌"时 `end()`；进程被系统/用户收掉时**没人去收活动**，内存在的时候没来得及收、内存没了更没人收 | ① 退到后台且没在放歌 → 立刻 `end()`；② `applicationWillTerminate` 里把系统里**所有** `Activity<SongActivityAttributes>` 结束掉 + 清 `MPNowPlayingInfoCenter` + 释放音频会话（`MainActor.assumeIsolated` 同步执行，不排队）；③ **下次启动第一件事**扫一遍全部结束（上滑强杀不给回调，只能这样兜）；④ 设置里新增「实时活动」开关，关掉就根本不创建 |
+| ② | 播放页太丑，参考群里邓紫棋那张 | 上一版是白底 + 封面 + 一行行控件，没有背景层次 | 改成沉浸式：**封面铺满做高斯模糊 + 压暗背景**、大圆角封面压在上面、白色题名、半透明歌词卡、细进度条、白色圆形播放键；所有键走统一的按压反馈 |
+| ③ | 点击反馈不明显，参考 Light Player | 全 App 用的是 `.buttonStyle(.plain)`——它连系统自带的按下高亮也一起去掉了，点下去屏幕没有任何变化 | 新增 `PressFeedbackButtonStyle`（按下缩到 0.97 + 压暗 0.82 + spring 回弹），把 8 个界面文件里 26 处 `.plain` 全换掉；再补触觉：行/卡片 `Haptics.tap()`、切 Tab `selection`、播放键/切歌沿用原有触觉 |
+| ④ | 歌词和唱的时间对不上（有时晚、有时早） | 两个叠加：**(a)** 切行用的是 0.5 秒才更新一次的 `currentTime`（最坏晚 500ms）；**(b)** 行高亮取的是 KRC/QRC 的**行开始**，而很多行第一个字比行开始晚 0.3–1s（所以"还没唱就切了"） | (a) 新增 25Hz 歌词 ticker，用 `preciseTime` 判定；(b) 行高亮改用 `highlightStartMs`（有逐字时间就取第一个字的起点）；再给一个**用户偏移**（±600ms，设置里 Stepper + 播放页「慢一点 / 快一点」现场调），逐字染色与切行同源 |
+| ⑤ | 资料库那页设计不好，换成「我的收藏」，放到发现和识曲中间 | 资料库把收藏/最近播放塞成一个分段控件，像"设置入口 + 两张列表" | 整页换成 **我的收藏**：大卡「我喜欢的音乐 · N 首」+ 播放全部/随机 + 干净的收藏列表（行内可取消收藏）+ 右上齿轮；Tab 顺序变成 **发现 / 我的收藏 / 识曲 / 下载** |
+| ⑥ | 下载：①选完音质直接下 ②现在会失败 ③找到无损却按 320k 下 | **②** `didFinishDownloadingTo` 里把临时文件 `moveItem` 放进了 `DispatchQueue.main.async`，而那个临时文件在回调返回后就会被系统删 → 移动失败 → 记一条"下载失败"。**③** 档位只信接口自报，没拿落盘后的文件复验。**①** 设计上强制"核对 → 确认"两步 | **①** 实测命中目标档 → 直接开下（1.8 秒"已开始下载"确认后自动收起）；只有降级才需要点头。**②** 临时文件在 delegate 回调里**同步**搬走，再回主线程更新；`taskMap` 加锁；错误翻译成人话（超时/断网/服务器拒绝）。**③** 落盘后读文件头 16 字节 + 真实体积重算容器与码率：档位以实测为准、后缀改成真实容器（`.flac` 里装 mp3 会当场改回 `.mp3`），不一致时在下载行写一句"实测 … 没达到 …" |
+
+## 二、新增/改动的文件（第二轮）
+
+```
+Models/SettingsStore.swift          + liveActivityEnabled / lyricOffsetMs（±600 夹取）
+Models/DownloadItem.swift           + actualNote（落盘实测与标注不一致时的一句话）
+Services/AudioPlayer.swift          + lyricPositionMs / 25Hz 歌词 ticker / seek 后立即重算
+Services/LyricsModel.swift          + highlightStartMs（有逐字时间取第一个字的起点）
+Services/LyricsCleaning.swift       indexAt 改用 highlightStartMs
+Services/LiveActivityController.swift  开关 gate + endAllActivities() + 退出清理
+Services/NowPlayingCenter.swift     + teardown()（清锁屏卡片、释放音频会话）
+Services/DownloadManager.swift      临时文件同步搬移 / 锁 / 落盘复验 / 错误翻译 / 退出清理
+Services/DownloadFlow.swift         命中目标档直接下载（+ .started 阶段）
+Services/DownloadGuard.swift        + Verdict（文件头 → 容器/码率/档位/后缀）+ downgradeNote
+Services/AppRouter.swift            Tab：discover / favorites / recognize / downloads
+Views/RootTabView.swift             新 Tab 顺序 + 切 Tab 触觉 + 退后台收活动
+Views/LibraryView.swift             整页重写为 FavoritesView（我的收藏）
+Views/NowPlayingView.swift          整页重写（沉浸式 + 按压反馈 + 歌词偏移微调）
+Views/Components.swift              + PressFeedbackButtonStyle（.press / .pressSubtle）
+Views/Haptics.swift                 + tap() / tabChanged()
+Views/DownloadSheet.swift           直接下载文案 + .started 确认页
+Views/DownloadsTabView.swift        实测档位说明
+Views/SettingsView.swift            + 歌词偏移 / 实时活动开关
+ios/SelfTest/main.swift             +15 条断言（切行时间点 7 / 落盘实测档位 8）
+```
+
+## 三、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 纯逻辑 | CI logic-tests（swiftc 编译 + 断言） | 见 §四 |
+| 界面卫生 / 工程结构 / 语法 | `check_ui_hygiene.py` / `check_pbxproj.py` / tree-sitter | 18 文件通过 / 175 对象 2 target / 66 文件 0 语法错误 |
+| 编译 | CI build-ipa | 见 §四 |
+| 真机 | **验不到**（Windows 无 iPhone） | 要你装机确认：退出后台后灵动岛是否消失、播放页观感、点击手感、歌词是否对齐、我的收藏页、下载是否一次点完且档位正确 |
+
+## 四、本轮出的包
+
+（CI 跑完后填）
+
+
+

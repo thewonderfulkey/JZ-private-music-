@@ -65,6 +65,8 @@ final class SettingsStore {
         static let pauseBeforeRecognize = "rec_pause"
         static let wifiOnlyDownload = "wifi_only"
         static let backgroundDownload = "bg_download"
+        static let liveActivity = "live_activity"
+        static let lyricOffset = "lyric_offset_ms"
     }
 
     private let defaults = UserDefaults.standard
@@ -103,6 +105,21 @@ final class SettingsStore {
     var backgroundDownload: Bool {
         didSet { defaults.set(backgroundDownload, forKey: Key.backgroundDownload) }
     }
+    /// 锁屏 / 灵动岛实时活动：关掉之后完全不创建（退出 App 后不会留任何残影）
+    var liveActivityEnabled: Bool {
+        didSet { defaults.set(liveActivityEnabled, forKey: Key.liveActivity) }
+    }
+    /// 歌词时间偏移（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±600，步进 50
+    var lyricOffsetMs: Int {
+        didSet {
+            let clamped = Self.clampOffset(lyricOffsetMs)
+            if clamped != lyricOffsetMs { lyricOffsetMs = clamped }
+            defaults.set(clamped, forKey: Key.lyricOffset)
+        }
+    }
+
+    /// 偏移的唯一边界口径（设置页 Stepper、播放页微调、引擎消费都走它）
+    static func clampOffset(_ value: Int) -> Int { min(max(value, -600), 600) }
 
     init() {
         let d = UserDefaults.standard
@@ -119,5 +136,9 @@ final class SettingsStore {
         pauseBeforeRecognize = d.object(forKey: Key.pauseBeforeRecognize) as? Bool ?? true
         wifiOnlyDownload = d.object(forKey: Key.wifiOnlyDownload) as? Bool ?? true
         backgroundDownload = d.object(forKey: Key.backgroundDownload) as? Bool ?? true
+        liveActivityEnabled = d.object(forKey: Key.liveActivity) as? Bool ?? true
+        let offset = d.integer(forKey: Key.lyricOffset)
+        lyricOffsetMs = Self.clampOffset(offset)
     }
 }
+

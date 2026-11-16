@@ -102,7 +102,7 @@ struct SongRow: View {
                             .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.secondary)
                             .minimumTapTarget()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press)
                     .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
                 }
             }
@@ -356,7 +356,7 @@ struct SectionHeader: View {
                 Button(actionTitle, action: action)
                     .font(.footnote)
                     .foregroundStyle(Tokens.Palette.vermilion)
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -385,5 +385,33 @@ struct PendingFeatureRow: View {
         .frame(minHeight: Tokens.Size.songRowHeight)
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - 按压反馈（老板反馈 ③：点击反馈不明显）
+
+/// 全 App 统一的按压反馈：按下缩到 0.97、压暗到 0.8、松手弹回。
+///
+/// 为什么不用 `.plain`：`.plain` 把系统的按下高亮也一起去掉了，行/卡片点下去毫无反馈，
+/// 加上"卡了一下"的体感就变成"点了没反应"。触觉由调用方在动作里补（`Haptics.tap()`）。
+struct PressFeedbackButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+    var dim: Double = 0.82
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? dim : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.72),
+                       value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PressFeedbackButtonStyle {
+    /// 用法：`.buttonStyle(.press)`
+    static var press: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
+    /// 大块卡片用更轻的缩放（整张卡缩 0.97 会显得晃）
+    static var pressSubtle: PressFeedbackButtonStyle {
+        PressFeedbackButtonStyle(scale: 0.99, dim: 0.92)
     }
 }

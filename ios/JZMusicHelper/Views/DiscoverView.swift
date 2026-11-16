@@ -83,7 +83,7 @@ struct DiscoverView: View {
             .background(Capsule().fill(Tokens.Palette.paperElevated))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .accessibilityLabel("搜索歌曲、歌手、专辑")
         .accessibilityHint("打开搜索页")
@@ -108,7 +108,7 @@ struct DiscoverView: View {
                         } label: {
                             EditorPlaylistCard(playlist: playlist)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                         .accessibilityLabel("\(playlist.title)，20 首，每日换一批")
                     }
                 }
@@ -133,7 +133,10 @@ struct DiscoverView: View {
                                       artwork: AnyView(SongArtwork(song: song, size: 104,
                                                                    radius: Tokens.Radius.artworkSmall)),
                                       size: 104,
-                                      onTap: { play([song], at: 0) })
+                                      onTap: {
+                                          Haptics.tap()
+                                          play([song], at: 0)
+                                      })
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -179,7 +182,7 @@ struct DiscoverView: View {
                                             showReason: true,
                                             rank: nil)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                     }
                 }
             }
@@ -234,7 +237,7 @@ struct DiscoverView: View {
                                             showReason: false,
                                             rank: index + 1)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                     }
                 }
             }
@@ -265,7 +268,7 @@ struct DiscoverView: View {
             Button("重试", action: retry)
                 .font(.footnote)
                 .foregroundStyle(Tokens.Palette.vermilion)
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
@@ -274,6 +277,7 @@ struct DiscoverView: View {
 
     private func play(_ songs: [Song], at index: Int) {
         guard songs.indices.contains(index) else { return }
+        Haptics.tap()
         player.play(queue: songs, startAt: index)
         library.recordPlayed(songs[index])
         router.showPlayer = true
@@ -311,7 +315,7 @@ struct DiscoverSectionHeader: View {
                 Button(actionTitle, action: action)
                     .font(.footnote)
                     .foregroundStyle(Tokens.Palette.vermilion)
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

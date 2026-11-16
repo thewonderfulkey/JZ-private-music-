@@ -42,7 +42,7 @@ struct MiniPlayerBar: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .accessibilityLabel("正在播放：\(song.name)，\(song.singer)")
                 .accessibilityHint("轻点打开播放页")
 
@@ -83,7 +83,7 @@ struct MiniPlayerBar: View {
                 .frame(width: 38, height: 44)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
     }
 
@@ -95,7 +95,7 @@ struct MiniPlayerBar: View {
                 .frame(width: 38, height: 44)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityLabel(label)
     }
 
@@ -114,7 +114,7 @@ struct MiniPlayerBar: View {
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
         .disabled(player.isResolving)
     }

@@ -252,7 +252,7 @@ struct RecognizeView: View {
                                     .font(.system(size: 32))
                                     .foregroundStyle(Tokens.Palette.vermilion)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press)
                             .accessibilityLabel("播放这首歌")
                         }
                     }
@@ -291,7 +291,7 @@ struct RecognizeView: View {
                             } label: {
                                 versionRow(song)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             Divider().padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                         }

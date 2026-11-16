@@ -65,8 +65,10 @@ final class DownloadFlow {
         case choosing
         /// 正在走换源链
         case resolving
-        /// 已拿到一条可下的源，等用户确认
+        /// 已拿到一条可下的源，等用户确认（**只在降级时需要点头**）
         case offer
+        /// 已经开下（老板反馈 ⑥：选完档位直接下，不再让人点第二遍）
+        case started
         /// 没有可用源 / 被开关拦下
         case failed
     }
@@ -131,11 +133,13 @@ final class DownloadFlow {
 
     private func apply(_ plan: DownloadResolver.Plan) {
         if let exact = plan.exact.first {
-            offer = Offer(quality: exact.quality,
-                          source: exact,
-                          isExact: true,
-                          note: plan.switched ? "本平台无源，已换到 \(exact.platform.shortName)" : "")
-            stage = .offer
+            let offer = Offer(quality: exact.quality,
+                              source: exact,
+                              isExact: true,
+                              note: plan.switched ? "本平台无源，已换到 \(exact.platform.shortName)" : "")
+            self.offer = offer
+            // 实测就是用户要的那一档 → 直接开下，不再要求点第二遍「开始下载」
+            start(offer)
         } else if let fallback = plan.fallback {
             offer = Offer(quality: fallback.quality,
                           source: fallback,
@@ -150,8 +154,9 @@ final class DownloadFlow {
 
     // MARK: 确认 → 落盘
 
-    func confirm() {
-        guard let song, let offer else { return }
+    /// 落盘。正常路径（实测命中目标档）由 `apply` 直接调；降级路径由用户在 offer 页点确认。
+    private func start(_ offer: Offer) {
+        guard let song else { return }
 
         if let reason = DownloadGuard.refusalReason(
             wifiOnly: SettingsStore.shared.wifiOnlyDownload,
@@ -168,8 +173,20 @@ final class DownloadFlow {
             useBackground: SettingsStore.shared.backgroundDownload)
 
         startedDownload = true
-        isPresented = false
-        stage = .choosing
+        stage = .started
+        Haptics.success()
+
+        // 给一个"已开始"的确认画面，1.8 秒后自己收起（不用用户再点关闭）
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if stage == .started { dismiss() }
+        }
+    }
+
+    /// 降级路径的确认按钮
+    func confirm() {
+        guard let offer else { return }
+        start(offer)
     }
 
     /// 这首歌是否已经在本地（用于把入口显示成"已下载"）

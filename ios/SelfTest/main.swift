@@ -1092,6 +1092,72 @@ do {
     check("归一化键保留汉字", SearchRanker.normalizedKey("晴天·周杰伦") == "晴天周杰伦")
 }
 
+// MARK: - 第二轮整改：歌词时间轴 + 下载实测档位
+
+section("歌词切行时间点（老板反馈 ④：晚切/早切）")
+
+do {
+    let plain = LyricLine(timeMs: 1000, text: "第一句")
+    check("没有逐字时间时用行时间", plain.highlightStartMs == 1000)
+
+    let withWords = LyricLine(timeMs: 5000, text: "第二句", words: [
+        LyricWord(text: "第", startMs: 5300, durMs: 200),
+        LyricWord(text: "二", startMs: 5500, durMs: 200),
+    ])
+    check("有逐字时间时取第一个字的起点（不再「行到即切」）",
+          withWords.highlightStartMs == 5300, "\(withWords.highlightStartMs)")
+
+    let lines = [
+        LyricLine(timeMs: 0, text: "前奏"),
+        LyricLine(timeMs: 5000, text: "第二句", words: [
+            LyricWord(text: "第", startMs: 5300, durMs: 200),
+        ]),
+        LyricLine(timeMs: 9000, text: "第三句"),
+    ]
+    check("5100ms 时还停在上一行（字没唱到就不抢）",
+          LyricsCleaning.indexAt(lines, positionMs: 5100) == 0,
+          "\(LyricsCleaning.indexAt(lines, positionMs: 5100))")
+    check("5300ms 时切到第二句",
+          LyricsCleaning.indexAt(lines, positionMs: 5300) == 1,
+          "\(LyricsCleaning.indexAt(lines, positionMs: 5300))")
+    check("9000ms 时切到第三句", LyricsCleaning.indexAt(lines, positionMs: 9000) == 2)
+    check("空歌词返回 -1", LyricsCleaning.indexAt([], positionMs: 1000) == -1)
+
+    // 用户偏移（±600ms）就是在 positionMs 上加减，这里验证"提前 200ms"确实会早切
+    let offset = 200
+    check("偏移 +200ms 会提前切行",
+          LyricsCleaning.indexAt(lines, positionMs: 5300 - offset) == 0
+            && LyricsCleaning.indexAt(lines, positionMs: 5300 - offset + offset) == 1)
+}
+
+section("下载落盘后的实测档位（老板反馈 ⑥：找到无损却下成 320k）")
+
+do {
+    // 真实文件头：FLAC "fLaC" / MP3 "ID3"
+    let flacMagic: [UInt8] = [0x66, 0x4C, 0x61, 0x43, 0, 0, 0, 34] + Array(repeating: 0, count: 8)
+    let mp3Magic: [UInt8] = [0x49, 0x44, 0x33] + Array(repeating: 0, count: 13)
+
+    let flac = DownloadGuard.verdict(prefix: flacMagic, size: 30_000_000, durationSec: 260)
+    check("FLAC 头 → 无损", flac.quality == .lossless, flac.quality.rawValue)
+    check("FLAC 头 → 后缀 flac", flac.extensionName == "flac")
+
+    // 320k mp3：260 秒 × 320kbps ≈ 10.4 MB
+    let mp3High = DownloadGuard.verdict(prefix: mp3Magic, size: 10_400_000, durationSec: 260)
+    check("300+ kbps 的 mp3 → 高品", mp3High.quality == .high, "kbps=\(mp3High.kbps)")
+    check("mp3 头 → 后缀 mp3", mp3High.extensionName == "mp3")
+
+    // 128k mp3：260 秒 × 128kbps ≈ 4.2 MB
+    let mp3Std = DownloadGuard.verdict(prefix: mp3Magic, size: 4_160_000, durationSec: 260)
+    check("128k 的 mp3 → 标准", mp3Std.quality == .standard, "kbps=\(mp3Std.kbps)")
+
+    check("标着无损但实测 320k → 有一句人话",
+          DownloadGuard.downgradeNote(mp3High, requested: .lossless) != nil)
+    check("实测就是无损 → 不啰嗦",
+          DownloadGuard.downgradeNote(flac, requested: .lossless) == nil)
+    check("标着无损但实测 320k 的说明里带实测码率",
+          (DownloadGuard.downgradeNote(mp3High, requested: .lossless) ?? "").contains("kbps"))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -39,6 +39,7 @@ struct HotChartView: View {
 
                         ForEach(Array(feed.hotSongs.enumerated()), id: \.element.id) { index, song in
                             Button {
+                                Haptics.tap()
                                 player.play(queue: feed.hotSongs, startAt: index)
                                 library.recordPlayed(song)
                                 router.showPlayer = true
@@ -48,7 +49,7 @@ struct HotChartView: View {
                                                 showReason: false,
                                                 rank: index + 1)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             Divider().padding(.leading, Tokens.Spacing.pageMargin + 44)
                         }

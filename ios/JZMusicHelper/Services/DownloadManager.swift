@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import UIKit
 import UserNotifications
@@ -6,6 +7,14 @@ import UserNotifications
 /// 管理下载任务：前台 URLSession（实时进度）+ 后台 URLSession（App 退后台继续下载）。
 /// 文件保存到 App 沙盒 Documents/Music/ 目录（已开启 UIFileSharingEnabled，
 /// 在"文件"App → 我的 iPhone → JZ 音乐 中可见）。
+///
+/// 2026-11-16 第二轮修的三个真问题（老板反馈 ⑥）：
+///   ① **下载失败**：`didFinishDownloadingTo` 里把临时文件 `moveItem` 放进了 `DispatchQueue.main.async`，
+///      而那个临时文件在 delegate 回调返回的瞬间就可能被系统删掉 → 移动失败 → 记一条失败。
+///      现在**在回调线程里同步搬走**，再回主线程更新状态。
+///   ② **标着无损实际 320k**：落盘后按文件头（前 16 字节）+ 真实体积重算容器与码率，
+///      档位以实测为准，并把文件名后缀改成真实容器（`.flac` 里装的是 mp3 这种会当场改回 `.mp3`）。
+///   ③ 同一份 taskMap 被 delegate 队列和主线程同时读写 → 用锁包起来。
 final class DownloadManager: NSObject, ObservableObject {
 
     static let shared = DownloadManager()
@@ -19,8 +28,12 @@ final class DownloadManager: NSObject, ObservableObject {
 
     private var foregroundSession: URLSession!
     private var backgroundSession: URLSession!
-    /// taskIdentifier -> 条目 id（进度回调用）
+
+    // taskIdentifier 相关状态：delegate 队列与主线程都会碰，统一加锁
+    private let taskLock = NSLock()
     private var taskMap: [Int: UUID] = [:]
+    private var taskFileNames: [Int: String] = [:]
+
     /// 下载记录的落盘路径（原来借 HistoryStore，现在 Downloads 自己存，避免两个 store 互相依赖）
     private var recordsURL: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -58,6 +71,40 @@ final class DownloadManager: NSObject, ObservableObject {
         return s.components(separatedBy: illegal).joined(separator: "_")
     }
 
+    // MARK: - task 登记（线程安全）
+
+    private func register(_ task: URLSessionTask, id: UUID, fileName: String) {
+        taskLock.lock()
+        taskMap[task.taskIdentifier] = id
+        taskFileNames[task.taskIdentifier] = fileName
+        taskLock.unlock()
+    }
+
+    private func itemID(for taskIdentifier: Int) -> UUID? {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return taskMap[taskIdentifier]
+    }
+
+    private func fileName(for taskIdentifier: Int) -> String? {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return taskFileNames[taskIdentifier]
+    }
+
+    private func unregister(_ taskIdentifier: Int) {
+        taskLock.lock()
+        taskMap[taskIdentifier] = nil
+        taskFileNames[taskIdentifier] = nil
+        taskLock.unlock()
+    }
+
+    private func taskIdentifier(forItem id: UUID) -> Int? {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return taskMap.first(where: { $0.value == id })?.key
+    }
+
     // MARK: - 下载
 
     /// 开始下载（后台会话）。返回条目 id。
@@ -88,16 +135,11 @@ final class DownloadManager: NSObject, ObservableObject {
             return id
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 300
-        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
-
         let session: URLSession = useBackground ? backgroundSession : foregroundSession
-        let task = session.downloadTask(with: request)
+        let task = session.downloadTask(with: URLRequest.download(url))
         item.status = .downloading
         appendOrUpdate(item)
-        taskMap[task.taskIdentifier] = id
+        register(task, id: id, fileName: fileName)
         task.resume()
         return id
     }
@@ -128,8 +170,7 @@ final class DownloadManager: NSObject, ObservableObject {
     func cancel(itemID: UUID) {
         guard let idx = items.firstIndex(where: { $0.id == itemID }) else { return }
         var item = items[idx]
-        // 找到对应 task 取消
-        if let tid = taskMap.first(where: { $0.value == itemID })?.key {
+        if let tid = taskIdentifier(forItem: itemID) {
             foregroundSession.getAllTasks { tasks in
                 tasks.first(where: { $0.taskIdentifier == tid })?.cancel()
             }
@@ -168,15 +209,11 @@ final class DownloadManager: NSObject, ObservableObject {
             appendOrUpdate(newItem)
             return
         }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 300
-        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
         let session: URLSession = useBackground ? backgroundSession : foregroundSession
-        let task = session.downloadTask(with: request)
+        let task = session.downloadTask(with: URLRequest.download(url))
         newItem.status = .downloading
         appendOrUpdate(newItem)
-        taskMap[task.taskIdentifier] = itemID
+        register(task, id: itemID, fileName: item.fileName)
         task.resume()
     }
 
@@ -219,11 +256,24 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 }
 
+// MARK: - 请求构造
+
+private extension URLRequest {
+    /// 下载与重试共用同一套头：缺 Referer 时部分 CDN 直接 403（这也是"下载失败"的一类来源）
+    static func download(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 300
+        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
+        return request
+    }
+}
+
 // MARK: - URLSessionDownloadDelegate
 extension DownloadManager: URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard let id = taskMap[downloadTask.taskIdentifier] else { return }
+        guard let id = itemID(for: downloadTask.taskIdentifier) else { return }
         let progress = totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) : 0
         DispatchQueue.main.async {
             guard let idx = self.items.firstIndex(where: { $0.id == id }) else { return }
@@ -240,65 +290,138 @@ extension DownloadManager: URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let id = taskMap[downloadTask.taskIdentifier] else { return }
-        taskMap[downloadTask.taskIdentifier] = nil
-        var destURL: URL?
+        let tid = downloadTask.taskIdentifier
+        guard let id = itemID(for: tid) else { return }
+        let plannedName = fileName(for: tid)
+        unregister(tid)
+
+        // ⚠️ 必须在本回调里**同步**搬走：location 是系统给的临时文件，
+        // 回调一返回就可能被删（上一版丢进 main.async 再搬，于是"下载失败"）
+        let dir = musicDirectory
+        let target = dir.appendingPathComponent(plannedName ?? "download-\(id.uuidString).m4a")
+        var moved = false
+        var moveError: String?
+        do {
+            if FileManager.default.fileExists(atPath: target.path) {
+                try? FileManager.default.removeItem(at: target)
+            }
+            try FileManager.default.moveItem(at: location, to: target)
+            moved = true
+        } catch {
+            moveError = error.localizedDescription
+        }
+
+        // 落盘后的实测（容器 + 真实码率）：只读前 16 字节，不做整文件读取。
+        // 放到主线程做是因为要读 `items` 里的时长（delegate 队列不碰 items，避免数据竞争）。
+        var actualSize: Int64 = 0
+        if moved,
+           let attrs = try? FileManager.default.attributesOfItem(atPath: target.path),
+           let size = attrs[.size] as? Int64 {
+            actualSize = size
+        }
         DispatchQueue.main.async {
             guard let idx = self.items.firstIndex(where: { $0.id == id }) else { return }
-            var item = self.items[idx]
-            do {
-                let dir = self.musicDirectory
-                destURL = dir.appendingPathComponent(item.fileName)
-                if FileManager.default.fileExists(atPath: destURL!.path) {
-                    try? FileManager.default.removeItem(at: destURL!)
-                }
-                try FileManager.default.moveItem(at: location, to: destURL!)
-                item.localPath = destURL!.path
-                var actual: Int64 = 0
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: destURL!.path),
-                   let size = attrs[.size] as? Int64 {
-                    actual = size
-                    item.totalBytes = size
-                }
-                // 95% 体积防线：取流时探到的体积与实际落盘体积对不上，宁可删掉重下，
-                // 也不要把半截文件留在库里伪装成"下载完成"（Android 同口径）。
-                let expected = item.expectedBytes ?? 0
-                if DownloadGuard.isComplete(actual: actual, expected: expected) {
-                    item.status = .completed
-                    item.progress = 1.0
-                    item.finishedAt = Date()
-                    item.errorMessage = nil
-                } else {
-                    try? FileManager.default.removeItem(at: destURL!)
-                    item.localPath = nil
-                    item.status = .failed
-                    item.progress = 0
-                    item.errorMessage = "文件不完整（\(DownloadGuard.sizeText(actual)) / 预期 \(DownloadGuard.sizeText(expected))），已删除"
-                }
-            } catch {
-                item.status = .failed
-                item.errorMessage = error.localizedDescription
-            }
-            self.items[idx] = item
-            self.persist()
-            self.notifyCompletion(item)
+            let duration = self.items[idx].song.durationSec
+            let verdict = moved
+                ? DownloadGuard.verdict(prefix: Self.readPrefix(of: target, count: 16),
+                                        size: actualSize, durationSec: duration)
+                : nil
+            self.finish(itemID: id, moved: moved, target: target,
+                        actualSize: actualSize, moveError: moveError, verdict: verdict)
         }
     }
 
+    /// 收尾：体积防线 + 档位实测 + 改名 + 状态更新
+    private func finish(itemID id: UUID, moved: Bool, target: URL, actualSize: Int64,
+                        moveError: String?, verdict: DownloadGuard.Verdict?) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        var item = items[idx]
+
+        guard moved else {
+            item.status = .failed
+            item.progress = 0
+            item.errorMessage = "文件写入失败：\(moveError ?? "未知原因")"
+            items[idx] = item
+            persist()
+            return
+        }
+
+        item.totalBytes = actualSize
+        let expected = item.expectedBytes ?? 0
+        guard DownloadGuard.isComplete(actual: actualSize, expected: expected) else {
+            try? FileManager.default.removeItem(at: target)
+            item.localPath = nil
+            item.status = .failed
+            item.progress = 0
+            item.errorMessage = "文件不完整（\(DownloadGuard.sizeText(actualSize)) / 预期 \(DownloadGuard.sizeText(expected))），已删除"
+            items[idx] = item
+            persist()
+            return
+        }
+
+        // 档位以实测为准：容器 / 码率与记录不一致时改回来（"标着无损其实是 320k"就死在这一步）
+        var finalURL = target
+        if let verdict {
+            if verdict.extensionName != finalURL.pathExtension.lowercased() {
+                let renamed = finalURL.deletingPathExtension()
+                    .appendingPathExtension(verdict.extensionName)
+                if (try? FileManager.default.moveItem(at: finalURL, to: renamed)) != nil {
+                    finalURL = renamed
+                }
+            }
+            if verdict.quality != item.quality {
+                item.actualNote = "实测 \(verdict.container.uppercased()) · \(verdict.kbps) kbps（\(verdict.quality.displayName)），与标注的 \(item.quality.displayName) 不一致"
+                item.quality = verdict.quality
+            }
+        }
+
+        item.fileName = finalURL.lastPathComponent
+        item.localPath = finalURL.path
+        item.status = .completed
+        item.progress = 1.0
+        item.finishedAt = Date()
+        item.errorMessage = nil
+        items[idx] = item
+        persist()
+        notifyCompletion(item)
+    }
+
+    private static func readPrefix(of url: URL, count: Int) -> [UInt8] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: count)
+        return [UInt8](data)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let id = taskMap[task.taskIdentifier] else { return }
+        guard let id = itemID(for: task.taskIdentifier) else { return }
         if let error = error {
-            taskMap[task.taskIdentifier] = nil
+            unregister(task.taskIdentifier)
             DispatchQueue.main.async {
                 guard let idx = self.items.firstIndex(where: { $0.id == id }) else { return }
                 var item = self.items[idx]
                 if item.status != .cancelled {
                     item.status = .failed
-                    item.errorMessage = error.localizedDescription
+                    item.errorMessage = Self.friendlyError(error)
                 }
                 self.items[idx] = item
                 self.persist()
             }
+        }
+    }
+
+    /// 把 `NSURLError` 翻成一句人话（"下载失败"三个字对用户没有任何帮助）
+    static func friendlyError(_ error: Error) -> String {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return ns.localizedDescription }
+        switch ns.code {
+        case NSURLErrorNotConnectedToInternet: return "网络未连接（NSURLErrorNotConnectedToInternet）"
+        case NSURLErrorTimedOut: return "下载超时，换 Wi-Fi 或稍后重试"
+        case NSURLErrorNetworkConnectionLost: return "网络中断，下载没完成"
+        case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost: return "连不上音源服务器"
+        case NSURLErrorBadServerResponse: return "音源服务器返回错误（可能已失效或被拒绝）"
+        case NSURLErrorHTTPTooManyRedirects: return "音源地址跳转异常"
+        default: return "\(ns.localizedDescription)（\(ns.code)）"
         }
     }
 
@@ -333,6 +456,25 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     /// 后台会话完成的系统回调（静态，跨实例共享）
     private static var backgroundCompletionHandlers: [String: () -> Void] = [:]
+
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // 上一次是被用户上滑强杀的：系统不给 willTerminate，灵动岛/锁屏活动会留在那儿。
+        // 启动时按类型扫一遍，全部收掉（正常启动时这里是空集合，没有副作用）。
+        LiveActivityController.endAllActivities()
+        return true
+    }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        // 用户/系统正在收掉 App：把"音乐软件留在系统里的东西"一次性清干净。
+        // `assumeIsolated`：UIKit 一定在主线程调 willTerminate，而这里要碰的
+        // NowPlayingCenter / LiveActivityController 都是 @MainActor —— 同步执行，不排进队列
+        // （排进队列的话进程可能已经没了，清理根本不会跑）。
+        MainActor.assumeIsolated {
+            LiveActivityController.shared.resetForTermination()
+            NowPlayingCenter.shared.teardown()
+        }
+    }
 
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,

@@ -44,4 +44,34 @@ enum DownloadGuard {
         let mb = Double(bytes) / 1_000_000
         return mb >= 1 ? String(format: "%.1f MB", mb) : String(format: "%.0f KB", mb * 1000)
     }
+
+    // MARK: 落盘后的实测档位（老板反馈 ⑥：标着无损、下下来是 320k）
+
+    /// 文件实测结果：容器、真实码率、据此判定的档位、正确后缀
+    struct Verdict: Equatable {
+        let container: String
+        let kbps: Int64
+        let quality: QualityLevel
+        let extensionName: String
+    }
+
+    /// 拿「文件头 16 字节 + 实际体积 + 时长」反推真实档位。
+    ///
+    /// 为什么必须在落盘后再验一次：取流阶段验的是**那个 URL** 返回的头与长度，而下载可能是
+    /// 另一个 CDN 节点、另一种编码，甚至同一 URL 第二次返回 320k 转码流。只有文件本身不说谎。
+    static func verdict(prefix: [UInt8], size: Int64, durationSec: Int) -> Verdict {
+        let container = StreamVerifier.sniffHead(prefix)
+        let facts = StreamVerifier.AudioFacts(container: container, totalBytes: size)
+        let (quality, ext) = QualityFacts.of(facts, durationSec: durationSec)
+        return Verdict(container: container,
+                       kbps: QualityFacts.kbps(size, durationSec),
+                       quality: quality,
+                       extensionName: ext)
+    }
+
+    /// 实测档位低于用户想要的档位时，给一句人话（不弹窗，就写在下载行里）
+    static func downgradeNote(_ verdict: Verdict, requested: QualityLevel) -> String? {
+        guard verdict.quality.sortOrder < requested.sortOrder else { return nil }
+        return "实测 \(verdict.container.uppercased()) · \(verdict.kbps) kbps（\(verdict.quality.displayName)），没达到 \(requested.displayName)"
+    }
 }

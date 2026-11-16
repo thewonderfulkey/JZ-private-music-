@@ -1,17 +1,16 @@
 import SwiftUI
 import UIKit
 
-// MARK: - 播放页（老板反馈 ③④）
+// MARK: - 播放页
 //
-// ③ **全屏覆盖**：外面从 sheet 改成 `fullScreenCover`（见 RootTabView）。sheet 那种"拉起一张布"的
-//    观感就是它只会盖到 .large detent + 圆角 + 后面能看到桌面；全屏之后才是"进播放页"。
-//    收起来的路径保留两条：左上角 chevron.down，或者按住顶部往下拽（>90pt）。
-//
-// ④ **歌词常驻**：上一版歌词藏在"点封面"后面（`showLyrics`），不点就永远看不见，看起来就是
-//    "歌词是空的"。现在封面下面直接跟一块歌词面板（当前行高亮 + 上下淡出 + 自动滚到中间），
-//    空的时候写明原因并给「重试」；打开播放页时如果歌词还是空的，自动再取一次（`reloadLyrics`）。
-//
-// 其余：封面 / 题名 + 收藏 / 进度（含缓冲带）/ 播放模式 / 上一首-播放-下一首 / 下载 / 状态与音源。
+// 2026-11-16 第二轮改版（老板反馈 ②③④）：
+//   ② 观感：从"白底卡片 + 封面 + 控件"改成**沉浸式**——封面铺满做高斯模糊背景 + 压暗，
+//      上面放大封面、居中题名、半透明歌词卡、细进度条与白色播放键。这是 Apple Music /
+//      网易云这一类"大封面压在模糊封面上"的版式（老板在群里参考的那张也是这个路子）。
+//   ③ 反馈：所有键都换 `PressFeedbackButtonStyle`（按下缩到 0.95 + 压暗 + 触觉），
+//      不再是"点了没感觉"。
+//   ④ 歌词：判定改用 25Hz 的 `player.lyricPositionMs`（精确位置 + 用户偏移），
+//      播放页里还给了 -0.2s / +0.2s 的现场微调，不用进设置。
 struct NowPlayingView: View {
 
     @Environment(PlayerEngine.self) private var player
@@ -37,45 +36,45 @@ struct NowPlayingView: View {
         return library.isFavorite(song)
     }
 
-    /// 当前这首歌是否已经下到本地（决定按钮用实心图标）
     private var isDownloaded: Bool {
         guard let song = player.currentSong else { return false }
         return downloadFlow.isDownloaded(song)
     }
 
     var body: some View {
-        GeometryReader { geo in
-            // 封面尺寸按屏幕算：大屏最多 300pt，SE 这种矮屏用高度反推，保证歌词区一定留得下
-            let side = max(140, min(min(geo.size.width - 104, geo.size.height * 0.30), 300))
-            VStack(spacing: 0) {
-                topBar
-                artwork(side: side)
-                    .padding(.top, Tokens.Spacing.xxs)
-                titles
-                    .padding(.horizontal, Tokens.Spacing.l)
-                    .padding(.top, Tokens.Spacing.m)
-                lyricsBlock
-                    .padding(.horizontal, Tokens.Spacing.m)
-                    .padding(.top, Tokens.Spacing.s)
-                    .frame(maxHeight: .infinity)
-                scrubber
-                    .padding(.horizontal, Tokens.Spacing.l)
-                    .padding(.top, Tokens.Spacing.xxs)
-                transport
-                    .padding(.horizontal, Tokens.Spacing.l)
-                footer
-                    .padding(.horizontal, Tokens.Spacing.l)
-                    .padding(.bottom, Tokens.Spacing.xs)
+        ZStack {
+            backdrop.ignoresSafeArea()
+
+            GeometryReader { geo in
+                // 封面尺寸按屏幕算：大屏最多 320pt，矮屏用高度反推，保证歌词卡留得下
+                let side = max(150, min(min(geo.size.width - 96, geo.size.height * 0.34), 320))
+                VStack(spacing: 0) {
+                    topBar
+                    cover(side: side)
+                        .padding(.top, Tokens.Spacing.xs)
+                    titles
+                        .padding(.horizontal, Tokens.Spacing.l)
+                        .padding(.top, Tokens.Spacing.m)
+                    lyricsBlock
+                        .padding(.horizontal, Tokens.Spacing.m)
+                        .padding(.top, Tokens.Spacing.s)
+                        .frame(maxHeight: .infinity)
+                    scrubber
+                        .padding(.horizontal, Tokens.Spacing.l)
+                        .padding(.top, Tokens.Spacing.xs)
+                    transport
+                        .padding(.horizontal, Tokens.Spacing.l)
+                        .padding(.top, Tokens.Spacing.xxs)
+                    quickActions
+                        .padding(.horizontal, Tokens.Spacing.l)
+                        .padding(.bottom, Tokens.Spacing.xs)
+                }
             }
         }
-        .background(paperBackground.ignoresSafeArea())
         .sheet(isPresented: $showSourceDetail) {
             SourceDetailView().environment(player)
         }
-        // 音质选择必须挂在**播放页自己**身上：RootTabView 上那个 sheet 挂在根视图，
-        // 播放页（全屏 cover）盖着它的时候根本弹不出来 —— 点「下载」会像没反应。
-        // 两边共用 downloadFlow.isPresented，但 RootTabView 那边加了 `!showPlayer` 的闸门，
-        // 所以同一时刻只有一个是活的。
+        // 音质选择必须挂在播放页自己身上：播放页是盖在根视图上的模态，根视图弹不出 sheet
         .sheet(isPresented: Binding(get: { downloadFlow.isPresented },
                                     set: { downloadFlow.isPresented = $0 }),
                onDismiss: { downloadFlow.dismiss() }) {
@@ -86,27 +85,43 @@ struct NowPlayingView: View {
         }
         .task {
             Haptics.prepare()
-            // 打开播放页时歌词仍为空 → 再取一次（切歌瞬间取词失败不再等于永久没词）。
-            // 只在空的时候重取：已经取到词的歌再走一遍会先把歌词清空，屏幕会闪一下空态。
+            // 只在空气时才重取：已经取到词的歌再走一遍会先清空歌词，闪一下空态
             if player.lyrics.isEmpty && !player.isLoadingLyrics {
                 player.reloadLyrics()
             }
         }
     }
 
-    private var paperBackground: some View {
-        LinearGradient(
-            colors: [Color(.systemBackground), Color(.secondarySystemBackground)],
-            startPoint: .top, endPoint: .bottom
-        )
+    // MARK: 背景（模糊封面 + 压暗）
+
+    private var backdrop: some View {
+        ZStack {
+            Color.black
+            if let urlString = player.currentSong?.picURL, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable()
+                            .scaledToFill()
+                            .blur(radius: 46)
+                            .opacity(0.85)
+                    } else {
+                        Color.black
+                    }
+                }
+            }
+            LinearGradient(
+                colors: [Color.black.opacity(0.30), Color.black.opacity(0.10), Color.black.opacity(0.82)],
+                startPoint: .top, endPoint: .bottom)
+        }
+        .clipped()
     }
 
     // MARK: 顶栏
 
     private var topBar: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             Capsule()
-                .fill(Color.primary.opacity(0.18))
+                .fill(Color.white.opacity(0.35))
                 .frame(width: 36, height: 5)
                 .padding(.top, 6)
                 .accessibilityHidden(true)
@@ -115,7 +130,7 @@ struct NowPlayingView: View {
                 Text("正在播放")
                     .font(.footnote.weight(.medium))
                     .tracking(2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.65))
 
                 HStack {
                     Button {
@@ -123,10 +138,11 @@ struct NowPlayingView: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.press)
                     .accessibilityLabel("收起播放页")
 
                     Spacer()
@@ -175,15 +191,16 @@ struct NowPlayingView: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("更多")
     }
 
-    // MARK: 封面
+    // MARK: 大封面
 
-    private func artwork(side: CGFloat) -> some View {
+    private func cover(side: CGFloat) -> some View {
         Group {
             if let song = player.currentSong,
                let urlString = song.picURL, let url = URL(string: urlString) {
@@ -191,26 +208,30 @@ struct NowPlayingView: View {
                     if case .success(let image) = phase {
                         image.resizable().scaledToFill()
                     } else {
-                        artworkPlaceholder
+                        coverPlaceholder
                     }
                 }
             } else {
-                artworkPlaceholder
+                coverPlaceholder
             }
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.playerArtwork, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 28, y: 14)
         .accessibilityLabel("专辑封面")
     }
 
-    private var artworkPlaceholder: some View {
+    private var coverPlaceholder: some View {
         ZStack {
-            LinearGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.04)],
+            LinearGradient(colors: [Color.white.opacity(0.14), Color.white.opacity(0.05)],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
             Image(systemName: "music.note")
-                .font(.system(size: 50, weight: .light))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 54, weight: .light))
+                .foregroundStyle(.white.opacity(0.6))
         }
     }
 
@@ -218,14 +239,15 @@ struct NowPlayingView: View {
 
     private var titles: some View {
         HStack(alignment: .center, spacing: Tokens.Spacing.xs) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(player.currentSong?.name ?? "未在播放")
                     .font(FontRole.playerTitle)
+                    .foregroundStyle(.white)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(player.currentSong?.singer ?? "")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -236,39 +258,41 @@ struct NowPlayingView: View {
                 withAnimation(Tokens.Motion.favorite) { library.toggleFavorite(song) }
             } label: {
                 Image(systemName: isFavorite ? "heart.fill" : "heart")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.secondary)
+                    .font(.system(size: 21, weight: .medium))
+                    .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.white.opacity(0.85))
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .disabled(player.currentSong == nil)
             .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
         }
     }
 
-    // MARK: 歌词（反馈 ④：常驻可见）
+    // MARK: 歌词（常驻 + 现场微调）
 
     private var lyricsBlock: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
             HStack(spacing: Tokens.Spacing.xs) {
                 Text("歌词")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.72))
                 if player.isLoadingLyrics {
-                    ProgressView().scaleEffect(0.6)
+                    ProgressView().tint(.white).scaleEffect(0.6)
                 } else if !player.lyrics.isEmpty {
                     Text(lyricsMeta)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.white.opacity(0.45))
                         .lineLimit(1)
                 }
                 Spacer()
-                if player.lyrics.isEmpty && !player.isLoadingLyrics {
+                if !player.lyrics.isEmpty {
+                    offsetControls
+                } else if !player.isLoadingLyrics {
                     Button("重试") { player.reloadLyrics() }
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Tokens.Palette.vermilion)
-                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                        .buttonStyle(.press)
                 }
             }
             .padding(.horizontal, Tokens.Spacing.xs)
@@ -282,6 +306,50 @@ struct NowPlayingView: View {
         .frame(maxHeight: .infinity)
     }
 
+    /// 歌词快/慢的现场微调（±200ms）
+    private var offsetControls: some View {
+        HStack(spacing: 4) {
+            Button {
+                settings.lyricOffsetMs = SettingsStore.clampOffset(settings.lyricOffsetMs - 200)
+                Haptics.tap()
+            } label: {
+                Text("慢一点")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 28)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.press)
+
+            Text(offsetLabel)
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(minWidth: 46)
+
+            Button {
+                settings.lyricOffsetMs = SettingsStore.clampOffset(settings.lyricOffsetMs + 200)
+                Haptics.tap()
+            } label: {
+                Text("快一点")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 28)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.press)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var offsetLabel: String {
+        let v = settings.lyricOffsetMs
+        if v == 0 { return "对齐" }
+        return v > 0 ? "+\(v)ms" : "\(v)ms"
+    }
+
     private var lyricsMeta: String {
         let word = player.lyrics.first?.hasWordTiming == true ? " · 逐字" : ""
         return "\(player.lyrics.count) 行 · \(player.lyricsSource)\(word)"
@@ -290,27 +358,27 @@ struct NowPlayingView: View {
     private var lyricsEmpty: some View {
         VStack(spacing: Tokens.Spacing.xxs) {
             if player.isLoadingLyrics {
-                ProgressView()
+                ProgressView().tint(.white)
                 Text("正在取歌词…")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.6))
             } else {
                 Image(systemName: "quote.bubble")
                     .font(.system(size: 20, weight: .light))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.5))
                 Text("这首歌还没取到歌词")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text("换下一首再回来、或点右上「重试」重新取")
+                    .foregroundStyle(.white.opacity(0.8))
+                Text("换下一首再回来、或点「重试」重新取")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.5))
                     .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
-                .fill(Color.primary.opacity(0.03))
+                .fill(Color.white.opacity(0.06))
         )
     }
 
@@ -324,8 +392,7 @@ struct NowPlayingView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                // 上下各留一段余量，当前行才能稳定停在正中
-                .padding(.vertical, 72)
+                .padding(.vertical, 64)
             }
             .mask(lyricsFadeMask)
             .onChange(of: player.lyricIndex) { _, idx in
@@ -344,19 +411,22 @@ struct NowPlayingView: View {
         .frame(maxHeight: .infinity)
         .background(
             RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
+                .fill(Color.white.opacity(0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous))
     }
 
-    /// 一行歌词：当前行逐字染色（有逐字时间时），其他行 55% 不透明度。
+    /// 一行歌词：当前行逐字染色（有逐字时间时），其他行 45% 不透明度。
     @ViewBuilder
     private func lyricLineView(index: Int, line: LyricLine) -> some View {
         let isCurrent = index == player.lyricIndex
 
         Group {
             if isCurrent {
-                // 逐字推进要 30fps；用 TimelineView 而不是 0.5s 的时间观察者，否则字是「跳」着亮的
                 if settings.lyricAnimation {
                     TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
                         Text(currentLineString(line))
@@ -367,13 +437,13 @@ struct NowPlayingView: View {
                     Text(line.text)
                         .font(currentLineFont)
                         .lineSpacing(3)
-                        .foregroundStyle(Tokens.Palette.vermilion)
+                        .foregroundStyle(.white)
                 }
             } else {
                 Text(line.text)
                     .font(FontRole.lyricOther)
                     .lineSpacing(3)
-                    .foregroundStyle(Color.secondary.opacity(0.55))
+                    .foregroundStyle(Color.white.opacity(0.45))
             }
         }
         .multilineTextAlignment(.center)
@@ -404,28 +474,26 @@ struct NowPlayingView: View {
         }
     }
 
-    /// 当前行的富文本：有逐字时间就按每字 start/dur 推进颜色，没有就整行高亮。
+    /// 当前行的富文本：逐字推进用 `lyricPositionMs`（已含用户偏移），与切行判定同源。
     private func currentLineString(_ line: LyricLine) -> AttributedString {
         guard line.hasWordTiming else {
             var whole = AttributedString(line.text)
-            whole.foregroundColor = Tokens.Palette.vermilion
+            whole.foregroundColor = .white
             return whole
         }
 
-        let nowMs = Int(player.preciseTime * 1000)
-        let unsung = Color.secondary.opacity(0.55)
+        let nowMs = player.lyricPositionMs
+        let unsung = Color.white.opacity(0.45)
         var result = AttributedString()
         for word in line.words {
-            // 设计稿 §3.6：单字 140ms 线性过渡
             let progress = min(max(Double(nowMs - word.startMs) / 140.0, 0), 1)
             var piece = AttributedString(word.text)
-            piece.foregroundColor = mix(unsung, Tokens.Palette.vermilion, progress)
+            piece.foregroundColor = mix(unsung, .white, progress)
             result.append(piece)
         }
         return result
     }
 
-    /// SwiftUI 没有内置 Color 插值，这里用 UIColor 通道手动混一下。
     private func mix(_ from: Color, _ to: Color, _ t: Double) -> Color {
         var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0, fa: CGFloat = 0
         var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
@@ -442,14 +510,13 @@ struct NowPlayingView: View {
         ))
     }
 
-    /// 歌词区上下淡出（设计稿 §3.6 的「上下一屏淡出」）
     private var lyricsFadeMask: some View {
         VStack(spacing: 0) {
             LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: 36)
+                .frame(height: 32)
             Rectangle().fill(Color.black)
             LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: 36)
+                .frame(height: 32)
         }
     }
 
@@ -461,16 +528,16 @@ struct NowPlayingView: View {
                 let width = geo.size.width
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.primary.opacity(0.12))
+                        .fill(Color.white.opacity(0.22))
                         .frame(height: 4)
                     Capsule()
-                        .fill(Color.primary.opacity(0.20))
+                        .fill(Color.white.opacity(0.35))
                         .frame(width: max(0, width * bufferedFraction), height: 4)
                     Capsule()
-                        .fill(Color.accentColor)
+                        .fill(Color.white)
                         .frame(width: max(0, width * shownFraction), height: 4)
                     Circle()
-                        .fill(Color.accentColor)
+                        .fill(Color.white)
                         .frame(width: 12, height: 12)
                         .offset(x: max(0, min(width - 12, width * shownFraction - 6)))
                 }
@@ -496,7 +563,7 @@ struct NowPlayingView: View {
             }
             .font(.caption)
             .monospacedDigit()
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.white.opacity(0.55))
         }
         .accessibilityElement()
         .accessibilityLabel("播放进度")
@@ -519,10 +586,11 @@ struct NowPlayingView: View {
             } label: {
                 Image(systemName: player.mode.symbolName)
                     .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
                     .frame(width: Tokens.Size.transportButton, height: Tokens.Size.transportButton)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel("播放模式，当前\(player.mode.displayName)")
 
             Spacer(minLength: 0)
@@ -532,11 +600,12 @@ struct NowPlayingView: View {
                 Haptics.trackChange()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 22, weight: .medium))
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.white)
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel("上一首")
 
             Button {
@@ -544,19 +613,19 @@ struct NowPlayingView: View {
                 Haptics.playbackToggle()
             } label: {
                 ZStack {
-                    Circle().fill(Color.accentColor)
+                    Circle().fill(Color.white)
                     if player.isResolving {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(.black)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(.black)
                     }
                 }
-                .frame(width: Tokens.Size.playButton, height: Tokens.Size.playButton)
+                .frame(width: 68, height: 68)
                 .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
             .disabled(player.isResolving)
 
@@ -565,11 +634,12 @@ struct NowPlayingView: View {
                 Haptics.trackChange()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 22, weight: .medium))
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.white)
                     .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .accessibilityLabel("下一首")
 
             Spacer(minLength: 0)
@@ -579,41 +649,43 @@ struct NowPlayingView: View {
                 downloadFlow.start(song: song, want: player.quality)
             } label: {
                 Image(systemName: isDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(.white.opacity(isDownloaded ? 1 : 0.85))
                     .frame(width: Tokens.Size.transportButton, height: Tokens.Size.transportButton)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .disabled(player.currentSong == nil)
-            .foregroundStyle(Color.primary)
             .opacity(player.currentSong == nil ? 0.35 : 1)
             .accessibilityLabel(isDownloaded ? "已下载，可重新下载" : "下载")
         }
     }
 
-    // MARK: 状态与音源
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                if player.isResolving {
-                    ProgressView().scaleEffect(0.6)
-                }
-                Text(player.errorText ?? player.statusText ?? " ")
-                    .font(.caption2)
-                    .foregroundStyle(player.errorText == nil ? Color.secondary : Color.orange)
-                    .lineLimit(1)
+    /// 底部一行：状态/音源信息（小字，别抢画面）
+    private var quickActions: some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            if player.isResolving {
+                ProgressView().tint(.white).scaleEffect(0.6)
             }
-
+            Text(statusLine)
+                .font(.caption2)
+                .foregroundStyle(player.errorText == nil ? Color.white.opacity(0.45) : Color.orange)
+                .lineLimit(1)
+            Spacer(minLength: 0)
             if let source = player.source {
-                Text("音源 \(source.backendName) · \(source.format.uppercased()) · \(source.kbps) kbps")
+                Text("\(source.backendName) · \(source.format.uppercased())")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.40))
                     .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 2)
+        .frame(minHeight: 18)
+    }
+
+    private var statusLine: String {
+        if let error = player.errorText { return error }
+        if let status = player.statusText, !status.isEmpty { return status }
+        return player.mode.displayName
     }
 
     // MARK: 工具

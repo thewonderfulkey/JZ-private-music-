@@ -43,6 +43,13 @@ final class PlayerEngine {
     private(set) var lyricsSource: String = ""
     private(set) var lyricIndex: Int = -1
 
+    /// 歌词判定用的位置（毫秒）= 精确播放位置 + 用户设置的偏移。
+    ///
+    /// 为什么要 `preciseTime` 而不是 0.5 秒才更新一次的 `currentTime`：
+    /// 之前高亮用的是时间观察者里的 currentTime，最坏情况整整晚半秒——
+    /// 表现出来就是"唱到下一句了，上一句还亮着"。25Hz 的专用 ticker 把这个误差压到 40ms 内。
+    var lyricPositionMs: Int { Int(preciseTime * 1000) + SettingsStore.shared.lyricOffsetMs }
+
     /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
     private(set) var deadSongKeys: Set<String> = []
     private(set) var isLoadingLyrics = false
@@ -72,6 +79,7 @@ final class PlayerEngine {
     private static let keyQuality = "quality"
 
     private var timeObserver: Any?
+    private var lyricTicker: Task<Void, Never>?
     private var endObserver: NSObjectProtocol?
     private var failedObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
@@ -106,6 +114,7 @@ final class PlayerEngine {
         systemAttached = true
         NowPlayingCenter.shared.attach(engine: self)
         installTimeObserver()
+        startLyricTicker()
     }
 
     // MARK: 播放入口
@@ -181,6 +190,7 @@ final class PlayerEngine {
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
+        updateLyricIndex()
         updateNowPlaying()
     }
 
@@ -462,8 +472,24 @@ final class PlayerEngine {
     }
 
     private func updateLyricIndex() {
-        let idx = LyricsCleaning.indexAt(lyrics, positionMs: Int(currentTime * 1000))
+        let idx = LyricsCleaning.indexAt(lyrics, positionMs: lyricPositionMs)
         if idx != lyricIndex { lyricIndex = idx }
+    }
+
+    /// 25Hz 的歌词定位 ticker（只在播放时推进）
+    ///
+    /// 为什么不放在 TimeObserver 里：那个是 0.5 秒一次，用来驱动进度条足够，
+    /// 用来切歌词就是"永远慢半拍"。这里只在 `isPlaying` 时算，代价是每 40ms 一次
+    /// `AVPlayer.currentTime()` + 一次线性扫（歌词几百行，扫到头也就微秒级）。
+    private func startLyricTicker() {
+        lyricTicker?.cancel()
+        lyricTicker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 40_000_000)
+                guard let self else { return }
+                if self.isPlaying, !self.lyrics.isEmpty { self.updateLyricIndex() }
+            }
+        }
     }
 
     /// 播放页重取歌词（首次取词失败时自动/手动重试；不打断播放）

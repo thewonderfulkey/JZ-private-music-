@@ -48,6 +48,16 @@ enum Haptics {
         light.impactOccurred()
     }
 
+    /// 普通点击（列表行、卡片、胶囊）——老板反馈 ③：点了要先"有感觉"
+    static func tap() {
+        light.impactOccurred()
+    }
+
+    /// 切 Tab：用 selection 更轻，只有"格"变了才给一次
+    static func tabChanged() {
+        selection.selectionChanged()
+    }
+
     /// 麦克风开始聆听（物理动作，给 medium）
     static func listeningStart() {
         medium.impactOccurred()
@@ -79,3 +89,4 @@ enum Haptics {
         selection.prepare()
     }
 }
+

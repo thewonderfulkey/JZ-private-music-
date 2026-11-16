@@ -52,6 +52,9 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var createdAt: Date
     var finishedAt: Date?
     var errorMessage: String?
+    /// 落盘实测与标注档位不一致时的说明（例：标着无损，文件其实是 320k mp3）。
+    /// 可选类型：旧记录没有这个键，解码不能失败。
+    var actualNote: String?
 
     init(id: UUID = UUID(),
          song: Song,
@@ -67,7 +70,8 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          expectedBytes: Int64? = nil,
          createdAt: Date = Date(),
          finishedAt: Date? = nil,
-         errorMessage: String? = nil) {
+         errorMessage: String? = nil,
+         actualNote: String? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -83,6 +87,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.createdAt = createdAt
         self.finishedAt = finishedAt
         self.errorMessage = errorMessage
+        self.actualNote = actualNote
     }
 
     var progressText: String {

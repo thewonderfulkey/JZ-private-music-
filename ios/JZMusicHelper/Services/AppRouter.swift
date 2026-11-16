@@ -8,12 +8,13 @@ import Observation
 // 视图侧读这份状态，两边都不用互相持有。
 //
 // 2026-11-16 改版（老板反馈 ⑥）：**搜索不再是 Tab**，入口挪到发现页最上方。
-// 所以 Tab 从 5 个收回 4 个（发现 / 识曲 / 下载 / 资料库），搜索变成发现页 push 出来的页面。
+// 2026-11-16 第二轮（老板反馈 ⑤）：**资料库 → 我的收藏**，并挪到发现与识曲之间。
+// 所以 Tab 是 4 个：发现 / 我的收藏 / 识曲 / 下载，搜索变成发现页 push 出来的页面。
 @Observable
 final class AppRouter {
 
     enum Tab: Hashable {
-        case discover, recognize, downloads, library
+        case discover, favorites, recognize, downloads
     }
 
     /// 当前 Tab（TabView 直接绑它）

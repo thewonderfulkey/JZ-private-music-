@@ -50,10 +50,24 @@ struct SettingsView: View {
                         Text(item.displayName).tag(item)
                     }
                 }
+                Stepper("时间偏移：\(lyricOffsetText)",
+                        value: $settings.lyricOffsetMs, in: -600...600, step: 100)
+                Text("歌词比声音慢就往上调（正数 = 歌词提前），反之往下调。播放页歌词区也有「快一点 / 慢一点」现场微调。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")
                 Button("清空歌词缓存", role: .destructive) {
                     showClearLyricsConfirm = true
                 }
+            }
+
+            Section("锁屏与灵动岛") {
+                Toggle("实时活动（锁屏歌词 / 灵动岛）", isOn: $settings.liveActivityEnabled)
+                Text(settings.liveActivityEnabled
+                     ? "播放时会在锁屏与灵动岛显示歌词卡片；暂停着退到后台、或退出 App 时会收掉，不留残影。"
+                     : "已关闭：播放时不会创建任何实时活动，退出 App 后系统里也不会留音乐组件。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("识曲") {
@@ -118,6 +132,12 @@ struct SettingsView: View {
             }
             Button("取消", role: .cancel) {}
         }
+    }
+
+    private var lyricOffsetText: String {
+        let v = settings.lyricOffsetMs
+        if v == 0 { return "0 ms（对齐）" }
+        return v > 0 ? "+\(v) ms（提前）" : "\(v) ms（延后）"
     }
 
     private var appVersion: String {

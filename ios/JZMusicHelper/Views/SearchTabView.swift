@@ -81,7 +81,7 @@ struct SearchView: View {
                         .frame(width: 28, height: 40)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.press)
                 .accessibilityLabel("清空")
             }
 
@@ -91,7 +91,7 @@ struct SearchView: View {
             }
             .font(.footnote.weight(.semibold))
             .foregroundStyle(Tokens.Palette.vermilion)
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .disabled(trimmedKeyword.isEmpty)
         }
         .padding(.leading, Tokens.Spacing.s)
@@ -148,7 +148,7 @@ struct SearchView: View {
                                     .background(Capsule().fill(Tokens.Palette.paperElevated))
                                     .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press)
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -173,6 +173,7 @@ struct SearchView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
+                            Haptics.tap()
                             player.play(queue: visibleSongs, startAt: index)
                             library.recordPlayed(song)
                             router.showPlayer = true
@@ -182,7 +183,7 @@ struct SearchView: View {
                                     isFavorite: library.isFavorite(song),
                                     onFavorite: { library.toggleFavorite(song) })
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.press)
                         .padding(.horizontal, Tokens.Spacing.pageMargin)
                         .contextMenu {
                             Button {
@@ -227,7 +228,7 @@ struct SearchView: View {
             }
             .font(.footnote)
             .foregroundStyle(Tokens.Palette.vermilion)
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             Spacer()
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

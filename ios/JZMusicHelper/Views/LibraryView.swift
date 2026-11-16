@@ -1,59 +1,45 @@
 import SwiftUI
 
-// MARK: - 资料库（设计稿 §3.10）
+// MARK: - 我的收藏（老板反馈 ⑤：资料库那页设计不行，直接换成"我的收藏"）
 //
-// 收藏 / 最近播放 两段（合并了旧「历史」Tab 的内容）；右上角 gear 进设置。
-struct LibraryView: View {
-
-    enum Segment: String, CaseIterable, Identifiable {
-        case favorites = "收藏"
-        case recent = "最近播放"
-        var id: String { rawValue }
-    }
+// 只做一件事：把收藏的歌排成一张干净的列表。
+//   · 顶部一张大卡写明「我喜欢的音乐 · N 首」，播放全部 / 随机播放两个动作就在卡上；
+//   · 下面是收藏列表，行内可直接取消收藏（爱心）；
+//   · 设置收进右上角齿轮（原来在"资料库"里）。
+// 最近播放没有消失：它作为一屏「最近播放」留在发现页（那里本来就有一栏）。
+struct FavoritesView: View {
 
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
     @Environment(DownloadFlow.self) private var downloadFlow
     @Environment(AppRouter.self) private var router
 
-    @State private var segment: Segment = .favorites
-
-    private var currentSongs: [Song] {
-        segment == .favorites ? library.favorites : library.recentSongs
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("分段", selection: $segment) {
-                ForEach(Segment.allCases) { item in
-                    Text(item.rawValue).tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, Tokens.Spacing.pageMargin)
-            .padding(.top, Tokens.Spacing.xs)
-
-            if currentSongs.isEmpty {
+        Group {
+            if library.favorites.isEmpty {
                 emptyState
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
-                        if segment == .favorites {
-                            favoriteHeader
-                        }
-                        ForEach(Array(currentSongs.enumerated()), id: \.element.id) { index, song in
+                    LazyVStack(spacing: 0) {
+                        header
+                        ForEach(Array(library.favorites.enumerated()), id: \.element.id) { index, song in
                             Button {
-                                player.play(queue: currentSongs, startAt: index)
+                                player.play(queue: library.favorites, startAt: index)
                                 library.recordPlayed(song)
+                                Haptics.tap()
                                 router.showPlayer = true
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
-                                        isFavorite: library.isFavorite(song),
-                                        onFavorite: { library.toggleFavorite(song) },
-                                        subtitle: segment == .recent ? recentSubtitle(song) : nil)
+                                        isFavorite: true,
+                                        onFavorite: {
+                                            Haptics.favorite()
+                                            withAnimation(Tokens.Motion.favorite) {
+                                                library.toggleFavorite(song)
+                                            }
+                                        })
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.press)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .contextMenu {
                                 Button {
@@ -61,11 +47,10 @@ struct LibraryView: View {
                                 } label: {
                                     Label("下载…", systemImage: "arrow.down.circle")
                                 }
-                                Button {
+                                Button(role: .destructive) {
                                     library.toggleFavorite(song)
                                 } label: {
-                                    Label(library.isFavorite(song) ? "取消收藏" : "收藏",
-                                          systemImage: library.isFavorite(song) ? "heart.slash" : "heart")
+                                    Label("取消收藏", systemImage: "heart.slash")
                                 }
                             }
                             Divider()
@@ -78,7 +63,7 @@ struct LibraryView: View {
                 .scrollIndicators(.hidden)
             }
         }
-        .navigationTitle("资料库")
+        .navigationTitle("我的收藏")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
@@ -91,43 +76,67 @@ struct LibraryView: View {
         }
     }
 
-    // MARK: 收藏头部
+    // MARK: 头部
 
-    private var favoriteHeader: some View {
-        HStack(spacing: Tokens.Spacing.s) {
-            ZStack {
-                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                    .fill(Tokens.Palette.paperElevated)
-                Image(systemName: "heart.fill")
-                    .foregroundStyle(Tokens.Palette.vermilion)
-            }
-            .frame(width: 88, height: 88)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("我喜欢的音乐")
-                    .font(.title3.weight(.semibold))
-                Text("\(library.favorites.count) 首 · 收藏即得")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: Tokens.Spacing.xs) {
-                    Button("播放全部") {
-                        guard let first = library.favorites.first else { return }
-                        player.play(queue: library.favorites,
-                                    startAt: library.favorites.firstIndex(of: first) ?? 0)
-                        router.showPlayer = true
-                    }
-                    .font(.footnote.weight(.semibold))
-                    Button("随机播放") {
-                        player.replaceQueue(library.favorites, shuffle: true)
-                        router.showPlayer = true
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
+            HStack(spacing: Tokens.Spacing.m) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                        .fill(
+                            LinearGradient(colors: [Tokens.Palette.vermilion.opacity(0.85),
+                                                    Tokens.Palette.vermilion.opacity(0.45)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 34, weight: .regular))
+                        .foregroundStyle(.white)
                 }
-                .buttonStyle(.plain)
-                .padding(.top, 2)
+                .frame(width: 96, height: 96)
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("我喜欢的音乐")
+                        .font(.title3.weight(.bold))
+                    Text("\(library.favorites.count) 首 · 收藏即得")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: Tokens.Spacing.s) {
+                        Button {
+                            guard !library.favorites.isEmpty else { return }
+                            player.play(queue: library.favorites, startAt: 0)
+                            library.recordPlayed(library.favorites[0])
+                            Haptics.tap()
+                            router.showPlayer = true
+                        } label: {
+                            Label("播放全部", systemImage: "play.fill")
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 34)
+                                .background(Capsule().fill(Tokens.Palette.paperElevated))
+                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                        }
+                        .buttonStyle(.press)
+
+                        Button {
+                            guard !library.favorites.isEmpty else { return }
+                            player.replaceQueue(library.favorites, shuffle: true)
+                            Haptics.tap()
+                            router.showPlayer = true
+                        } label: {
+                            Label("随机", systemImage: "shuffle")
+                                .font(.footnote)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 34)
+                                .background(Capsule().fill(Tokens.Palette.paperElevated))
+                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                        }
+                        .buttonStyle(.press)
+                    }
+                    .padding(.top, 2)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer()
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .padding(.vertical, Tokens.Spacing.m)
@@ -135,20 +144,19 @@ struct LibraryView: View {
 
     // MARK: 空态
 
-    @ViewBuilder
     private var emptyState: some View {
-        if segment == .favorites {
-            EmptyStateView(title: "还没有收藏的歌曲",
-                           systemImage: "heart",
-                           description: "在歌曲右侧点心形，或在搜索结果里左滑收藏")
-        } else {
-            EmptyStateView(title: "还没有播放记录",
-                           systemImage: "clock",
-                           description: "放一首歌，这里会留下痕迹")
+        VStack(spacing: Tokens.Spacing.s) {
+            Image(systemName: "heart")
+                .font(.system(size: 38, weight: .light))
+                .foregroundStyle(Tokens.Palette.vermilion.opacity(0.7))
+            Text("还没有收藏的歌")
+                .font(.headline)
+            Text("在播放页点 ❤，或在搜索结果里左滑收藏")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-    }
-
-    private func recentSubtitle(_ song: Song) -> String {
-        song.album.isEmpty ? song.singer : "\(song.singer) · \(song.album)"
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Tokens.Spacing.l)
     }
 }

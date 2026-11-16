@@ -2,16 +2,14 @@ import SwiftUI
 
 // MARK: - 外壳：4 个 Tab
 //
-// 2026-11-16 改版（老板反馈 ⑥）：**搜索不再占一个 Tab**，入口放到发现页最上方 →
-// 所以 Tab 收回 4 个：发现 / 识曲 / 下载 / 资料库（设置仍在资料库右上角）。
+// 2026-11-16 第二轮（老板反馈 ⑤）：Tab = **发现 / 我的收藏 / 识曲 / 下载**
+// （资料库那页整页换成"我的收藏"，并挪到发现与识曲之间；设置仍在右上角齿轮）。
+// 搜索不占 Tab，入口在发现页最上方（上一轮改的）。
 //
 // 迷你播放条挂在**每个 Tab 的 NavigationStack** 上（`miniPlayerInset`），
-// 不是挂在 TabView 上——挂在 TabView 上会盖住 Tab 栏（反馈 ⑤ 的后半句）。
+// 不是挂在 TabView 上——挂在 TabView 上会盖住 Tab 栏。
 //
-// 播放页是 `fullScreenCover`（反馈 ③：原来用 sheet，看起来像"拉起一张布"，底下页面还露着）。
-//
-// Tab 的选择状态放在 `AppRouter`（不是本地 @State）：App Intents（快捷指令 / Siri）
-// 要能把 App 直接带到"识曲"或"搜索"，那条请求在回到前台时由这里消费。
+// 播放页是 `fullScreenCover`（③：原来用 sheet，看起来像"拉起一张布"）。
 struct RootTabView: View {
 
     @Environment(PlayerEngine.self) private var player
@@ -31,7 +29,10 @@ struct RootTabView: View {
     }
 
     var body: some View {
-        TabView(selection: Binding(get: { router.tab }, set: { router.tab = $0 })) {
+        TabView(selection: Binding(get: { router.tab }, set: { newValue in
+            if router.tab != newValue { Haptics.tabChanged() }
+            router.tab = newValue
+        })) {
             NavigationStack {
                 DiscoverView()
                     .paperBackground()
@@ -40,6 +41,14 @@ struct RootTabView: View {
             .miniPlayerInset(onTap: openPlayer)
             .tabItem { Label("发现", systemImage: "house.fill") }
             .tag(AppRouter.Tab.discover)
+
+            NavigationStack {
+                FavoritesView()
+                    .paperBackground()
+            }
+            .miniPlayerInset(onTap: openPlayer)
+            .tabItem { Label("我的收藏", systemImage: "heart.fill") }
+            .tag(AppRouter.Tab.favorites)
 
             NavigationStack {
                 RecognizeView()
@@ -59,14 +68,6 @@ struct RootTabView: View {
             .tabItem { Label("下载", systemImage: "arrow.down.circle.fill") }
             .badge(activeDownloads)
             .tag(AppRouter.Tab.downloads)
-
-            NavigationStack {
-                LibraryView()
-                    .paperBackground()
-            }
-            .miniPlayerInset(onTap: openPlayer)
-            .tabItem { Label("资料库", systemImage: "square.stack.fill") }
-            .tag(AppRouter.Tab.library)
         }
         .tint(Tokens.Palette.vermilion)
         .fullScreenCover(isPresented: Binding(get: { router.showPlayer },
@@ -95,6 +96,10 @@ struct RootTabView: View {
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
             if phase == .active { drainIntents() }
+            // 退到后台且没在放歌 → 立刻收掉灵动岛/锁屏活动（老板反馈 ①：退出后台不该还挂着）
+            if phase == .background, !player.isPlaying {
+                LiveActivityController.shared.end()
+            }
         }
     }
 
@@ -111,12 +116,12 @@ struct RootTabView: View {
         case .playFavorites:
             let favorites = library.favorites
             guard !favorites.isEmpty else {
-                router.tab = .library
+                router.tab = .favorites
                 return
             }
             player.replaceQueue(favorites, shuffle: true)
             library.recordPlayed(favorites.first!)
-            router.tab = .library
+            router.tab = .favorites
             router.showPlayer = true
         case .startRecognition:
             router.tab = .recognize

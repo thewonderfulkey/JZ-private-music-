@@ -137,13 +137,22 @@ private struct DownloadRowView: View {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.orange)
-                    .lineLimit(2)
+                    .lineLimit(3)
+            }
+
+            // 落盘实测与标注不一致（例：标着无损，文件其实是 320k）——写清楚，别让用户自己去比体积
+            if let note = item.actualNote, item.status == .completed {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
             }
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
             // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页
+            Haptics.tap()
             player.playSingle(item.song)
             router.showPlayer = true
         }

@@ -24,6 +24,28 @@ final class NowPlayingCenter {
 
     private init() {}
 
+    /// 退出 App 时清掉系统面的残留：控制中心/锁屏的"正在播放"卡片、音频会话占用。
+    ///
+    /// 用户上滑杀掉 App 后，锁屏卡片和灵动岛如果没人收，会一直挂在那儿——
+    /// 这里在 `applicationWillTerminate` 里把能清的都清掉（真正被强杀时 iOS 不给回调，
+    /// 那部分只能靠下次启动时扫 `Activity.activities` 收尾，见 LiveActivityController）。
+    func teardown() {
+        engine = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+        artworkTask?.cancel()
+        artworkTask = nil
+        artwork = nil
+        lastArtworkURL = nil
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            #if DEBUG
+            print("[NowPlaying] 释放音频会话失败：\(error)")
+            #endif
+        }
+    }
+
     // MARK: 装配
 
     func attach(engine: PlayerEngine) {
