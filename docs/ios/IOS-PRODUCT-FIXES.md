@@ -131,14 +131,27 @@ ios/SelfTest/main.swift             +16 条断言（切行时间点 8 / 落盘�
 
 | 项 | 手段 | 结论 |
 |---|---|---|
-| 纯逻辑 | CI logic-tests（swiftc 编译 + 断言） | 见 §四 |
+| 纯逻辑 | CI logic-tests（swiftc 编译 + 断言） | **379 条全绿**（第二轮 +16：切行时间点 8 / 落盘实测档位 8） |
 | 界面卫生 / 工程结构 / 语法 | `check_ui_hygiene.py` / `check_pbxproj.py` / tree-sitter | 18 文件通过 / 175 对象 2 target / 66 文件 0 语法错误 |
-| 编译 | CI build-ipa | 见 §四 |
+| 编译 | CI build-ipa | ✅ **BUILD SUCCEEDED**，`PlugIns/JZWidgets.appex` 在包里 |
 | 真机 | **验不到**（Windows 无 iPhone） | 要你装机确认：退出后台后灵动岛是否消失、播放页观感、点击手感、歌词是否对齐、我的收藏页、下载是否一次点完且档位正确 |
 
-## 四、本轮出的包
+> 中间踩了两个自己的坑（都记下来免得下轮再犯）：① 切行时间点写成 `min(行时间, 第一个字)`，
+> 等于把高亮提前，正好是老板说的"还没唱就切"——改成 `max`；② `DownloadItem.quality` 是 `let`，
+> 落盘复验要改写它，编译报 "cannot assign to property"。这两处各费了一轮 CI。
 
-（CI 跑完后填）
+## 四、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.1.95-e01f607-r58-ios-unsigned.ipa` |
+| 大小 | 1.53 MB |
+| SHA-256 | `3771c2b13edaec267cc239c4d7a40f287aaf01d9ea52a3e0ccdc9e73ee7aa37a` |
+| CI | [run #58](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43869801424)（逻辑 379 条 ✅ / 编译 ✅ / 插件门禁 ✅ / 发飞书群 ✅） |
+| 提交 | `e01f607` |
+
+> 群里同一晚还有 `…fe338c4-r56…`、`…ac40b5c-r57…` 两个**失败**的构建通知（编译/断言没过，没出包），
+> 以及 `…e9499bf-r55…`（第一轮 7 项的包）。**这一轮请装 r58**；r55 是上一批改动，不含本轮 6 项。
 
 
 
