@@ -22,7 +22,7 @@ struct SearchView: View {
                 statusLine
                 resultsList
             }
-            .navigationTitle("JZ的音乐助手")
+            .navigationTitle("JZ 音乐")
             .navigationDestination(for: Song.self) { song in
                 SongDetailView(song: song)
             }

@@ -5,7 +5,7 @@ import UserNotifications
 // MARK: - 下载管理器
 /// 管理下载任务：前台 URLSession（实时进度）+ 后台 URLSession（App 退后台继续下载）。
 /// 文件保存到 App 沙盒 Documents/Music/ 目录（已开启 UIFileSharingEnabled，
-/// 在"文件"App → 我的 iPhone → JZ的音乐助手 中可见）。
+/// 在"文件"App → 我的 iPhone → JZ 音乐 中可见）。
 final class DownloadManager: NSObject, ObservableObject {
 
     static let shared = DownloadManager()

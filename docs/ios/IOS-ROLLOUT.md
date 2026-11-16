@@ -52,7 +52,7 @@
 | `NSSupportsLiveActivitiesFrequentUpdates` | `YES`（逐字歌词需要；若审核/功耗有问题则降级为整行） |
 | `UIFileSharingEnabled` | `YES` |
 | `LSSupportsOpeningDocumentsInPlace` | `YES` |
-| `CFBundleDisplayName` | JZ 音乐（与 APK「JZ的音乐助手」保持一致，过长会截断） |
+| `CFBundleDisplayName` | **JZ 音乐**（与安卓「JZ的音乐助手」故意区分：iOS 图标下只能显示 5–6 个字，「JZ的音乐助手」会被截成「JZ的音…」；定稿见 §0 的口径） |
 | `UILaunchScreen` | 纸底色 `#FAF8F3` + 题字图（静态） |
 | `UIUserInterfaceStyle` | 不设（跟随系统；App 内再给「外观」三项） |
 | `ITSAppUsesNonExemptEncryption` | `NO`（只做 HTTPS，无自研加密导出；但 KRC/QRC 解密是**解析**不是加密，需在审核说明里写清） |

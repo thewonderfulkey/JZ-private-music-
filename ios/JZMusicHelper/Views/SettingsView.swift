@@ -36,7 +36,7 @@ struct SettingsView: View {
                     HStack {
                         Text("文件 App 目录")
                         Spacer()
-                        Text("我的 iPhone / JZ的音乐助手")
+                        Text("我的 iPhone / JZ 音乐")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -62,7 +62,7 @@ struct SettingsView: View {
                 }
 
                 Section("关于") {
-                    LabeledContent("应用", value: "JZ的音乐助手")
+                    LabeledContent("应用", value: "JZ 音乐")
                     LabeledContent("版本", value: "1.0")
                     Text("音乐源为第三方接口聚合（酷我/QQ/网易/酷狗系），仅供个人学习测试，请支持正版音乐。接口为实测可用状态，随时可能失效。")
                         .font(.caption)
