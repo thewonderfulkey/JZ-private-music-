@@ -269,7 +269,9 @@ jobs:
   # 能抓：启动崩溃、首屏渲染错乱、393pt 宽度下的布局塌陷。
   # 抓不到：麦克风识曲、真实出声、锁屏/灵动岛、自签安装、后台音频——那些只能真机。
   simulator-smoke:
-    needs: build-ipa
+    # 只依赖断言：模拟器那份是独立编译的（-sdk iphonesimulator），不必等出包，
+    # 这样冒烟能和出包并行，少等 5 分钟。
+    needs: logic-tests
     name: simulator smoke (boot + launch + screenshot)
     runs-on: macos-15
     timeout-minutes: 25
