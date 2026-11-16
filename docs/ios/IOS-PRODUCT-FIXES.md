@@ -379,3 +379,68 @@ android/app/build.gradle.kts          versionCode 155 / versionName 2.1.97
 4. **播放列表（②）**：从「下载」页点一首 → 打开播放列表，应该是**整列**；列表循环能自动下一首。精选歌单点单曲同理（其余曲目会边放边补进队列）。
 5. **离线词图（⑧）**：下载一首（等几十秒让补料跑完），下载列表那行会多一句「已内嵌歌词+封面」/「歌词封面已存旁车」；开飞行模式，点已下载的歌 → 封面和歌词都还在。
 6. **悬浮栏（⑨）**：每个 Tab 滚到最底、搜索结果滚到最底，最后一条都能完整露出来，不被播放条压住。
+
+
+---
+
+# 第六轮整改（2026-11-17 凌晨 03:xx，老板 7 条 + 群内三张截屏 + 一段 8 秒录屏）
+
+> 来源：老板在开发群发的 r62 真机截屏（02:53 播放列表 1 首 / 02:45 播放页 / 02:46 歌词空态）
+> 与一段 8 秒录屏（02:47，点同一首歌 → 转圈"正在解析音源…"），外加 7 条文字反馈。
+> 本轮开工前按老板要求先把 5 个口径问清楚（布局铺法 / 小字去留 / 队列范围 /
+> 同一首再点 / 歌词兜底），全部按"推荐项"执行。
+
+## 一、逐条结果
+
+| # | 老板原话（摘要） | 问题定位（改前） | 改法（改后） |
+|---|---|---|---|
+| ① | 播放页调板正了，但进度条下方还有一大段空白；要所有元素从上到下均匀分布、自适应 | 上一版把"标题与功能键之间"的留白压成 50~64pt 之后，整列仍是**顶端对齐**：富余高度不会自己消失，全部堆在播放键下面（截屏底部 ~200pt 空白） | 改 **「封面撑满型」整列铺满**：`VStack` 高度钉成屏高，段与段之间用等权 `Spacer(minLength:)`（下限 12~24pt，富余均分）；封面边长由 `LayoutRules.playerCoverSide(width:height:)` 吃掉富余高度（除封面外固定块估 380pt，剩下的 72% 给封面，夹 140~380、不超屏宽−56）。封面 → 标题 → 功能键 → 进度 → 播放键 → 底部，一路铺到底 |
+| ② | 暂停键下方的小字不用显示了，已经在「音源」里 | `statusRow` 常驻一行：正常态写「音源 cyapi QQ · M4A · 97 kbps」并 `minHeight: 16` 预留高度 | 常驻行删掉；只在 `player.errorText` 有值时出现一行橙色 `errorLine`（无源/换源失败/播放失败），正常状态**一点高度都不占**。音质细节仍在「音源」面板 |
+| ③ | 歌词压根取不到了；双击封面要全屏歌词（不要框）；再次双击非歌词区域回封面 | 两层硬门槛把候选**全丢掉**：`abs(目标−候选) > 4s` 直接丢（实测 蓝莲花/后来/倔强/我不配 一个候选都不剩），版本标签惩罚把唯一的 live 候选也压到及格线下，文件头验收再把剩下的一票否决 | 三道闸全部改软：**时长只排序不过滤**；版本惩罚只影响排序；文件头验收改成"优先选通过的那份，一份都没通过就退回排名最高的那份"；新增 **酷我兜底**（非酷我的歌按「歌名 歌手」在酷我搜同一首，取官方行级词）；取到的词按音源实际时长 **线性对齐时间轴**（`alignedToAudio`，比例 0.75~1.35 才拉，差 <2% 不动）。歌词页去掉空态的圆角卡片；顶部歌名行 / 曲目信息行双击即回封面；空态多一行**失败原因**（下一轮能直接定位是哪条链断了） |
+| ④ | 点最近播放里的歌，播完自动"下一首"还是它自己，播放列表始终只有一首 | `DiscoverView` 最近播放的卡片 `play([song], at: 0)` ——只把这一首塞进队列 | 改成 `play(library.recentSongs, at: index)`：**整列最近播放（最多 50 首）**当队列，列表循环/随机才真的会往下走 |
+| ⑤ | 点正在播的这首会重新请求、重头播 | `play(queue:startAt:)` 无条件重置队列/进度/歌词并重新走三级取流 → 转圈"正在解析音源…"后从头放 | 新增 `PlaybackRules.shouldReuseCurrentSong(...)`：同一首歌 + 已装上播放项 + 无错误 → **只把播放列表换成这次点的整列**（`adoptQueue`），音频、进度、歌词全部保留，直接弹播放页；上次解析失败的歌仍允许重试 |
+| ⑥ | 搜索页点历史记录后键盘不收回 | 历史胶囊的按钮只 `keyword = word; runSearch()`，`fieldFocused` 一直是 true | 点历史先 `fieldFocused = false` 再搜索（结果不再被键盘顶掉半屏） |
+| ⑦ | 悬浮条和底层栏最后一条之间空隙又太大了，要严丝合缝 | 占位 `56 + 16 = 72`，页面自己再 `.padding(.bottom, 32)`，而条子本体只占 64 → 空出 40pt；`List`/`Form` 页面用占位行时 `insetGrouped` 的 section 间距还会再插一段 | 新增 `MiniPlayerMetrics`：占位**正好等于**条子高度（56 + 上下各 4 = 64），没播歌时 24（页面底部呼吸）；各页去掉额外的 32pt 底 padding；下载页/设置页改用 `.safeAreaInset(edge: .bottom) { MiniPlayerClearance() }`（真实内容 inset，滚到底最后一条紧贴条子上沿） |
+
+## 二、改动的文件（第六轮）
+
+```
+Services/LayoutRules.swift        playerGap 改成"间距下限 12~24"；+ playerCoverSide / chromeHeight；+ MiniPlayerMetrics
+Services/LyricsCleaning.swift     + alignedToAudio（时间轴按音源时长对齐）
+Services/LddcLyrics.swift         去掉 ±4s 硬过滤；版本惩罚只排序；文件头验收改软（chooseOutcome）；
+                                  + scoredCandidate（纯函数）+ FetchedOutcome；取词后对齐时间轴
+Services/LyricsService.swift      + 非酷我的歌走"酷我搜索 + 官方歌词"兜底；+ failureReason；统一对齐出口
+Services/PlaybackRules.swift      + shouldReuseCurrentSong（同一首再点不重播）
+Services/AudioPlayer.swift        play() 同曲复用（adoptQueue）；+ lyricsFailure（失败原因给人看）
+Views/NowPlayingView.swift        整列铺满版式 / 封面边长按屏算 / 状态行 → 仅错误行 / 歌词空态去框 + 失败原因 / 双击回封面
+Views/MiniPlayerBar.swift         占位 = 条子高度；+ MiniPlayerClearance（List/Form 用真实 inset）
+Views/DiscoverView.swift          最近播放整列当队列
+Views/SearchTabView.swift         点历史记录收键盘
+Views/DownloadsTabView.swift      下载列表改 safeAreaInset 让位
+Views/SettingsView.swift          设置表单改 safeAreaInset 让位
+Views/LibraryView / RecognizeView / EditorPlaylistView / HotChartView
+                                  去掉额外的 32pt 底 padding（严丝合缝）
+ios/SelfTest/main.swift           +31 条断言（铺满 5 / 悬浮条 3 / 同曲复用 4 / 候选软过滤 4 /
+                                  验收优选 4 / 时间轴对齐 7，另更新留白 4 条）
+ios/JZMusicHelper.xcodeproj       MARKETING_VERSION 2.1.98 / CURRENT_PROJECT_VERSION 156
+android/app/build.gradle.kts      versionCode 156 / versionName 2.1.98
+```
+
+## 三、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 纯逻辑 | CI logic-tests（swiftc + 断言） | 见下方出包记录（本轮新增 31 条） |
+| 候选软过滤的真因 | 本机 Python 复刻酷狗搜索 + KRC 解密，跑了 8 首歌 | 改前：蓝莲花/后来/倔强/我不配 **±4s 内 0 个候选**（→ 没词）；七里香只有 299s 原版 + 302s live（live 被版本惩罚压掉，原版可以过） |
+| 类型 | WSL + Swift 6.0.3 + 桩模块，CI 完整 swiftc 清单 typecheck | `TYPECHECK_EXIT=0` |
+| 断言实跑 | 本机小 runner（纯逻辑，不含解密/网络） | **31/31 通过**（铺满、悬浮条、同曲复用、候选软过滤、验收优选、时间轴对齐） |
+| 真机观感 | **验不到**（开发机 Windows，没有 iPhone/模拟器） | 需要老板装机确认（见下） |
+
+## 四、装机按这个顺序试
+
+1. **播放页铺满（①②）**：进播放页，从顶栏到播放键之间是否还有"空一大块"的地方；暂停键下面**没有**那行小字了；故意断网放一首 → 出错时才出现一行橙色提示。
+2. **歌词（③）**：搜《我不配》《蓝莲花》《后来》各播一首，打开歌词——应当**有词**（哪怕版本略不同，也不会整首空着）；顶部小字会写来源（`LDDC` / `酷我兜底` / `…·已对齐 ×1.34`）。双击封面 → 全屏歌词（没有圆角框）；**双击顶部歌名/曲目信息那一片** → 回封面；点某一句仍然是跳转。
+3. **队列（④）**：点「最近播放」里第 2 张卡 → 播放列表里是整列最近播放；等这首放完，自动播下一首（不是又回到它自己）。
+4. **同一首再点（⑤）**：正在放这首歌时，回到列表再点它一次 → 直接弹播放页，**不转圈、不重头播**（进度条位置不变）。
+5. **搜索键盘（⑥）**：搜索页点一条历史记录 → 键盘自己收回去，结果完整露出来。
+6. **悬浮条（⑦）**：各 Tab / 搜索结果滚到最底 → 最后一条紧贴播放条上沿，中间没有多余空隙。

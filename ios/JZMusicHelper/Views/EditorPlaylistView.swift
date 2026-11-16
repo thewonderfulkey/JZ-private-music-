@@ -41,7 +41,6 @@ struct EditorPlaylistView: View {
                 // 迷你条是浮层：末尾让出高度，最后一行不会被压住（第五轮反馈 ⑨）
                 MiniPlayerSpacer()
             }
-            .padding(.bottom, Tokens.Spacing.xxl)
             .readableWidth()
         }
         .scrollIndicators(.hidden)

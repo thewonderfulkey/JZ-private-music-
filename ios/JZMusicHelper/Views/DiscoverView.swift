@@ -34,7 +34,6 @@ struct DiscoverView: View {
                 MiniPlayerSpacer()
             }
             .padding(.top, Tokens.Spacing.xs)
-            .padding(.bottom, Tokens.Spacing.xxl)
             .readableWidth()
         }
         .scrollIndicators(.hidden)
@@ -129,7 +128,10 @@ struct DiscoverView: View {
                 DiscoverSectionHeader(title: "最近播放", meta: "\(library.recentSongs.count) 首")
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Tokens.Spacing.s) {
-                        ForEach(library.recentSongs.prefix(8)) { song in
+                        // r63（老板反馈 ④）：点最近播放里的一首，**整列最近播放**就是队列——
+                        // 原来只把这一首塞进队列，播完列表循环还是它自己，听着像"永远只有一首"。
+                        ForEach(Array(library.recentSongs.prefix(8).enumerated()),
+                                id: \.element.id) { index, song in
                             MediaCard(title: song.name,
                                       subtitle: song.singer,
                                       artwork: AnyView(SongArtwork(song: song, size: 104,
@@ -137,7 +139,7 @@ struct DiscoverView: View {
                                       size: 104,
                                       onTap: {
                                           Haptics.tap()
-                                          play([song], at: 0)
+                                          play(library.recentSongs, at: index)
                                       })
                         }
                     }

@@ -86,15 +86,12 @@ struct DownloadsTabView: View {
                             }
                         }
                     }
-                    // 迷你条是浮层：列表末尾让出它的高度（第五轮反馈 ⑨）
-                    Section {
-                        MiniPlayerSpacer()
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
+                    // 迷你条是浮层：用真实的底部 inset 让位（r63：insetGrouped 的 section 间距
+                    // 会插在占位行和最后一条记录之间，占位行做不到"严丝合缝"）
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
+                .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
             }
         }
     }

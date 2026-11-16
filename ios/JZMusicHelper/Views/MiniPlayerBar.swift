@@ -176,17 +176,35 @@ struct MiniPlayerOverlay: ViewModifier {
     }
 }
 
-/// 列表末尾的占位：正好等于迷你条的高度（+ 一点呼吸）。
-/// 每个可滚动页面都要在内容末尾放一个——浮层不挤压内容，只能自己把位置让出来。
+/// List / Form 类页面用：把迷你条的高度做成**真实的内容底部 inset**。
+///
+/// 为什么这两类页面不能用占位行：`insetGrouped` 的 section 之间自带 ~28pt 间距，
+/// 那个间距会插在"占位行"和"最后一条记录"之间，反而又空出一块。
+/// 用 `safeAreaInset(edge: .bottom)` 挂在 List/Form 自己身上，滚到底时最后一条正好贴住条子上沿。
+struct MiniPlayerClearance: View {
+
+    @Environment(PlayerEngine.self) private var player
+
+    var body: some View {
+        Color.clear
+            .frame(height: CGFloat(MiniPlayerMetrics.listBottomInset(playing: player.hasCurrentSong)))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// 列表末尾的占位：**正好等于**迷你条占掉的高度（r63：老板要"严丝合缝"）。
+///
+/// 上一版是 `56 + 16 = 72`，页面自己又加了 32 的底 padding，而条子本体只占 64 ——
+/// 最后一条和条子之间空出 40pt。现在高度只从 `MiniPlayerMetrics` 取一个数：
+/// 在播歌时 = 条子高度（最后一条紧贴条子上沿），没播歌时 = 页面底部呼吸。
 struct MiniPlayerSpacer: View {
 
     @Environment(PlayerEngine.self) private var player
 
     var body: some View {
         Color.clear
-            .frame(height: player.hasCurrentSong
-                   ? Tokens.Size.miniPlayerHeight + Tokens.Spacing.m
-                   : 0)
+            .frame(height: CGFloat(MiniPlayerMetrics.listBottomInset(playing: player.hasCurrentSong)))
             .accessibilityHidden(true)
     }
 }

@@ -40,15 +40,52 @@ enum LayoutRules {
         return min(available, cap)
     }
 
-    /// 播放页「封面 / 歌名 / 音质标签」与「功能键」之间那段留白的高度。
+    /// 播放页里相邻两块之间的**最小**间距（r63「封面撑满型」）。
     ///
-    /// 第五轮老板截屏：封面到播放栏之间空出一大块。根因不是封面太小，而是这块留白用了
-    /// **无上限的 `Spacer()`**——屏幕上所有富余高度都被它吞在标题和功能键之间。
-    /// 参考截屏（APK）里这段只有 ~60pt，其余高度落在最底部（状态行下面）。
-    /// 现在按屏高给一个**有上限**的值：手机上大约 50~64pt，小屏也不会挤成一团。
+    /// 第六轮老板截屏：封面到功能键那块留白被压到 64pt 之后，富余高度全堆到了播放键下面
+    /// ——"进度条下方还有一大段空着的"。根因是整列**顶端对齐**：富余空间不会自己消失。
+    /// 现在改成整列铺满（外层 VStack 高度 = 屏高，各段之间用等权 `Spacer`），
+    /// 这个值只作为 `Spacer(minLength:)` 的下限：小屏上别挤成一团，大屏上富余由 Spacer 均分。
     static func playerGap(availableHeight: Double) -> Double {
-        guard availableHeight.isFinite, availableHeight > 0 else { return 48 }
-        return min(max(availableHeight * 0.075, 12), 64)
+        guard availableHeight.isFinite, availableHeight > 0 else { return 16 }
+        return min(max(availableHeight * 0.02, 12), 24)
+    }
+
+    /// 播放页封面边长（r63「封面撑满型」）：让封面吃掉富余高度，其余元素铺满整屏。
+    ///
+    /// 口径：先把「除封面以外那些块的固定高度」估成 `chromeHeight`（顶栏 48 + 标题/标签 95 +
+    /// 功能键 52 + 进度 40 + 播放键 72 + 底部呼吸 ≈ 380），剩下的高度 72% 给封面、28% 留给间距。
+    /// 再限制「不超过屏宽 − 左右各 28pt」，夹在 140…380。
+    /// 为什么不用"扣到精确"的算法：字体/动态字号一变，固定高度就变，估一个小常数比逐块测量稳，
+    /// 而且间距是 `Spacer`，估偏了也会被它吸收。
+    static func playerCoverSide(width: Double, height: Double) -> Double {
+        let w = (width.isFinite && width > 0) ? width : 393
+        let h = (height.isFinite && height > 0) ? height : 852
+        let byWidth = w - 56
+        let byHeight = (h - chromeHeight) * 0.72
+        return max(140, min(min(byWidth, byHeight), 380))
+    }
+
+    /// 播放页除封面以外的块大致占掉的高度（估出来的常数，见 `playerCoverSide`）
+    static let chromeHeight: Double = 380
+}
+
+// MARK: - 迷你播放条占位（纯函数）
+//
+// 第六轮老板反馈 ⑦："悬浮条和底层栏最后一条记录之间空隙太大，要严丝合缝。"
+// 根因：条子本体 56 + 上下各 4 内边距 = 64，而列表末尾让了 `56 + 16` 的占位、又额外
+// padding 了 32 —— 于是最后一条和条子之间空出 40pt。这里把"该让多少"钉成一个数。
+enum MiniPlayerMetrics {
+
+    /// 条子连同上下内边距占掉的真实高度
+    static let barHeight: Double = 56 + 4 + 4
+
+    /// 没在播歌时的页面底部呼吸（列表最后一条不要贴着屏幕边缘）
+    static let idleBottomInset: Double = 24
+
+    /// 列表末尾应该让出的高度：在播歌时**正好等于条子高度**（最后一条紧贴条子上沿）
+    static func listBottomInset(playing: Bool) -> Double {
+        playing ? barHeight : idleBottomInset
     }
 }
 

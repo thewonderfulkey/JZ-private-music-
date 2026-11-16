@@ -59,7 +59,6 @@ struct FavoritesView: View {
                         // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
                         MiniPlayerSpacer()
                     }
-                    .padding(.bottom, Tokens.Spacing.xxl)
                     .readableWidth()
                 }
                 .scrollIndicators(.hidden)

@@ -138,6 +138,9 @@ struct SearchView: View {
                     FlowLayout(spacing: Tokens.Spacing.xs) {
                         ForEach(library.searchHistory, id: \.self) { word in
                             Button {
+                                // r63（老板反馈 ⑥）：点历史记录后键盘要自己收回去，
+                                // 不然结果被键盘顶掉一半，还得手动点一下才看得到
+                                fieldFocused = false
                                 keyword = word
                                 runSearch()
                             } label: {
@@ -215,7 +218,6 @@ struct SearchView: View {
 
                     MiniPlayerSpacer()
                 }
-                .padding(.bottom, Tokens.Spacing.xxl)
                 .readableWidth()
             }
             .scrollIndicators(.hidden)

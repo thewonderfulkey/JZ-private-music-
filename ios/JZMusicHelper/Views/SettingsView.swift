@@ -119,13 +119,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // 迷你条是浮层：表单末尾让出它的高度，最后一行不会被压住（第五轮反馈 ⑨）
-            Section {
-                MiniPlayerSpacer()
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
         .scrollContentBackground(.hidden)
         .background(Tokens.Palette.paper)
         .navigationTitle("设置")

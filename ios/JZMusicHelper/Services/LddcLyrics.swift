@@ -3,20 +3,25 @@ import Foundation
 // MARK: - LDDC 取词编排（酷狗 KG / QQ QM 双源）
 //
 // 与 Android `LddcLyrics.kt` 同口径（对齐 chenmozhijin/LDDC 的 auto_fetch）：
-//   双源并行搜「歌名 歌手」→ 候选按 LDDC 评分选优（>55 分、时长 ±4s）→ 分数降序、同分 QQ 优先
-//   → 取前 3 个候选取词（谁先成功用谁）→ 解密 → 要求 ≥6 行且不是乱码 → **文件头验收**
+//   双源并行搜「歌名 歌手」→ 候选按 LDDC 评分选优（>55 分）→ 分数降序、时长近者优先、同分 QQ 优先
+//   → 取前 3 个候选取词 → 解密 → 要求 ≥6 行且不是乱码 → **文件头软验收** → 时间轴按音源时长对齐
 //
-// 2026-11-17（老板真机反馈「七里香取到的总是 live 版，逐行时间对不上」）：
-// 打分公式本身没错，漏掉的是「歌词文件自己声明的版本信息」。搜索候选的时长可能为 0 或不准，
-// 而 KRC/QRC/LRC 的明文头部带 `[total:...]` / `[length:...]` / `[ti:...]` / `[ar:...]`，
-// 这才是这份词对应哪一版音频的直接证据。所以：
-//   · `fetchKgLines` / `fetchQqLines` 把明文元数据一起带回来（`LyricsMeta`）；
-//   · `fetchOne` 取到词后再用 `headerRejection` 做一次「词对不对版」验收，不通过就丢，继续看下一个候选；
-//   · 候选取词从 LDDC 原文的 2 个放宽到 3 个（有了验收，前两名可能都被判掉，多留一点余量）。
+// 2026-11-17 第六轮（老板真机反馈「歌词压根取不到了」）——上一轮把两道闸都做成了硬门槛：
+//   · 候选 ±4s 时长过滤：实测 蓝莲花/后来/倔强/我不配 这些歌一个候选都不剩（各家给同一首歌
+//     的时长能差 5~40 秒），于是整首没词；
+//   · 版本标签惩罚（live/现场/翻唱 −35）与文件头验收：本来是"防止贴错版本"，
+//     但它们把「唯一的候选」也一起丢了。
+// 现在两道闸都改成**软**的：时长只参与排序；惩罚只用来排序；文件头验收优先选通过的那份，
+// 一份都没通过就退回排名最高的那份（老板口径：宁可给最接近的一份词，也别整首空着），
+// 最后再用 `LyricsCleaning.alignedToAudio` 把时间轴按音源实际时长拉一遍。
+//
+// 上一轮（2026-11-17 凌晨）加的是「歌词文件自己声明的版本信息」：
+// 打分公式本身没错，漏掉的是 KRC/QRC/LRC 明文头部的 `[total:...]` / `[length:...]` / `[ti:...]`，
+// 这才是这份词对应哪一版音频的直接证据。所以 `fetchKgLines` / `fetchQqLines` 仍把元数据带回来。
 //
 // 注意「元数据缺失要放行」不是偷懒：SelfTest 里的真实酷狗 KRC 样本（realKrcBase64）
-// 头部只有 `[ti:]/[ar:]/[al:]/[by:]/[offset:]`，**没有** `[total:]`；总时长更多出现在
-// QQ QRC / 纯文本 LRC 里。缺 total 就丢词会把正常的酷狗词整批丢掉，所以只做「有就验」。
+// 头部只有 `[ti:]/[ar:]/[al:]/[by:]/[offset:]`，**没有** `[total:]`（很多原版甚至是 `[total:0]`）；
+// 总时长更多出现在 QQ QRC / 纯文本 LRC 里。所以只做「有就验」。
 //
 // 两个源的脾气（都写在 Android 注释里，实测复核过）：
 //   · 酷狗 `lyrics.kugou.com/v1/search` 与 `/download` 的签名**只含 appid+clientver+业务参数**，
@@ -34,7 +39,6 @@ enum LddcLyrics {
     private static let kgSalt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
     private static let netTimeout: TimeInterval = 8
     private static let minScore = LddcMatch.minScore
-    private static let durationTolerance = LddcMatch.durationToleranceSec
 
     /// 文件头时长与歌曲时长的容差（毫秒）。
     ///
@@ -72,66 +76,120 @@ enum LddcLyrics {
         let candidates = await kgTask + qqTask
         guard !candidates.isEmpty else { return nil }
 
-        guard let lines = await pickBest(candidates: candidates, song: song,
-                                         title: title, artist: artist) else { return nil }
-        return LyricsResult(lines: lines, source: "LDDC")
+        guard let picked = await pickBest(candidates: candidates, song: song,
+                                          title: title, artist: artist) else { return nil }
+        // 时间轴按音源实际时长对齐（r63：宁可给最接近的一份词，也别整首空着）
+        let aligned = LyricsCleaning.alignedToAudio(picked.lines, declaredMs: picked.declaredMs,
+                                                    audioSec: song.durationSec)
+        let source = aligned.ratio > 1.0001
+            ? "LDDC·已对齐 ×" + String(format: "%.2f", aligned.ratio)
+            : "LDDC"
+        return LyricsResult(lines: aligned.lines, source: source)
     }
 
-    /// 评分 + 版本标签惩罚 + 时长过滤 + 排序 + 取前 3 个候选取词
+    /// 一次取词的结果（连同歌词文件自己声明的总时长，供时间轴对齐用）
+    struct Picked: Sendable {
+        let lines: [LyricLine]
+        let declaredMs: Int
+    }
+
+    /// 评分 + 版本标签惩罚 + 排序（**不设时长硬门槛**）+ 取前 3 个候选取词 + 文件头软验收
+    ///
+    /// r63 的关键改动（老板反馈 ③：「歌词压根取不到了」）：
+    ///   · **去掉 ±4s 的候选硬过滤**。原来是 `abs(目标时长 - 候选时长) > 4` 直接丢，
+    ///     实测 蓝莲花 / 后来 / 倔强 / 我不配 这些歌一个候选都不剩（酷狗给的时长跟各家音源
+    ///     差 5~40 秒很常见）→ 整首没词。现在时长只参与**排序**（越接近越优先）。
+    ///   · **版本惩罚保留，但只用来排序**：带 live/现场/翻唱/伴奏的候选仍被压到后面，
+    ///     实在没有别的候选时才用它——宁可词差一点，也别整首空着。
+    ///   · **文件头验收从"一票否决"改成"优选项"**：先在所有候选里找通过验收的（按排名），
+    ///     一份都没通过才退回到排名最高的那份。
     static func pickBest(candidates: [Candidate], song: Song,
-                         title: String, artist: String) async -> [LyricLine]? {
+                         title: String, artist: String) async -> Picked? {
         let targetDur = song.durationSec
-        // 三元组（score / durationDelta / source）是排序键，单独的 candidate 留给取词用
         var scored: [(score: Double, durationDelta: Int, source: String, candidate: Candidate)] = []
         for cand in candidates {
-            if targetDur > 0 && cand.durationSec > 0 {
-                if abs(targetDur - cand.durationSec) > durationTolerance { continue }
-            }
-            var total = LddcMatch.score(title: title, candidateTitle: cand.title,
-                                        artist: artist, candidateArtist: cand.artist)
-            // 版本标签惩罚（不改 score 的公式）：候选标题带「原查询没有」的 live/现场/翻唱…→ 扣 35。
-            // 「七里香 (Live)」原来标题 LCS ≈46、歌手 100，总分 73 直接过线；扣完 38 < 55 被拦下。
-            total = max(0, total - LddcMatch.versionPenalty(queryTitle: title,
-                                                            candidateTitle: cand.title))
-            if total > minScore {
-                let delta: Int
-                if targetDur > 0 && cand.durationSec > 0 {
-                    delta = abs(targetDur - cand.durationSec)
-                } else {
-                    delta = Int.max // 时长未知的候选排在有明确时长的候选之后
-                }
-                scored.append((total, delta, cand.source, cand))
+            let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
+            if one.score > minScore {
+                scored.append((one.score, one.durationDelta, cand.source, cand))
             }
         }
         guard !scored.isEmpty else { return nil }
-        // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）。
-        // 以前只有「分数 → 源」，同分时完全看源优先级；现在时长更接近的版本会先被试。
+        // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）
         scored.sort {
             precedes((score: $0.score, durationDelta: $0.durationDelta, source: $0.source),
                      (score: $1.score, durationDelta: $1.durationDelta, source: $1.source))
         }
 
-        // LDDC 原文只试前 2 个候选；这里放宽到 3：有了文件头验收，前两名可能都被判「词不对版」，
-        // 多留一个余量，避免明明有正确版本却因为前两名全被拒而整首没词。
+        // 前 3 个候选并行取词：谁先成不重要，最后按"候选排名"取——
+        // 排在前面且通过文件头验收的先赢，全都没通过就退回排名最高的那份。
         let top = Array(scored.prefix(3))
-        return await withTaskGroup(of: (Int, [LyricLine]?).self) { group in
+        let outcomes: [FetchedOutcome] = await withTaskGroup(of: FetchedOutcome.self) { group in
             for (idx, item) in top.enumerated() {
                 group.addTask {
-                    let lines = await fetchOne(item.candidate, song: song,
-                                               queryTitle: title, queryArtist: artist)
-                    return (idx, lines)
+                    guard let one = await fetchOne(item.candidate) else {
+                        return FetchedOutcome(idx: idx, lines: nil, headerOK: false)
+                    }
+                    let rejection = headerRejection(meta: one.meta, song: song,
+                                                    queryTitle: title, queryArtist: artist)
+                    if let rejection {
+                        print("[LddcLyrics] 候选 \(item.candidate.source)「\(item.candidate.title)」"
+                              + "未通过版本验收（仍可兜底）：\(rejection)")
+                    }
+                    return FetchedOutcome(idx: idx,
+                                          lines: Picked(lines: one.lines,
+                                                        declaredMs: one.meta.durationMs),
+                                          headerOK: rejection == nil)
                 }
             }
-            var results: [(Int, [LyricLine]?)] = []
-            for await r in group { results.append(r) }
-            // 按候选优先级取第一个合格的，保证结果稳定（不随网络先后抖动）
-            for (idx, _) in top.enumerated() {
-                if let hit = results.first(where: { $0.0 == idx })?.1 {
-                    return hit
-                }
-            }
-            return nil
+            var out: [FetchedOutcome] = []
+            for await r in group { out.append(r) }
+            return out
         }
+        guard let winner = chooseOutcome(outcomes, topCount: top.count) else { return nil }
+        return outcomes.first(where: { $0.idx == winner })?.lines
+    }
+
+    /// 单个候选的评分（含版本标签惩罚）与时长差 —— 纯函数，CI 能直接断言。
+    ///
+    /// r63 的关键：**时长差不参与过滤，只参与排序**。原来 `abs(目标 - 候选) > 4` 直接丢，
+    /// 实测 蓝莲花/后来/倔强/我不配 整首一个候选都不剩 → 没词。
+    static func scoredCandidate(_ cand: Candidate, title: String, artist: String, targetDur: Int)
+        -> (score: Double, durationDelta: Int) {
+        var total = LddcMatch.score(title: title, candidateTitle: cand.title,
+                                    artist: artist, candidateArtist: cand.artist)
+        total = max(0, total - LddcMatch.versionPenalty(queryTitle: title,
+                                                        candidateTitle: cand.title))
+        let delta = (targetDur > 0 && cand.durationSec > 0)
+            ? abs(targetDur - cand.durationSec) : Int.max
+        return (total, delta)
+    }
+
+    /// 一个候选的取词结果（供 `chooseOutcome` 做纯逻辑断言）
+    struct FetchedOutcome: Sendable {
+        let idx: Int
+        let lines: Picked?
+        /// 文件头验收是否通过
+        let headerOK: Bool
+
+        var hasLines: Bool { lines != nil }
+    }
+
+    /// 从取词结果里挑赢家（纯函数）：
+    ///   1. 先按**候选排名**取"有词且通过版本验收"的；
+    ///   2. 一份都没通过 → 退回排名最高的"有词"的那份（老板 r63 口径：宁可词差一点，也别空着）。
+    static func chooseOutcome(_ outcomes: [FetchedOutcome], topCount: Int) -> Int? {
+        guard topCount > 0 else { return nil }
+        for idx in 0..<topCount {
+            if let hit = outcomes.first(where: { $0.idx == idx && $0.hasLines && $0.headerOK }) {
+                return hit.idx
+            }
+        }
+        for idx in 0..<topCount {
+            if let hit = outcomes.first(where: { $0.idx == idx && $0.hasLines }) {
+                return hit.idx
+            }
+        }
+        return nil
     }
 
     private static func sourcePriority(_ source: String) -> Int {
@@ -153,9 +211,9 @@ enum LddcLyrics {
         items.sorted(by: precedes)
     }
 
-    /// 单个候选取词 + 乱码校验 + 文件头验收；要求 ≥6 行
-    private static func fetchOne(_ cand: Candidate, song: Song,
-                                 queryTitle: String, queryArtist: String) async -> [LyricLine]? {
+    /// 单个候选取词 + 乱码校验；要求 ≥6 行。
+    /// 「版本对不对」不在这里判：交给调用方在**全部候选之间**比较后再决定（r63 改成软验收）。
+    private static func fetchOne(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
         let fetched: (lines: [LyricLine], meta: LyricsMeta)?
         switch cand.source {
         case "kg": fetched = await fetchKgLines(cand)
@@ -163,19 +221,15 @@ enum LddcLyrics {
         default: fetched = nil
         }
         guard let fetched, !fetched.lines.isEmpty else { return nil }
-        let lines = fetched.lines
-        if LyricsCleaning.isBroken(lines.map(\.text).joined(separator: "\n")) { return nil }
-        guard lines.count >= 6 else { return nil }
-        // 文件头验收放在最后：前面几步失败本来就要丢，这里只在"看起来能用"的词上判断版本对不对
-        if let reason = headerRejection(meta: fetched.meta, song: song,
-                                        queryTitle: queryTitle, queryArtist: queryArtist) {
-            print("[LddcLyrics] 丢弃候选 \(cand.source)「\(cand.title)」：\(reason)")
-            return nil
-        }
-        return lines
+        if LyricsCleaning.isBroken(fetched.lines.map(\.text).joined(separator: "\n")) { return nil }
+        guard fetched.lines.count >= 6 else { return nil }
+        return fetched
     }
 
-    /// 用歌词文件头做「版本验收」：nil = 通过，非 nil = 丢弃原因（人类可读，只打控制台，不弹 UI）。
+    /// 用歌词文件头做「版本验收」：nil = 通过，非 nil = 不通过的原因（人类可读，只打控制台）。
+    ///
+    /// **r63 起这是"优选项"而不是"一票否决"**：调用方先在所有候选里找通过验收的，
+    /// 一份都没通过才退回排名最高的那份。原来一票否决会让"唯一的候选"也被丢掉，整首没词。
     ///
     /// 三项分别覆盖三种错版方式：
     ///   · 时长对不上 → live/不同剪辑版（文件头 `[total:...]` 是这份词自己的音频长度）；

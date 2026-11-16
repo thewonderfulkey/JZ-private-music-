@@ -57,7 +57,6 @@ struct RecognizeView: View {
                 MiniPlayerSpacer()
             }
             .padding(.top, Tokens.Spacing.m)
-            .padding(.bottom, Tokens.Spacing.xxl)
             .readableWidth()
         }
         .scrollIndicators(.hidden)

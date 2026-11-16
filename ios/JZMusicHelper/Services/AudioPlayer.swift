@@ -125,17 +125,37 @@ final class PlayerEngine {
     }
 
     /// 以给定队列起播（搜索结果的"整列当队列"、收藏的"播放全部"）
+    ///
+    /// r63（老板反馈 ⑤）：点的是**正在播的这首**时不再重新请求、不再重头播——
+    /// 只把播放列表换成这次的整列，然后打开播放页。原来同一点击会走整条取流链，
+    /// 表现为"切回去了、转圈、从头开始"。
     func play(queue songs: [Song], startAt start: Int) {
         guard !songs.isEmpty else { return }
         attachSystemIfNeeded()
+        let target = min(max(start, 0), songs.count - 1)
+        if PlaybackRules.shouldReuseCurrentSong(currentID: currentSong?.id,
+                                                targetID: songs[target].id,
+                                                hasLoadedItem: player.currentItem != nil,
+                                                hasError: errorText != nil) {
+            adoptQueue(songs, at: target)
+            return
+        }
         queue = songs
-        index = min(max(start, 0), songs.count - 1)
-        currentSong = songs[index]
+        index = target
+        currentSong = songs[target]
         rejectedSourceURLs.removeAll()
         consecutiveSkips = 0
         resetProgress()
-        prepareLyrics(for: songs[index])
+        prepareLyrics(for: songs[target])
         Task { await loadCurrent() }
+    }
+
+    /// 同一首歌再次被点：只换列表，不动正在放的音频/进度/歌词
+    private func adoptQueue(_ songs: [Song], at newIndex: Int) {
+        queue = songs
+        index = newIndex
+        // currentSong 不变（同一首），进度、歌词、音源全部保留
+        updateNowPlaying()
     }
 
     func toggle() {
@@ -488,15 +508,19 @@ final class PlayerEngine {
 
     // MARK: 歌词
 
+    /// 歌词取不到时的原因（播放页空状态里显示给人看，r63 加：下一轮一眼就能定位是哪条链断了）
+    private(set) var lyricsFailure: String = ""
+
     /// 切歌时先清空，再异步取词（不阻塞起播：Android 同样是"起播前并发预热歌词"）
     ///
     /// 第五轮（老板反馈 ⑧）：已下载的歌**先读下载时一起存下的本地 LRC**——
     /// 无网络环境（飞机上、地铁里）点开下载好的歌，也要有词可看，不能只剩播放器。
-    /// 本地没有才走网络；网络失败时保持空态（播放页有「重试」）。
+    /// 本地没有才走网络；网络失败时保持空态（播放页有「重试」+ 失败原因）。
     private func prepareLyrics(for song: Song) {
         lyrics = []
         lyricsSource = ""
         lyricIndex = -1
+        lyricsFailure = ""
 
         if let local = DownloadManager.shared.localLyrics(for: song), !local.isEmpty {
             lyrics = local
@@ -515,6 +539,11 @@ final class PlayerEngine {
             self.lyrics = result?.lines ?? []
             self.lyricsSource = result?.source ?? ""
             self.isLoadingLyrics = false
+            if result == nil {
+                let reason = await LyricsService.shared.failureReason()
+                guard self.currentSong?.id == song.id else { return }
+                self.lyricsFailure = reason
+            }
             self.updateLyricIndex()
         }
     }

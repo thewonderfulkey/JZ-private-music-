@@ -130,7 +130,12 @@ struct NowPlayingView: View {
     }
 
     private func playerBody(width w: CGFloat, height h: CGFloat) -> some View {
-        VStack(spacing: 0) {
+        // r63「封面撑满型」：整列**铺满屏高**，富余高度由等权 Spacer 均分。
+        // 上一版是"顶端对齐 + 一段有上限的留白"，富余高度全堆在播放键下面（老板：进度条下方一大段空的）。
+        let gap = CGFloat(LayoutRules.playerGap(availableHeight: Double(h)))
+        let coverSide = CGFloat(LayoutRules.playerCoverSide(width: Double(w), height: Double(h)))
+
+        return VStack(spacing: 0) {
             topBar(width: w)
 
             if showLyrics {
@@ -145,24 +150,28 @@ struct NowPlayingView: View {
                     .padding(.top, Tokens.Spacing.xxs)
                     .padding(.bottom, Tokens.Spacing.xs)
             } else {
-                coverStage(width: w, containerHeight: h)
+                Spacer(minLength: gap)
+                coverStage(width: w, side: coverSide)
+                Spacer(minLength: gap)
                 titleStage(width: w)
-                // 有上限的留白（老板反馈 ①：以前这里是无上限 Spacer，整段空白都堆在这）
-                Color.clear
-                    .frame(height: CGFloat(LayoutRules.playerGap(availableHeight: Double(h))))
-
+                Spacer(minLength: gap)
                 quickRow(width: w)
+                Spacer(minLength: gap)
                 progressRow(width: w)
+                transportRow(width: w)
                     .padding(.top, Tokens.Spacing.xs)
 
-                transportRow(width: w)
-                    .padding(.top, Tokens.Spacing.xxs)
+                // 状态行只在出错时出现（老板 r63：暂停键下面那行小字不要了，
+                // 但"无源/换源失败"必须让人看见，否则点歌没反应像卡死）
+                if let error = player.errorText {
+                    errorLine(width: w)
+                        .padding(.top, Tokens.Spacing.xs)
+                }
 
-                statusRow(width: w)
-                    .padding(.top, Tokens.Spacing.xxs)
-                    .padding(.bottom, Tokens.Spacing.xs)
+                Spacer(minLength: gap)
             }
         }
+        .frame(width: w, height: h, alignment: .top)
     }
 
     // MARK: 收起手势
@@ -333,9 +342,8 @@ struct NowPlayingView: View {
 
     // MARK: 封面（双击进歌词）
 
-    private func coverStage(width: CGFloat, containerHeight: CGFloat) -> some View {
-        let side = coverSide(width: width, containerHeight: containerHeight)
-        return VStack(spacing: Tokens.Spacing.xs) {
+    private func coverStage(width: CGFloat, side: CGFloat) -> some View {
+        VStack(spacing: Tokens.Spacing.xs) {
             Group {
                 if let local = localCoverImage {
                     Image(uiImage: local).resizable().scaledToFill()
@@ -375,14 +383,6 @@ struct NowPlayingView: View {
                 .foregroundStyle(.white.opacity(0.35))
         }
         .frame(width: width)
-        .padding(.top, Tokens.Spacing.s)
-    }
-
-    /// 封面边长：宽高中取小的一头反推，保证下面四行控件都还在屏幕里
-    private func coverSide(width: CGFloat, containerHeight: CGFloat) -> CGFloat {
-        let byHeight = containerHeight * 0.32
-        let byWidth = width - Tokens.Spacing.xxl * 3
-        return max(140, min(min(byWidth, byHeight), 300))
     }
 
     private var coverPlaceholder: some View {
@@ -704,28 +704,24 @@ struct NowPlayingView: View {
         .disabled(player.isResolving)
     }
 
-    // MARK: 底部状态行
+    // MARK: 底部错误行（r63：正常状态整行不显示）
 
-    private func statusRow(width: CGFloat) -> some View {
-        HStack(spacing: Tokens.Spacing.xs) {
-            if player.isResolving {
-                ProgressView().tint(.white).scaleEffect(0.6)
-            }
-            Text(statusLine)
+    /// 老板 r63："暂停键下方的小字不用再显示了，毕竟已经在音源里了。"
+    /// 但"解析失败/无源/换源"这类错误必须让人看见——所以这行现在只在 `player.errorText` 有值时出现，
+    /// 高度也不预留（正常状态下一点空隙都不占）。
+    private func errorLine(width: CGFloat) -> some View {
+        HStack(spacing: Tokens.Spacing.xxs + 2) {
+            Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption2)
-                .foregroundStyle(player.errorText == nil ? Color.white.opacity(0.45) : Color.orange)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            Text(player.errorText ?? "")
+                .font(.caption2)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
         }
+        .foregroundStyle(Color.orange)
         .frame(width: max(80, width - Tokens.Spacing.l * 2))
-        .frame(minHeight: 16)
-    }
-
-    private var statusLine: String {
-        if let error = player.errorText { return error }
-        if let status = player.statusText, !status.isEmpty { return status }
-        return player.mode.displayName
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: 全屏歌词
@@ -733,19 +729,29 @@ struct NowPlayingView: View {
     private func lyricsStage(width: CGFloat) -> some View {
         VStack(spacing: 0) {
             lyricsHeader(width: width)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { backToCover() }
 
             offsetRow(width: width)
                 .padding(.top, Tokens.Spacing.xxs)
 
             if player.lyrics.isEmpty {
                 lyricsEmpty(width: width)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { backToCover() }
             } else {
                 LyricsPane(width: width)
-                    .padding(.top, Tokens.Spacing.s)
+                    .padding(.top, Tokens.Spacing.xs)
             }
         }
         .frame(width: width)
         .padding(.top, Tokens.Spacing.xxs)
+    }
+
+    /// 歌词页 → 封面（双击空白处、点右上角「封面」、⋯ 菜单都走这里）
+    private func backToCover() {
+        Haptics.tap()
+        withAnimation(.easeInOut(duration: 0.26)) { showLyrics = false }
     }
 
     /// 歌词页顶部的歌名 / 行数来源 / 当前偏移（一行放完，不吃歌词的高度）
@@ -821,8 +827,10 @@ struct NowPlayingView: View {
         return "\(player.lyrics.count) 行 · \(player.lyricsSource)\(word)"
     }
 
+    /// 歌词空状态（r63：**去掉那个圆角卡片**——老板说"不要显示一个框，很丑，直接把边缘去掉"）；
+    /// 顺便把失败原因写清楚，下一轮一眼能看出是哪条链断了。
     private func lyricsEmpty(width: CGFloat) -> some View {
-        VStack(spacing: Tokens.Spacing.xxs) {
+        VStack(spacing: Tokens.Spacing.xs) {
             if player.isLoadingLyrics {
                 ProgressView().tint(.white)
                 Text("正在取歌词…")
@@ -835,6 +843,13 @@ struct NowPlayingView: View {
                 Text("这首歌还没取到歌词")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.8))
+                if !player.lyricsFailure.isEmpty {
+                    Text(player.lyricsFailure)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, Tokens.Spacing.l)
+                }
                 Button("重试") { player.reloadLyrics() }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
@@ -843,12 +858,6 @@ struct NowPlayingView: View {
         }
         .frame(width: max(80, width - Tokens.Spacing.m * 2))
         .frame(maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
-        .padding(.horizontal, Tokens.Spacing.m)
-        .padding(.vertical, Tokens.Spacing.m)
     }
 
     // MARK: 工具

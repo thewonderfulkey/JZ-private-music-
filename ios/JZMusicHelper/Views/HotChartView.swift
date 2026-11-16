@@ -58,7 +58,6 @@ struct HotChartView: View {
                         MiniPlayerSpacer()
                     }
                     .padding(.top, Tokens.Spacing.xs)
-                    .padding(.bottom, Tokens.Spacing.xxl)
                     .readableWidth()
                 }
                 .scrollIndicators(.hidden)

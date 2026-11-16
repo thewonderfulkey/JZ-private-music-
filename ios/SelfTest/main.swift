@@ -1202,19 +1202,20 @@ do {
 section("第五轮：播放页留白 / 歌词浏览手感（老板反馈 ①⑤⑥⑦）")
 
 do {
-    // ① 封面与播放栏之间那段空白：以前是无上限 Spacer，现在是按屏高给的有上限留白。
-    // 手机上（844pt）应该落在 50~64pt，小屏不至于挤，大屏也不会再空出一大块。
-    let gapPhone = LayoutRules.playerGap(availableHeight: 844)
-    check("iPhone 844：留白在 50~64pt 之间（不再吞掉整段富余高度）",
-          gapPhone >= 50 && gapPhone <= 64, "\(gapPhone)")
-    check("小屏 400：留白按比例缩到 30pt", LayoutRules.playerGap(availableHeight: 400) == 30,
+    // ⑥ 老板 r63：整列铺满，间距只做下限（富余由 Spacer 均分），不再出现"上边留白 + 下面一大截空"
+    check("iPhone 844：间距下限落在 12~24pt（富余由 Spacer 均分，不再吞成一大块）",
+          LayoutRules.playerGap(availableHeight: 844) > 12
+          && LayoutRules.playerGap(availableHeight: 844) < 24,
+          "\(LayoutRules.playerGap(availableHeight: 844))")
+    check("小屏 400：间距压到下限 12pt（不会挤成一团也不铺张）",
+          LayoutRules.playerGap(availableHeight: 400) == 12,
           "\(LayoutRules.playerGap(availableHeight: 400))")
-    check("超大屏 2000：留白封顶 64pt（不会又变成一大块空白）",
-          LayoutRules.playerGap(availableHeight: 2000) == 64,
+    check("超大屏 2000：间距封顶 24pt（富余交给封面吃掉）",
+          LayoutRules.playerGap(availableHeight: 2000) == 24,
           "\(LayoutRules.playerGap(availableHeight: 2000))")
-    check("屏高未知（0 / NaN）→ 给一个安全的 48pt",
-          LayoutRules.playerGap(availableHeight: 0) == 48
-          && LayoutRules.playerGap(availableHeight: .nan) == 48)
+    check("屏高未知（0 / NaN）→ 给一个安全的 16pt",
+          LayoutRules.playerGap(availableHeight: 0) == 16
+          && LayoutRules.playerGap(availableHeight: .nan) == 16)
 
     // ⑤ 滑歌词后停留 4 秒才回当前行
     check("停留时长 4 秒", LyricsUXRules.dwellSeconds == 4)
@@ -1343,6 +1344,103 @@ do {
     } else {
         check("真实 KRC 样本能解密", false)
     }
+}
+
+section("第六轮：播放页铺满 / 队列口径 / 歌词兜底 / 悬浮条严丝合缝（老板 r63）")
+
+do {
+    // ① 播放页「封面撑满型」：封面吃掉富余高度，整列铺满屏高
+    let phone = LayoutRules.playerCoverSide(width: 393, height: 852)
+    check("iPhone 393×852：封面 ≈ 340pt（吃掉富余高度）", phone > 320 && phone < 360, "\(phone)")
+    let se = LayoutRules.playerCoverSide(width: 375, height: 667)
+    check("小屏 375×667：封面收到 200 上下（其余块不被挤出屏幕）",
+          se > 180 && se < 230, "\(se)")
+    check("封面永远不超过「屏宽 − 56」",
+          LayoutRules.playerCoverSide(width: 393, height: 852) <= 393 - 56)
+    check("封面有下限 140（再小的屏也不至于看不见）",
+          LayoutRules.playerCoverSide(width: 120, height: 300) == 140,
+          "\(LayoutRules.playerCoverSide(width: 120, height: 300))")
+    check("屏宽/屏高未知 → 按 393×852 估",
+          LayoutRules.playerCoverSide(width: 0, height: 0) == phone)
+
+    // ⑦ 悬浮条严丝合缝：占位 = 条子本体 64，没播歌时 24
+    check("在播歌：列表末尾让出 64（= 条子 56 + 上下各 4）",
+          MiniPlayerMetrics.listBottomInset(playing: true) == 64,
+          "\(MiniPlayerMetrics.listBottomInset(playing: true))")
+    check("没在播歌：只让 24（页面底部呼吸）",
+          MiniPlayerMetrics.listBottomInset(playing: false) == 24)
+    check("让出高度正好等于条子高度（上一版 72+32 多空了 40pt）",
+          MiniPlayerMetrics.listBottomInset(playing: true) == MiniPlayerMetrics.barHeight)
+
+    // ⑤ 同一首歌再点：不重新请求、不重头播
+    check("同一首 + 已装上播放项 + 无错误 → 复用当前播放",
+          PlaybackRules.shouldReuseCurrentSong(currentID: "qq_1", targetID: "qq_1",
+                                               hasLoadedItem: true, hasError: false))
+    check("上次解析失败（无播放项）→ 允许重试",
+          !PlaybackRules.shouldReuseCurrentSong(currentID: "qq_1", targetID: "qq_1",
+                                                hasLoadedItem: false, hasError: true))
+    check("换了一首歌 → 正常起播",
+          !PlaybackRules.shouldReuseCurrentSong(currentID: "qq_1", targetID: "qq_2",
+                                                hasLoadedItem: true, hasError: false))
+    check("没有当前曲（首次播放）→ 正常起播",
+          !PlaybackRules.shouldReuseCurrentSong(currentID: nil, targetID: "qq_1",
+                                                hasLoadedItem: true, hasError: false))
+
+    // ④ 候选不再被 ±4s 硬过滤（这就是"歌词压根取不到"的真凶）
+    let eightOff = LddcLyrics.Candidate(source: "kg", title: "我不配", artist: "周杰伦",
+                                        durationSec: 288)
+    let scored8 = LddcLyrics.scoredCandidate(eightOff, title: "我不配", artist: "周杰伦",
+                                             targetDur: 296)
+    check("时长差 8s 的候选照样及格（有词可看，不再整首空着）",
+          scored8.score > LddcMatch.minScore, "\(scored8.score)")
+    check("时长差 8s 记为 durationDelta=8（只影响排序）", scored8.durationDelta == 8)
+    check("时长未知 → Int.max（排在有时长的候选之后）",
+          LddcLyrics.scoredCandidate(
+            LddcLyrics.Candidate(source: "kg", title: "我不配", artist: "周杰伦", durationSec: 0),
+            title: "我不配", artist: "周杰伦", targetDur: 296).durationDelta == Int.max)
+    let liveCand = LddcLyrics.Candidate(source: "kg", title: "我不配 (Live)", artist: "周杰伦",
+                                        durationSec: 292)
+    check("现场版仍被版本惩罚压到及格线下（版本质量还在管）",
+          LddcLyrics.scoredCandidate(liveCand, title: "我不配", artist: "周杰伦",
+                                     targetDur: 296).score < LddcMatch.minScore)
+
+    // 文件头验收从"一票否决"改成"优选项"
+    func outcome(_ idx: Int, _ hasLines: Bool, _ headerOK: Bool) -> LddcLyrics.FetchedOutcome {
+        LddcLyrics.FetchedOutcome(
+            idx: idx,
+            lines: hasLines ? LddcLyrics.Picked(lines: [LyricLine(timeMs: 0, text: "x")],
+                                                declaredMs: 0) : nil,
+            headerOK: headerOK)
+    }
+    check("排名第二但通过验收 → 赢过排名第一但不合格的",
+          LddcLyrics.chooseOutcome([outcome(0, true, false), outcome(1, true, true)],
+                                   topCount: 2) == 1)
+    check("全都没通过验收 → 退回排名最高的那份（不整首丢词）",
+          LddcLyrics.chooseOutcome([outcome(0, true, false), outcome(1, true, false)],
+                                   topCount: 2) == 0)
+    check("排名第一没取到词 → 用第二个",
+          LddcLyrics.chooseOutcome([outcome(0, false, false), outcome(1, true, true)],
+                                   topCount: 2) == 1)
+    check("全都没词 → nil",
+          LddcLyrics.chooseOutcome([outcome(0, false, false)], topCount: 1) == nil)
+
+    // ③ 时间轴对齐：词的总长和音源时长差得多就按比例拉一遍
+    let shortLyric = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 270_000, text: "z")]
+    let aligned = LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 362)
+    check("270s 的词 × 362s 音源 → 比例约 1.33",
+          aligned.ratio > 1.30 && aligned.ratio < 1.40, "\(aligned.ratio)")
+    check("最后一行被拉到音源尾部附近（不再越唱越偏）",
+          abs(Double(aligned.lines.last!.timeMs) - 362_000) < 6_000,
+          "\(aligned.lines.last!.timeMs)")
+    check("差不到 2% 就不动（本来准的词别搓歪）",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 275).ratio == 1)
+    check("差到 3 倍以上不硬拉（明显不是同一版）",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 900).ratio == 1)
+    check("音源时长未知 → 原样返回",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 0).ratio == 1)
+    check("文件头写了总长 → 用文件头的（不是最后一行）",
+          LyricsCleaning.alignedToAudio([LyricLine(timeMs: 0, text: "a")],
+                                        declaredMs: 100_000, audioSec: 100).ratio == 1)
 }
 
 section("第五轮：下载把歌词和封面一起带走（老板反馈 ⑧）")

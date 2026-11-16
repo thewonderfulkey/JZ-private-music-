@@ -107,6 +107,16 @@ enum PlaybackRules {
         consecutiveSkips >= autoSkipLimit
     }
 
+    /// 「这次点的就是正在放的那首」——此时**不该**重新解析、不该重头播（r63 老板反馈 ⑤）。
+    ///
+    /// 三个条件缺一不可：同一首歌、已经装上了播放项（不是上次解析失败留下的空壳）、
+    /// 当前没有错误态（失败过的歌再点一次应该重试）。
+    static func shouldReuseCurrentSong(currentID: String?, targetID: String,
+                                       hasLoadedItem: Bool, hasError: Bool) -> Bool {
+        guard let currentID, !currentID.isEmpty, !targetID.isEmpty else { return false }
+        return currentID == targetID && hasLoadedItem && !hasError
+    }
+
     /// 上限可配置版：设置里的「跳过上限」关掉自动跳歌时传 1
     static func shouldStopAfterSkips(_ consecutiveSkips: Int, limit: Int) -> Bool {
         consecutiveSkips >= max(1, limit)

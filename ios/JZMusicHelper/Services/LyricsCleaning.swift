@@ -239,6 +239,39 @@ enum LyricsCleaning {
         return out.sorted { $0.timeMs < $1.timeMs }
     }
 
+    // MARK: 时间轴对齐
+
+    /// 把歌词时间轴按**音源实际时长**线性对齐（纯函数），返回 (对齐后的行, 拉伸比例)。
+    ///
+    /// 为什么需要：r62 的「版本验收」把不合格版本的词全丢了，结果很多歌整首没词
+    /// （老板 r63 反馈：歌词压根取不到了）。现在的口径是"宁可给一份最接近的词，
+    /// 也别空着"，但直接拿来会越唱越偏——同一个歌名的另一个剪辑（Live/现场/不同专辑版本）
+    /// 词是对的，只是总长差 8~40 秒。按比例拉一遍不完美，但比固定偏移好得多。
+    ///
+    /// 口径：
+    ///   · 音源时长未知、或歌词总长未知 → 原样返回（ratio = 1）
+    ///   · 比例落在 0.75…1.35 之外 → 视为"明显不是同一版"，**不硬拉**（拉了只会更离谱）
+    ///   · 比例与 1 相差 < 2% → 不值得动（避免把本来就准的词搓歪）
+    static func alignedToAudio(_ lines: [LyricLine], declaredMs: Int, audioSec: Int)
+        -> (lines: [LyricLine], ratio: Double) {
+        guard !lines.isEmpty, audioSec > 0 else { return (lines, 1) }
+        let audioMs = Double(audioSec) * 1_000
+        // 文件头没写总长时，用最后一行 + 3 秒估一个（尾奏大致就这点）
+        let total = declaredMs > 0 ? Double(declaredMs) : Double((lines.last?.timeMs ?? 0) + 3_000)
+        guard total > 0 else { return (lines, 1) }
+        let ratio = audioMs / total
+        guard ratio >= 0.75, ratio <= 1.35, abs(ratio - 1) >= 0.02 else { return (lines, 1) }
+        func scale(_ ms: Int) -> Int { Int((Double(ms) * ratio).rounded()) }
+        let scaled = lines.map { line in
+            LyricLine(timeMs: max(0, scale(line.timeMs)), text: line.text,
+                      words: line.words.map {
+                          LyricWord(text: $0.text, startMs: max(0, scale($0.startMs)),
+                                    durMs: max(0, scale($0.durMs)))
+                      })
+        }
+        return (scaled, ratio)
+    }
+
     // MARK: 定位
 
     /// 当前播放位置对应的歌词行下标（没有则 -1）
