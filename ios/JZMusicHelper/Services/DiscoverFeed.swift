@@ -39,7 +39,13 @@ final class DiscoverFeed {
         let songs: [Song]
     }
 
-    init() {}
+    /// 编辑精选的「上次展示日」：key = 类别|歌名|歌手 → 天序号（没有 = 从没展示过）
+    private static let shownKey = "discover_shown_days_v1"
+    private var shownDays: [String: Int] = [:]
+
+    init() {
+        shownDays = defaults.dictionary(forKey: Self.shownKey) as? [String: Int] ?? [:]
+    }
 
     // MARK: 热门音乐
 
@@ -130,6 +136,36 @@ final class DiscoverFeed {
     func nextGuessRound(recent: [Song]) async {
         guessRound += 1
         await refreshGuess(recent: recent)
+    }
+
+    // MARK: 编辑精选：每日这一批（最久没展示的优先）
+
+    /// 当天这批 20 首：按「最久没展示」排，`rotation` 只用来做「换一批」（0 = 今天第一组）
+    func editorSeeds(for playlist: DiscoverCatalog.Playlist, rotation: Int = 0) -> [DiscoverCatalog.Seed] {
+        DiscoverRules.pickByRecency(
+            playlist.seeds,
+            key: { Self.seedKey(playlist: playlist.title, seed: $0) },
+            lastShown: shownDays,
+            day: day,
+            take: 20,
+            offset: rotation * 20)
+    }
+
+    /// 展示过就记下今天（下次优先推别的）——只在 .task 里调，不要在 body 里调（会改状态）
+    func markShown(_ seeds: [DiscoverCatalog.Seed], in playlist: DiscoverCatalog.Playlist) {
+        var changed = false
+        for seed in seeds {
+            let key = Self.seedKey(playlist: playlist.title, seed: seed)
+            if shownDays[key] != day {
+                shownDays[key] = day
+                changed = true
+            }
+        }
+        if changed { defaults.set(shownDays, forKey: Self.shownKey) }
+    }
+
+    private static func seedKey(playlist: String, seed: DiscoverCatalog.Seed) -> String {
+        "\(playlist)|\(seed.name)|\(seed.singer)"
     }
 
     // MARK: 编辑精选：把「歌名 + 歌手」换成真实 Song

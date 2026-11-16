@@ -19,9 +19,8 @@ struct EditorPlaylistView: View {
     @State private var status: String?
     @State private var preparing = false
 
-    private var seeds: [DiscoverCatalog.Seed] {
-        DiscoverRules.rotate(playlist.seeds, day: feed.day + rotation, take: 20)
-    }
+    /// 当天这批 20 首：进页面时算一次（内部会记「今天展示过」，所以不能放在 body 里算）
+    @State private var seeds: [DiscoverCatalog.Seed] = []
 
     private var accent: Color { Color(hex: playlist.accentHex) }
 
@@ -47,6 +46,10 @@ struct EditorPlaylistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             Haptics.prepare()
+            if seeds.isEmpty {
+                seeds = feed.editorSeeds(for: playlist, rotation: rotation)
+                feed.markShown(seeds, in: playlist)
+            }
             await feed.loadHotIfNeeded()
         }
     }
@@ -178,7 +181,9 @@ struct EditorPlaylistView: View {
 
         var resolved: [Song] = []
         let target = 5
+        var nextIndex = 0
         for (index, seed) in seeds.enumerated() {
+            nextIndex = index + 1
             if resolved.count >= target { break }
             status = "正在准备队列 \(resolved.count)/\(target)…"
             resolvingIndex = index
@@ -198,8 +203,30 @@ struct EditorPlaylistView: View {
             player.play(queue: resolved, startAt: 0)
             library.recordPlayed(resolved[0])
             Haptics.success()
-            status = "队列已就绪 \(resolved.count) 首"
+            status = "队列已就绪 \(resolved.count) 首，正在补齐其余…"
+            // 其余曲目后台解析并追加进队列（用户不用一首首点，也不卡住首播）
+            Task { await fillRemaining(from: nextIndex, already: resolved.count) }
         }
         preparing = false
+    }
+
+    /// 后台补齐：解析一首补一首，队列追加后「下一首」自然往下走
+    private func fillRemaining(from start: Int, already: Int) async {
+        guard start < seeds.count else { return }
+        var added = 0
+        for index in start..<seeds.count {
+            let seed = seeds[index]
+            if let song = await feed.resolve(seed: seed) {
+                player.appendToQueue([song])
+                added += 1
+                failedRows.remove(index)
+            } else {
+                failedRows.insert(index)
+            }
+            if added % 5 == 0, added > 0 {
+                status = "队列已就绪 \(already + added) 首…"
+            }
+        }
+        status = "队列已就绪 \(already + added) 首（整张 \(seeds.count) 首）"
     }
 }

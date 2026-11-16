@@ -896,6 +896,44 @@ do {
     check("同歌同歌手去重", multi.count == 1, "\(multi.count)")
 }
 
+// MARK: - 收尾口径（可配置跳过上限 / 编辑精选按新旧轮换）
+
+section("收尾口径：可配置跳过上限 / 编辑精选按新旧轮换")
+
+do {
+    // ① 跳过上限（设置里「跳过上限」与「自动跳歌」开关都落到这两个函数）
+    check("默认上限仍是 3",
+          PlaybackRules.shouldStopAfterSkips(PlaybackRules.autoSkipLimit,
+                                             limit: PlaybackRules.autoSkipLimit))
+    check("上限 1 时第 1 首就停", PlaybackRules.shouldStopAfterSkips(1, limit: 1))
+    check("上限 5 时第 4 首不停", !PlaybackRules.shouldStopAfterSkips(4, limit: 5))
+    check("上限 0 也按 1 处理", PlaybackRules.shouldStopAfterSkips(1, limit: 0))
+    check("停下文案写清楚", PlaybackRules.skipMessage(3, limit: 3).contains("先停在这里"),
+          PlaybackRules.skipMessage(3, limit: 3))
+    check("未到上限时不写停", !PlaybackRules.skipMessage(2, limit: 3).contains("先停在这里"),
+          PlaybackRules.skipMessage(2, limit: 3))
+
+    // ② 编辑精选「最久没展示优先」
+    let pool = ["A", "B", "C", "D"]
+    let none: [String: Int] = [:]
+    check("没展示过的按池子顺序",
+          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2) == ["A", "B"])
+    let shown = ["A": 5, "B": 5, "C": 1, "D": 1]
+    check("最久没展示的优先",
+          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: shown, day: 6, take: 2) == ["C", "D"],
+          "\(DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: shown, day: 6, take: 2))")
+    check("take 超过池子按池子长度",
+          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 99).count == 4)
+    check("空池子返回空",
+          DiscoverRules.pickByRecency([String](), key: { $0 }, lastShown: none, day: 1, take: 3).isEmpty)
+    check("换一批会换一组",
+          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2, offset: 1) == ["B", "C"],
+          "\(DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2, offset: 1))")
+    check("30 首池子取 20 首",
+          DiscoverRules.pickByRecency(DiscoverCatalog.playlists[0].seeds,
+                                      key: { $0.name }, lastShown: none, day: 1, take: 20).count == 20)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

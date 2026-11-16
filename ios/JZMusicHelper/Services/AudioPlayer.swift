@@ -190,6 +190,15 @@ final class PlayerEngine {
         play(queue: songs, startAt: start)
     }
 
+    /// 队列追加（发现页「播放全部」先起播 5 首，其余解析完再补进队列；已在队列里的不重复加）
+    func appendToQueue(_ songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        let existing = Set(queue.map { $0.id })
+        let fresh = songs.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        queue.append(contentsOf: fresh)
+    }
+
     // MARK: 内部流程
 
     private func goTo(_ newIndex: Int) {
@@ -211,8 +220,22 @@ final class PlayerEngine {
 
     private func loadCurrent() async {
         guard let song = currentSong else { return }
-        isResolving = true
         errorText = nil
+
+        // 已下到本地的歌优先播本地文件：离线也能放，也省掉一次解析
+        if let localURL = DownloadManager.shared.localFileURL(for: song) {
+            let local = StreamSource(url: localURL.absoluteString,
+                                     backendName: "本地文件",
+                                     platform: song.platform,
+                                     quality: quality,
+                                     format: localURL.pathExtension.lowercased(),
+                                     note: "已下载")
+            statusText = "本地文件 · \(localURL.lastPathComponent)"
+            start(item: AVPlayerItem(url: localURL), song: song, source: local)
+            return
+        }
+
+        isResolving = true
         statusText = "正在解析音源…"
 
         let resolved = await resolveStream(for: song)
@@ -227,23 +250,32 @@ final class PlayerEngine {
             return
         }
 
-        source = src
         statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
-        consecutiveSkips = 0
+        start(item: AVPlayerItem(url: url), song: song, source: src)
+    }
 
-        let item = AVPlayerItem(url: url)
-        wire(item: item, song: song, source: src)
+    /// 装配并起播一个 item（本地文件与在线取流共用这一处）
+    private func start(item: AVPlayerItem, song: Song, source: StreamSource) {
+        self.source = source
+        consecutiveSkips = 0
+        wire(item: item, song: song, source: source)
         player.replaceCurrentItem(with: item)
         player.play()
         isPlaying = true
         updateNowPlaying()
     }
 
-    /// 三级取流 + 3 轮重试（与 Android `AppState.resolveAndPlayIfNeeded` 同口径：
+    /// 三级取流 + 可配置重试（与 Android `AppState.resolveAndPlayIfNeeded` 同口径：
     /// 本平台后端 → 同曲跨平台补位 → 间隔 2s / 2.5s / 3s 再试）
+    ///
+    /// 两个设置开关在这里真正生效：
+    ///   · 「无源自动换源」关掉 → 只解析一轮，不做 2s/2.5s/3s 重试
+    ///   · 「跨平台补源」关掉 → 不调用同曲跨平台解析
     private func resolveStream(for song: Song) async -> StreamSource? {
+        let settings = SettingsStore.shared
+        let attempts = settings.autoFallback ? 3 : 1
         let triedCandidates = TriedKeys()
-        for attempt in 0..<3 {
+        for attempt in 0..<attempts {
             if attempt > 0 {
                 let delays: [Double] = [2, 2.5, 3]
                 let delay = delays[min(attempt - 1, delays.count - 1)]
@@ -254,7 +286,8 @@ final class PlayerEngine {
                !rejectedSourceURLs.contains(pick.url) {
                 return pick
             }
-            if let cross = await SameSongCrossResolver.resolve(
+            if settings.crossPlatformBackfill,
+               let cross = await SameSongCrossResolver.resolve(
                 song: song, quality: quality, triedKeys: triedCandidates),
                !rejectedSourceURLs.contains(cross.url) {
                 return cross
@@ -323,14 +356,20 @@ final class PlayerEngine {
         }
     }
 
+    /// 连跳上限：设置里关掉「自动跳歌」时只允许跳 1 首就停
+    private var skipLimit: Int {
+        let settings = SettingsStore.shared
+        return settings.autoSkipDeadSongs ? max(1, settings.skipLimit) : 1
+    }
+
     private func rejectSource(_ source: StreamSource, reason: String) {
         rejectedSourceURLs.insert(source.url)
         if let song = currentSong { deadSongKeys.insert(song.id) }
         errorText = reason
         consecutiveSkips += 1
-        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips) {
+        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) {
             isPlaying = false
-            errorText = PlaybackRules.skipMessage(consecutiveSkips)
+            errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
             return
         }
         // 还有余量：换下一首（同一首的其它源会在 loadCurrent 里被重新解析）
@@ -343,9 +382,9 @@ final class PlayerEngine {
     private func handleNoSource() {
         if let song = currentSong { deadSongKeys.insert(song.id) }
         consecutiveSkips += 1
-        errorText = PlaybackRules.skipMessage(consecutiveSkips)
+        errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
         isPlaying = false
-        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips) { return }
+        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) { return }
         guard let next = PlaybackRules.nextIndex(
             count: queue.count, current: index, mode: mode,
             randomIn: { Int.random(in: $0) }) else { return }

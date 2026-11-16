@@ -107,9 +107,18 @@ enum PlaybackRules {
         consecutiveSkips >= autoSkipLimit
     }
 
+    /// 上限可配置版：设置里的「跳过上限」关掉自动跳歌时传 1
+    static func shouldStopAfterSkips(_ consecutiveSkips: Int, limit: Int) -> Bool {
+        consecutiveSkips >= max(1, limit)
+    }
+
     /// 连续失败后的提示文案（口语、可执行，不甩代码）
     static func skipMessage(_ consecutiveSkips: Int) -> String {
-        if shouldStopAfterSkips(consecutiveSkips) {
+        skipMessage(consecutiveSkips, limit: autoSkipLimit)
+    }
+
+    static func skipMessage(_ consecutiveSkips: Int, limit: Int) -> String {
+        if shouldStopAfterSkips(consecutiveSkips, limit: limit) {
             return "连着 \(consecutiveSkips) 首都没有可用的播放源，先停在这里。换个关键词，或稍后再试。"
         }
         return "这首暂时没有可用的播放源，已跳到下一首（第 \(consecutiveSkips) 首）"

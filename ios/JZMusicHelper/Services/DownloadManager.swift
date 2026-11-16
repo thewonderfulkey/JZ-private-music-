@@ -116,6 +116,14 @@ final class DownloadManager: NSObject, ObservableObject {
         }
     }
 
+    /// 已下好的本地文件路径（播放引擎优先播它：离线可用、省一次解析）
+    func localFileURL(for song: Song) -> URL? {
+        guard let item = items.first(where: { $0.song.id == song.id && $0.status == .completed }),
+              let path = item.localPath,
+              FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
     /// 取消下载
     func cancel(itemID: UUID) {
         guard let idx = items.firstIndex(where: { $0.id == itemID }) else { return }
