@@ -65,17 +65,18 @@ ios/SelfTest/main.swift                           +17 条断言（文本清洗 8
 | 扩展是否进包 | CI 的 `unzip -l` 门禁 | ✅ `PlugIns/JZWidgets.appex`（260,440 B）在包里 |
 | 真机观感 | **验不到**：开发机是 Windows，没有 iPhone/模拟器 | 录制里那 7 条都属于"看得见"的问题，改完仍需装机确认：编辑精选卡够不够小、翻页手感、满屏播放页、歌词真的出来了、迷你条四键、发现页顶部搜索、搜索结果条数 |
 
-## 四、本轮出的包
+## 四、本轮出的包（**装这个**）
 
 | 项 | 值 |
 |---|---|
-| 文件 | `JZ-Music-v2.1.95-075fe1f-r54-ios-unsigned.ipa` |
-| 大小 | 1.49 MB |
-| SHA-256 | `93063f077196f3f94200d114a4383e64a870b5287bcf6bd38aee9e09009af2ff` |
-| CI | [run #54](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43855913748)（logic-tests ✅ / build ✅ / 插件门禁 ✅ / 发飞书群 ✅） |
-| 提交 | `075fe1f` |
+| 文件 | `JZ-Music-v2.1.95-e9499bf-r55-ios-unsigned.ipa` |
+| 大小 | 1.50 MB |
+| SHA-256 | `0e00bae1f2d9d022f959cb37cde8c4ad09ca1a8b83904430184ca5a3877511ca` |
+| CI | [run #55](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43856937060)（logic-tests ✅ 363 条 / build ✅ / 插件门禁 ✅ / 发飞书群 ✅） |
+| 提交 | `e9499bf` |
 
-> 认包只认文件名里的 `075fe1f-r54`：群里的历史包（r47 `650a8e1` 及更早）都还没有这 7 项改动。
+> 认包只认文件名里的 `e9499bf-r55`：群里的历史包（r54 `075fe1f`、r47 `650a8e1` 及更早）都没有这 7 项改动。
+> 其中 **r54 是同一批改动的中间包**（少了"播放页下载 sheet"和"歌词只在空时重取"两处），**已被 r55 取代码**，不用装。
 
 ## 五、装机时按这个顺序试
 
