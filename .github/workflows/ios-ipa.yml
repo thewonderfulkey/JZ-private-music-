@@ -280,6 +280,7 @@ jobs:
       - name: 编译模拟器版本
         run: |
           set -euo pipefail
+          mkdir -p build
           xcodebuild \
             -project ios/JZMusicHelper.xcodeproj \
             -target JZMusicHelper \
