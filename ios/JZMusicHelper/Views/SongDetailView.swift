@@ -137,8 +137,8 @@ struct SongDetailView: View {
         Task {
             for await event in stream {
                 switch event {
-                case .started(let adapter):
-                    backendStatus[adapter.name] = "解析中"
+                case .started(let backend):
+                    backendStatus[backend] = "解析中"
                 case .success(let source):
                     sources.append(source)
                     backendStatus[source.backendName] = "成功"
