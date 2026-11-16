@@ -34,6 +34,9 @@ enum LyricsFixtures {
     static let synthQrcExpectedFirstTimeMs = 0
     static let synthQrcExpectedFirstWords = 3
 
+    /// zlib 压缩的 "hello world"（hex）——用来单独验证解压底座
+    static let zlibHelloHex = "789ccb48cdc9c95728cf2fca4901001a0b045d"
+
     /// 3DES 单块向量：(明文 hex, 密文 hex)
     static let desVectors: [(plain: String, cipher: String)] = [
         ("4a5a544553543031", "e6ba70094ac5bc6d"),

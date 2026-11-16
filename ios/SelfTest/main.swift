@@ -407,13 +407,20 @@ func hexToBytes(_ hex: String) -> [UInt8] {
 }
 
 do {
+    // 先单独验解压底座：这一层不通，KRC/QRC 全都解不开
+    let hello = Zlib.inflate(Data(hexToBytes(LyricsFixtures.zlibHelloHex)))
+    check("zlib 解压底座可用", hello.flatMap { String(data: $0, encoding: .utf8) } == "hello world",
+          "err=\(Zlib.lastError) out=\(hello.map { String(data: $0, encoding: .utf8) ?? "?" } ?? "nil")")
+}
+
+do {
     // —— 真实数据：4192 字节 KRC 密文 → 63 行逐字歌词
     guard let data = Data(base64Encoded: LyricsFixtures.realKrcBase64) else {
         check("真实 KRC base64 可解码", false)
         exit(1)
     }
     let plain = LddcCrypto.krcDecrypt([UInt8](data))
-    check("真实 KRC 解密成功", plain != nil)
+    check("真实 KRC 解密成功", plain != nil, "err=\(Zlib.lastError)")
     if let plain {
         check("真实 KRC 明文含歌名", plain.contains(LyricsFixtures.realKrcContains))
         check("真实 KRC 明文够长", plain.count > 5000, "len=\(plain.count)")
@@ -436,7 +443,7 @@ do {
     // —— 合成 KRC：逐字节往返
     guard let data = Data(base64Encoded: LyricsFixtures.synthKrcBase64),
           let plain = LddcCrypto.krcDecrypt([UInt8](data)) else {
-        check("合成 KRC 解密成功", false)
+        check("合成 KRC 解密成功", false, "err=\(Zlib.lastError)")
         exit(1)
     }
     let lines = LddcCrypto.krcToLines(plain)

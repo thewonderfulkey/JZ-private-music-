@@ -8,14 +8,20 @@ import Foundation
 // 流式接口在 COMPRESSION_STATUS_END 处就能干净收尾。
 enum Zlib {
 
+    /// 上一次失败的阶段（测试里打出来定位用）
+    static var lastError = ""
+
     static func inflate(_ data: Data, maxOutput: Int = 8 * 1024 * 1024) -> Data? {
+        lastError = ""
         guard !data.isEmpty else { return nil }
 
         // compression_stream 这个 C 结构体在 Swift 里没有零参 init，必须用指针手动建
         let streamPointer = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
         defer { streamPointer.deallocate() }
+        // 分配出来是未初始化内存，compression_stream_init 要求 state 字段为 NULL——必须先清零
+        memset(streamPointer, 0, MemoryLayout<compression_stream>.size)
         guard compression_stream_init(streamPointer, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
-                == COMPRESSION_STATUS_OK else { return nil }
+                == COMPRESSION_STATUS_OK else { lastError = "init 失败"; return nil }
         defer { compression_stream_destroy(streamPointer) }
 
         let bufferSize = 64 * 1024
@@ -24,7 +30,7 @@ enum Zlib {
 
         var output = Data()
         return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Data? in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return nil }
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { lastError = "无源指针"; return nil }
             streamPointer.pointee.src_ptr = base
             streamPointer.pointee.src_size = data.count
             while true {
@@ -37,12 +43,16 @@ enum Zlib {
                     let produced = bufferSize - streamPointer.pointee.dst_size
                     if produced > 0 {
                         output.append(buffer, count: produced)
-                        if output.count > maxOutput { return nil }
+                        if output.count > maxOutput { lastError = "输出超限"; return nil }
                     }
                     if status == COMPRESSION_STATUS_END { return output }
                     // 输入耗尽却没产出 → 数据被截断，别死循环
-                    if streamPointer.pointee.src_size == 0 && produced == 0 { return nil }
+                    if streamPointer.pointee.src_size == 0 && produced == 0 {
+                        lastError = "输入耗尽（status=\(status.rawValue)）"
+                        return nil
+                    }
                 default:
+                    lastError = "process status=\(status.rawValue)"
                     return nil
                 }
             }
