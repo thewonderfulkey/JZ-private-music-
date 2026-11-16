@@ -8,6 +8,8 @@
 > 用 HTML 按 393×852 渲染后截图，仅表达布局与层级；**封面是占位色块**（真实版用平台封面），字体用系统字体近似（真机是 SF Pro / 苹方）。
 > 源文件 [mockups/mockups.html](mockups/mockups.html)，可直接用浏览器打开改。
 
+![五屏总览](mockups/00-overview.png)
+
 | 页面 | 图 |
 |---|---|
 | 1 发现 | ![发现](mockups/01-discover.png) |
