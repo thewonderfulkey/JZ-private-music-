@@ -164,7 +164,7 @@ struct NowPlayingView: View {
                 // 状态行只在出错时出现（老板 r63：暂停键下面那行小字不要了，
                 // 但"无源/换源失败"必须让人看见，否则点歌没反应像卡死）
                 if let error = player.errorText {
-                    errorLine(width: w)
+                    errorLine(width: w, text: error)
                         .padding(.top, Tokens.Spacing.xs)
                 }
 
@@ -709,11 +709,11 @@ struct NowPlayingView: View {
     /// 老板 r63："暂停键下方的小字不用再显示了，毕竟已经在音源里了。"
     /// 但"解析失败/无源/换源"这类错误必须让人看见——所以这行现在只在 `player.errorText` 有值时出现，
     /// 高度也不预留（正常状态下一点空隙都不占）。
-    private func errorLine(width: CGFloat) -> some View {
+    private func errorLine(width: CGFloat, text: String) -> some View {
         HStack(spacing: Tokens.Spacing.xxs + 2) {
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.caption2)
-            Text(player.errorText ?? "")
+            Text(text)
                 .font(.caption2)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
