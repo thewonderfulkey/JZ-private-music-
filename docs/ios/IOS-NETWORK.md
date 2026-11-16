@@ -109,4 +109,4 @@ Android 为了让酷狗证书不匹配的域名能用，OkHttp 里对该域名�
 
 - 接口挂了先跑 `python tools/ios/probe_network.py`，它会把「哪家搜索空 / 哪个后端没 URL / 真实码率变成多少」直接打出来。
 - 改排序权重、原唱判定、码率区间、酷我过滤这类"数字口径"，**必须**同步改 `ios/SelfTest/main.swift`，CI 会拦。
-- 新增一条 pbxproj 文件引用时不要手写 ID：用 `.build/add_pbx_files.py` 的思路（按已占用 ID 动态分配），否则会和 `F…13`（Info.plist）、`F…14`（app）撞车——这个坑已经踩过一次。
+- 新增一条 pbxproj 文件引用时不要手写 ID：用 `tools/ios/add_pbx_files.py` 的思路（按已占用 ID 动态分配），否则会和 `F…13`（Info.plist）、`F…14`（app）撞车——这个坑已经踩过一次。
