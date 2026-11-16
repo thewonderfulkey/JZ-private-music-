@@ -43,20 +43,34 @@ ios/JZMusicHelper/Views/LibraryView.swift         点歌进播放页
 ios/JZMusicHelper/Views/DownloadsTabView.swift    点本地歌进播放页
 ios/JZMusicHelper/Views/EditorPlaylistView.swift  点歌进播放页
 ios/JZMusicHelper/Views/RecognizeView.swift       结果/其他版本进播放页
-ios/SelfTest/main.swift                           +21 条断言（文本清洗 / 跨平台去重）
+ios/SelfTest/main.swift                           +17 条断言（文本清洗 8 + 跨平台去重 9），总数 363 条
 ```
 
 ## 三、怎么验的（以及验不到什么）
 
 | 项 | 手段 | 结论 |
 |---|---|---|
-| 纯逻辑口径 | `swiftc` 编译 SelfTest 并跑全部断言（CI logic-tests job） | 文本清洗 7 条 + 跨平台去重 14 条，全绿 |
+| 纯逻辑口径 | `swiftc` 编译 SelfTest 并跑全部断言（CI logic-tests job） | **363 条全绿**（本轮 +17：文本清洗 8 条、跨平台去重 9 条） |
 | 界面卫生 | `tools/ios/check_ui_hygiene.py` | 18 个界面文件通过（无硬编码字号、无常量行高截断文本） |
 | 工程结构 | `tools/ios/check_pbxproj.py` | 175 对象 / 2 target 通过（本轮没加新文件，不需要改 pbxproj） |
-| 能否编译 | `xcodebuild`（CI build-ipa job） | BUILD SUCCEEDED 才有 IPA |
+| 语法 | tree-sitter-swift 解析 `ios/**/*.swift` | 66 个文件 0 个 ERROR/MISSING 节点 |
+| 能否编译 | `xcodebuild`（CI build-ipa job） | ✅ **BUILD SUCCEEDED** |
+| 扩展是否进包 | CI 的 `unzip -l` 门禁 | ✅ `PlugIns/JZWidgets.appex`（260,440 B）在包里 |
 | 真机观感 | **验不到**：开发机是 Windows，没有 iPhone/模拟器 | 录制里那 7 条都属于"看得见"的问题，改完仍需装机确认：编辑精选卡够不够小、翻页手感、满屏播放页、歌词真的出来了、迷你条四键、发现页顶部搜索、搜索结果条数 |
 
-## 四、装机时按这个顺序试
+## 四、本轮出的包
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.1.95-075fe1f-r54-ios-unsigned.ipa` |
+| 大小 | 1.49 MB |
+| SHA-256 | `93063f077196f3f94200d114a4383e64a870b5287bcf6bd38aee9e09009af2ff` |
+| CI | [run #54](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43855913748)（logic-tests ✅ / build ✅ / 插件门禁 ✅ / 发飞书群 ✅） |
+| 提交 | `075fe1f` |
+
+> 认包只认文件名里的 `075fe1f-r54`：群里的历史包（r47 `650a8e1` 及更早）都还没有这 7 项改动。
+
+## 五、装机时按这个顺序试
 
 1. **发现页**：最上面是搜索框；编辑精选是 4 张长方形卡（一屏能看到 2 张半）；猜你喜欢/热门音乐是「三行一页」的卡，左右滑能翻页，底部小胶囊跟着动。
 2. **搜索**：点顶部搜索框 → 自动弹键盘 → 搜「周杰伦」→ 结果里《夜曲》《晴天》各只出现一次（同平台不同 ID 的也合并），不再一屏全是同一首。
@@ -64,3 +78,4 @@ ios/SelfTest/main.swift                           +21 条断言（文本清洗 /
 4. **收起播放页**：左上角 chevron.down 或按住顶部往下拽。
 5. **迷你条**：播放中回到任意 Tab，底部条上有 ❤ / ⏮ / ⏸ / ⏭ 四个键；**Tab 栏仍然完整可点**（能切到下载、资料库）。
 6. **收藏**：点 ❤ 变实心，进「资料库 › 收藏」能看到这首。
+
