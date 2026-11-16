@@ -57,7 +57,7 @@ final class SearchService {
                             platform: adapter.platform, songs: songs, error: nil,
                             elapsedMs: Int(Date().timeIntervalSince(started) * 1000))
                     } catch {
-                        let msg = (error as? APIError) == .timeout
+                        let msg = (error as? APIError) == APIError.timeout
                             ? "超时"
                             : (error.localizedDescription.isEmpty ? "失败" : error.localizedDescription)
                         return PlatformResult(

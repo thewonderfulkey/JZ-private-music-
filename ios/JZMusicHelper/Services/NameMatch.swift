@@ -9,15 +9,11 @@ import Foundation
 // 口径：歌名去括号版本说明与标点后相等，或长度差 ≤6 字且互相包含；歌手拆 token 后取交集。
 enum NameMatch {
 
-    private static let bracket = NSRegularExpression(
-        pattern: "（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】"
-    )
+    private static let bracket = Pattern.make("（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】")
 
-    private static let punct = NSRegularExpression(
-        pattern: "[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+]"
-    )
+    private static let punct = Pattern.make("[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+]")
 
-    private static let singerSep = NSRegularExpression(pattern: "[/&、,，\\s]+")
+    private static let singerSep = Pattern.make("[/&、,，\\s]+")
 
     /// 纯歌名归一化：去版本括号 + 去标点空白
     static func normTitle(_ raw: String) -> String {

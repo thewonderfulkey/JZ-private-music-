@@ -13,34 +13,26 @@ import Foundation
 //   ④ 单歌手优于多歌手串（合唱版/群星版降权）。
 enum StudioPick {
 
-    private static let bracket = NSRegularExpression(
-        pattern: "（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】"
-    )
+    private static let bracket = Pattern.make("（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】")
 
-    private static let editSuffix = NSRegularExpression(
-        pattern:
-            "\\s*[-—–·]?\\s*(" +
-            "伴奏|钢琴版|吉他版|翻唱|cover|live|现场版|现场|演唱会|音乐会|remix|dj版|dj|电音|串烧|" +
-            "合唱版|合唱|纯音乐|钢琴|混音|重制|ktv|对唱|说唱|beat|instrumental|片段|剪辑|消音|学唱|" +
-            "咚鼓|童声|古筝|学唱版|版本[0-9一二三四五六七八九十]+" +
-            ").*$",
-        options: [.caseInsensitive]
-    )
+    private static let editSuffix = Pattern.make(
+        "\\s*[-—–·]?\\s*(" +
+        "伴奏|钢琴版|吉他版|翻唱|cover|live|现场版|现场|演唱会|音乐会|remix|dj版|dj|电音|串烧|" +
+        "合唱版|合唱|纯音乐|钢琴|混音|重制|ktv|对唱|说唱|beat|instrumental|片段|剪辑|消音|学唱|" +
+        "咚鼓|童声|古筝|学唱版|版本[0-9一二三四五六七八九十]+" +
+        ").*$",
+        options: [.caseInsensitive])
 
-    private static let liveAlbum = NSRegularExpression(
-        pattern:
-            "现场|演唱会|音乐会|春晚|春节|联欢|跨年|晚会|盛典|颁奖|综艺|节目|直播|" +
-            "live|concert|unplugged|新声代|天赐|蒙面|我们的歌|声生不息|歌手20",
-        options: [.caseInsensitive]
-    )
+    private static let liveAlbum = Pattern.make(
+        "现场|演唱会|音乐会|春晚|春节|联欢|跨年|晚会|盛典|颁奖|综艺|节目|直播|" +
+        "live|concert|unplugged|新声代|天赐|蒙面|我们的歌|声生不息|歌手20",
+        options: [.caseInsensitive])
 
-    private static let multiSinger = NSRegularExpression(pattern: "[/&、,，;；]|\\s{2,}")
+    private static let multiSinger = Pattern.make("[/&、,，;；]|\\s{2,}")
 
-    private static let quotedName = NSRegularExpression(
-        pattern: "[\"'“”‘’「」『』]([^\"'“”‘’「」『』]*)[\"'“”‘’「」『』]"
-    )
+    private static let quotedName = Pattern.make("[\"'“”‘’「」『』]([^\"'“”‘’「」『』]*)[\"'“”‘’「」『』]")
 
-    private static let trailingJoiner = NSRegularExpression(pattern: "\\s*[-—–·]\\s*$")
+    private static let trailingJoiner = Pattern.make("\\s*[-—–·]\\s*$")
 
     // MARK: 核心歌名
 

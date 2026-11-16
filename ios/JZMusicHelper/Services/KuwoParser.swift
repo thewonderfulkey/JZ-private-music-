@@ -6,6 +6,21 @@ import Foundation
 // 单独拆一个文件的原因是：它是纯函数、不碰网络，可以直接被 CI 的 `ios/SelfTest` 编译进来跑断言
 // （酷我返回的不是 JSON，是 `{'key':'value',...}` 这种单引号文本，格式一改就会整平台静默 0 条，
 //  必须有回归测试盯着——Android 侧曾因此"酷我永远 0 条"）。
+// MARK: - 正则工厂
+//
+// `NSRegularExpression(pattern:options:)` 是 **throws** 的（模式非法会抛），
+// 而 `static let` 的初始化器不允许 throw。这里集中包一层：模式都是写死的常量，
+// 非法就等于写错了代码，直接 fatalError 比静默降级成"不过滤"安全得多。
+enum Pattern {
+    static func make(_ pattern: String,
+                     options: NSRegularExpression.Options = []) -> NSRegularExpression {
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            fatalError("非法正则表达式：\(pattern)")
+        }
+    }
+}
 enum KuwoParser {
 
     /// 从整段响应里抽出 abslist 的记录
@@ -71,9 +86,7 @@ enum KuwoParser {
         return chunks
     }
 
-    private static let dictEntry = NSRegularExpression(
-        pattern: "'([^']*)':\\s*'((?:[^'\\\\]|\\\\.)*)'"
-    )
+    private static let dictEntry = Pattern.make("'([^']*)':\\s*'((?:[^'\\\\]|\\\\.)*)'")
 
     /// 解析单引号键值对，并还原 HTML 实体（不还原的话 "IVORY&nbsp;TOWER" 会漏掉相关性比较）
     static func parseSingleQuotedDict(_ text: String) -> [String: String]? {
