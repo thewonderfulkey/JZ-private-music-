@@ -57,7 +57,7 @@ enum RecognizeJudge {
 
     /// 归一化：繁转简 + 小写 + 只留字母数字（去空格标点括号，CJK 属字母会保留）
     static func normName(_ s: String) -> String {
-        let simplified = TraditionalMap.toSimplified(s).lowercased()
+        let simplified = TradToSimpMap.toSimplified(s).lowercased()
         var out = ""
         out.unicodeScalars.append(contentsOf: simplified.unicodeScalars.filter {
             CharacterSet.alphanumerics.contains($0)
