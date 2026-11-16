@@ -1,0 +1,128 @@
+import Foundation
+
+// MARK: - 歌词清洗与 LRC 解析
+//
+// 与 Android `LyricsService` 的 cleanArtist / isBrokenLyrics / cleanLine / parseLrc / indexAt 同口径。
+// 这一层的存在原因：三个源的歌词格式差得远（普通 LRC、酷我 LRC、KRC/QRC 明文），
+// 而渲染层只该看到「时间 + 干净的行文本 + 可选的逐字时间」。所有脏活在这里做完。
+enum LyricsCleaning {
+
+    // MARK: 歌手清洗
+
+    /// 多艺人取第一个（"A20 LITE/A20" → "A20 LITE"），去掉分隔符
+    static func cleanArtist(_ singer: String) -> String {
+        let parts = singer.split(whereSeparator: { "/／、,，;；".contains($0) })
+        return parts.first.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+    }
+
+    // MARK: 损坏判定
+
+    /// 歌词损坏判定：含占位符/危险码点且**同时**含中文 → 损坏。
+    ///
+    /// 占位符集合：半角 `?`、全角 `？`、U+FFFD、U+FF3F、变体问号（U+FE56/U+FE16/U+2047）、
+    /// BOM（U+FEFF）、几何符号全区块 U+25A0–U+25FF（安卓对未覆盖几何符号会渲成"菱形带问号"）、
+    /// 私用区 U+E000–F8FF、专用区 U+FFF0–FFFD、代理区 U+D800–DFFF、非字符 U+FFFE/FFFF。
+    ///
+    /// 只做占位符检测，**不做繁体推断**——粤语/台版歌词是合法的，误判会整首丢词。
+    static func isBroken(_ text: String) -> Bool {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        var hasBad = false
+        var hasCJK = false
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if v >= 0x4E00 && v <= 0x9FFF { hasCJK = true }
+            if isBadScalar(v) { hasBad = true }
+            if hasBad && hasCJK { return true }
+        }
+        return false
+    }
+
+    private static func isBadScalar(_ v: UInt32) -> Bool {
+        switch v {
+        case 0x3F, 0xFF1F, 0xFFFD, 0xFF3F, 0xFE56, 0xFE16, 0x2047, 0xFEFF,
+             0xFFFE, 0xFFFF:
+            return true
+        case 0x25A0...0x25FF, 0xE000...0xF8FF, 0xFFF0...0xFFFD, 0xD800...0xDFFF:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: 单行清洗
+
+    /// 单行歌词清洗：繁转简 → 剔占位符/危险码点/控制字符 → 含 `<` 的 KRC 碎片行整行丢弃。
+    /// 返回 "" 表示该行不可用。
+    static func cleanLine(_ raw: String) -> String {
+        let simp = TradToSimpMap.toSimplified(raw)
+        var out = String()
+        out.reserveCapacity(simp.count)
+        for scalar in simp.unicodeScalars {
+            let v = scalar.value
+            if isBadScalar(v) { continue }
+            if v < 0x20 || v == 0x7F { continue }
+            out.unicodeScalars.append(scalar)
+        }
+        // KRC 解析失败会留下 `<数字,数字,数字>` 之类的碎片；正常歌词不会有 `<`
+        if out.contains("<") { return "" }
+        // 中文歌词里出现的 "?" 基本是解码失败的占位符，直接抹掉
+        if out.unicodeScalars.contains(where: { $0.value >= 0x4E00 && $0.value <= 0x9FFF }) {
+            out = out.replacingOccurrences(of: "?", with: "").replacingOccurrences(of: "？", with: " ")
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: LRC 解析
+
+    private static let timeTag = Pattern.make(
+        "\\[(\\d{1,2}):(\\d{1,2})(?:\\.(\\d{1,3}))?\\]")
+
+    /// 解析 LRC 文本为时间戳行。
+    /// 注意 `[mm:ss.xxx]` 的 `xxx` 是**毫秒**（三位小数秒），不能乘 10 当"十进制小数"用——
+    /// Android 那边曾经踩过，这里直接按毫秒处理。
+    static func parseLrc(_ lrc: String) -> [LyricLine] {
+        guard !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        var out: [LyricLine] = []
+        for raw in lrc.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            let ns = line as NSString
+            let matches = timeTag.matches(in: line, range: NSRange(location: 0, length: ns.length))
+            guard !matches.isEmpty else { continue }
+            var times: [Int] = []
+            for m in matches where m.numberOfRanges >= 3 {
+                let minStr = ns.substring(with: m.range(at: 1))
+                let secStr = ns.substring(with: m.range(at: 2))
+                var fracStr = ""
+                if m.numberOfRanges > 3, m.range(at: 3).location != NSNotFound {
+                    fracStr = ns.substring(with: m.range(at: 3))
+                }
+                let minutes = Int(minStr) ?? 0
+                let seconds = Int(secStr) ?? 0
+                // 补足/截断到 3 位再当毫秒
+                let frac = Int(fracStr.padding(toLength: 3, withPad: "0", startingAt: 0).prefix(3)) ?? 0
+                times.append(minutes * 60_000 + seconds * 1000 + frac)
+            }
+            // 一行可能有多个时间戳（`[00:01.00][00:05.00]同一句词`）
+            guard let closeBracket = line.lastIndex(of: "]") else { continue }
+            let text = String(line[line.index(after: closeBracket)...])
+            let cleaned = cleanLine(text)
+            guard !cleaned.isEmpty else { continue }
+            for t in times {
+                out.append(LyricLine(timeMs: t, text: cleaned))
+            }
+        }
+        return out.sorted { $0.timeMs < $1.timeMs }
+    }
+
+    // MARK: 定位
+
+    /// 当前播放位置对应的歌词行下标（没有则 -1）
+    static func indexAt(_ lines: [LyricLine], positionMs: Int) -> Int {
+        guard !lines.isEmpty else { return -1 }
+        var idx = -1
+        for (i, line) in lines.enumerated() {
+            if line.timeMs <= positionMs { idx = i } else { break }
+        }
+        return idx
+    }
+}

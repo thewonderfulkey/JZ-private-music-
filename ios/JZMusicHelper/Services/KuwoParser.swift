@@ -181,3 +181,31 @@ enum KuwoParser {
         return anyToken
     }
 }
+
+extension NSRegularExpression {
+    /// 第一个匹配的各捕获组（**不含**整段匹配，索引 0 就是 group 1）
+    func match(_ s: String) -> [String]? {
+        let ns = s as NSString
+        guard let m = firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        guard m.numberOfRanges > 1 else { return [] }
+        var out: [String] = []
+        for i in 1..<m.numberOfRanges {
+            let r = m.range(at: i)
+            out.append(r.location == NSNotFound ? "" : ns.substring(with: r))
+        }
+        return out
+    }
+
+    /// 所有匹配的各捕获组（同上，不含整段匹配）
+    func allMatches(_ s: String) -> [[String]] {
+        let ns = s as NSString
+        let matches = matches(in: s, range: NSRange(location: 0, length: ns.length))
+        return matches.map { m in
+            guard m.numberOfRanges > 1 else { return [] }
+            return (1..<m.numberOfRanges).map { i in
+                let r = m.range(at: i)
+                return r.location == NSNotFound ? "" : ns.substring(with: r)
+            }
+        }
+    }
+}

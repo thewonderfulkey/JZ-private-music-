@@ -34,6 +34,10 @@
 		B00000000000000000000019 /* NowPlayingCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001B /* NowPlayingCenter.swift */; };
 		B0000000000000000000001A /* MiniPlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001C /* MiniPlayerBar.swift */; };
 		B0000000000000000000001B /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001D /* NowPlayingView.swift */; };
+		B0000000000000000000001C /* LyricsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001E /* LyricsModel.swift */; };
+		B0000000000000000000001D /* LyricsCleaning.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001F /* LyricsCleaning.swift */; };
+		B0000000000000000000001E /* TraditionalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* TraditionalMap.swift */; };
+		B0000000000000000000001F /* LddcCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000021 /* LddcCrypto.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -66,6 +70,10 @@
 		F0000000000000000000001B /* NowPlayingCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingCenter.swift; sourceTree = "<group>"; };
 		F0000000000000000000001C /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
 		F0000000000000000000001D /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+		F0000000000000000000001E /* LyricsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsModel.swift; sourceTree = "<group>"; };
+		F0000000000000000000001F /* LyricsCleaning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsCleaning.swift; sourceTree = "<group>"; };
+		F00000000000000000000020 /* TraditionalMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TraditionalMap.swift; sourceTree = "<group>"; };
+		F00000000000000000000021 /* LddcCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LddcCrypto.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -127,6 +135,10 @@
 				F00000000000000000000019 /* PlaybackRules.swift */,
 				F0000000000000000000001A /* AudioPlayer.swift */,
 				F0000000000000000000001B /* NowPlayingCenter.swift */,
+				F0000000000000000000001E /* LyricsModel.swift */,
+				F0000000000000000000001F /* LyricsCleaning.swift */,
+				F00000000000000000000020 /* TraditionalMap.swift */,
+				F00000000000000000000021 /* LddcCrypto.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -250,6 +262,10 @@
 				B00000000000000000000019 /* NowPlayingCenter.swift in Sources */,
 				B0000000000000000000001A /* MiniPlayerBar.swift in Sources */,
 				B0000000000000000000001B /* NowPlayingView.swift in Sources */,
+				B0000000000000000000001C /* LyricsModel.swift in Sources */,
+				B0000000000000000000001D /* LyricsCleaning.swift in Sources */,
+				B0000000000000000000001E /* TraditionalMap.swift in Sources */,
+				B0000000000000000000001F /* LddcCrypto.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

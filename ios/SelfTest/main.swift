@@ -333,6 +333,170 @@ do {
     check("三种模式都有文案", PlayMode.allCases.allSatisfy { !$0.displayName.isEmpty })
 }
 
+// MARK: - 10 歌词：清洗、LRC、逐字解密
+
+section("歌词清洗与 LRC 解析")
+
+do {
+    check("多艺人取第一个（/）", LyricsCleaning.cleanArtist("A20 LITE/A20") == "A20 LITE",
+          LyricsCleaning.cleanArtist("A20 LITE/A20"))
+    check("多艺人取第一个（、）", LyricsCleaning.cleanArtist("谭晶、陈奕迅") == "谭晶")
+    check("单艺人不改", LyricsCleaning.cleanArtist(" 周杰伦 ") == "周杰伦")
+    check("空歌手返回空", LyricsCleaning.cleanArtist("") == "")
+}
+
+do {
+    check("纯中文不算损坏", !LyricsCleaning.isBroken("故事的小黄花"))
+    check("合法繁体不算损坏", !LyricsCleaning.isBroken("廣東話的歌詞"))
+    check("中文里出现 ? 判损坏", LyricsCleaning.isBroken("?? 晴天"))
+    check("中文里出现替换符判损坏", LyricsCleaning.isBroken("晴天\u{FFFD}"))
+    check("中文里出现几何符号判损坏", LyricsCleaning.isBroken("晴天\u{25A0}"))
+    check("空串算损坏", LyricsCleaning.isBroken("   "))
+}
+
+do {
+    check("cleanLine 抹掉替换符", LyricsCleaning.cleanLine("晴\u{FFFD}天") == "晴天")
+    check("cleanLine 丢弃 KRC 碎片行", LyricsCleaning.cleanLine("<1,2,3>") == "")
+    check("cleanLine 抹掉中文里的问号", LyricsCleaning.cleanLine("晴天?") == "晴天")
+    check("cleanLine 保留中文标点", LyricsCleaning.cleanLine("故事的小黄花，") == "故事的小黄花，")
+    check("cleanLine 繁转简", LyricsCleaning.cleanLine("廣東話") == "广东话",
+          LyricsCleaning.cleanLine("廣東話"))
+}
+
+do {
+    let lrc = """
+    [00:01.50]第一句
+    [00:03.00]第二句
+    [00:05.25][00:10.00]重复的一句
+    [ar:周杰伦]
+    """
+    let lines = LyricsCleaning.parseLrc(lrc)
+    check("LRC 行数（一个时间戳两次 = 两行）", lines.count == 4, "count=\(lines.count)")
+    check("mm:ss.xx 按毫秒解析", lines.first?.timeMs == 1500, "t=\(lines.first?.timeMs ?? -1)")
+    check("按时间排序", lines.map(\.timeMs) == lines.map(\.timeMs).sorted())
+    check("非时间戳行被忽略", !lines.contains { $0.text.contains("ar:") })
+    check("多时间戳展开", lines.filter { $0.text == "重复的一句" }.count == 2)
+}
+
+do {
+    let lines = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 1000, text: "b"),
+                 LyricLine(timeMs: 2000, text: "c")]
+    check("indexAt 命中第一行", LyricsCleaning.indexAt(lines, positionMs: 0) == 0)
+    check("indexAt 命中中间", LyricsCleaning.indexAt(lines, positionMs: 1500) == 1)
+    check("indexAt 超过最后一行取最后", LyricsCleaning.indexAt(lines, positionMs: 99_999) == 2)
+    check("indexAt 在首行之前返回 -1", LyricsCleaning.indexAt(lines, positionMs: -1) == -1)
+    check("indexAt 空数组返回 -1", LyricsCleaning.indexAt([], positionMs: 0) == -1)
+}
+
+do {
+    check("繁简映射表规模够用", TradToSimpMap.pairCount > 1000, "count=\(TradToSimpMap.pairCount)")
+    check("简体原样返回", TradToSimpMap.toSimplified("晴天") == "晴天")
+}
+
+section("歌词解密：真实酷狗 KRC + 合成 KRC/QRC + DES 向量")
+
+func hexToBytes(_ hex: String) -> [UInt8] {
+    var out: [UInt8] = []
+    var i = hex.startIndex
+    while i < hex.endIndex {
+        let j = hex.index(i, offsetBy: 2)
+        if let b = UInt8(hex[i..<j], radix: 16) { out.append(b) }
+        i = j
+    }
+    return out
+}
+
+do {
+    // —— 真实数据：4192 字节 KRC 密文 → 63 行逐字歌词
+    guard let data = Data(base64Encoded: LyricsFixtures.realKrcBase64) else {
+        check("真实 KRC base64 可解码", false)
+        exit(1)
+    }
+    let plain = LddcCrypto.krcDecrypt([UInt8](data))
+    check("真实 KRC 解密成功", plain != nil)
+    if let plain {
+        check("真实 KRC 明文含歌名", plain.contains(LyricsFixtures.realKrcContains))
+        check("真实 KRC 明文够长", plain.count > 5000, "len=\(plain.count)")
+        let lines = LddcCrypto.krcToLines(plain)
+        check("真实 KRC 行数达到下限", lines.count >= LyricsFixtures.realKrcMinLines,
+              "lines=\(lines.count)")
+        check("真实 KRC 首行有逐字时间", lines.first?.hasWordTiming == true)
+        check("真实 KRC 逐字时间递增", {
+            guard let first = lines.first, first.words.count > 1 else { return false }
+            return first.words[1].startMs >= first.words[0].startMs
+        }())
+        check("真实 KRC 逐字时间已换算成绝对时间（首行首词≥行首）", {
+            guard let first = lines.first, let w = first.words.first else { return false }
+            return w.startMs >= first.timeMs
+        }())
+    }
+}
+
+do {
+    // —— 合成 KRC：逐字节往返
+    guard let data = Data(base64Encoded: LyricsFixtures.synthKrcBase64),
+          let plain = LddcCrypto.krcDecrypt([UInt8](data)) else {
+        check("合成 KRC 解密成功", false)
+        exit(1)
+    }
+    let lines = LddcCrypto.krcToLines(plain)
+    check("合成 KRC 行数", lines.count == LyricsFixtures.synthKrcExpectedLines,
+          "got=\(lines.count)")
+    check("合成 KRC 首行文本", lines.first?.text == LyricsFixtures.synthKrcExpectedFirstText,
+          lines.first?.text ?? "nil")
+    check("合成 KRC 首行时间", lines.first?.timeMs == LyricsFixtures.synthKrcExpectedFirstTimeMs)
+    check("合成 KRC 首行逐字数量", lines.first?.words.count == LyricsFixtures.synthKrcExpectedFirstWords,
+          "got=\(lines.first?.words.count ?? -1)")
+    check("合成 KRC 首词时间 = 行首 + 0", lines.first?.words.first?.startMs == 0)
+    check("合成 KRC 第二行逐字有偏移", {
+        guard lines.count > 1, let w = lines[1].words.first else { return false }
+        return w.startMs == lines[1].timeMs
+    }())
+    // 逐字拼接 = 整行文本（这是渲染层逐字染色的前提）
+    check("逐字拼接与整行一致", {
+        guard let first = lines.first else { return false }
+        return first.words.map(\.text).joined().trimmingCharacters(in: .whitespaces) == first.text
+    }())
+    check("krcToLrc 兜底能出 LRC", !LddcCrypto.krcToLrc(plain).isEmpty)
+    check("krcToLrc 的行数对得上", LddcCrypto.krcToLrc(plain).split(separator: "\n").count == lines.count)
+}
+
+do {
+    // —— 合成 QRC：hex → 3DES → inflate → 逐字
+    let plain = LddcCrypto.qrcDecrypt(hex: LyricsFixtures.synthQrcHex)
+    check("合成 QRC 解密成功", plain != nil)
+    if let plain {
+        let lines = LddcCrypto.qrcToLines(plain)
+        check("合成 QRC 行数", lines.count == LyricsFixtures.synthQrcExpectedLines,
+              "got=\(lines.count)")
+        check("合成 QRC 首行文本", lines.first?.text == LyricsFixtures.synthQrcExpectedFirstText,
+              lines.first?.text ?? "nil")
+        check("合成 QRC 首行时间", lines.first?.timeMs == LyricsFixtures.synthQrcExpectedFirstTimeMs)
+        check("合成 QRC 首行逐字数量",
+              lines.first?.words.count == LyricsFixtures.synthQrcExpectedFirstWords,
+              "got=\(lines.first?.words.count ?? -1)")
+        check("qrcToLrc 兜底能出 LRC", !LddcCrypto.qrcToLrc(plain).isEmpty)
+    }
+    check("非法 hex 返回 nil", LddcCrypto.qrcDecrypt(hex: "zz") == nil)
+    check("空 hex 返回 nil", LddcCrypto.qrcDecrypt(hex: "") == nil)
+}
+
+do {
+    // —— DES：与 Python 独立实现逐字节对齐（双向）
+    for (index, vector) in LyricsFixtures.desVectors.enumerated() {
+        let plain = hexToBytes(vector.plain)
+        let cipher = hexToBytes(vector.cipher)
+        let encrypted = LddcCrypto.tripledesEncryptBlock(plain)
+        let decrypted = LddcCrypto.tripledesDecryptBlock(cipher)
+        check("DES 向量 \(index + 1) 加密一致",
+              encrypted.map { String(format: "%02x", $0) }.joined() == vector.cipher,
+              encrypted.map { String(format: "%02x", $0) }.joined())
+        check("DES 向量 \(index + 1) 解密一致",
+              decrypted.map { String(format: "%02x", $0) }.joined() == vector.plain,
+              decrypted.map { String(format: "%02x", $0) }.joined())
+    }
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

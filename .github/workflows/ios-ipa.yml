@@ -58,6 +58,11 @@ jobs:
             ios/JZMusicHelper/Services/SearchService.swift \
             ios/JZMusicHelper/Services/URLResolver.swift \
             ios/JZMusicHelper/Services/PlaybackRules.swift \
+            ios/JZMusicHelper/Services/LyricsModel.swift \
+            ios/JZMusicHelper/Services/LyricsCleaning.swift \
+            ios/JZMusicHelper/Services/TraditionalMap.swift \
+            ios/JZMusicHelper/Services/LddcCrypto.swift \
+            ios/SelfTest/LyricsFixtures.swift \
             ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log
           ./build/jz-selftest 2>&1 | tee build/selftest.log
 
