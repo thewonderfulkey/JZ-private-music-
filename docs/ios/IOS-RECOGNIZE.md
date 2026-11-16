@@ -78,8 +78,8 @@
 
 | 验证 | 手段 | 结果 |
 |---|---|---|
-| 打分与身份归并 | CI `logic-tests` | ✅ 22 条断言 |
-| 整包编译 | CI `build-ipa` | 见本轮 run |
+| 打分与身份归并 | CI `logic-tests` | ✅ 22 条断言全绿（`section("识曲打分…")`，run [#43830848168](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43830848168)） |
+| 整包编译 | CI `build-ipa` | ✅ BUILD SUCCEEDED，`JZ-Music-v2.1.95-b753b89-r38-ios-unsigned.ipa` 已发飞书群 |
 | **真机能不能听到、能不能识别** | ❌ 无设备 | **未验证**，见 §6 |
 
 > 说法边界：这里没验证过麦克风、没验证过接口签名在真机上是否被接受。签名逻辑是照 Android 逐行搬的（salt、参数集、body 参与 md5），但**第一次装机必须实测**。
