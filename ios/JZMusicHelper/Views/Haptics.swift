@@ -43,6 +43,11 @@ enum Haptics {
         light.impactOccurred()
     }
 
+    /// 换一批（发现页编辑精选 / 猜你喜欢）
+    static func refresh() {
+        light.impactOccurred()
+    }
+
     /// 麦克风开始聆听（物理动作，给 medium）
     static func listeningStart() {
         medium.impactOccurred()

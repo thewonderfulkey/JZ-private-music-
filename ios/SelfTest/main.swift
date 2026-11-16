@@ -667,6 +667,81 @@ do {
     check("体积未知写待核对", DownloadGuard.sizeText(0) == "待核对")
 }
 
+// MARK: - 发现页口径（编辑精选 / 热门榜单 / 猜你喜欢）
+
+section("发现页口径：每日轮换 / 原版判定 / 榜单挑选")
+
+do {
+    // ① 每日轮换
+    let pool = Array(0..<10)
+    check("轮换取前 3 首", DiscoverRules.rotate(pool, day: 0, take: 3) == [0, 1, 2])
+    check("轮换按天滑窗", DiscoverRules.rotate(pool, day: 7, take: 3) == [7, 8, 9])
+    check("轮换到尾回绕", DiscoverRules.rotate(pool, day: 8, take: 3) == [8, 9, 0])
+    check("负天数也不越界", DiscoverRules.rotate(pool, day: -1, take: 2) == [9, 0])
+    check("take 超过池子按池子长度", DiscoverRules.rotate(pool, day: 0, take: 99).count == 10)
+    check("空池子返回空", DiscoverRules.rotate([Int](), day: 3, take: 5).isEmpty)
+
+    // ② 原版判定
+    check("去括号版本", DiscoverRules.coreName("晴天 (Live)") == "晴天",
+          DiscoverRules.coreName("晴天 (Live)"))
+    check("去中文括号", DiscoverRules.coreName("晴天（伴奏）") == "晴天",
+          DiscoverRules.coreName("晴天（伴奏）"))
+    check("去 DJ 版后缀并清尾部连接符", DiscoverRules.coreName("夜曲 - DJ版") == "夜曲",
+          DiscoverRules.coreName("夜曲 - DJ版"))
+    check("去纯音乐后缀", DiscoverRules.coreName("七里香 纯音乐") == "七里香",
+          DiscoverRules.coreName("七里香 纯音乐"))
+    check("干净名字原样返回", DiscoverRules.coreName("晴天") == "晴天")
+    check("原版分高于 Live 版",
+          DiscoverRules.plainScore("晴天") > DiscoverRules.plainScore("晴天 (Live)"))
+
+    // ③ 歌手归一
+    check("合唱取第一个歌手", DiscoverRules.singerKey("陈奕迅/华语群星") == "陈奕迅",
+          DiscoverRules.singerKey("陈奕迅/华语群星"))
+    check("单人歌手不变", DiscoverRules.singerKey("周杰伦") == "周杰伦")
+
+    func mkSong(_ name: String, _ singer: String, _ id: String) -> Song {
+        Song(platform: .qq, platformID: id, name: name, singer: singer,
+             album: "", duration: 200, picURL: nil)
+    }
+
+    // ④ 榜单挑选：同曲只留原版、同歌手 ≤2、凑不满不硬凑
+    let candidates = [
+        mkSong("晴天", "周杰伦", "1"),
+        mkSong("晴天 (Live)", "周杰伦", "2"),
+        mkSong("七里香", "周杰伦", "3"),
+        mkSong("青花瓷", "周杰伦", "4"),
+        mkSong("夜曲", "周杰伦", "5"),
+        mkSong("演员", "薛之谦", "6"),
+    ]
+    let picked = DiscoverRules.pick(candidates, limit: 7)
+    check("同曲只留 1 首", picked.filter { $0.name == "晴天" }.count == 1,
+          "\(picked.map(\.name))")
+    check("非原版被剔除", !picked.contains { $0.name.contains("Live") })
+    check("同歌手最多 2 首", picked.filter { $0.singer == "周杰伦" }.count <= DiscoverRules.maxPerSinger,
+          "\(picked.filter { $0.singer == "周杰伦" }.count)")
+    check("候选不够时不硬凑", picked.count == 3, "\(picked.count)")
+    check("剔除听过的（按核心歌名）",
+          DiscoverRules.pick(candidates, limit: 7, excluding: ["晴天"]).allSatisfy { $0.name != "晴天" })
+
+    // ⑤ 猜你喜欢的关键词
+    let recent = [mkSong("晴天", "周杰伦", "a"), mkSong("七里香", "周杰伦", "b"),
+                  mkSong("演员", "薛之谦", "c")]
+    check("关键词按歌手去重并保序",
+          DiscoverRules.guessKeywords(from: recent, limit: 5) == ["周杰伦", "薛之谦"],
+          "\(DiscoverRules.guessKeywords(from: recent, limit: 5))")
+
+    // ⑥ 目录本身
+    check("编辑精选 4 类", DiscoverCatalog.playlists.count == 4)
+    check("每类 30 首", DiscoverCatalog.playlists.allSatisfy { $0.seeds.count == 30 },
+          "\(DiscoverCatalog.playlists.map { $0.seeds.count })")
+    check("热门种子词 24 个", DiscoverCatalog.hotSeedWords.count == 24,
+          "\(DiscoverCatalog.hotSeedWords.count)")
+    check("每类每天都能凑 20 首",
+          DiscoverCatalog.playlists.allSatisfy {
+              DiscoverRules.rotate($0.seeds, day: 12_345, take: 20).count == 20
+          })
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

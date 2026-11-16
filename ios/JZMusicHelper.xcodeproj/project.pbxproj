@@ -51,6 +51,11 @@
 		B00000000000000000000030 /* DownloadGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000032 /* DownloadGuard.swift */; };
 		B00000000000000000000031 /* DownloadFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000033 /* DownloadFlow.swift */; };
 		B00000000000000000000032 /* DownloadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000034 /* DownloadSheet.swift */; };
+		B00000000000000000000033 /* DiscoverCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* DiscoverCatalog.swift */; };
+		B00000000000000000000034 /* DiscoverRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* DiscoverRules.swift */; };
+		B00000000000000000000035 /* DiscoverFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000037 /* DiscoverFeed.swift */; };
+		B00000000000000000000036 /* EditorPlaylistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000038 /* EditorPlaylistView.swift */; };
+		B00000000000000000000037 /* HotChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000039 /* HotChartView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +105,11 @@
 		F00000000000000000000032 /* DownloadGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadGuard.swift; sourceTree = "<group>"; };
 		F00000000000000000000033 /* DownloadFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadFlow.swift; sourceTree = "<group>"; };
 		F00000000000000000000034 /* DownloadSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSheet.swift; sourceTree = "<group>"; };
+		F00000000000000000000035 /* DiscoverCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverCatalog.swift; sourceTree = "<group>"; };
+		F00000000000000000000036 /* DiscoverRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverRules.swift; sourceTree = "<group>"; };
+		F00000000000000000000037 /* DiscoverFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverFeed.swift; sourceTree = "<group>"; };
+		F00000000000000000000038 /* EditorPlaylistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPlaylistView.swift; sourceTree = "<group>"; };
+		F00000000000000000000039 /* HotChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotChartView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +151,7 @@
 				F00000000000000000000003 /* DownloadItem.swift */,
 				F00000000000000000000030 /* LibraryStore.swift */,
 				F00000000000000000000031 /* SettingsStore.swift */,
+				F00000000000000000000035 /* DiscoverCatalog.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -172,6 +183,8 @@
 				F00000000000000000000026 /* CoverResolver.swift */,
 				F00000000000000000000032 /* DownloadGuard.swift */,
 				F00000000000000000000033 /* DownloadFlow.swift */,
+				F00000000000000000000036 /* DiscoverRules.swift */,
+				F00000000000000000000037 /* DiscoverFeed.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -193,6 +206,8 @@
 				F0000000000000000000002E /* LibraryView.swift */,
 				F0000000000000000000002F /* Components.swift */,
 				F00000000000000000000034 /* DownloadSheet.swift */,
+				F00000000000000000000038 /* EditorPlaylistView.swift */,
+				F00000000000000000000039 /* HotChartView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -318,6 +333,11 @@
 				B00000000000000000000030 /* DownloadGuard.swift in Sources */,
 				B00000000000000000000031 /* DownloadFlow.swift in Sources */,
 				B00000000000000000000032 /* DownloadSheet.swift in Sources */,
+				B00000000000000000000033 /* DiscoverCatalog.swift in Sources */,
+				B00000000000000000000034 /* DiscoverRules.swift in Sources */,
+				B00000000000000000000035 /* DiscoverFeed.swift in Sources */,
+				B00000000000000000000036 /* EditorPlaylistView.swift in Sources */,
+				B00000000000000000000037 /* HotChartView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

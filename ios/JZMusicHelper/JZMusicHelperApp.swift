@@ -12,6 +12,7 @@ struct JZMusicHelperApp: App {
     @State private var library = LibraryStore.shared
     @State private var settings = SettingsStore.shared
     @State private var downloadFlow = MainActor.assumeIsolated { DownloadFlow() }
+    @State private var discoverFeed = MainActor.assumeIsolated { DiscoverFeed() }
 
     init() {
         // 下载完成提示（可选权限，拒绝也不影响下载）
@@ -25,6 +26,7 @@ struct JZMusicHelperApp: App {
                 .environment(library)
                 .environment(settings)
                 .environment(downloadFlow)
+                .environment(discoverFeed)
                 .environmentObject(downloads)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(Tokens.Palette.vermilion)

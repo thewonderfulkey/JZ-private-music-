@@ -26,7 +26,7 @@ struct RootTabView: View {
     var body: some View {
         TabView(selection: $selection) {
             NavigationStack {
-                DiscoverView(onPlay: playSingle)
+                DiscoverView(onPlay: playSingle, onOpenSearch: { selection = .search })
                     .paperBackground()
                     .navigationTitle("发现")
             }
