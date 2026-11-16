@@ -1107,6 +1107,12 @@ do {
     check("有逐字时间时取第一个字的起点（不再「行到即切」）",
           withWords.highlightStartMs == 5300, "\(withWords.highlightStartMs)")
 
+    let earlyWord = LyricLine(timeMs: 8000, text: "第三句", words: [
+        LyricWord(text: "第", startMs: 7600, durMs: 200),
+    ])
+    check("逐字时间早于行时间时，仍以行时间为准（不提前切）",
+          earlyWord.highlightStartMs == 8000, "\(earlyWord.highlightStartMs)")
+
     let lines = [
         LyricLine(timeMs: 0, text: "前奏"),
         LyricLine(timeMs: 5000, text: "第二句", words: [

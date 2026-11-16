@@ -31,11 +31,11 @@ struct LyricLine: Hashable, Sendable {
     /// 高亮这一行用的时间点。
     ///
     /// 为什么不用 `timeMs`：KRC/QRC 的 `[start,dur]` 是**行**开始，而很多歌词行会在第一个字之前
-    /// 留 0.3–1s 的呼吸（前奏/拖音），拿行开始去高亮就会"还没唱就切了"。取第一个逐字时间的起点
-    /// 更贴近人耳判定；没有逐字时间（纯 LRC）才回退到行时间。
+    /// 留 0.3–1s 的呼吸（前奏/拖音），拿行开始去高亮就会"还没唱就切了"。
+    /// 取两者**较晚**的那个：既不会早于行开始，也不会早于第一个字真正唱出来的时刻。
     var highlightStartMs: Int {
         guard let first = words.first else { return timeMs }
-        return min(first.startMs, timeMs)
+        return max(timeMs, first.startMs)
     }
 }
 

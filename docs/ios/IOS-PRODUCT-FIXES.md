@@ -124,7 +124,7 @@ Views/Haptics.swift                 + tap() / tabChanged()
 Views/DownloadSheet.swift           直接下载文案 + .started 确认页
 Views/DownloadsTabView.swift        实测档位说明
 Views/SettingsView.swift            + 歌词偏移 / 实时活动开关
-ios/SelfTest/main.swift             +15 条断言（切行时间点 7 / 落盘实测档位 8）
+ios/SelfTest/main.swift             +16 条断言（切行时间点 8 / 落盘实测档位 8）
 ```
 
 ## 三、验证
@@ -139,6 +139,7 @@ ios/SelfTest/main.swift             +15 条断言（切行时间点 7 / 落盘�
 ## 四、本轮出的包
 
 （CI 跑完后填）
+
 
 
 
