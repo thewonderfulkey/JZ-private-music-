@@ -53,6 +53,8 @@ struct RecognizeView: View {
                     resultSection
                 }
                 recentSection
+                // 迷你条是浮层：末尾让出高度（第五轮反馈 ⑨）
+                MiniPlayerSpacer()
             }
             .padding(.top, Tokens.Spacing.m)
             .padding(.bottom, Tokens.Spacing.xxl)

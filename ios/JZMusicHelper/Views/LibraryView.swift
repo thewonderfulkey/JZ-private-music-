@@ -56,6 +56,8 @@ struct FavoritesView: View {
                             Divider()
                                 .padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                         }
+                        // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
+                        MiniPlayerSpacer()
                     }
                     .padding(.bottom, Tokens.Spacing.xxl)
                     .readableWidth()

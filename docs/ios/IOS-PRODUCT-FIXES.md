@@ -303,3 +303,61 @@ ios/JZMusicHelper.xcodeproj           MARKETING_VERSION 2.1.96 / CURRENT_PROJECT
 
 
 
+
+# 第五轮整改（2026-11-17 凌晨，老板 9 条 + 群内两张真机截屏）
+
+> 来源：老板在开发群发的两张真机截屏（01:51 播放页 / 01:53 歌词页）+ 9 条文字反馈，
+> 以及一张 APK 参考截图（《慢慢》那一版播放页的版式）。每条的"改前 → 改后"写在下表。
+
+## 一、逐条结果
+
+| # | 老板原话（摘要） | 问题定位（改前） | 改法（改后） |
+|---|---|---|---|
+| ① | 封面和播放栏中间一大段空隙；文字下的标签也没居中 | 标题与功能键之间用的是**无上限 `Spacer()`**：屏幕上所有富余高度都被它吞在中间（截屏里音质标签到功能键约 139pt）。音质标签放在横向 `ScrollView` 里，内容天然靠左 | 新增 `LayoutRules.playerGap(availableHeight:)`：按屏高给 **50~64pt 的有上限留白**，多出来的高度落到状态行下面（与 APK 参考图一致）。标签行给内容 `minWidth = 行宽`，装得下就被居中，装不下仍可横向滑 |
+| ② | 播放列表只有一首歌，列表循环也来回只放这一首 | 从「编辑精选歌单」和「下载」点歌时走的是 `playSingle`，队列里只有 1 首；列表循环在 1 首队列上等于单曲循环 | 点歌即把**整列**当队列：下载页 = 全部已完成下载；精选歌单 = 点中那首先播（1~3 秒出声），其余按列表顺序后台解析追加。搜索 / 收藏 / 榜单本来就走整列队列 |
+| ③ | 歌词总是不准，七里香的词总返回 live 版 | LDDC 评分只拿「搜索结果里的时长」做过滤，候选 `七里香 (Live)` 仍能拿 73 分过线；而**歌词文件自己写的时长**（KRC `[total:]` / LRC `[length:]`）完全没用上 | 新增 `LyricsMeta` 解析文件头（ti/ar/al/total/length/duration/offset）；取词后做**文件头验收**：时长差 >8s、标题分 <50、歌手分 <30 就丢掉换下一个候选（元数据缺失则放行，否则真实酷狗 KRC 会被整批误杀）；新增版本标签惩罚：候选带「查询没有的」live/现场/演唱会/翻唱/cover/remix/伴奏/纯音乐… 扣 35 分；排序改成「分数 → 时长差 → 源」，候选从 2 个放宽到 3 个 |
+| ④ | 双击封面是小框歌词，要全屏歌词 | 歌词是播放页里的一块圆角卡片（左右留边、下方还有功能键行与状态行），看起来就是个"小框" | 歌词改成**整页层**：去掉卡片底 / 描边 / 左右边距，从顶栏下方一路铺到进度条，功能键行与状态行收起；顶栏加「封面」返回键，⋯ 菜单里也加「回到封面」 |
+| ⑤ | 歌词快进后退时还没切就立刻弹回原位置 | `onChange(lyricIndex)` 无条件 `scrollTo`，用户一停手就被拽回当前行 | 新增 `LyricsUXRules.dwellSeconds = 4`：滑过歌词后 **4 秒没有新操作**才回当前行；期间底部有「回到当前」可以立刻回去 |
+| ⑥ | 歌词判定太敏感，没点到也算点了，范围太宽 | 每行 `.contentShape(Rectangle())` + 满宽 `frame(maxWidth:)`，手指从空白扫过也算点击 | 命中区只认**文字本身**（两侧用 Spacer 撑开）；滑动刚结束 0.35 秒内的触摸只当"刹车"（`isTapCoolingDown`）；`isTap` 要求位移 ≤8pt 且时长 ≤0.5s |
+| ⑦ | 歌词界面上下滑把播放页退出去了 | 整页下拽收起手势用 `simultaneousGesture` 无条件挂着，和歌词滚动抢手势 | 歌词模式下**不挂**下拽手势（`page` 里按 `showLyrics` 二分），收起播放页只走左上角 chevron |
+| ⑧ | 下载要把歌词和封面一起下、内嵌为一体；删除也一一对应删掉 | 只下音频；歌词和封面全靠网络，离线点开下载好的歌只有播放器 | 下载完成后异步补料：**旁车** `.lrc` + `.jpg`（所有容器都能用）+ **内嵌**（m4a 走 AVFoundation metadata、mp3 走 ID3v2.4：标题/歌手/专辑/封面/歌词）；删除下载时先删旁车再删音频；播放本地文件优先读旁车歌词与封面；下载列表多一行「已内嵌歌词+封面 / 歌词封面已存旁车」 |
+| ⑨ | 悬浮栏挡住各 Tab 最后一条，也挡搜索结果 | 迷你条用 `safeAreaInset` 挂在 NavigationStack 上，内层 `ScrollView`/`List` 的滚动内容不随之让位 | 改成 **overlay 浮层 + 每个可滚动页面末尾 `MiniPlayerSpacer()` 真实占位**（发现/收藏/识曲/下载/设置/搜索结果/最近搜索/歌单页/榜单页），滚到底一定停得出来 |
+
+## 二、改动的文件（第五轮）
+
+```
+Services/LayoutRules.swift            + playerGap(availableHeight:) / LyricsUXRules（停留 4s / 点击阈值 / 刹车冷却）
+Services/LyricsCleaning.swift         + LyricsMeta（文件头元数据）+ meta(_:)
+Services/LddcMatch.swift              + versionTags / versionPenalty（版本标签惩罚，主评分公式未改）
+Services/LddcLyrics.swift             取词带回文件头 → headerRejection 验收；排序 weighted；候选 2 → 3
+Services/DownloadCompanion.swift      新增：旁车路径/读写删、LRC 文本、ID3v2.4 标签（纯 Foundation）
+Services/AudioTagEmbedder.swift       新增：m4a metadata 导出 + mp3 前置 ID3，先临时文件再原子替换
+Services/DownloadManager.swift        下载完成补料（取词/取封面/旁车/内嵌/回填）+ localLyrics/localCoverURL + 删除先删旁车 + completedSongs
+Services/AudioPlayer.swift            本地歌词优先（离线有词）；其余播放逻辑未动
+Models/DownloadItem.swift             + companionsNote（可选，旧 downloads.json 兼容）
+Views/NowPlayingView.swift            播放页：有上限留白 / 标签居中 / 整页歌词 / 歌词停留与点击判定 / 歌词页禁用下拽收起 / 本地封面
+Views/MiniPlayerBar.swift             safeAreaInset → overlay 浮层 + MiniPlayerSpacer
+Views/Components.swift                SongArtwork 优先用下载时存的本地封面
+Views/RootTabView.swift / DiscoverView / LibraryView / SearchTabView / DownloadsTabView / EditorPlaylistView / HotChartView / RecognizeView / SettingsView
+                                      迷你条挂载改名 + 每个列表末尾占位；下载页整列队列；歌单页后台补队列
+ios/SelfTest/main.swift               +68 条断言（留白 4 / 歌词手感 9 / 文件头 10 / 版本惩罚 9 / 排序与验收 12 / 下载旁车与 ID3 24）
+ios/JZMusicHelper.xcodeproj           新文件挂载 + MARKETING_VERSION 2.1.97 / CURRENT_PROJECT_VERSION 155
+.github/workflows/ios-ipa.yml         logic-tests 清单加 DownloadCompanion.swift（AudioTagEmbedder 只进 App）
+android/app/build.gradle.kts          versionCode 155 / versionName 2.1.97
+```
+
+## 三、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 纯逻辑 | CI logic-tests（swiftc + 断言） | 见下（本轮 +68 条） |
+| 界面卫生 | `python tools/ios/check_ui_hygiene.py` | 18 个界面文件通过 |
+| 工程结构 | `python tools/ios/check_pbxproj.py` | 179 个对象 / 2 个 target 通过 |
+| 语法 | tree-sitter-swift 解析 `ios/**/*.swift` | 68 个文件，0 个新 ERROR（唯一命中的仍是 SelfTest 里那段 `\{` 多行字符串样本，老问题） |
+| 类型 | 开发机（Windows）本来没有 Swift；本轮额外在 **WSL + Swift 6.0.3** 里用桩模块（CryptoKit / Compression）把 CI 的完整 swiftc 清单 typecheck 了一遍 | **TYPECHECK_EXIT=0**（含 SelfTest 与 DownloadCompanion） |
+| 断言实跑 | 同上，另起一个只含纯逻辑文件的小 runner（不需要网络/解密） | **64/64 通过**：留白、歌词手感、文件头、版本惩罚、排序、文件头验收、旁车读写删、ID3 字节布局 |
+| 真机观感 | **验不到**（开发机 Windows，没有 iPhone/模拟器） | 需要老板装机确认：见下 |
+
+## 四、本轮出的包（**装这个**）
+
+（CI 出包后回填）

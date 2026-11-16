@@ -489,10 +489,23 @@ final class PlayerEngine {
     // MARK: 歌词
 
     /// 切歌时先清空，再异步取词（不阻塞起播：Android 同样是"起播前并发预热歌词"）
+    ///
+    /// 第五轮（老板反馈 ⑧）：已下载的歌**先读下载时一起存下的本地 LRC**——
+    /// 无网络环境（飞机上、地铁里）点开下载好的歌，也要有词可看，不能只剩播放器。
+    /// 本地没有才走网络；网络失败时保持空态（播放页有「重试」）。
     private func prepareLyrics(for song: Song) {
         lyrics = []
         lyricsSource = ""
         lyricIndex = -1
+
+        if let local = DownloadManager.shared.localLyrics(for: song), !local.isEmpty {
+            lyrics = local
+            lyricsSource = "本地歌词"
+            isLoadingLyrics = false
+            updateLyricIndex()
+            return
+        }
+
         isLoadingLyrics = true
         Task { [weak self] in
             let result = await LyricsService.shared.fetch(song)

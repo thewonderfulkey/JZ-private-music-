@@ -86,6 +86,12 @@ struct DownloadsTabView: View {
                             }
                         }
                     }
+                    // 迷你条是浮层：列表末尾让出它的高度（第五轮反馈 ⑨）
+                    Section {
+                        MiniPlayerSpacer()
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -147,13 +153,30 @@ private struct DownloadRowView: View {
                     .foregroundStyle(.orange)
                     .lineLimit(3)
             }
+
+            // 第五轮（老板反馈 ⑧）：歌词和封面有没有跟着歌一起下来，这里能一眼看到
+            if let note = item.companionsNote, item.status == .completed {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
-            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页
+            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页。
+            //
+            // 第五轮（老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"）：
+            // 从列表里点一首时，**整列已完成下载**就是队列——否则队列里只有这一首，
+            // 列表循环退化成单曲循环。
             Haptics.tap()
-            player.playSingle(item.song)
+            let songs = downloads.completedSongs
+            if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
+                player.play(queue: songs, startAt: index)
+            } else {
+                player.playSingle(item.song)
+            }
             router.showPlayer = true
         }
         .accessibilityElement(children: .combine)

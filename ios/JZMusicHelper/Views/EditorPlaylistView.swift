@@ -38,6 +38,8 @@ struct EditorPlaylistView: View {
                         .padding(.horizontal, Tokens.Spacing.pageMargin)
                         .padding(.top, Tokens.Spacing.s)
                 }
+                // 迷你条是浮层：末尾让出高度，最后一行不会被压住（第五轮反馈 ⑨）
+                MiniPlayerSpacer()
             }
             .padding(.bottom, Tokens.Spacing.xxl)
             .readableWidth()
@@ -163,15 +165,44 @@ struct EditorPlaylistView: View {
         status = nil
 
         if let song = await feed.resolve(seed: list[index]) {
-            player.playSingle(song)
+            // 第五轮（老板反馈 ②）：点单曲时队列里只有这一首，列表循环就退化成单曲循环。
+            // 先播点中的这首（1~3 秒有声音），再把这张歌单其余曲目后台补进队列。
+            player.play(queue: [song], startAt: 0)
             library.recordPlayed(song)
             Haptics.playbackToggle()
             router.showPlayer = true
+            Task { await fillAround(tapped: index) }
         } else {
             failedRows.insert(index)
             status = "《\(list[index].name)》没找到可播放的版本"
         }
         resolvingIndex = nil
+    }
+
+    /// 点单曲起播后，把同一张歌单里**其余**曲目后台解析并追加进队列。
+    ///
+    /// 顺序：从点中那首的下一行开始，绕回列表开头——这样"下一首"就是列表上看到的下一行。
+    /// 为什么不一次解析完再起播：这个池子每首都要四平台搜索，20 首要一分多钟，
+    /// 用户会以为卡死（`playAll` 那边同样只先凑 5 首）。
+    private func fillAround(tapped: Int) async {
+        guard seeds.count > 1 else { return }
+        let order = (1..<seeds.count).map { (tapped + $0) % seeds.count }
+        var added = 0
+        for index in order {
+            if let song = await feed.resolve(seed: seeds[index]) {
+                player.appendToQueue([song])
+                added += 1
+                failedRows.remove(index)
+            } else {
+                failedRows.insert(index)
+            }
+            if added > 0, added % 3 == 0 {
+                status = "队列已补到 \(added + 1) 首…"
+            }
+        }
+        status = added > 0
+            ? "队列已就绪 \(added + 1) 首（整张 \(seeds.count) 首）"
+            : "队里暂时只有这一首可播放"
     }
 
     /// 「播放全部」：逐首解析，凑到 5 首就先起播（其余等用户点）。

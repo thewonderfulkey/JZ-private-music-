@@ -1,5 +1,25 @@
 import Foundation
 
+// MARK: - 歌词文件头元数据
+//
+// 为什么单独抽一层：搜索接口给的候选时长经常是 0 或差几秒，光靠「标题 + 歌手」打分拦不住
+// 「七里香 (Live)」这类同歌手同名的现场版（老板真机反馈：逐行时间总是对不上）。
+// 而歌词文件自己（KRC/QRC/LRC）开头就写着 `[total:261000]` / `[length:04:21]`，
+// 这才是**这份词**对应哪一版音频的直接证据。结构体放在文件级，是因为 `LddcLyrics`
+// 取词后要把它带出来做「文件头验收」。
+struct LyricsMeta: Equatable, Sendable {
+    var title: String = ""
+    var artist: String = ""
+    var album: String = ""
+    /// 歌词文件自带的总时长（毫秒）：KRC 的 `[total:261000]`、LRC 的 `[length:04:21]` / `[length:261000]`、`[duration:...]`
+    var durationMs: Int = 0
+    /// `[offset:±N]`（毫秒），已由现有 lrcOffsetMs 的逻辑覆盖，这里同步带出来
+    var offsetMs: Int = 0
+
+    /// 有没有任何可用的头部信息。全空 = 元数据缺失，验收时要放行而不是丢弃（保持原行为）
+    var hasHeader: Bool { !title.isEmpty || !artist.isEmpty || durationMs > 0 }
+}
+
 // MARK: - 歌词清洗与 LRC 解析
 //
 // 与 Android `LyricsService` 的 cleanArtist / isBrokenLyrics / cleanLine / parseLrc / indexAt 同口径。
@@ -13,6 +33,89 @@ enum LyricsCleaning {
     static func cleanArtist(_ singer: String) -> String {
         let parts = singer.split(whereSeparator: { "/／、,，;；".contains($0) })
         return parts.first.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+    }
+
+    // MARK: 歌词文件头元数据
+
+    /// 头部标签：`[ti:...]` / `[ar:...]` / `[al:...]` / `[total:...]` / `[length:...]` 等。
+    /// 大小写不敏感；值里不允许出现 `]`/换行，避免把歌词正文吞进来。
+    /// QRC/KRC 还有 `[id:$...]` `[hash:...]` `[signature:...]` `[by:]` 之类的标签，
+    /// 这里只挑我们认识的四个 key，其余一律忽略。
+    private static let metaTag = Pattern.make(
+        "\\[([A-Za-z][A-Za-z0-9_]*)\\s*:\\s*([^\\]\\r\\n]*)\\]", options: [.caseInsensitive])
+
+    /// 解析歌词文件头元数据（纯函数）。缺失/非法一律给安全默认值，不 crash。
+    ///
+    /// 同一个 key 出现多次时只认第一个（头部标签在前，后面的多半是正文/翻译层）；
+    /// `[offset:±N]` 交给已有的 `lrcOffsetMs` 解析，保持与 `parseLrc` 完全同口径。
+    static func meta(_ text: String) -> LyricsMeta {
+        var out = LyricsMeta()
+        guard !text.isEmpty else { return out }
+        let ns = text as NSString
+        for m in metaTag.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        where m.numberOfRanges >= 3 {
+            let key = ns.substring(with: m.range(at: 1)).lowercased()
+            let value = ns.substring(with: m.range(at: 2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            switch key {
+            case "ti":
+                if out.title.isEmpty { out.title = stripArtistSuffix(value) }
+            case "ar":
+                if out.artist.isEmpty { out.artist = value }
+            case "al":
+                if out.album.isEmpty { out.album = value }
+            case "total", "length", "duration":
+                // 三种写法都见过：KRC 用 total、标准 LRC 用 length、个别源用 duration
+                if out.durationMs == 0 { out.durationMs = parseMetaDurationMs(value) }
+            default:
+                break
+            }
+        }
+        out.offsetMs = lrcOffsetMs(text)
+        return out
+    }
+
+    /// 标题里的「- 歌手名」后缀（`[ti:七里香 - 周杰伦]` 是常见写法）要剥掉。
+    /// 不剥的话拿它跟查询歌名算标题分会被歌手名拖低，反而把正确版本的词判成「不对版」。
+    /// 只认带分隔符的写法，不碰 `Bling-Bling` 这种标题内部的连字符。
+    private static let titleArtistSeparators = [" - ", " – ", " — ", " － ", "－", "—"]
+
+    private static func stripArtistSuffix(_ title: String) -> String {
+        for separator in titleArtistSeparators {
+            guard let range = title.range(of: separator) else { continue }
+            let head = String(title[..<range.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let tail = String(title[range.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !head.isEmpty && !tail.isEmpty { return head }
+        }
+        return title
+    }
+
+    /// 头部时长 → 毫秒。三种写法：
+    ///   · `04:21` / `1:04:21`（可带小数秒）→ 按「时:分:秒」换算
+    ///   · 纯数字 > 10000 → 直接当毫秒（KRC 的 `[total:261000]`）
+    ///   · 纯数字 ≤ 10000 → 当秒（LRC 的 `[length:261]` 也有源这么写）
+    /// `[length:04:21]` = 261s = 261000ms（这是老板点名的判版本依据）。
+    private static func parseMetaDurationMs(_ raw: String) -> Int {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return 0 }
+        if text.contains(":") {
+            let parts = text.split(separator: ":")
+                .map { String($0).trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2 || parts.count == 3 else { return 0 }
+            var seconds = 0.0
+            for part in parts {
+                // 小数秒有的源用逗号当小数点
+                guard let value = Double(part.replacingOccurrences(of: ",", with: ".")),
+                      value >= 0 else { return 0 }
+                seconds = seconds * 60 + value
+            }
+            return seconds > 0 ? Int((seconds * 1000).rounded()) : 0
+        }
+        guard let value = Double(text), value > 0 else { return 0 }
+        return value > 10_000 ? Int(value.rounded()) : Int((value * 1000).rounded())
     }
 
     // MARK: 损坏判定

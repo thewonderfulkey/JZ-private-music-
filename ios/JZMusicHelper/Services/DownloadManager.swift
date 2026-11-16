@@ -34,6 +34,15 @@ final class DownloadManager: NSObject, ObservableObject {
     private var taskMap: [Int: UUID] = [:]
     private var taskFileNames: [Int: String] = [:]
 
+    // 歌词/封面补料状态（老板反馈 ⑧）。补料任务跑在后台，删除下载在主线程，
+    // 两边都要碰这两个集合，所以同样用锁保护（跟 taskMap 一样，delegate/主线程不共享裸状态）。
+    //   · companionRunning：同一 item 只补一次（下载完成回调理论上只来一次，但重试/极端时序仍要防）
+    //   · companionCancelled：删除下载时给在飞的任务打标记，让它在写盘前退出，
+    //     否则会出现"音频删了、旁车又被写回来"的孤儿文件
+    private let companionLock = NSLock()
+    private var companionRunning: Set<UUID> = []
+    private var companionCancelled: Set<UUID> = []
+
     /// 下载记录的落盘路径（原来借 HistoryStore，现在 Downloads 自己存，避免两个 store 互相依赖）
     private var recordsURL: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -166,6 +175,32 @@ final class DownloadManager: NSObject, ObservableObject {
         return URL(fileURLWithPath: path)
     }
 
+    /// 离线歌词（播放页在无网络时调用）：已下载完成 + 旁车 .lrc 存在才返回。
+    ///
+    /// 只读旁车、不读内嵌标签：旁车是我们自己写的 UTF-8 LRC，解析口径完全可控；
+    /// 内嵌标签是"拷走也带着"的保险，不是 App 内播放的首选来源。
+    /// 只在主线程调用（`items` 只在主线程改）。
+    func localLyrics(for song: Song) -> [LyricLine]? {
+        guard let audio = localFileURL(for: song) else { return nil }
+        return DownloadCompanion.readLyrics(from: audio)
+    }
+
+    /// 离线封面（列表/播放页显示本地封面用）：已下载完成 + 旁车 .jpg 存在才返回。
+    /// 只在主线程调用（`items` 只在主线程改）。
+    func localCoverURL(for song: Song) -> URL? {
+        guard let audio = localFileURL(for: song) else { return nil }
+        let cover = DownloadCompanion.coverURL(for: audio)
+        guard FileManager.default.fileExists(atPath: cover.path) else { return nil }
+        return cover
+    }
+
+    /// 已下载完成的歌（按下载顺序）：从下载页点一首时，**整列**就是播放队列。
+    /// 第五轮老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"——根因就是从列表点歌时
+    /// 只把点中的那一首塞进队列。只在主线程调用（`items` 只在主线程改）。
+    var completedSongs: [Song] {
+        items.filter { $0.status == .completed }.map(\.song)
+    }
+
     /// 取消下载
     func cancel(itemID: UUID) {
         guard let idx = items.firstIndex(where: { $0.id == itemID }) else { return }
@@ -187,8 +222,15 @@ final class DownloadManager: NSObject, ObservableObject {
     func remove(itemID: UUID, deleteFile: Bool = true) {
         guard let idx = items.firstIndex(where: { $0.id == itemID }) else { return }
         let item = items[idx]
+        // 先叫停在飞的补料任务：否则它可能在我们删完文件之后才写旁车，
+        // 留下"音频没了、歌词封面还在"的孤儿文件（老板要的是一一对应地删）。
+        cancelCompanion(itemID)
         if deleteFile, let path = item.localPath {
-            try? FileManager.default.removeItem(atPath: path)
+            let audio = URL(fileURLWithPath: path)
+            // 一一对应：删音频之前先删同目录同基名的 .lrc / .jpg。
+            // 旁车只依赖音频路径推导，不需要额外的清单文件，所以"谁被删、谁跟着删"永远对齐。
+            DownloadCompanion.removeSidecars(audio: audio)
+            try? FileManager.default.removeItem(at: audio)
         }
         items.remove(at: idx)
         persist()
@@ -215,6 +257,178 @@ final class DownloadManager: NSObject, ObservableObject {
         appendOrUpdate(newItem)
         register(task, id: itemID, fileName: item.fileName)
         task.resume()
+    }
+
+    // MARK: - 歌词/封面补料（老板反馈 ⑧）
+
+    /// 下载成功后异步补料：取词 → 取封面 → 写旁车 → 能内嵌就内嵌 → 把结果写回条目。
+    ///
+    /// 为什么用 detached 后台任务：补料包含网络请求（歌词接口 + 封面 CDN）和一次可能的
+    /// 音频文件重写，放主线程会把 UI 卡住；`.utility` 让它不去抢下载/播放的 CPU。
+    /// 为什么每个 item 只跑一次：`companionRunning` 去重；`finish` 成功后理论上只调一次，
+    /// 但重试/极端时序下仍要防止同一 item 两条补料任务互相覆盖。
+    private func startCompanionFill(itemID: UUID, song: Song, audioURL: URL) {
+        companionLock.lock()
+        if companionRunning.contains(itemID) || companionCancelled.contains(itemID) {
+            companionLock.unlock()
+            return
+        }
+        companionRunning.insert(itemID)
+        companionLock.unlock()
+
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            await self.fillCompanion(itemID: itemID, song: song, audioURL: audioURL)
+            self.finishCompanionBookkeeping(itemID)
+        }
+    }
+
+    /// 补料主流程。任何一步失败都只是"少了歌词/封面"（或者没内嵌成功），
+    /// 绝不能反过来影响"歌已经下好、能播"这件事。
+    private func fillCompanion(itemID: UUID, song: Song, audioURL: URL) async {
+        // 条目还在（没被删）才有补料的必要
+        guard await isCompletedDownload(itemID) else { return }
+
+        // ① 歌词：QRC/KRC 的逐字时间不落 LRC，落盘只保留行级时间（离线够看，见 lrcText 注释）
+        var lines: [LyricLine] = []
+        if let result = await LyricsService.shared.fetch(song) {
+            lines = result.lines
+        }
+        if isCompanionCancelled(itemID) { return }
+        let lyricsText = lines.isEmpty ? nil : DownloadCompanion.lrcText(
+            from: lines, title: song.name, artist: song.singer, durationSec: song.durationSec)
+
+        // ② 封面：只认 song.picURL；下不到就当没有封面（不拿占位图冒充真封面）
+        let cover = await fetchCoverData(for: song)
+        if isCompanionCancelled(itemID) { return }
+
+        // 写盘前再确认一次：歌词接口 + 封面下载可能花掉几秒，用户完全可能已经删了这条下载
+        guard await isCompletedDownload(itemID) else { return }
+
+        // ③ 旁车：任何容器都能用，是离线播放读取的第一来源
+        var sidecars = DownloadCompanion.writeSidecars(audio: audioURL,
+                                                       lyricsText: lyricsText,
+                                                       coverData: cover?.data)
+
+        // ④ 内嵌：只有 m4a/mp3 有可靠写法；失败时 AudioTagEmbedder 内部保证保留原文件
+        var embedded = false
+        if lyricsText != nil || cover != nil,
+           DownloadCompanion.canEmbed(extension: audioURL.pathExtension) {
+            switch audioURL.pathExtension.lowercased() {
+            case "m4a", "mp4":
+                embedded = await AudioTagEmbedder.embedM4A(
+                    fileURL: audioURL, title: song.name, artist: song.singer,
+                    album: song.album, coverData: cover?.data, lyrics: lyricsText ?? "")
+            case "mp3":
+                embedded = await AudioTagEmbedder.embedMP3(
+                    fileURL: audioURL, title: song.name, artist: song.singer,
+                    album: song.album, coverData: cover?.data,
+                    coverMime: cover?.mime ?? "image/jpeg", lyrics: lyricsText ?? "")
+            default:
+                embedded = false
+            }
+        }
+        sidecars.embedded = embedded
+
+        // ⑤ 回填说明。内嵌会重写音频文件，写完再确认条目还在：别给已删除的条目写说明。
+        let note = Self.companionsNote(lyricsText: lyricsText, coverData: cover?.data,
+                                       sidecars: sidecars)
+        guard await isCompletedDownload(itemID) else { return }
+        await MainActor.run {
+            guard let idx = self.items.firstIndex(where: { $0.id == itemID }),
+                  self.items[idx].status == .completed else { return }
+            if self.items[idx].companionsNote != note {
+                self.items[idx].companionsNote = note
+                self.persist()
+            }
+        }
+    }
+
+    /// 清理补料状态（成功/失败/被取消都要清，否则这个 UUID 永远占着 running）
+    private func finishCompanionBookkeeping(_ itemID: UUID) {
+        companionLock.lock()
+        companionRunning.remove(itemID)
+        companionCancelled.remove(itemID)
+        companionLock.unlock()
+    }
+
+    private func isCompanionCancelled(_ itemID: UUID) -> Bool {
+        companionLock.lock()
+        defer { companionLock.unlock() }
+        return companionCancelled.contains(itemID)
+    }
+
+    /// 删除下载时叫停在飞补料。
+    /// 只给**真在跑**的任务打标记，否则会给一个永远不会被清理的 UUID 留垃圾。
+    private func cancelCompanion(_ itemID: UUID) {
+        companionLock.lock()
+        if companionRunning.contains(itemID) { companionCancelled.insert(itemID) }
+        companionLock.unlock()
+    }
+
+    /// 条目是否还处于"已下载完成"。
+    /// `items` 只在主线程改，所以补料任务读它必须切主线程拿一份快照，不能在后台线程裸读。
+    private func isCompletedDownload(_ itemID: UUID) async -> Bool {
+        await MainActor.run {
+            self.items.contains { $0.id == itemID && $0.status == .completed }
+        }
+    }
+
+    /// 封面下载结果：字节 + MIME（MIME 只给 mp3 的 APIC 帧用）
+    private struct CoverPayload {
+        let data: Data
+        let mime: String
+    }
+
+    /// 直接下 `song.picURL`（不走 CoverResolver 的 QQ 兜底：下载完成后不再为了封面多搜一次接口）。
+    /// 无 picURL / 超时 / 非 2xx / 空 body 全部返回 nil —— 结果只是"没有封面"，不影响别的。
+    private func fetchCoverData(for song: Song, timeout: TimeInterval = 20) async -> CoverPayload? {
+        guard let raw = song.picURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty, let url = URL(string: raw) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        // 与音频下载同一套头：部分 CDN 不带 Referer 会直接 403
+        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard !data.isEmpty else { return nil }
+            return CoverPayload(data: data, mime: Self.imageMimeType(data, response: response))
+        } catch {
+            return nil
+        }
+    }
+
+    /// 封面 MIME：优先用响应头；服务端不给/给错时按文件头猜。
+    /// 只影响 mp3 APIC 的 MIME 字段（旁车文件名固定 .jpg，播放端按内容解码）。
+    private static func imageMimeType(_ data: Data, response: URLResponse?) -> String {
+        if let mime = response?.mimeType?.lowercased(), mime.hasPrefix("image/") { return mime }
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if data.starts(with: [0x47, 0x49, 0x46, 0x38]) { return "image/gif" }
+        if data.count >= 12, data.starts(with: [0x52, 0x49, 0x46, 0x46]),
+           Array(data[8..<12]) == Array("WEBP".utf8) { return "image/webp" }
+        return "image/jpeg"
+    }
+
+    /// 一句能放下载列表的说明（老板要能看出"词和图到底有没有跟着歌走"）
+    private static func companionsNote(lyricsText: String?, coverData: Data?,
+                                       sidecars: DownloadCompanion.Sidecars) -> String? {
+        let hasLyrics = !(lyricsText ?? "").isEmpty
+        let hasCover = !(coverData ?? Data()).isEmpty
+        guard hasLyrics || hasCover else { return nil }
+        if sidecars.embedded {
+            if hasLyrics && hasCover { return "已内嵌歌词+封面" }
+            return hasLyrics ? "已内嵌歌词" : "已内嵌封面"
+        }
+        let savedLyrics = sidecars.lyricsURL != nil
+        let savedCover = sidecars.coverURL != nil
+        guard savedLyrics || savedCover else { return nil }
+        if savedLyrics && savedCover { return "歌词封面已存旁车" }
+        return savedLyrics ? "歌词已存旁车" : "封面已存旁车"
     }
 
     // MARK: - 持久化
@@ -384,6 +598,9 @@ extension DownloadManager: URLSessionDownloadDelegate {
         items[idx] = item
         persist()
         notifyCompletion(item)
+        // 音频落盘、记录落库之后才补词和图（老板反馈 ⑧）：
+        // 补料是纯附加值，异步做，失败绝不影响"歌已经能播"这件事。
+        startCompanionFill(itemID: id, song: item.song, audioURL: finalURL)
     }
 
     private static func readPrefix(of url: URL, count: Int) -> [UInt8] {

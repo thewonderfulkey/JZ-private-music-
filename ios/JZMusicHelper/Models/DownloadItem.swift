@@ -56,6 +56,10 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     /// 落盘实测与标注档位不一致时的说明（例：标着无损，文件其实是 320k mp3）。
     /// 可选类型：旧记录没有这个键，解码不能失败。
     var actualNote: String?
+    /// 歌词/封面补料结果（例："已内嵌歌词+封面" / "歌词封面已存旁车"）。
+    /// 下载完成后的异步补料会回填它，下载列表据此能看出"词和图到底有没有跟着歌走"。
+    /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
+    var companionsNote: String?
 
     init(id: UUID = UUID(),
          song: Song,
@@ -72,7 +76,8 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          createdAt: Date = Date(),
          finishedAt: Date? = nil,
          errorMessage: String? = nil,
-         actualNote: String? = nil) {
+         actualNote: String? = nil,
+         companionsNote: String? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -89,6 +94,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.finishedAt = finishedAt
         self.errorMessage = errorMessage
         self.actualNote = actualNote
+        self.companionsNote = companionsNote
     }
 
     var progressText: String {

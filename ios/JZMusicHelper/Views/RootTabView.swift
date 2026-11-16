@@ -8,7 +8,7 @@ import SwiftUI
 // 齿轮从 FavoritesView 撤掉，设置页就是第五个 Tab。
 // 搜索不占 Tab，入口在发现页最上方（上一轮改的）。
 //
-// 迷你播放条挂在**每个 Tab 的 NavigationStack** 上（`miniPlayerInset`），
+// 迷你播放条挂在**每个 Tab 的 NavigationStack** 上（`miniPlayerBar`，浮层 + 列表末尾占位），
 // 不是挂在 TabView 上——挂在 TabView 上会盖住 Tab 栏。
 //
 // 播放页是 `fullScreenCover`（③：原来用 sheet，看起来像"拉起一张布"）。
@@ -40,7 +40,7 @@ struct RootTabView: View {
                     .paperBackground()
                     .navigationTitle("发现")
             }
-            .miniPlayerInset(onTap: openPlayer)
+            .miniPlayerBar(onTap: openPlayer)
             .tabItem { Label("发现", systemImage: "house.fill") }
             .tag(AppRouter.Tab.discover)
 
@@ -48,7 +48,7 @@ struct RootTabView: View {
                 FavoritesView()
                     .paperBackground()
             }
-            .miniPlayerInset(onTap: openPlayer)
+            .miniPlayerBar(onTap: openPlayer)
             .tabItem { Label("我的收藏", systemImage: "heart.fill") }
             .tag(AppRouter.Tab.favorites)
 
@@ -57,7 +57,7 @@ struct RootTabView: View {
                     .paperBackground()
                     .navigationTitle("识曲")
             }
-            .miniPlayerInset(onTap: openPlayer)
+            .miniPlayerBar(onTap: openPlayer)
             .tabItem { Label("识曲", systemImage: "waveform") }
             .tag(AppRouter.Tab.recognize)
 
@@ -66,7 +66,7 @@ struct RootTabView: View {
                     .paperBackground()
                     .navigationTitle("下载")
             }
-            .miniPlayerInset(onTap: openPlayer)
+            .miniPlayerBar(onTap: openPlayer)
             .tabItem { Label("下载", systemImage: "arrow.down.circle.fill") }
             .badge(activeDownloads)
             .tag(AppRouter.Tab.downloads)
@@ -74,7 +74,7 @@ struct RootTabView: View {
             NavigationStack {
                 SettingsView()
             }
-            .miniPlayerInset(onTap: openPlayer)
+            .miniPlayerBar(onTap: openPlayer)
             .tabItem { Label("设置", systemImage: "gearshape.fill") }
             .tag(AppRouter.Tab.settings)
         }

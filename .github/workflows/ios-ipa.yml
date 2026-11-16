@@ -83,6 +83,7 @@ jobs:
             ios/JZMusicHelper/Services/LddcLyrics.swift \
             ios/JZMusicHelper/Services/KwLyrics.swift \
             ios/JZMusicHelper/Services/LyricsService.swift \
+            ios/JZMusicHelper/Services/DownloadCompanion.swift \
             ios/JZMusicHelper/Services/CoverResolver.swift \
             ios/SelfTest/LyricsFixtures.swift \
             ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log

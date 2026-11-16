@@ -7,8 +7,9 @@ import SwiftUI
 //
 // 现在：
 //   · 四个键：收藏 / 上一首 / 播放暂停 / 下一首（都是 44pt 命中区）；
-//   · 挂载方式改成挂在**每个 NavigationStack 上**（见 `miniPlayerInset`），
-//     inset 只挤压内容区，Tab 栏本身仍在、仍可点；
+//   · 挂载方式改成挂在**每个 NavigationStack 上**（见 `miniPlayerBar`），
+//     但用 overlay 浮层而不是 safeAreaInset，并在每个可滚动页面末尾放 `MiniPlayerSpacer()`
+//     显式占位——safeAreaInset 在 NavigationStack 上传不进内层列表，会把最后一条压住；
 //   · 进度仍用底部 2pt 细线，不高亮抢视觉。
 struct MiniPlayerBar: View {
 
@@ -144,30 +145,49 @@ struct MiniPlayerBar: View {
 // MARK: - 挂载方式
 
 extension View {
-    /// 把迷你条挂在**当前 Tab 的 NavigationStack** 上（不是 TabView 上）。
+    /// 把迷你条**浮**在当前页面底部（挂在每个 Tab 的 NavigationStack 上，push 之后的子页面也有）。
     ///
-    /// 挂在 TabView 上的旧写法会把条子盖在 Tab 栏之上，播歌后 Tab 点不动——这就是反馈 ⑤ 的后半句。
-    /// 挂在 NavigationStack 上，safeAreaInset 只挤压内容区，Tab 栏始终完整可点；
-    /// 而且 push 到子页面（搜索页 / 歌单页）时条子照样在。
-    func miniPlayerInset(onTap: @escaping () -> Void) -> some View {
-        modifier(MiniPlayerInset(onTap: onTap))
+    /// 为什么不用 `safeAreaInset`（前几版的写法）：`safeAreaInset` 挂在 NavigationStack 上时，
+    /// 它只缩窄了栈自己的安全区，**内层 ScrollView / List 的滚动内容并不会因此让位**——
+    /// 于是播歌之后每个 Tab 的最后一条、以及搜索结果最后一条都被条子压住
+    /// （第五轮老板反馈 ⑨）。现在改成 overlay 浮层 + 各页面列表末尾 `MiniPlayerSpacer()` 显式占位：
+    /// 占位是真实布局高度，滚到底一定停得出来，不靠安全区的传递。
+    func miniPlayerBar(onTap: @escaping () -> Void) -> some View {
+        modifier(MiniPlayerOverlay(onTap: onTap))
     }
 }
 
-struct MiniPlayerInset: ViewModifier {
+struct MiniPlayerOverlay: ViewModifier {
 
     @Environment(PlayerEngine.self) private var player
     let onTap: () -> Void
 
     func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 0) {
+        content.overlay(alignment: .bottom) {
             if player.hasCurrentSong {
                 MiniPlayerBar(onTap: onTap)
                     .padding(.horizontal, Tokens.Spacing.xs)
-                    .padding(.bottom, Tokens.Spacing.xxs)
                     .padding(.top, Tokens.Spacing.xxs)
+                    .padding(.bottom, Tokens.Spacing.xxs)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: player.hasCurrentSong)
+    }
+}
+
+/// 列表末尾的占位：正好等于迷你条的高度（+ 一点呼吸）。
+/// 每个可滚动页面都要在内容末尾放一个——浮层不挤压内容，只能自己把位置让出来。
+struct MiniPlayerSpacer: View {
+
+    @Environment(PlayerEngine.self) private var player
+
+    var body: some View {
+        Color.clear
+            .frame(height: player.hasCurrentSong
+                   ? Tokens.Size.miniPlayerHeight + Tokens.Spacing.m
+                   : 0)
+            .accessibilityHidden(true)
     }
 }
 

@@ -53,6 +53,9 @@ struct HotChartView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             Divider().padding(.leading, Tokens.Spacing.pageMargin + 44)
                         }
+
+                        // 迷你条是浮层：榜单末尾让出高度（第五轮反馈 ⑨）
+                        MiniPlayerSpacer()
                     }
                     .padding(.top, Tokens.Spacing.xs)
                     .padding(.bottom, Tokens.Spacing.xxl)

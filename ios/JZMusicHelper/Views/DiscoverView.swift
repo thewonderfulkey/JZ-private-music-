@@ -30,6 +30,8 @@ struct DiscoverView: View {
                 recentSection
                 guessSection
                 hotSection
+                // 迷你播放条是浮层（第五轮反馈 ⑨：它会压住最后一条），末尾显式让出高度
+                MiniPlayerSpacer()
             }
             .padding(.top, Tokens.Spacing.xs)
             .padding(.bottom, Tokens.Spacing.xxl)

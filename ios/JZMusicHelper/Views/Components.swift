@@ -45,6 +45,13 @@ struct SongArtwork: View {
     /// 封面走内存缓存：滚动离开再回来不重新下载（AsyncImage 会重下）
     private func load() async {
         if image != nil { return }
+        // 第五轮（老板反馈 ⑧）：下过的歌先读下载时一起存的本地封面，无网络也显示真封面
+        if let path = DownloadManager.shared.localCoverURL(for: song)?.path,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let localImage = UIImage(data: data) {
+            image = localImage
+            return
+        }
         if resolvedURL == nil {
             resolvedURL = await CoverResolver.shared.coverURL(for: song)
         }

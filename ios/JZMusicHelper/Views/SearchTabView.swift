@@ -152,6 +152,8 @@ struct SearchView: View {
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
+                    // 最近搜索页同样会被迷你条压住（第五轮反馈 ⑨）：末尾让出高度
+                    MiniPlayerSpacer()
                 }
                 .padding(.top, Tokens.Spacing.s)
                 .readableWidth()
@@ -210,6 +212,8 @@ struct SearchView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
                     }
+
+                    MiniPlayerSpacer()
                 }
                 .padding(.bottom, Tokens.Spacing.xxl)
                 .readableWidth()

@@ -251,9 +251,71 @@ enum LddcMatch {
         return max(listScore, joined) * 100
     }
 
+    // MARK: 版本标签惩罚
+
+    /// 版本标签表（每行第一项是规范名，其余是同义写法；中英文、全角/半角括号都覆盖）。
+    ///
+    /// 为什么需要这一层：主评分公式不能动（必须与 APK 一致），但它对
+    /// 「七里香」→「七里香 (Live)」这种同歌手、同主标题的候选天然友好：
+    /// 标题 LCS 约 46 分、歌手 100 分，总分 73 > 55 直接过线。公式之外再扣一道分：
+    /// 候选带着「原查询没有」的版本标签 → 扣 35，直接打回及格线下（73 − 35 = 38）。
+    static let versionTags: [[String]] = [
+        ["live", "现场", "演唱会"],
+        ["cover", "翻唱"],
+        ["remix", "dj", "混音"],
+        ["inst", "伴奏", "纯音乐", "instrumental", "off vocal", "offvocal"],
+        ["karaoke", "卡拉ok"],
+        ["片段", "clip"],
+        ["demo"],
+        ["acoustic", "unplugged"],
+    ]
+
+    /// 预编译的标签正则：ASCII 词加词边界（避免 `Olive`/`Demons` 这类误判），中文直接子串匹配。
+    /// 放在 static let 里只编译一次，`versionPenalty` 每次只跑匹配。
+    private static let versionTagRegexes: [(canonical: String, regex: NSRegularExpression)] =
+        versionTags.map { (group) -> (canonical: String, regex: NSRegularExpression) in
+            let canonical = group.first ?? ""
+            let alternatives = group.map { (alias) -> String in
+                let body = alias.split(separator: " ")
+                    .map { NSRegularExpression.escapedPattern(for: String($0)) }
+                    .joined(separator: "\\s*")
+                // 只含 ASCII 的标签（live/cover/...）要整词匹配；中文标签子串出现即算
+                let ascii = alias.unicodeScalars.allSatisfy { $0.isASCII }
+                return ascii ? "(?<![a-z0-9])\(body)(?![a-z0-9])" : body
+            }
+            return (canonical: canonical, regex: Pattern.make(alternatives.joined(separator: "|")))
+        }
+
+    /// 标题里出现了哪些版本标签（按规范名归并：`现场` / `live` / `演唱会` 都算 live）
+    private static func versionTagsIn(_ title: String) -> Set<String> {
+        let normalized = unifiedSymbol(title).lowercased()
+        guard !normalized.isEmpty else { return [] }
+        let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+        var found = Set<String>()
+        for entry in versionTagRegexes
+        where entry.regex.firstMatch(in: normalized, range: range) != nil {
+            found.insert(entry.canonical)
+        }
+        return found
+    }
+
+    /// 候选标题里出现了「原查询没有」的版本标签（live/现场/演唱会/翻唱/cover/remix/伴奏/
+    /// 纯音乐/instrumental/karaoke/片段/demo/acoustic 等）→ 返回应扣的分（0 或 35）。
+    ///
+    /// 查询自己就带版本标签时不扣（用户搜的就是 live）：`晴天 (Live)` 配 `晴天 (Live)` /
+    /// `晴天 现场版` 都算同一组，避免同义写法互相打架。大小写不敏感，全角括号先归一。
+    static func versionPenalty(queryTitle: String, candidateTitle: String) -> Double {
+        let candidateTags = versionTagsIn(candidateTitle)
+        guard !candidateTags.isEmpty else { return 0 }
+        let queryTags = versionTagsIn(queryTitle)
+        // 候选带的标签查询里都有（例如都带 live）→ 不扣；否则说明是另一个版本 → 扣 35
+        return candidateTags.isSubset(of: queryTags) ? 0 : 35
+    }
+
     // MARK: 综合
 
     /// 候选总分（对齐 LDDC auto_fetch）：标题×0.5 + 歌手×0.5，标题 <30 再 −35，下限 0
+    /// 注意：版本标签惩罚**不在这里**做，由 `versionPenalty` 单独算（保持本函数与 APK 逐字一致）。
     static func score(title: String, candidateTitle: String,
                       artist: String, candidateArtist: String) -> Double {
         let ts = titleScore(title, candidateTitle)

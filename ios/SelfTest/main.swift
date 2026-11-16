@@ -1199,6 +1199,272 @@ do {
           (DownloadGuard.downgradeNote(mp3High, requested: .lossless) ?? "").contains("kbps"))
 }
 
+section("第五轮：播放页留白 / 歌词浏览手感（老板反馈 ①⑤⑥⑦）")
+
+do {
+    // ① 封面与播放栏之间那段空白：以前是无上限 Spacer，现在是按屏高给的有上限留白。
+    // 手机上（844pt）应该落在 50~64pt，小屏不至于挤，大屏也不会再空出一大块。
+    let gapPhone = LayoutRules.playerGap(availableHeight: 844)
+    check("iPhone 844：留白在 50~64pt 之间（不再吞掉整段富余高度）",
+          gapPhone >= 50 && gapPhone <= 64, "\(gapPhone)")
+    check("小屏 400：留白按比例缩到 30pt", LayoutRules.playerGap(availableHeight: 400) == 30,
+          "\(LayoutRules.playerGap(availableHeight: 400))")
+    check("超大屏 2000：留白封顶 64pt（不会又变成一大块空白）",
+          LayoutRules.playerGap(availableHeight: 2000) == 64,
+          "\(LayoutRules.playerGap(availableHeight: 2000))")
+    check("屏高未知（0 / NaN）→ 给一个安全的 48pt",
+          LayoutRules.playerGap(availableHeight: 0) == 48
+          && LayoutRules.playerGap(availableHeight: .nan) == 48)
+
+    // ⑤ 滑歌词后停留 4 秒才回当前行
+    check("停留时长 4 秒", LyricsUXRules.dwellSeconds == 4)
+    check("停 4 秒 → 该回到当前行", LyricsUXRules.shouldResumeFollowing(secondsSinceInteraction: 4))
+    check("才停 3.9 秒 → 不回去（还没来得及点，别弹走）",
+          !LyricsUXRules.shouldResumeFollowing(secondsSinceInteraction: 3.9))
+    check("NaN 当作「立刻回」（宁可跟随，不要卡在不跟随）",
+          LyricsUXRules.shouldResumeFollowing(secondsSinceInteraction: .nan))
+
+    // ⑥ 点击判定：只认"几乎没动、也没按太久"
+    check("手指没动、0.2 秒 → 算点击", LyricsUXRules.isTap(moved: 3, duration: 0.2))
+    check("扫了 20pt → 不算点击（滑动时不跳歌）",
+          !LyricsUXRules.isTap(moved: 20, duration: 0.2))
+    check("按了 0.9 秒 → 不算点击",
+          !LyricsUXRules.isTap(moved: 3, duration: 0.9))
+    check("滑动刚结束 0.1 秒内的触摸只当刹车",
+          LyricsUXRules.isTapCoolingDown(secondsSinceScrollEnd: 0.1))
+    check("滑动结束 0.5 秒后恢复正常点击",
+          !LyricsUXRules.isTapCoolingDown(secondsSinceScrollEnd: 0.5))
+}
+
+section("第五轮：歌词取词判版本（文件头时长 / 版本标签 / 排序）")
+
+do {
+    // 老板反馈 ③：七里香取到的总是 live 版，逐行时间对不上。
+    // 修法是不动 LDDC 主评分公式，另加"歌词文件头验收 + 版本标签惩罚 + 时长差排序"。
+    let krcMeta = LyricsCleaning.meta(
+        "[total:261000]\n[ti:七里香 - 周杰伦]\n[ar:周杰伦]\n[al:七里香]\n")
+    check("KRC 头 [total:] 解析成毫秒", krcMeta.durationMs == 261000, "\(krcMeta.durationMs)")
+    check("头里 [ti:七里香 - 周杰伦] 剥掉歌手后缀", krcMeta.title == "七里香", krcMeta.title)
+    check("头里 [ar:]/[al:] 原样带出",
+          krcMeta.artist == "周杰伦" && krcMeta.album == "七里香")
+    check("有头部信息 → hasHeader", krcMeta.hasHeader)
+
+    // 三种时长写法：LRC 的 mm:ss、纯毫秒、纯秒
+    check("[length:04:21] → 261000ms",
+          LyricsCleaning.meta("[length:04:21]").durationMs == 261000,
+          "\(LyricsCleaning.meta("[length:04:21]").durationMs)")
+    check("[length:261000] → 261000ms",
+          LyricsCleaning.meta("[length:261000]").durationMs == 261000)
+    check("[duration:261] 纯数字 ≤10000 → 当秒，261000ms",
+          LyricsCleaning.meta("[duration:261]").durationMs == 261000)
+    check("[length:abc] / 空串 → 0，不崩",
+          LyricsCleaning.meta("[length:abc]").durationMs == 0
+          && LyricsCleaning.meta("").durationMs == 0)
+    check("KRC 行 [29900,1000]<0,...> 不会被误当成头部标签",
+          LyricsCleaning.meta("[29900,1000]<0,1000,0>故事的小黄花").hasHeader == false)
+    check("[offset:+500] 从头部带出", LyricsCleaning.meta("[offset:+500]").offsetMs == 500)
+
+    // 版本标签惩罚：候选是 live/现场/翻唱/伴奏，而查询不是 → 扣 35 分
+    check("七里香 vs 七里香 (Live) → 扣 35",
+          LddcMatch.versionPenalty(queryTitle: "七里香", candidateTitle: "七里香 (Live)") == 35)
+    check("全角括号的「现场版」同样认得",
+          LddcMatch.versionPenalty(queryTitle: "七里香", candidateTitle: "七里香（现场版）") == 35)
+    check("候选项只是「- 周杰伦」这种署名 → 不扣",
+          LddcMatch.versionPenalty(queryTitle: "七里香", candidateTitle: "七里香 - 周杰伦") == 0)
+    check("查询自己就是 Live → 不扣",
+          LddcMatch.versionPenalty(queryTitle: "七里香 (Live)", candidateTitle: "七里香（现场版）") == 0)
+    check("伴奏/纯音乐/Cover 都算另一个版本",
+          LddcMatch.versionPenalty(queryTitle: "晴天", candidateTitle: "晴天 - 伴奏") == 35
+          && LddcMatch.versionPenalty(queryTitle: "晴天", candidateTitle: "晴天（纯音乐）") == 35
+          && LddcMatch.versionPenalty(queryTitle: "晴天", candidateTitle: "晴天 (Cover)") == 35)
+    check("Olive 这种带 live 字样的普通歌名不误判",
+          LddcMatch.versionPenalty(queryTitle: "Olive", candidateTitle: "Olive") == 0)
+    // 这条是主评分拦不住的：标题分 57 > 50，只有版本标签这一层能拦
+    check("富士山下（Live）→ 扣 35",
+          LddcMatch.versionPenalty(queryTitle: "富士山下", candidateTitle: "富士山下（Live）") == 35)
+
+    // 扣完必须掉到及格线以下（七里香 live 原本 73 分就能过）
+    let liveScore = LddcMatch.score(title: "七里香", candidateTitle: "七里香 (Live)",
+                                    artist: "周杰伦", candidateArtist: "周杰伦")
+    check("七里香 Live 原本能过线（说明公式本身拦不住）",
+          liveScore > LddcMatch.minScore, "\(liveScore)")
+    check("扣掉版本分以后就过不了线",
+          liveScore - LddcMatch.versionPenalty(queryTitle: "七里香",
+                                              candidateTitle: "七里香 (Live)") < LddcMatch.minScore)
+
+    // 排序：分数 → 时长差 → 源
+    let ranked = LddcLyrics.ranked([(score: 60, durationDelta: 10, source: "qq"),
+                                    (score: 70, durationDelta: 20, source: "kg"),
+                                    (score: 70, durationDelta: 5, source: "kg")])
+    check("排序：分数高的在前，同分时长差小的在前",
+          ranked.map { $0.durationDelta } == [5, 20, 10],
+          "\(ranked.map { $0.durationDelta })")
+    check("同分同时长 → QQ 优先",
+          LddcLyrics.ranked([(score: 70, durationDelta: 5, source: "kg"),
+                             (score: 70, durationDelta: 5, source: "qq")]).first?.source == "qq")
+    check("时长未知（Int.max）排在有明确时长的候选之后",
+          LddcLyrics.ranked([(score: 70, durationDelta: Int.max, source: "qq"),
+                             (score: 70, durationDelta: 5, source: "kg")]).first?.source == "kg")
+
+    // 文件头验收：有就验，缺就放行
+    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
+    check("文件头时长 320s vs 本曲 299s → 判为别的版本",
+          LddcLyrics.headerRejection(
+            meta: LyricsMeta(title: "七里香", artist: "周杰伦", durationMs: 320_000),
+            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
+    check("时长差恰好 8s（容差边界）→ 放行",
+          LddcLyrics.headerRejection(
+            meta: LyricsMeta(title: "七里香", artist: "周杰伦", durationMs: 291_000),
+            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") == nil)
+    check("文件头标题是另一首歌 → 丢弃",
+          LddcLyrics.headerRejection(
+            meta: LyricsMeta(title: "夜曲", artist: "周杰伦"),
+            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
+    check("文件头歌手是别人（翻唱）→ 丢弃",
+          LddcLyrics.headerRejection(
+            meta: LyricsMeta(title: "七里香", artist: "蔡健雅"),
+            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
+    check("元数据全缺 → 放行（老行为不能变）",
+          LddcLyrics.headerRejection(meta: LyricsMeta(), song: qili,
+                                     queryTitle: "七里香", queryArtist: "周杰伦") == nil)
+    check("验收容差是 8000ms", LddcLyrics.headerDurationToleranceMs == 8_000)
+
+    // 真实酷狗 KRC 回归：头部只有 ti/ar/al，没有 [total:] → 必须放行，不能把整批词丢掉
+    if let data = Data(base64Encoded: LyricsFixtures.realKrcBase64),
+       let plain = LddcCrypto.krcDecrypt([UInt8](data)) {
+        let realMeta = LyricsCleaning.meta(plain)
+        check("真实 KRC 头部能认出歌名", realMeta.title.contains("晴天"), realMeta.title)
+        check("真实 KRC 头部能认出歌手", realMeta.artist.contains("周杰伦"), realMeta.artist)
+        check("真实 KRC 头部没有 [total:]（缺失时 durationMs = 0）",
+              realMeta.durationMs == 0, "\(realMeta.durationMs)")
+        check("真实 KRC 头部缺时长 → 验收放行（不能凭空丢词）",
+              LddcLyrics.headerRejection(meta: realMeta, song: qili,
+                                         queryTitle: "晴天", queryArtist: "周杰伦") == nil)
+    } else {
+        check("真实 KRC 样本能解密", false)
+    }
+}
+
+section("第五轮：下载把歌词和封面一起带走（老板反馈 ⑧）")
+
+do {
+    // 旁车路径：同目录、同基名，只换最后一段扩展名
+    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
+    let audio = URL(fileURLWithPath: "/m/A - B [QQ_cyapi].m4a")
+    check("旁车歌词 = 同基名 .lrc",
+          DownloadCompanion.lyricsURL(for: audio).lastPathComponent == "A - B [QQ_cyapi].lrc",
+          DownloadCompanion.lyricsURL(for: audio).lastPathComponent)
+    check("旁车封面 = 同基名 .jpg",
+          DownloadCompanion.coverURL(for: audio).lastPathComponent == "A - B [QQ_cyapi].jpg")
+    check("多段扩展名只换最后一段",
+          DownloadCompanion.lyricsURL(for: URL(fileURLWithPath: "/m/x.y.z.mp3")).lastPathComponent == "x.y.z.lrc")
+
+    // LRC 文本：头部 + 行级时间（逐字不落 LRC），空行跳过
+    let lrcLines = [LyricLine(timeMs: 0, text: "第一行"),
+                    LyricLine(timeMs: 12_340, text: "第二行"),
+                    LyricLine(timeMs: 61_000, text: "   ")]
+    let lrc = DownloadCompanion.lrcText(from: lrcLines, title: "晴天",
+                                        artist: "周杰伦", durationSec: 269)
+    check("LRC 头部（ti/ar/al/length）",
+          lrc.hasPrefix("[ti:晴天]\n[ar:周杰伦]\n[al:]\n[length:04:29]\n"), lrc.prefix(40).description)
+    check("行级时间按百分秒写", lrc.contains("[00:12.34]第二行"), lrc)
+    check("空文本行不写时间戳", !lrc.contains("[01:01.00]"))
+
+    // 写旁车 → 读回来 → 删干净（真实文件 IO，用临时目录）
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("jz-companion-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let audioFile = dir.appendingPathComponent("A - B [QQ_cyapi].m4a")
+    try? Data("fake-audio".utf8).write(to: audioFile)
+    let coverBytes = Data([0xFF, 0xD8, 0xFF, 0x11, 0x22])
+    let written = DownloadCompanion.writeSidecars(audio: audioFile, lyricsText: lrc,
+                                                  coverData: coverBytes)
+    check("旁车写成功（歌词 + 封面）",
+          written.lyricsURL != nil && written.coverURL != nil)
+    let readBack = DownloadCompanion.readLyrics(from: audioFile)
+    check("读回 2 行（空行已被跳过）", readBack?.count == 2, "\(readBack?.count ?? -1)")
+    check("读回的行时间对得上", readBack?.map { $0.timeMs } == [0, 12_340],
+          "\(readBack?.map { $0.timeMs } ?? [])")
+    check("读回封面字节一致", DownloadCompanion.readCover(from: audioFile) == coverBytes)
+    DownloadCompanion.removeSidecars(audio: audioFile)
+    check("删旁车后歌词/封面都读不到",
+          DownloadCompanion.readLyrics(from: audioFile) == nil
+          && DownloadCompanion.readCover(from: audioFile) == nil)
+
+    check("不可写目录只返回 nil，不抛错",
+          DownloadCompanion.writeSidecars(audio: URL(fileURLWithPath: "/no/such/dir/a.m4a"),
+                                          lyricsText: lrc, coverData: coverBytes).lyricsURL == nil)
+
+    // ID3v2.4：mp3 内嵌（字节布局逐项钉住）
+    func syncsafeValue(_ bytes: [UInt8]) -> Int {
+        var value = 0
+        for b in bytes.prefix(4) { value = (value << 7) | Int(b & 0x7F) }
+        return value
+    }
+    func frameIDs(_ tag: [UInt8]) -> [String] {
+        var ids: [String] = []
+        var cursor = 10
+        while cursor + 10 <= tag.count {
+            ids.append(String(bytes: tag[cursor..<(cursor + 4)], encoding: .ascii) ?? "")
+            let size = syncsafeValue(Array(tag[(cursor + 4)..<(cursor + 8)]))
+            cursor += 10 + size
+        }
+        return ids
+    }
+
+    let tag = [UInt8](DownloadCompanion.id3Tag(title: "晴天", artist: "周杰伦", album: "叶惠美",
+                                              coverData: coverBytes, coverMime: "IMAGE/JPEG",
+                                              lyrics: "故事的小黄花"))
+    check("ID3 头是 \"ID3\"", Array(tag.prefix(3)) == [0x49, 0x44, 0x33])
+    check("ID3v2.4 + 无标志位", Array(tag[3..<6]) == [0x04, 0x00, 0x00])
+    check("头部帧区长度 = 总长 − 10", syncsafeValue(Array(tag[6..<10])) == tag.count - 10,
+          "\(syncsafeValue(Array(tag[6..<10]))) / \(tag.count - 10)")
+    check("帧顺序 TIT2/TPE1/TALB/APIC/USLT",
+          frameIDs(tag) == ["TIT2", "TPE1", "TALB", "APIC", "USLT"], "\(frameIDs(tag))")
+    let tit2Payload = Array(tag[20..<20 + syncsafeValue(Array(tag[14..<18]))])
+    check("TIT2 用 UTF-8 编码 + 标题",
+          tit2Payload.first == 0x03
+          && String(bytes: tit2Payload.dropFirst(), encoding: .utf8) == "晴天")
+    check("空值跳帧：只给标题时只剩 TIT2 且总长 22",
+          [UInt8](DownloadCompanion.id3Tag(title: "t", artist: "", album: "",
+                                           coverData: nil, coverMime: "", lyrics: "")).count == 22
+          && frameIDs([UInt8](DownloadCompanion.id3Tag(title: "t", artist: "", album: "",
+                                                      coverData: nil, coverMime: "", lyrics: ""))) == ["TIT2"])
+    check("全空 → 只有 10 字节头",
+          [UInt8](DownloadCompanion.id3Tag(title: "", artist: "", album: "",
+                                           coverData: nil, coverMime: "", lyrics: "")).count == 10)
+
+    check("能内嵌的容器：m4a/mp3/MP4/.mp3",
+          DownloadCompanion.canEmbed(extension: "m4a")
+          && DownloadCompanion.canEmbed(extension: "mp3")
+          && DownloadCompanion.canEmbed(extension: "MP4")
+          && DownloadCompanion.canEmbed(extension: ".mp3"))
+    check("只能写旁车的容器：flac/ogg/wav",
+          !DownloadCompanion.canEmbed(extension: "flac")
+          && !DownloadCompanion.canEmbed(extension: "ogg")
+          && !DownloadCompanion.canEmbed(extension: "wav"))
+
+    // 旧下载记录（downloads.json 没有 companionsNote 键）必须仍能解码
+    let legacyItem = DownloadItem(song: qili, streamURL: "https://x", backendName: "b",
+                                  quality: .high, status: .completed,
+                                  companionsNote: "已内嵌歌词+封面")
+    if let encoded = try? JSONEncoder().encode(legacyItem),
+       var obj = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any] {
+        obj.removeValue(forKey: "companionsNote")
+        if let legacyData = try? JSONSerialization.data(withJSONObject: obj),
+           let decoded = try? JSONDecoder().decode(DownloadItem.self, from: legacyData) {
+            check("旧 downloads.json 没有 companionsNote 也能解码",
+                  decoded.companionsNote == nil && decoded.song.id == qili.id)
+        } else {
+            check("旧 downloads.json 能解码", false)
+        }
+    } else {
+        check("DownloadItem 能编码", false)
+    }
+
+    try? FileManager.default.removeItem(at: dir)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
