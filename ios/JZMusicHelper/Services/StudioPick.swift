@@ -15,9 +15,9 @@ enum StudioPick {
 
     private static let bracket = NSRegularExpression(
         pattern: "（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】"
-    )!
+    )
 
-    private static let editSuffix = try! NSRegularExpression(
+    private static let editSuffix = NSRegularExpression(
         pattern:
             "\\s*[-—–·]?\\s*(" +
             "伴奏|钢琴版|吉他版|翻唱|cover|live|现场版|现场|演唱会|音乐会|remix|dj版|dj|电音|串烧|" +
@@ -27,20 +27,20 @@ enum StudioPick {
         options: [.caseInsensitive]
     )
 
-    private static let liveAlbum = try! NSRegularExpression(
+    private static let liveAlbum = NSRegularExpression(
         pattern:
             "现场|演唱会|音乐会|春晚|春节|联欢|跨年|晚会|盛典|颁奖|综艺|节目|直播|" +
             "live|concert|unplugged|新声代|天赐|蒙面|我们的歌|声生不息|歌手20",
         options: [.caseInsensitive]
     )
 
-    private static let multiSinger = NSRegularExpression(pattern: "[/&、,，;；]|\\s{2,}")!
+    private static let multiSinger = NSRegularExpression(pattern: "[/&、,，;；]|\\s{2,}")
 
     private static let quotedName = NSRegularExpression(
         pattern: "[\"'“”‘’「」『』]([^\"'“”‘’「」『』]*)[\"'“”‘’「」『』]"
-    )!
+    )
 
-    private static let trailingJoiner = NSRegularExpression(pattern: "\\s*[-—–·]\\s*$")!
+    private static let trailingJoiner = NSRegularExpression(pattern: "\\s*[-—–·]\\s*$")
 
     // MARK: 核心歌名
 

@@ -73,7 +73,7 @@ enum KuwoParser {
 
     private static let dictEntry = NSRegularExpression(
         pattern: "'([^']*)':\\s*'((?:[^'\\\\]|\\\\.)*)'"
-    )!
+    )
 
     /// 解析单引号键值对，并还原 HTML 实体（不还原的话 "IVORY&nbsp;TOWER" 会漏掉相关性比较）
     static func parseSingleQuotedDict(_ text: String) -> [String: String]? {

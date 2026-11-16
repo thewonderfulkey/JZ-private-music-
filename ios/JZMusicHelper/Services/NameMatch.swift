@@ -11,13 +11,13 @@ enum NameMatch {
 
     private static let bracket = NSRegularExpression(
         pattern: "（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】"
-    )!
+    )
 
     private static let punct = NSRegularExpression(
         pattern: "[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+]"
-    )!
+    )
 
-    private static let singerSep = NSRegularExpression(pattern: "[/&、,，\\s]+")!
+    private static let singerSep = NSRegularExpression(pattern: "[/&、,，\\s]+")
 
     /// 纯歌名归一化：去版本括号 + 去标点空白
     static func normTitle(_ raw: String) -> String {

@@ -32,10 +32,8 @@ final class APIClient {
                    headers: [String: String] = [:],
                    timeout: TimeInterval = 15) async throws -> String {
         let data = try await getData(urlString, headers: headers, timeout: timeout)
-        // 部分接口（酷我 r.s）返回 GBK 或带 BOM，统一按 UTF-8 → GB18030 → Latin1 兜底
+        // 所有接口都带 encoding=utf8（酷我 r.s 亦然），UTF-8 失败时按 Latin1 兜底以便看清乱码而不是拿空串
         if let s = String(data: data, encoding: .utf8) { return s }
-        let gb = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
-        if let s = String(data: data, encoding: String.Encoding(rawValue: gb)) { return s }
         return String(data: data, encoding: .isoLatin1) ?? ""
     }
 
