@@ -320,7 +320,7 @@ jobs:
               xcrun simctl launch --terminate-running-process "$DEVICE" com.jz.musichelper
             sleep "$wait"
             xcrun simctl io "$DEVICE" screenshot "shots/$name.png"
-            echo "已截图：$name（tab=$tab query=$query）"
+            echo "已截图：${name}（tab=${tab} query=${query}）"
           }
 
           shot 01-discover    discover  ""      8
