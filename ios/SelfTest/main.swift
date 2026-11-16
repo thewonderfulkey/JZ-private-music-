@@ -1118,8 +1118,8 @@ do {
     // 用户偏移（±600ms）由调用方加在 positionMs 上：+200 提前、-200 延后
     check("偏移 +200ms：4800 的位置按 5000 算，已切到第二句",
           LyricsCleaning.indexAt(lines, positionMs: 4800 + 200) == 1)
-    check("偏移 -200ms：5200 的位置按 5000 算，仍停在第一句",
-          LyricsCleaning.indexAt(lines, positionMs: 5200 - 200) == 0)
+    check("偏移 -200ms：5000 的位置按 4800 算，仍停在第一句",
+          LyricsCleaning.indexAt(lines, positionMs: 5000 - 200) == 0)
 }
 
 section("下载落盘后的实测档位（老板反馈 ⑥：找到无损却下成 320k）")
