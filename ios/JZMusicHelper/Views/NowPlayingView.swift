@@ -1,32 +1,40 @@
 import SwiftUI
 import UIKit
 
-// MARK: - 播放页
+// MARK: - 播放页（老板反馈 ③④）
 //
-// 设计稿 §3.6 的第一个可运行版本：封面 / 题名 / 进度（含缓冲带）/ 三态循环 / 上一首-播放-下一首 /
-// 状态行与音源行。歌词区（点封面切换）等歌词层移植完再加，这里先不放空的占位。
+// ③ **全屏覆盖**：外面从 sheet 改成 `fullScreenCover`（见 RootTabView）。sheet 那种"拉起一张布"的
+//    观感就是它只会盖到 .large detent + 圆角 + 后面能看到桌面；全屏之后才是"进播放页"。
+//    收起来的路径保留两条：左上角 chevron.down，或者按住顶部往下拽（>90pt）。
+//
+// ④ **歌词常驻**：上一版歌词藏在"点封面"后面（`showLyrics`），不点就永远看不见，看起来就是
+//    "歌词是空的"。现在封面下面直接跟一块歌词面板（当前行高亮 + 上下淡出 + 自动滚到中间），
+//    空的时候写明原因并给「重试」；打开播放页时如果歌词还是空的，自动再取一次（`reloadLyrics`）。
+//
+// 其余：封面 / 题名 + 收藏 / 进度（含缓冲带）/ 播放模式 / 上一首-播放-下一首 / 下载 / 状态与音源。
 struct NowPlayingView: View {
 
     @Environment(PlayerEngine.self) private var player
+    @Environment(LibraryStore.self) private var library
     @Environment(SettingsStore.self) private var settings
     @Environment(DownloadFlow.self) private var downloadFlow
     @Environment(\.dismiss) private var dismiss
-    @State private var showSourceDetail = false
-    /// 设计稿 §3.6：开「减弱动态效果」时歌词直接跳行，不做位移过渡
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var showSourceDetail = false
     /// 拖动中的进度（0...1）；nil 表示没在拖，显示真实进度
     @State private var dragFraction: Double?
-    /// 封面 ↔ 歌词
-    @State private var showLyrics = false
 
-    private var shownFraction: Double {
-        dragFraction ?? player.progress
-    }
+    private var shownFraction: Double { dragFraction ?? player.progress }
 
     private var bufferedFraction: Double {
         guard player.duration > 0 else { return 0 }
         return min(max(player.bufferedTime / player.duration, 0), 1)
+    }
+
+    private var isFavorite: Bool {
+        guard let song = player.currentSong else { return false }
+        return library.isFavorite(song)
     }
 
     /// 当前这首歌是否已经下到本地（决定按钮用实心图标）
@@ -36,33 +44,38 @@ struct NowPlayingView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            ScrollView {
-                VStack(spacing: 0) {
-                    stage
-                        .padding(.horizontal, 34)
-                        .padding(.top, 8)
-                    titles
-                        .padding(.horizontal, 24)
-                        .padding(.top, 22)
-                    scrubber
-                        .padding(.horizontal, 24)
-                        .padding(.top, 18)
-                    transport
-                        .padding(.horizontal, 26)
-                        .padding(.top, 14)
-                    footer
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
-                        .padding(.bottom, 24)
-                }
+        GeometryReader { geo in
+            // 封面尺寸按屏幕算：大屏最多 300pt，SE 这种矮屏用高度反推，保证歌词区一定留得下
+            let side = max(140, min(min(geo.size.width - 104, geo.size.height * 0.30), 300))
+            VStack(spacing: 0) {
+                topBar
+                artwork(side: side)
+                    .padding(.top, Tokens.Spacing.xxs)
+                titles
+                    .padding(.horizontal, Tokens.Spacing.l)
+                    .padding(.top, Tokens.Spacing.m)
+                lyricsBlock
+                    .padding(.horizontal, Tokens.Spacing.m)
+                    .padding(.top, Tokens.Spacing.s)
+                    .frame(maxHeight: .infinity)
+                scrubber
+                    .padding(.horizontal, Tokens.Spacing.l)
+                    .padding(.top, Tokens.Spacing.xxs)
+                transport
+                    .padding(.horizontal, Tokens.Spacing.l)
+                footer
+                    .padding(.horizontal, Tokens.Spacing.l)
+                    .padding(.bottom, Tokens.Spacing.xs)
             }
         }
         .background(paperBackground.ignoresSafeArea())
-        .presentationDragIndicator(.visible)
         .sheet(isPresented: $showSourceDetail) {
             SourceDetailView().environment(player)
+        }
+        .task {
+            Haptics.prepare()
+            // 打开播放页时歌词仍为空 → 再取一次（切歌瞬间取词失败不再等于永久没词）
+            player.reloadLyrics()
         }
     }
 
@@ -76,109 +89,228 @@ struct NowPlayingView: View {
     // MARK: 顶栏
 
     private var topBar: some View {
-        ZStack {
-            Text("正在播放")
-                .font(.footnote.weight(.medium))
-                .tracking(2)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭播放页")
+        VStack(spacing: 6) {
+            Capsule()
+                .fill(Color.primary.opacity(0.18))
+                .frame(width: 36, height: 5)
+                .padding(.top, 6)
+                .accessibilityHidden(true)
 
-                Spacer()
+            ZStack {
+                Text("正在播放")
+                    .font(.footnote.weight(.medium))
+                    .tracking(2)
+                    .foregroundStyle(.secondary)
 
-                Menu {
-                    Section("播放模式") {
-                        ForEach(PlayMode.allCases, id: \.self) { mode in
-                            Button {
-                                if player.mode != mode { player.setMode(mode) }
-                            } label: {
-                                Label(mode.displayName, systemImage: mode.symbolName)
-                            }
-                        }
-                    }
+                HStack {
                     Button {
-                        showSourceDetail = true
+                        dismiss()
                     } label: {
-                        Label("音源详情", systemImage: "antenna.radiowaves.left.and.right")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
-                    if let song = player.currentSong {
-                        Button {
-                            downloadFlow.start(song: song, want: player.quality)
-                        } label: {
-                            Label("下载…", systemImage: "arrow.down.circle")
-                        }
-                        ShareLink(item: SongShare.text(song: song, source: player.source)) {
-                            Label("分享", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    if let source = player.source {
-                        Section("当前音源") {
-                            Text("\(source.backendName) · \(source.format.uppercased()) · \(source.kbps) kbps")
-                            Text(source.note)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("收起播放页")
+
+                    Spacer()
+
+                    moreMenu
                 }
-                .accessibilityLabel("更多")
+            }
+            .frame(minHeight: 40)
+        }
+        .contentShape(Rectangle())
+        // 往下拽收起来（sheet 的手感，但内容是满屏的）
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    if value.translation.height > 90 { dismiss() }
+                }
+        )
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Section("播放模式") {
+                ForEach(PlayMode.allCases, id: \.self) { mode in
+                    Button {
+                        if player.mode != mode { player.setMode(mode) }
+                    } label: {
+                        Label(mode.displayName, systemImage: mode.symbolName)
+                    }
+                }
+            }
+            Button {
+                showSourceDetail = true
+            } label: {
+                Label("音源详情", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            if let song = player.currentSong {
+                Button {
+                    downloadFlow.start(song: song, want: player.quality)
+                } label: {
+                    Label("下载…", systemImage: "arrow.down.circle")
+                }
+                ShareLink(item: SongShare.text(song: song, source: player.source)) {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("更多")
+    }
+
+    // MARK: 封面
+
+    private func artwork(side: CGFloat) -> some View {
+        Group {
+            if let song = player.currentSong,
+               let urlString = song.picURL, let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        artworkPlaceholder
+                    }
+                }
+            } else {
+                artworkPlaceholder
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 44)
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.playerArtwork, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
+        .accessibilityLabel("专辑封面")
     }
 
-    // MARK: 封面 / 歌词
-
-    /// 封面与歌词共用一个方形区域：点击封面切歌词，点歌词切回封面（设计稿 §3.6）
-    @ViewBuilder
-    private var stage: some View {
-        if showLyrics {
-            lyricsPanel
-                .onTapGesture { withAnimation(.easeInOut(duration: 0.25)) { showLyrics = false } }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("歌词，轻点返回封面")
-        } else {
-            artwork
-                .onTapGesture { withAnimation(.easeInOut(duration: 0.25)) { showLyrics = true } }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("专辑封面，轻点看歌词")
+    private var artworkPlaceholder: some View {
+        ZStack {
+            LinearGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.04)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: 50, weight: .light))
+                .foregroundStyle(.secondary)
         }
     }
 
-    private var lyricsPanel: some View {
+    // MARK: 题名 + 收藏
+
+    private var titles: some View {
+        HStack(alignment: .center, spacing: Tokens.Spacing.xs) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.currentSong?.name ?? "未在播放")
+                    .font(FontRole.playerTitle)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(player.currentSong?.singer ?? "")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button {
+                guard let song = player.currentSong else { return }
+                Haptics.favorite()
+                withAnimation(Tokens.Motion.favorite) { library.toggleFavorite(song) }
+            } label: {
+                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentSong == nil)
+            .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
+        }
+    }
+
+    // MARK: 歌词（反馈 ④：常驻可见）
+
+    private var lyricsBlock: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            HStack(spacing: Tokens.Spacing.xs) {
+                Text("歌词")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if player.isLoadingLyrics {
+                    ProgressView().scaleEffect(0.6)
+                } else if !player.lyrics.isEmpty {
+                    Text(lyricsMeta)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if player.lyrics.isEmpty && !player.isLoadingLyrics {
+                    Button("重试") { player.reloadLyrics() }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.xs)
+
+            if player.lyrics.isEmpty {
+                lyricsEmpty
+            } else {
+                lyricsScroll
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var lyricsMeta: String {
+        let word = player.lyrics.first?.hasWordTiming == true ? " · 逐字" : ""
+        return "\(player.lyrics.count) 行 · \(player.lyricsSource)\(word)"
+    }
+
+    private var lyricsEmpty: some View {
+        VStack(spacing: Tokens.Spacing.xxs) {
+            if player.isLoadingLyrics {
+                ProgressView()
+                Text("正在取歌词…")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(.tertiary)
+                Text("这首歌还没取到歌词")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("换下一首再回来、或点右上「重试」重新取")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+
+    private var lyricsScroll: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 18) {
-                    if player.lyrics.isEmpty {
-                        VStack(spacing: 10) {
-                            if player.isLoadingLyrics { ProgressView() }
-                            Text(player.isLoadingLyrics ? "歌词加载中…" : "暂无歌词")
-                                .font(.subheadline)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.top, 60)
-                    } else {
-                        ForEach(Array(player.lyrics.enumerated()), id: \.offset) { idx, line in
-                            lyricLineView(index: idx, line: line)
-                                .id(idx)
-                        }
+                LazyVStack(spacing: Tokens.Spacing.m) {
+                    ForEach(Array(player.lyrics.enumerated()), id: \.offset) { idx, line in
+                        lyricLineView(index: idx, line: line)
+                            .id(idx)
                     }
                 }
                 .frame(maxWidth: .infinity)
-                // 上下各留一屏余量，当前行才能稳定停在正中
-                .padding(.vertical, 120)
+                // 上下各留一段余量，当前行才能稳定停在正中
+                .padding(.vertical, 72)
             }
             .mask(lyricsFadeMask)
             .onChange(of: player.lyricIndex) { _, idx in
@@ -186,10 +318,7 @@ struct NowPlayingView: View {
                 if reduceMotion {
                     proxy.scrollTo(idx, anchor: .center)
                 } else {
-                    // 设计稿 §3.6：行推进 spring(0.38, 0.92)
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
-                        proxy.scrollTo(idx, anchor: .center)
-                    }
+                    withAnimation(Tokens.Motion.lyricAdvance) { proxy.scrollTo(idx, anchor: .center) }
                 }
             }
             .onAppear {
@@ -199,10 +328,10 @@ struct NowPlayingView: View {
         }
         .frame(maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous)
                 .fill(Color.primary.opacity(0.04))
         )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sheet, style: .continuous))
     }
 
     /// 一行歌词：当前行逐字染色（有逐字时间时），其他行 55% 不透明度。
@@ -217,29 +346,28 @@ struct NowPlayingView: View {
                     TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
                         Text(currentLineString(line))
                             .font(currentLineFont)
-                            .lineSpacing(4)
+                            .lineSpacing(3)
                     }
                 } else {
                     Text(line.text)
                         .font(currentLineFont)
-                        .lineSpacing(4)
+                        .lineSpacing(3)
                         .foregroundStyle(Tokens.Palette.vermilion)
                 }
             } else {
                 Text(line.text)
-                    .font(.body)
-                    .lineSpacing(4)
+                    .font(FontRole.lyricOther)
+                    .lineSpacing(3)
                     .foregroundStyle(Color.secondary.opacity(0.55))
             }
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
-        // 设计稿 §1：可点区域 ≥44pt——歌词行本身只有 22~28pt，补 8pt 上下内边距
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onTapGesture {
             guard player.duration > 0 else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.lyricSeek()
             player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
         }
         .accessibilityElement(children: .ignore)
@@ -265,7 +393,7 @@ struct NowPlayingView: View {
     private func currentLineString(_ line: LyricLine) -> AttributedString {
         guard line.hasWordTiming else {
             var whole = AttributedString(line.text)
-            whole.foregroundColor = Color.accentColor
+            whole.foregroundColor = Tokens.Palette.vermilion
             return whole
         }
 
@@ -276,7 +404,7 @@ struct NowPlayingView: View {
             // 设计稿 §3.6：单字 140ms 线性过渡
             let progress = min(max(Double(nowMs - word.startMs) / 140.0, 0), 1)
             var piece = AttributedString(word.text)
-            piece.foregroundColor = mix(unsung, Color.accentColor, progress)
+            piece.foregroundColor = mix(unsung, Tokens.Palette.vermilion, progress)
             result.append(piece)
         }
         return result
@@ -303,78 +431,17 @@ struct NowPlayingView: View {
     private var lyricsFadeMask: some View {
         VStack(spacing: 0) {
             LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: 64)
+                .frame(height: 36)
             Rectangle().fill(Color.black)
             LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: 64)
-        }
-    }
-
-    @ViewBuilder
-    private var artwork: some View {
-        let side = min(UIScreen.main.bounds.width - 68, 380)
-        Group {
-            if let song = player.currentSong,
-               let urlString = song.picURL, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        artworkPlaceholder
-                    }
-                }
-            } else {
-                artworkPlaceholder
-            }
-        }
-        .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
-        .accessibilityLabel("专辑封面")
-    }
-
-    private var artworkPlaceholder: some View {
-        ZStack {
-            LinearGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.04)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-            Image(systemName: "music.note")
-                .font(.system(size: 54, weight: .light))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    // MARK: 题名
-
-    private var titles: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.currentSong?.name ?? "未在播放")
-                    .font(.title2.weight(.bold))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(player.currentSong?.singer ?? "")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Button {
-                withAnimation(.easeInOut(duration: 0.25)) { showLyrics.toggle() }
-            } label: {
-                Image(systemName: showLyrics ? "photo" : "quote.bubble")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showLyrics ? "显示封面" : "显示歌词")
+                .frame(height: 36)
         }
     }
 
     // MARK: 进度
 
     private var scrubber: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             GeometryReader { geo in
                 let width = geo.size.width
                 ZStack(alignment: .leading) {
@@ -412,7 +479,7 @@ struct NowPlayingView: View {
                 Spacer()
                 Text("-" + Self.timeText(max(0, player.duration - (dragFraction.map { $0 * player.duration } ?? player.currentTime))))
             }
-            .font(.footnote)
+            .font(.caption)
             .monospacedDigit()
             .foregroundStyle(.tertiary)
         }
@@ -430,22 +497,24 @@ struct NowPlayingView: View {
     // MARK: 控件
 
     private var transport: some View {
-        HStack {
+        HStack(spacing: Tokens.Spacing.xs) {
             Button {
                 player.cycleMode()
+                Haptics.trackChange()
             } label: {
                 Image(systemName: player.mode.symbolName)
-                    .font(.system(size: 19, weight: .medium))
-                    .frame(width: 52, height: 52)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: Tokens.Size.transportButton, height: Tokens.Size.transportButton)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("播放模式，当前\(player.mode.displayName)")
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Button {
                 player.previousTrack()
+                Haptics.trackChange()
             } label: {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 22, weight: .medium))
@@ -457,19 +526,19 @@ struct NowPlayingView: View {
 
             Button {
                 player.toggle()
+                Haptics.playbackToggle()
             } label: {
                 ZStack {
                     Circle().fill(Color.accentColor)
                     if player.isResolving {
-                        ProgressView()
-                            .tint(.white)
+                        ProgressView().tint(.white)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(.white)
                     }
                 }
-                .frame(width: 56, height: 56)
+                .frame(width: Tokens.Size.playButton, height: Tokens.Size.playButton)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -478,6 +547,7 @@ struct NowPlayingView: View {
 
             Button {
                 player.nextTrack()
+                Haptics.trackChange()
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 22, weight: .medium))
@@ -487,15 +557,15 @@ struct NowPlayingView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("下一首")
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Button {
                 guard let song = player.currentSong else { return }
                 downloadFlow.start(song: song, want: player.quality)
             } label: {
                 Image(systemName: isDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle")
-                    .font(.system(size: 19, weight: .medium))
-                    .frame(width: 52, height: 52)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: Tokens.Size.transportButton, height: Tokens.Size.transportButton)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -504,47 +574,31 @@ struct NowPlayingView: View {
             .opacity(player.currentSong == nil ? 0.35 : 1)
             .accessibilityLabel(isDownloaded ? "已下载，可重新下载" : "下载")
         }
-        .overlay(alignment: .bottom) {
-            Text(player.mode.displayName)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .offset(y: 18)
-        }
-        .padding(.bottom, 18)
     }
 
     // MARK: 状态与音源
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 if player.isResolving {
                     ProgressView().scaleEffect(0.6)
                 }
                 Text(player.errorText ?? player.statusText ?? " ")
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(player.errorText == nil ? Color.secondary : Color.orange)
                     .lineLimit(1)
             }
-            .frame(height: 16, alignment: .leading)
 
             if let source = player.source {
-                HStack(spacing: 4) {
-                    Text("音源 \(source.backendName) · \(source.format.uppercased()) · \(source.kbps) kbps")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                    Spacer()
-                }
-            }
-            if !player.lyrics.isEmpty {
-                Text("歌词 \(player.lyrics.count) 行 · 来自\(player.lyricsSource)\(player.hasLyrics && player.lyrics.first?.hasWordTiming == true ? " · 逐字" : "")")
+                Text("音源 \(source.backendName) · \(source.format.uppercased()) · \(source.kbps) kbps")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 2)
     }
 
     // MARK: 工具

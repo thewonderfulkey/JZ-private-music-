@@ -1,9 +1,14 @@
 import SwiftUI
 
-// MARK: - 搜索（设计稿 §3.4）
+// MARK: - 搜索页（老板反馈 ⑥⑦）
+//
+// ⑥ **不再是 Tab**：从发现页最上方的搜索框 push 进来（`navigationBarBackButtonHidden` 不设，
+//    保留系统返回）。进来自动聚焦键盘，少一次点击。
+// ⑦ **结果按「归一化歌名 + 歌手」跨平台去重**（口径在 `SearchRanker.dedupe`，与 Android v2.1.10 一致）：
+//    同一首《晴天》四家各回一条时只留匹配度最高的一条，不再出现"一屏全是倔强"。
 //
 // 平台状态行（§2.5）在上，结果在下；已确认无源的歌隐藏并可展开；搜过才记历史。
-struct SearchTabView: View {
+struct SearchView: View {
 
     @Environment(PlayerEngine.self) private var player
     @Environment(LibraryStore.self) private var library
@@ -16,6 +21,7 @@ struct SearchTabView: View {
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
     @State private var showHidden = false
+    @FocusState private var fieldFocused: Bool
 
     private var visibleSongs: [Song] {
         songs.filter { !player.deadSongKeys.contains($0.id) }
@@ -25,30 +31,94 @@ struct SearchTabView: View {
         songs.filter { player.deadSongKeys.contains($0.id) }
     }
 
+    private var trimmedKeyword: String {
+        keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
-        Group {
-            if keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                idleView
-            } else if isSearching && songs.isEmpty {
-                SkeletonRows()
-                    .frame(maxHeight: .infinity, alignment: .top)
-            } else if songs.isEmpty {
-                EmptyStateView(title: "没有找到「\(keyword)」",
-                               systemImage: "magnifyingglass",
-                               description: "换个关键词，或只搜歌名")
-            } else {
-                resultList
-            }
+        VStack(spacing: 0) {
+            searchField
+            content
         }
-        .navigationTitle("搜索")
-        .searchable(text: $keyword,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "歌曲、歌手、专辑")
-        .onSubmit(of: .search) { runSearch() }
+        .background(Tokens.Palette.paper.ignoresSafeArea())
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { fieldFocused = true }
         .onDisappear { searchTask?.cancel() }
         // App Intent（「搜索歌曲」快捷指令）把词塞进 router，这里消费掉
         .onChange(of: router.pendingSearch) { _, _ in consumePendingSearch() }
         .task { consumePendingSearch() }
+    }
+
+    // MARK: 搜索框
+
+    private var searchField: some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            TextField("搜索歌曲、歌手、专辑", text: $keyword)
+                .font(.body)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($fieldFocused)
+                .onSubmit { runSearch() }
+                .accessibilityLabel("搜索关键词")
+
+            if !keyword.isEmpty {
+                Button {
+                    keyword = ""
+                    songs = []
+                    platformResults = []
+                    isSearching = false
+                    fieldFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 28, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清空")
+            }
+
+            Button("搜索") {
+                fieldFocused = false
+                runSearch()
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Tokens.Palette.vermilion)
+            .buttonStyle(.plain)
+            .disabled(trimmedKeyword.isEmpty)
+        }
+        .padding(.leading, Tokens.Spacing.s)
+        .padding(.trailing, Tokens.Spacing.xs)
+        .frame(minHeight: 44)
+        .background(Capsule().fill(Tokens.Palette.paperElevated))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.vertical, Tokens.Spacing.xs)
+    }
+
+    // MARK: 内容
+
+    @ViewBuilder
+    private var content: some View {
+        if trimmedKeyword.isEmpty && songs.isEmpty {
+            idleView
+        } else if isSearching && songs.isEmpty {
+            SkeletonRows()
+                .frame(maxHeight: .infinity, alignment: .top)
+        } else if songs.isEmpty {
+            EmptyStateView(title: "没有找到「\(trimmedKeyword)」",
+                           systemImage: "magnifyingglass",
+                           description: "换个关键词，或只搜歌名")
+        } else {
+            resultList
+        }
     }
 
     // MARK: 初始态（最近搜索）
@@ -84,7 +154,9 @@ struct SearchTabView: View {
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
                 }
                 .padding(.top, Tokens.Spacing.s)
+                .readableWidth()
             }
+            .scrollIndicators(.hidden)
         }
     }
 
@@ -94,7 +166,8 @@ struct SearchTabView: View {
         VStack(spacing: 0) {
             PlatformStatusRow(results: platformResults)
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
-                .padding(.top, Tokens.Spacing.xs)
+                .padding(.top, Tokens.Spacing.xxs)
+                .padding(.bottom, Tokens.Spacing.xxs)
 
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -102,6 +175,7 @@ struct SearchTabView: View {
                         Button {
                             player.play(queue: visibleSongs, startAt: index)
                             library.recordPlayed(song)
+                            router.showPlayer = true
                         } label: {
                             SongRow(song: song,
                                     showsFavorite: true,
@@ -173,7 +247,7 @@ struct SearchTabView: View {
     }
 
     private func runSearch() {
-        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = trimmedKeyword
         guard !trimmed.isEmpty else { return }
         searchTask?.cancel()
         songs = []

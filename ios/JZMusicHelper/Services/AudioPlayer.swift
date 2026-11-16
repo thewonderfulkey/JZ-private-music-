@@ -466,6 +466,16 @@ final class PlayerEngine {
         if idx != lyricIndex { lyricIndex = idx }
     }
 
+    /// 播放页重取歌词（首次取词失败时自动/手动重试；不打断播放）
+    ///
+    /// 之前「歌词一直是空」有两层原因，都会在这里被兜住：
+    ///   ① 取词发生在切歌那一瞬间，弱网/接口抽风失败后没有第二次机会 → 现在播放页打开时会再取一次；
+    ///   ② 用户只能看到一句"暂无歌词"，没有重试入口 → 播放页的空状态里给了一个「重试」。
+    func reloadLyrics() {
+        guard let song = currentSong, !isLoadingLyrics else { return }
+        prepareLyrics(for: song)
+    }
+
     private func updateNowPlaying() {
         // 锁屏歌词 / 灵动岛：这里每 0.5 秒被调一次，节流在 PlaybackActivityRules 里
         LiveActivityController.shared.sync(

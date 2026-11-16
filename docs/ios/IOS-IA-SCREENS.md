@@ -1,5 +1,10 @@
 # iOS 版信息架构与逐页设计
 
+> ⚠️ **2026-11-16 起：底部导航由 5 Tab 改为 4 Tab（发现 / 识曲 / 下载 / 资料库），搜索不再是 Tab，
+> 入口挪到发现页最上方；播放页由 sheet 改为全屏。** 以本文 §1 为准的实现已过期，最新口径见
+> [IOS-PRODUCT-FIXES.md](IOS-PRODUCT-FIXES.md)（老板真机录屏 7 项整改）。本文其余章节的每页
+> 布局/五态/无障碍条目仍然有效，只是"搜索页从哪进"和"Tab 有几格"这两处按上面这句改。
+
 > 配套：[IOS-UI-DESIGN.md](IOS-UI-DESIGN.md)（令牌与视觉规则）、[IOS-FEATURE-PARITY.md](IOS-FEATURE-PARITY.md)（Android 功能 → iOS 落点）。
 > 本文所有页面都按"布局 / 交互 / 五态 / 无障碍 / iPad"五项写全；未写全的页面视为未设计。
 

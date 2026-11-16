@@ -74,11 +74,16 @@ final class SearchService {
         }
     }
 
-    /// 合并 + 全局排序（搜索页最终展示的就是这个）
+    /// 合并 + 全局排序 + 跨平台去重（搜索页最终展示的就是这个）
+    ///
+    /// 去重口径与 Android v2.1.10 一致：**先排序、再按归一化歌名+歌手 distinct**，
+    /// 所以同一个（歌名, 歌手）留下的是匹配度最高的那条（平台位次先验也参与在内）。
+    /// 被合并掉的其他平台版本不是丢失——点播放时 `SameSongCrossResolver` 仍会跨平台补源。
     func searchRanked(keyword: String, limit: Int = 20) async -> (songs: [Song], platforms: [PlatformResult]) {
         let results = await searchAll(keyword: keyword, limit: limit)
         let merged = results.flatMap(\.songs)
-        return (SearchRanker.rank(keyword: keyword, songs: merged), results)
+        let ranked = SearchRanker.dedupe(SearchRanker.rank(keyword: keyword, songs: merged))
+        return (ranked, results)
     }
 
     /// 流式搜索（边到边显示；UI 用）

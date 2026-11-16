@@ -9,6 +9,7 @@ struct EditorPlaylistView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(DiscoverFeed.self) private var feed
+    @Environment(AppRouter.self) private var router
 
     let playlist: DiscoverCatalog.Playlist
     /// 发现页「换一批」的轮次（叠加到日期上，用来换一组 20 首）
@@ -165,6 +166,7 @@ struct EditorPlaylistView: View {
             player.playSingle(song)
             library.recordPlayed(song)
             Haptics.playbackToggle()
+            router.showPlayer = true
         } else {
             failedRows.insert(index)
             status = "《\(list[index].name)》没找到可播放的版本"

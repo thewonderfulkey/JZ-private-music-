@@ -31,7 +31,7 @@ struct QQSearchAdapter: SearchAdapter {
             let pic = albumMid.isEmpty
                 ? nil
                 : "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(albumMid).jpg"
-            songs.append(Song(platform: .qq, platformID: mid, name: name, singer: singers,
+            songs.append(Song.make(platform: .qq, platformID: mid, name: name, singer: singers,
                               album: album, duration: Double(dur), picURL: pic))
         }
         return songs
@@ -61,7 +61,7 @@ struct NeteaseSearchAdapter: SearchAdapter {
                 .joined(separator: "/")
             let album = (item["album"] as? [String: Any])?["name"] as? String ?? ""
             let durMs = (item["duration"] as? Int) ?? 0
-            songs.append(Song(platform: .netease, platformID: String(id), name: name,
+            songs.append(Song.make(platform: .netease, platformID: String(id), name: name,
                               singer: artists, album: album,
                               duration: Double(durMs / 1000), picURL: nil))
         }
@@ -86,7 +86,7 @@ struct NeteaseSearchAdapter: SearchAdapter {
         guard !pics.isEmpty else { return songs }
         return songs.map { s in
             guard (s.picURL ?? "").isEmpty, let p = pics[s.platformID] else { return s }
-            return Song(platform: s.platform, platformID: s.platformID, name: s.name,
+            return Song.make(platform: s.platform, platformID: s.platformID, name: s.name,
                         singer: s.singer, album: s.album, duration: s.duration, picURL: p)
         }
     }
@@ -119,7 +119,7 @@ struct KuwoSearchAdapter: SearchAdapter {
             let mvpic = (item["MVPIC"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let pic = mvpic.isEmpty ? nil : "https://img1.kuwo.cn/wmvpic/\(mvpic)"
-            let song = Song(platform: .kuwo, platformID: rid, name: name, singer: artist,
+            let song = Song.make(platform: .kuwo, platformID: rid, name: name, singer: artist,
                             album: album, duration: Double(dur), picURL: pic)
             // 变体不直接丢：整页都是变体时也要能出结果（否则界面显示"酷我 0 首"，像接口挂了）
             if KuwoParser.isVariant(name) { variants.append(song) } else { songs.append(song) }
@@ -154,7 +154,7 @@ struct KugouSearchAdapter: SearchAdapter {
                 pic = union.replacingOccurrences(of: "{size}", with: "500")
                     .replacingOccurrences(of: "http://", with: "https://")
             }
-            songs.append(Song(platform: .kugou, platformID: hash, name: name, singer: singer,
+            songs.append(Song.make(platform: .kugou, platformID: hash, name: name, singer: singer,
                               album: album, duration: Double(dur), picURL: pic))
         }
         return songs
@@ -172,3 +172,4 @@ enum SearchAdapters {
 
     static var platforms: [MusicPlatform] { all.map(\.platform) }
 }
+

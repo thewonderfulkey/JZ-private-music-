@@ -11,6 +11,12 @@ import Foundation
 //     塞公共参数会签名失配；搜索接口 `complexsearch` 反而要全套公共参数
 //   · QQ 走 `musicu.fcg`，先 GetSession 拿 uid/sid/userip，再 DoSearch、GetPlayLyricInfo；
 //     该接口对同 IP 高频请求会返回 `request.code=2001`（空候选），遇到就当这条源失败
+//
+// 2026-11-16（真机反馈「歌词全是空」）：酷狗的三个端点原来写的是 `http://`。
+// iOS 的 ATS 默认拒绝明文请求（NSURLErrorAppTransportSecurityRequiresSecureConnection），
+// 所以**整条酷狗源在真机上是死的**——本地 Python 探针能通只是因为 urllib 没有 ATS。
+// 现在三处全部换成 https（实测 complexsearch / lyrics / download 都返回 200），
+// Info.plist 里同时补了 ATS 例外，兜住其它明文音频/CDN 地址。
 enum LddcLyrics {
 
     private static let kgSalt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
@@ -149,7 +155,7 @@ enum LddcLyrics {
             ("sorttype", "0"), ("keyword", keyword), ("pagesize", "20"), ("page", "1"),
         ]
         let query = kgQuery(params: params, module: "SearchSong", mid: mid, dfid: dfid)
-        let url = "http://complexsearch.kugou.com/v2/search/song?" + query
+        let url = "https://complexsearch.kugou.com/v2/search/song?" + query
         guard let json = try? await APIClient.shared.getJSON(
             url, headers: kgHeaders(module: "SearchSong", mid: mid), timeout: netTimeout),
               let lists = (json["data"] as? [String: Any])?["lists"] as? [[String: Any]] else {
@@ -193,7 +199,7 @@ enum LddcLyrics {
             ("accesskey", accesskey), ("charset", "utf8"), ("client", "mobi"),
             ("fmt", "krc"), ("id", cid), ("ver", "1"),
         ]
-        let dlURL = "http://lyrics.kugou.com/download?"
+        let dlURL = "https://lyrics.kugou.com/download?"
             + kgQuery(params: dlParams, module: "Lyric", mid: mid)
         guard let dlJson = try? await APIClient.shared.getJSON(
             dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout),
@@ -392,3 +398,4 @@ enum LddcLyrics {
         Data(s.utf8).base64EncodedString()
     }
 }
+

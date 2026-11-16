@@ -105,6 +105,7 @@ struct DownloadsTabView: View {
 private struct DownloadRowView: View {
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(PlayerEngine.self) private var player
+    @Environment(AppRouter.self) private var router
     let item: DownloadItem
 
     var body: some View {
@@ -142,8 +143,9 @@ private struct DownloadRowView: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
-            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链）
+            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页
             player.playSingle(item.song)
+            router.showPlayer = true
         }
         .accessibilityElement(children: .combine)
     }

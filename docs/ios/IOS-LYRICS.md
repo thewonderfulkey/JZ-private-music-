@@ -138,6 +138,17 @@ python tools/ios/gen_traditional_map.py           # 从 Android 的 TraditionalM
 
 ## 8 装到手机上要看的三件事
 
-1. 放一首**有逐字歌词**的歌（酷狗源）→ 播放页点封面 → 歌词出现，当前行高亮并自动滚到中间。
+1. 放一首**有逐字歌词**的歌（酷狗源）→ 播放页点歌词面板（现在常驻，不用点封面）→ 歌词出现，当前行高亮并自动滚到中间。
 2. 一首**酷我来源**的歌 → 歌词来源显示"酷我"（行级时间，没有逐字）。
 3. 切歌 → 歌词跟着换；同一首切走再切回来 → 应该几乎立刻出现（4h 缓存命中）。
+
+## 9 2026-11-16 真机反馈「歌词全是空」的复盘（必读）
+
+老板真机录屏里歌词区一直是空的。排查结论是**两个问题叠在一起**，都不是解密算法：
+
+| 层 | 问题 | 证据 | 修法 |
+|---|---|---|---|
+| 网络 | `LddcLyrics` 里酷狗三个端点写的是 `http://`（complexsearch / lyrics.v1 / download） | iOS 的 ATS 默认拒绝明文请求，`URLSession` 直接返回 -1022 `NSURLErrorAppTransportSecurityRequiresSecureConnection`。**本地 Python 探针是通的**——因为 urllib 没有 ATS，这个差异把问题藏了整整两轮 | 三处改 `https://`（实测三个端点都 200）+ `Info.plist` 加 `NSAllowsArbitraryLoads`（音频直链也有一堆明文地址） |
+| 界面 | 歌词藏在"点封面"后面（`showLyrics` 默认 false），不点永远看不见；空态也没有重试 | 播放页代码 | 歌词面板常驻在封面下方；空态写原因 + 「重试」；打开播放页若仍为空自动再取一次（`PlayerEngine.reloadLyrics`） |
+
+这次改完，酷狗源在真机上才**第一次真的发起过请求**。剩下的未知只有"到手的数据在真机上能不能正确渲染"这一层，装机清单见 [IOS-PRODUCT-FIXES.md](IOS-PRODUCT-FIXES.md) §4。

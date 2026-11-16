@@ -14,6 +14,7 @@ struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
     @Environment(DownloadFlow.self) private var downloadFlow
+    @Environment(AppRouter.self) private var router
 
     @State private var segment: Segment = .favorites
 
@@ -44,6 +45,7 @@ struct LibraryView: View {
                             Button {
                                 player.play(queue: currentSongs, startAt: index)
                                 library.recordPlayed(song)
+                                router.showPlayer = true
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
@@ -112,10 +114,12 @@ struct LibraryView: View {
                         guard let first = library.favorites.first else { return }
                         player.play(queue: library.favorites,
                                     startAt: library.favorites.firstIndex(of: first) ?? 0)
+                        router.showPlayer = true
                     }
                     .font(.footnote.weight(.semibold))
                     Button("随机播放") {
                         player.replaceQueue(library.favorites, shuffle: true)
+                        router.showPlayer = true
                     }
                     .font(.footnote)
                     .foregroundStyle(.secondary)

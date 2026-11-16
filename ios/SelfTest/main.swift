@@ -1037,6 +1037,61 @@ do {
     check("自定义上限生效", LayoutRules.contentWidth(available: 900, max: 600) == 600)
 }
 
+// MARK: - 文本清洗 + 跨平台去重（v2.2 老板反馈 ⑦）
+
+section("文本清洗：接口里的字面量转义与 HTML 实体")
+
+do {
+    check("字面量 \\u0026 还原成 &（真机录屏里「周杰伦\\u0026Lara」的根因）",
+          TextClean.text("周杰伦\\u0026Lara梁心颐") == "周杰伦&Lara梁心颐",
+          TextClean.text("周杰伦\\u0026Lara梁心颐"))
+    check("中文转义也能还原", TextClean.text("\\u6674\\u5929") == "晴天", TextClean.text("\\u6674\\u5929"))
+    check("&nbsp; 变空格", TextClean.text("A&nbsp;B") == "A B")
+    check("&amp; 变 &", TextClean.text("A&amp;B") == "A&B")
+    check("零宽字符与 BOM 被清掉", TextClean.text("\u{200B}晴天\u{FEFF}") == "晴天")
+    check("首尾空白被 trim", TextClean.text("  晴天  ") == "晴天")
+    check("没有转义时原样返回", TextClean.text("晴天") == "晴天")
+
+    let cleaned = Song.make(platform: .qq, platformID: "c1", name: "珊瑚海",
+                            singer: "周杰伦\\u0026Lara梁心颐", album: "十一月的萧邦",
+                            duration: 260, picURL: nil)
+    check("Song.make 构造时就洗净（UI 层不再看到反斜杠）", cleaned.singer == "周杰伦&Lara梁心颐",
+          cleaned.singer)
+}
+
+section("跨平台去重：同一首只留匹配度最高的一条（对齐 APK songDedupeKey）")
+
+do {
+    let qq = song(.qq, "晴天", "周杰伦", id: "q1")
+    let netease = song(.netease, "晴天", "周杰伦", id: "n1")
+    let kuwo = song(.kuwo, "晴天", "周杰伦", id: "k1")
+    let merged = SearchRanker.dedupe([qq, netease, kuwo])
+    check("四家同名同歌手只留 1 条", merged.count == 1, "count=\(merged.count)")
+    check("留下的是输入顺序里第一条（= 排序后分数最高的那条）", merged.first?.platform == .qq,
+          merged.first?.platform.rawValue ?? "nil")
+
+    check("同一位歌手的另一首歌不合并",
+          SearchRanker.dedupe([qq, song(.qq, "七里香", "周杰伦", id: "q2")]).count == 2)
+    check("同名不同歌手不合并",
+          SearchRanker.dedupe([qq, song(.netease, "晴天", "某翻唱", id: "n9")]).count == 2)
+    check("不同版本（Live）不合并",
+          SearchRanker.dedupe([qq, song(.qq, "晴天 (Live)", "周杰伦", id: "q3")]).count == 2)
+
+    // 真机录屏里网易把《倔强》同一首歌吐了 5 条（ID 不同），这是最典型的那一类
+    let jj = (0..<5).map { song(.netease, "倔强", "五月天", id: "j\($0)") }
+    check("同平台同歌 5 条只留 1 条", SearchRanker.dedupe(jj).count == 1)
+
+    // 歌手字段带字面量转义的合唱曲：洗完以后应当和另一平台的干净写法合并
+    let dirty = song(.qq, "珊瑚海", "周杰伦\\u0026Lara梁心颐", id: "d1")
+    let clean = song(.kuwo, "珊瑚海", "周杰伦&Lara梁心颐", id: "d2")
+    check("脏歌手与干净歌手算同一首", SearchRanker.dedupe([dirty, clean]).count == 1)
+
+    check("归一化键只留数字/字母/汉字（对齐 Android 正则）",
+          SearchRanker.normalizedKey("Letting Go (Live)!") == "lettinggolive",
+          SearchRanker.normalizedKey("Letting Go (Live)!"))
+    check("归一化键保留汉字", SearchRanker.normalizedKey("晴天·周杰伦") == "晴天周杰伦")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

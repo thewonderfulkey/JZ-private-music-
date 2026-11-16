@@ -4,11 +4,15 @@ import SwiftUI
 //
 // 21 行，数据来自 DiscoverFeed 当天缓存（种子词四平台合并 + 原版优先挑选）。
 // 点任一行以整张榜单为队列起播——与「猜你喜欢」一致，不让用户一首一首点。
+//
+// 行样式统一走 `DiscoverSongRow`（与发现页热门模块同一套），不再单独维护一张 ChartRow：
+// 两处一旦各写一遍，改版时必然只改一处，看起来就是"同一个榜单两种样子"。
 struct HotChartView: View {
 
     @Environment(PlayerEngine.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(DiscoverFeed.self) private var feed
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
         Group {
@@ -37,12 +41,16 @@ struct HotChartView: View {
                             Button {
                                 player.play(queue: feed.hotSongs, startAt: index)
                                 library.recordPlayed(song)
+                                router.showPlayer = true
                             } label: {
-                                ChartRow(rank: index + 1, song: song)
+                                DiscoverSongRow(song: song,
+                                                reason: song.singer,
+                                                showReason: false,
+                                                rank: index + 1)
                             }
                             .buttonStyle(.plain)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            Divider().padding(.leading, Tokens.Spacing.pageMargin + 36)
+                            Divider().padding(.leading, Tokens.Spacing.pageMargin + 44)
                         }
                     }
                     .padding(.top, Tokens.Spacing.xs)

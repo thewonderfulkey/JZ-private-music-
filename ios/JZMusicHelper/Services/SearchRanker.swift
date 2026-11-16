@@ -113,4 +113,43 @@ enum SearchRanker {
         if field.contains(word) { return 40 }
         return 0
     }
+
+    // MARK: - 跨平台去重
+
+    /// 归一化键：小写 → 只留 `0-9` / `a-z` / CJK。
+    ///
+    /// 与 Android v2.1.10 `songDedupeKey` 同一口径（那边是
+    /// `lowercase().replace("&nbsp;"," ").replace("\\u0026","&").replace(Regex("[^0-9a-z\\u4e00-\\u9fff]"),"")`）。
+    /// 效果：《晴天》在 QQ / 网易 / 酷我 / 酷狗 各返回一条时只留匹配度最高的那条；
+    /// 《倔强》被网易返回 5 个同名的不同 ID（原版 + 各种 remaster）也只留 1 条。
+    static func dedupeKey(_ song: Song) -> String {
+        normalizedKey(TextClean.text(song.name)) + "|" + normalizedKey(TextClean.text(song.singer))
+    }
+
+    static func normalizedKey(_ raw: String) -> String {
+        let lower = raw.lowercased()
+        var out = String()
+        out.reserveCapacity(lower.count)
+        for scalar in lower.unicodeScalars {
+            let v = scalar.value
+            if (0x30...0x39).contains(v) || (0x61...0x7A).contains(v) || (0x4E00...0x9FFF).contains(v) {
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
+    }
+
+    /// 保持输入顺序去重（先排好序再进来 → 留下的天然是匹配度最高的那条）。
+    ///
+    /// 为什么放在排序之后：Android 侧是 `SearchRanker.rank(...).distinctBy { songDedupeKey(it) }`，
+    /// 先按分数排、再 distinct，等于「每个 (歌名, 歌手) 取最高分的那条」。顺序反过来就变成"先到先得"。
+    static func dedupe(_ songs: [Song]) -> [Song] {
+        var seen = Set<String>()
+        var out: [Song] = []
+        out.reserveCapacity(songs.count)
+        for s in songs where seen.insert(dedupeKey(s)).inserted {
+            out.append(s)
+        }
+        return out
+    }
 }

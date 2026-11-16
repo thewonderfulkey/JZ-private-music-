@@ -246,6 +246,7 @@ struct RecognizeView: View {
                                 player.playSingle(resolved)
                                 library.recordPlayed(resolved)
                                 Haptics.playbackToggle()
+                                router.showPlayer = true
                             } label: {
                                 Image(systemName: "play.circle.fill")
                                     .font(.system(size: 32))
@@ -286,6 +287,7 @@ struct RecognizeView: View {
                                 player.playSingle(song)
                                 library.recordPlayed(song)
                                 Haptics.playbackToggle()
+                                router.showPlayer = true
                             } label: {
                                 versionRow(song)
                             }
@@ -576,3 +578,4 @@ private struct FingerprintHostView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {}
 }
+

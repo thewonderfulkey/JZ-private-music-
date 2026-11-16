@@ -1,28 +1,31 @@
 import SwiftUI
 
-// MARK: - 发现（设计稿 §3.1）
+// MARK: - 发现（老板反馈 ①②⑥ 的全部改在这里）
 //
-// 上一版这里只有"最近播放 + 猜你喜欢"（都由本地历史派生），新用户打开就是三个静态分类 + 一行
-// "随 P1 接入"的占位——表现出来就是"发现页什么都没有"。这一版把三块都接上真数据：
-//   ① 编辑精选：内置池（DiscoverCatalog）按天轮换 20 首 → 点开歌单页，点单曲才去搜真实音源
-//   ② 猜你喜欢：从最近播放抽歌手 → 搜他们的歌 → 剔掉听过的（真数据派生，不是假推荐）
-//   ③ 热门音乐：种子词四平台并发搜索 → DiscoverRules.pick 选出 21 首 → 当天缓存
+// 结构（自上而下，v2.2 口径）：
+//   ① 搜索框：**搜索入口搬到发现页最上方**（不再占一个 Tab）
+//   ② 编辑精选：横向长方形纸卡（对齐 Android `EditorCard` 150×66dp 的比例），不再是 160×160 大方块
+//   ③ 最近播放：小封面横排（有播放记录才出现）
+//   ④ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
+//   ⑤ 热门音乐：同一套分页，行内带名次
+//
+// 三条数据链都是真数据（与 Android 同口径）：编辑精选是内置池按天轮换、热门是种子词实时搜索、
+// 猜你喜欢从最近播放抽歌手再搜——搜不到就显示失败态 + 重试，不放假歌糊页面。
 struct DiscoverView: View {
 
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
     @Environment(DiscoverFeed.self) private var feed
-
-    let onPlay: (Song) -> Void
-    var onOpenSearch: (() -> Void)? = nil
+    @Environment(AppRouter.self) private var router
 
     /// 编辑精选「换一批」的轮次：只在本次会话内叠加，不写盘（跨天本来就会换）
     @State private var rotation = 0
+    @State private var showSearch = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.xl) {
-                brandRow
+            LazyVStack(alignment: .leading, spacing: Tokens.Spacing.l) {
+                searchEntry
                 editorSection
                 recentSection
                 guessSection
@@ -34,15 +37,8 @@ struct DiscoverView: View {
         }
         .scrollIndicators(.hidden)
         .navigationTitle("发现")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    onOpenSearch?()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .accessibilityLabel("去搜索")
-            }
+        .navigationDestination(isPresented: $showSearch) {
+            SearchView()
         }
         .refreshable {
             await feed.refreshHot()
@@ -53,87 +49,73 @@ struct DiscoverView: View {
             if feed.guessState == .idle, !library.recentSongs.isEmpty {
                 await feed.refreshGuess(recent: library.recentSongs)
             }
+            openSearchIfIntentAsked()
         }
+        .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
     }
 
-    // MARK: 品牌行
+    /// 快捷指令「搜索歌曲」把词塞进 router，回到发现页时自动把搜索页推到前台
+    private func openSearchIfIntentAsked() {
+        guard router.pendingSearch != nil else { return }
+        showSearch = true
+    }
 
-    private var brandRow: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
-            // 印章只作装饰（设计稿 §2），无障碍隐藏
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(Tokens.Palette.vermilion)
-                .frame(width: 14, height: 14)
-                .rotationEffect(.degrees(-4))
-                .accessibilityHidden(true)
-            Text("发现音乐")
-                .font(.footnote.weight(.medium))
-                .tracking(4)
-                .foregroundStyle(.secondary)
+    // MARK: 顶部搜索入口（反馈 ⑥）
+
+    private var searchEntry: some View {
+        Button {
+            showSearch = true
+        } label: {
+            HStack(spacing: Tokens.Spacing.xs) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("搜索歌曲、歌手、专辑")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+                Text("四家一起找")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, Tokens.Spacing.s)
+            .frame(minHeight: 42)
+            .background(Capsule().fill(Tokens.Palette.paperElevated))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         }
+        .buttonStyle(.plain)
         .padding(.horizontal, Tokens.Spacing.pageMargin)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("发现音乐")
+        .accessibilityLabel("搜索歌曲、歌手、专辑")
+        .accessibilityHint("打开搜索页")
     }
 
-    // MARK: 编辑精选
+    // MARK: 编辑精选（反馈 ①：长方形卡）
 
     private var editorSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
-            SectionHeader(title: "编辑精选", actionTitle: "换一批") {
-                Haptics.refresh()
-                withAnimation(Tokens.Motion.stateChange) { rotation += 1 }
-            }
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            DiscoverSectionHeader(title: "编辑精选", meta: "每日换一批",
+                                  actionTitle: "换一批",
+                                  action: {
+                                      Haptics.refresh()
+                                      withAnimation(Tokens.Motion.stateChange) { rotation += 1 }
+                                  })
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Tokens.Spacing.s) {
+                HStack(spacing: Tokens.Spacing.xs) {
                     ForEach(DiscoverCatalog.playlists) { playlist in
                         NavigationLink {
                             EditorPlaylistView(playlist: playlist, rotation: rotation)
                         } label: {
-                            playlistCard(playlist)
+                            EditorPlaylistCard(playlist: playlist)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(playlist.title)，20 首，今日精选")
+                        .accessibilityLabel("\(playlist.title)，20 首，每日换一批")
                     }
                 }
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
+                .padding(.vertical, 2)
             }
         }
-    }
-
-    private func playlistCard(_ playlist: DiscoverCatalog.Playlist) -> some View {
-        let accent = Color(hex: playlist.accentHex)
-        return VStack(alignment: .leading, spacing: 0) {
-            ZStack {
-                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: [accent.opacity(0.34), accent.opacity(0.10)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                Image(systemName: "music.note")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(accent.opacity(0.85))
-            }
-            .frame(width: 160, height: 160)
-            .overlay(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(accent)
-                    .frame(width: 26, height: 3)
-                    .padding(Tokens.Spacing.s)
-            }
-
-            Text(playlist.title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .padding(.top, Tokens.Spacing.xs)
-            Text("20 首 · 每日换一批")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .frame(width: 160, alignment: .leading)
-        .contentShape(Rectangle())
     }
 
     // MARK: 最近播放
@@ -141,17 +123,17 @@ struct DiscoverView: View {
     @ViewBuilder
     private var recentSection: some View {
         if !library.recentSongs.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
-                SectionHeader(title: "最近播放")
+            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                DiscoverSectionHeader(title: "最近播放", meta: "\(library.recentSongs.count) 首")
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Tokens.Spacing.s) {
                         ForEach(library.recentSongs.prefix(8)) { song in
                             MediaCard(title: song.name,
                                       subtitle: song.singer,
-                                      artwork: AnyView(SongArtwork(song: song, size: 112,
+                                      artwork: AnyView(SongArtwork(song: song, size: 104,
                                                                    radius: Tokens.Radius.artworkSmall)),
-                                      size: 112,
-                                      onTap: { onPlay(song) })
+                                      size: 104,
+                                      onTap: { play([song], at: 0) })
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -160,70 +142,70 @@ struct DiscoverView: View {
         }
     }
 
-    // MARK: 猜你喜欢
+    // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
 
-    @ViewBuilder
     private var guessSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("猜你喜欢")
-                    .font(FontRole.sectionTitle)
-                Spacer()
-                if !library.recentSongs.isEmpty, feed.guessState != .loading {
-                    Button("换一批") {
-                        Haptics.refresh()
-                        Task { await feed.nextGuessRound(recent: library.recentSongs) }
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(Tokens.Palette.vermilion)
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, Tokens.Spacing.pageMargin)
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            DiscoverSectionHeader(
+                title: "猜你喜欢",
+                meta: library.recentSongs.isEmpty ? nil : "根据你的播放",
+                actionTitle: (library.recentSongs.isEmpty || feed.guessState == .loading) ? nil : "换一批",
+                action: {
+                    Haptics.refresh()
+                    Task { await feed.nextGuessRound(recent: library.recentSongs) }
+                })
 
-            if library.recentSongs.isEmpty {
-                // 首启（纯新用户）：不放假推荐，只说明这里会长出来什么
-                PendingFeatureRow(title: "还没有推荐",
-                                  note: "多听几首，这里会根据你的播放记录长出来")
-            } else if feed.guessState == .loading {
-                SkeletonRows(count: 3)
-            } else if feed.guessState == .failed {
-                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                    StatusLine(kind: .error("推荐暂时取不到，稍后再试"))
-                    Button("重试") {
-                        Task { await feed.refreshGuess(recent: library.recentSongs) }
+            Group {
+                if library.recentSongs.isEmpty {
+                    GuessEmptyGuide()
+                } else if feed.guessState == .loading {
+                    SkeletonRows(count: 3)
+                } else if feed.guessState == .failed || feed.guessSongs.isEmpty {
+                    if feed.guessState == .failed {
+                        retryBlock("推荐暂时取不到，稍后再试") {
+                            Task { await feed.refreshGuess(recent: library.recentSongs) }
+                        }
+                    } else {
+                        GuessEmptyGuide()
                     }
-                    .font(.footnote)
-                    .foregroundStyle(Tokens.Palette.vermilion)
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(feed.guessSongs.prefix(5).enumerated()), id: \.element.id) { index, song in
+                } else {
+                    songListCard(count: feed.guessSongs.count) { index in
+                        let song = feed.guessSongs[index]
                         Button {
-                            player.play(queue: Array(feed.guessSongs.prefix(5)), startAt: index)
-                            library.recordPlayed(song)
+                            play(feed.guessSongs, at: index)
                         } label: {
-                            SongRow(song: song,
-                                    subtitle: "\(song.singer) · 根据你最近的播放")
+                            DiscoverSongRow(song: song,
+                                            reason: guessReason(for: song),
+                                            showReason: true,
+                                            rank: nil)
                         }
                         .buttonStyle(.plain)
-                        .padding(.horizontal, Tokens.Spacing.pageMargin)
-                        Divider().padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                     }
                 }
             }
         }
     }
 
-    // MARK: 热门音乐
+    /// 推荐理由：能对上最近播放的歌手就写「因为你在听 X」，否则退一句实话
+    private func guessReason(for song: Song) -> String {
+        if let hit = library.recentSongs.first(where: {
+            !$0.singer.isEmpty && NameMatch.singerMatches($0.singer, song.singer)
+        }) {
+            return "因为你在听 \(hit.singer)"
+        }
+        return "根据你的播放记录"
+    }
+
+    // MARK: 热门音乐（反馈 ②：与猜你喜欢同一套分页）
 
     private var hotSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.s) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
                 Text("热门音乐")
                     .font(FontRole.sectionTitle)
+                Text("每日更新")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
                 Spacer()
                 if !feed.hotSongs.isEmpty {
                     NavigationLink("查看全部") { HotChartView() }
@@ -233,75 +215,313 @@ struct DiscoverView: View {
             }
             .padding(.horizontal, Tokens.Spacing.pageMargin)
 
-            switch feed.hotState {
-            case .idle, .loading:
-                SkeletonRows(count: 3)
-            case .failed:
-                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                    StatusLine(kind: .error("榜单暂时取不到，稍后再试"))
-                    Button("重试") {
+            Group {
+                switch feed.hotState {
+                case .idle, .loading:
+                    SkeletonRows(count: 3)
+                case .failed:
+                    retryBlock("榜单暂时取不到，稍后再试") {
                         Task { await feed.refreshHot() }
                     }
-                    .font(.footnote)
-                    .foregroundStyle(Tokens.Palette.vermilion)
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
-            case .loaded:
-                VStack(spacing: 0) {
-                    ForEach(Array(feed.hotSongs.prefix(7).enumerated()), id: \.element.id) { index, song in
+                case .loaded:
+                    songListCard(count: min(feed.hotSongs.count, 21)) { index in
+                        let song = feed.hotSongs[index]
                         Button {
-                            player.play(queue: feed.hotSongs, startAt: index)
-                            library.recordPlayed(song)
+                            play(Array(feed.hotSongs.prefix(21)), at: index)
                         } label: {
-                            ChartRow(rank: index + 1, song: song)
+                            DiscoverSongRow(song: song,
+                                            reason: song.singer,
+                                            showReason: false,
+                                            rank: index + 1)
                         }
                         .buttonStyle(.plain)
-                        .padding(.horizontal, Tokens.Spacing.pageMargin)
-                        Divider().padding(.leading, Tokens.Spacing.pageMargin + 36)
                     }
                 }
             }
         }
     }
+
+    // MARK: 卡片外壳
+
+    /// 三行一页的列表卡：分页控件 + 纸卡底 + 细描边
+    private func songListCard<Row: View>(count: Int,
+                                         @ViewBuilder row: @escaping (Int) -> Row) -> some View {
+        PagedRows(count: count, perPage: 3, content: row)
+            .padding(.vertical, Tokens.Spacing.xxs)
+            .background(
+                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                    .fill(Tokens.Palette.paperElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+            )
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+    }
+
+    private func retryBlock(_ message: String, retry: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            StatusLine(kind: .error(message))
+            Button("重试", action: retry)
+                .font(.footnote)
+                .foregroundStyle(Tokens.Palette.vermilion)
+                .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+    }
+
+    // MARK: 播放
+
+    private func play(_ songs: [Song], at index: Int) {
+        guard songs.indices.contains(index) else { return }
+        player.play(queue: songs, startAt: index)
+        library.recordPlayed(songs[index])
+        router.showPlayer = true
+    }
 }
 
-// MARK: - 榜单行（发现页用前 7 行，榜单页用全部）
+// MARK: - 区块标题
 
-struct ChartRow: View {
-    let rank: Int
-    let song: Song
+struct DiscoverSectionHeader: View {
+    let title: String
+    var meta: String?
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    /// 显式 init：可选参数的默认值不依赖 memberwise 的推断，读起来也明确
+    init(title: String, meta: String? = nil, actionTitle: String? = nil,
+         action: (() -> Void)? = nil) {
+        self.title = title
+        self.meta = meta
+        self.actionTitle = actionTitle
+        self.action = action
+    }
 
     var body: some View {
-        HStack(spacing: Tokens.Spacing.s) {
-            Text("\(rank)")
-                .font(.footnote.weight(.semibold).monospacedDigit())
-                .foregroundStyle(rank <= 3 ? Tokens.Palette.vermilion : Color.secondary)
-                .frame(width: 20, alignment: .trailing)
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
+            Text(title)
+                .font(FontRole.sectionTitle)
+            if let meta {
+                Text(meta)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .font(.footnote)
+                    .foregroundStyle(Tokens.Palette.vermilion)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+    }
+}
 
-            SongArtwork(song: song, size: 44, radius: Tokens.Radius.artworkSmall)
+// MARK: - 编辑精选卡（长方形，对齐 Android `EditorCard`）
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(song.name)
-                    .font(FontRole.songTitle)
+/// Android 是 150×66dp 的白卡：左边色条 + 歌单名 + 首数 + 右箭头。
+/// iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
+struct EditorPlaylistCard: View {
+
+    let playlist: DiscoverCatalog.Playlist
+
+    private var accent: Color { Color(hex: playlist.accentHex) }
+
+    var body: some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(accent)
+                .frame(width: 3, height: 26)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(playlist.title)
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(song.singer)
-                    .font(FontRole.songSubtitle)
+                Text("20 首 · 每日换一批")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
-            Spacer(minLength: Tokens.Spacing.xs)
+            Spacer(minLength: 0)
 
-            Text(song.durationText)
-                .font(FontRole.metadata)
-                .monospacedDigit()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tertiary)
         }
-        .frame(minHeight: Tokens.Size.songRowHeight)
+        .padding(.horizontal, Tokens.Spacing.s)
+        .padding(.vertical, Tokens.Spacing.xs)
+        .frame(width: 170, alignment: .leading)
+        .frame(minHeight: 64)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .fill(Tokens.Palette.paperElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 列表行（猜你喜欢 / 热门音乐共用）
+
+struct DiscoverSongRow: View {
+    let song: Song
+    var reason: String
+    /// 猜你喜欢：副行显示推荐理由；热门：副行只显示歌手
+    var showReason: Bool
+    /// 热门音乐的名次（从 1 开始）；猜你喜欢传 nil
+    var rank: Int?
+
+    init(song: Song, reason: String, showReason: Bool, rank: Int? = nil) {
+        self.song = song
+        self.reason = reason
+        self.showReason = showReason
+        self.rank = rank
+    }
+
+    var body: some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            if let rank {
+                Text(String(format: "%02d", rank))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(rank <= 3 ? Tokens.Palette.vermilion : Color.secondary)
+                    .frame(width: 20, alignment: .trailing)
+            }
+
+            SongArtwork(song: song, size: 46, radius: Tokens.Radius.artworkSmall)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(song.name)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if showReason {
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(Tokens.Palette.vermilion)
+                            .lineLimit(1)
+                    }
+                    Text(song.singer.isEmpty ? "未知歌手" : song.singer)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: Tokens.Spacing.xxs)
+
+            Image(systemName: "play.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, Tokens.Spacing.s)
+        .frame(minHeight: 56)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("第 \(rank) 名，\(song.name)，\(song.singer)，\(song.durationText)")
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("轻点播放")
+    }
+
+    private var accessibilityText: String {
+        let prefix = rank.map { "第 \($0) 名，" } ?? ""
+        let lead = showReason ? "\(reason)，" : ""
+        return "\(prefix)\(song.name)，\(lead)\(song.singer)"
+    }
+}
+
+// MARK: - 三行一页的横向分页列表
+
+/// 与 Android「猜你喜欢 / 热门音乐」同一套翻页口径：一页 3 行、左右滑、翻页指示做成一排小胶囊。
+/// 高度必须给死（TabView 的分页容器没有固有高度），所以行高走 `@ScaledMetric` 跟随 Dynamic Type。
+struct PagedRows<Content: View>: View {
+
+    let count: Int
+    let perPage: Int
+    let content: (Int) -> Content
+
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 60
+    @State private var page = 0
+
+    /// 显式写 init 而不是靠 memberwise：`@ViewBuilder` 要落到参数上，
+    /// 属性上的 result builder 到底传不传给 memberwise init 这件事，不同 Swift 版本表现不一样。
+    init(count: Int, perPage: Int, @ViewBuilder content: @escaping (Int) -> Content) {
+        self.count = count
+        self.perPage = perPage
+        self.content = content
+    }
+
+    private var pageCount: Int { max(1, (count + perPage - 1) / perPage) }
+
+    var body: some View {
+        VStack(spacing: Tokens.Spacing.xxs) {
+            TabView(selection: $page) {
+                ForEach(0..<pageCount, id: \.self) { p in
+                    VStack(spacing: 0) {
+                        ForEach(0..<perPage, id: \.self) { i in
+                            let index = p * perPage + i
+                            Group {
+                                if index < count {
+                                    content(index)
+                                } else {
+                                    Color.clear
+                                }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .tag(p)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: rowHeight * CGFloat(perPage))
+
+            if pageCount > 1 {
+                pageDots
+            }
+        }
+    }
+
+    private var pageDots: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<pageCount, id: \.self) { i in
+                Capsule()
+                    .fill(i == page ? Color.primary.opacity(0.55) : Color.primary.opacity(0.15))
+                    .frame(width: i == page ? 14 : 5, height: 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, Tokens.Spacing.s)
+        .padding(.bottom, 2)
+        .animation(.easeInOut(duration: 0.2), value: page)
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - 猜你喜欢空态（纯新用户）
+
+struct GuessEmptyGuide: View {
+    var body: some View {
+        VStack(spacing: Tokens.Spacing.xxs) {
+            Text("猜你喜欢")
+                .font(.subheadline.weight(.semibold))
+            Text("多听几首，这里会根据你的播放记录长出来")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(Tokens.Spacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .fill(Tokens.Palette.paperElevated.opacity(0.6))
+        )
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
 }
 
