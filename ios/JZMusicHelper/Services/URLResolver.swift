@@ -10,10 +10,11 @@ enum ResolveEvent {
 
 /// 跨轮次复用的"已试过的候选"集合（Android 侧是 MutableSet，这里用引用类型避免 inout 跨 await）
 final class TriedKeys: @unchecked Sendable {
-    private(set) var set: Set<String> = []
-    var count: Int { set.count }
-    func contains(_ k: String) -> Bool { set.contains(k) }
-    func insert(_ k: String) { set.insert(k) }
+    // 注意：属性不能叫 `set`——和属性 setter 的关键字冲突（`var count: Int { set.count }` 会被当成 setter 定义）
+    private(set) var keys: Set<String> = []
+    var count: Int { keys.count }
+    func contains(_ k: String) -> Bool { keys.contains(k) }
+    func insert(_ k: String) { keys.insert(k) }
 }
 
 // MARK: - 并发取流
