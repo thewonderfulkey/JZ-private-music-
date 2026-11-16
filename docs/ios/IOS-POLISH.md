@@ -61,10 +61,11 @@ CI 门禁：`check_ui_hygiene.py` 的 R1/R2 两条规则（18 个界面文件全
 
 | 验证 | 手段 | 结果 |
 |---|---|---|
-| 版式规则（限宽/宽屏） | CI `logic-tests` | ✅ 10 条断言 |
+| 版式规则（限宽/宽屏） | CI `logic-tests` | ✅ 10 条断言；全套 **346 条全绿**，run [#43838743701](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43838743701) |
 | 界面卫生（字号/行高） | CI 门禁 `check_ui_hygiene.py` | ✅ 18 个文件全绿 |
 | 工程结构（pbxproj） | CI 门禁 `check_pbxproj.py` | ✅ 175 个对象 / 2 target |
 | **VoiceOver 实际朗读顺序 / AX5 实际排版 / iPad 实际观感** | ❌ 无设备 | **未验证**（§6 是人工清单） |
+| 产物 | CI `build-ipa` | ✅ `JZ-Music-v2.1.95-650a8e1-r47-ios-unsigned.ipa` 已发飞书群 |
 
 ---
 
