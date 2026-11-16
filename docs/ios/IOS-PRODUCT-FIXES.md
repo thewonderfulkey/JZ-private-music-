@@ -340,7 +340,7 @@ Views/MiniPlayerBar.swift             safeAreaInset → overlay 浮层 + MiniPla
 Views/Components.swift                SongArtwork 优先用下载时存的本地封面
 Views/RootTabView.swift / DiscoverView / LibraryView / SearchTabView / DownloadsTabView / EditorPlaylistView / HotChartView / RecognizeView / SettingsView
                                       迷你条挂载改名 + 每个列表末尾占位；下载页整列队列；歌单页后台补队列
-ios/SelfTest/main.swift               +68 条断言（留白 4 / 歌词手感 9 / 文件头 10 / 版本惩罚 9 / 排序与验收 12 / 下载旁车与 ID3 24）
+ios/SelfTest/main.swift               +70 条断言（留白 4 / 歌词手感 9 / 文件头 10 / 版本惩罚 9 / 排序与验收 13 / 下载旁车与 ID3 25）
 ios/JZMusicHelper.xcodeproj           新文件挂载 + MARKETING_VERSION 2.1.97 / CURRENT_PROJECT_VERSION 155
 .github/workflows/ios-ipa.yml         logic-tests 清单加 DownloadCompanion.swift（AudioTagEmbedder 只进 App）
 android/app/build.gradle.kts          versionCode 155 / versionName 2.1.97
@@ -350,7 +350,7 @@ android/app/build.gradle.kts          versionCode 155 / versionName 2.1.97
 
 | 项 | 手段 | 结论 |
 |---|---|---|
-| 纯逻辑 | CI logic-tests（swiftc + 断言） | 见下（本轮 +68 条） |
+| 纯逻辑 | CI logic-tests（swiftc + 断言） | **461 条全绿**（r61 的 391 + 本轮 70：留白 4 / 歌词手感 9 / 文件头 10 / 版本惩罚 9 / 排序与验收 13 / 下载旁车与 ID3 25） |
 | 界面卫生 | `python tools/ios/check_ui_hygiene.py` | 18 个界面文件通过 |
 | 工程结构 | `python tools/ios/check_pbxproj.py` | 179 个对象 / 2 个 target 通过 |
 | 语法 | tree-sitter-swift 解析 `ios/**/*.swift` | 68 个文件，0 个新 ERROR（唯一命中的仍是 SelfTest 里那段 `\{` 多行字符串样本，老问题） |
@@ -360,4 +360,22 @@ android/app/build.gradle.kts          versionCode 155 / versionName 2.1.97
 
 ## 四、本轮出的包（**装这个**）
 
-（CI 出包后回填）
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.1.97-4e9b09d-r62-ios-unsigned.ipa` |
+| 大小 | 1,725,119 字节（≈1.65 MB） |
+| SHA-256 | `d1680bd1a4dd92e9d0c71d02fa43fd80499a1849f65139ee63047b5ecbbc2530` |
+| CI | [run #62](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43904747643)（一次过：逻辑断言 ✅ / BUILD SUCCEEDED / 插件在包里 ✅ / 发飞书群 ✅） |
+| 提交 | `4e9b09d` |
+| 包内自证 | `Info.plist` 里 `CFBundleShortVersionString = 2.1.97` / `CFBundleVersion = 155`；二进制里有新类型 `DownloadCompanion` / `AudioTagEmbedder`（下载词图内嵌）与 `PlayerQueueSheet` |
+
+> 认包只认 `4e9b09d-r62`。r61（dcf6f85）是上一轮的包，里面还是"封面到播放栏一大段空白 + 小框歌词 + 只下一首的队列"。
+
+## 五、装机按这个顺序试
+
+1. **播放页版式（①）**：封面到功能键之间不再有一大截空白；歌名下面的音质标签是**居中**的。
+2. **歌词页（④⑤⑥⑦）**：双击封面 → 整页歌词（没有圆角小框）；上下滑歌词，**停手约 4 秒**才回到正在唱的那句，期间点「回到当前」立刻回；滑动时手指扫过空白不会跳歌；在歌词页上下滑**不会**把播放页收起来；右上角「封面」能回封面。
+3. **歌词对不对版（③）**：搜「七里香 周杰伦」播原版，看词是不是录音室版（副歌顺序对、逐行能跟上）。仍差一点就用「慢一点 / 快一点」（每下 200ms，最多 ±2s）。
+4. **播放列表（②）**：从「下载」页点一首 → 打开播放列表，应该是**整列**；列表循环能自动下一首。精选歌单点单曲同理（其余曲目会边放边补进队列）。
+5. **离线词图（⑧）**：下载一首（等几十秒让补料跑完），下载列表那行会多一句「已内嵌歌词+封面」/「歌词封面已存旁车」；开飞行模式，点已下载的歌 → 封面和歌词都还在。
+6. **悬浮栏（⑨）**：每个 Tab 滚到最底、搜索结果滚到最底，最后一条都能完整露出来，不被播放条压住。
