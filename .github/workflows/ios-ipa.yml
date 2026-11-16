@@ -304,20 +304,31 @@ jobs:
           echo "APP=$APP"
           xcrun simctl install "$DEVICE" "$APP"
 
-      - name: 启动 App 并截图（首启 + 重进）
+      - name: 启动 App 并截图（六个页面）
         run: |
           set -euo pipefail
           DEVICE=$(xcrun simctl list devices available | grep -Eo "iPhone 1[6-9]( Pro| Plus)? " | head -1 | xargs)
           mkdir -p shots
-          # 关掉通知权限弹窗，否则首启截图会被系统弹窗盖住
-          SIMCTL_CHILD_JZ_SKIP_NOTIFICATION_PROMPT=1 xcrun simctl launch --terminate-running-process "$DEVICE" com.jz.musichelper
-          sleep 8
-          xcrun simctl io "$DEVICE" screenshot shots/01-launch.png
-          xcrun simctl terminate "$DEVICE" com.jz.musichelper || true
-          sleep 1
-          SIMCTL_CHILD_JZ_SKIP_NOTIFICATION_PROMPT=1 xcrun simctl launch "$DEVICE" com.jz.musichelper
-          sleep 6
-          xcrun simctl io "$DEVICE" screenshot shots/02-relaunch.png
+
+          shot() {   # $1=文件名 $2=Tab $3=搜索词（可空） $4=等待秒数
+            local name="$1" tab="$2" query="$3" wait="$4"
+            xcrun simctl terminate "$DEVICE" com.jz.musichelper || true
+            sleep 1
+            SIMCTL_CHILD_JZ_SKIP_NOTIFICATION_PROMPT=1 \
+            SIMCTL_CHILD_JZ_SMOKE_TAB="$tab" \
+            SIMCTL_CHILD_JZ_SMOKE_QUERY="$query" \
+              xcrun simctl launch --terminate-running-process "$DEVICE" com.jz.musichelper
+            sleep "$wait"
+            xcrun simctl io "$DEVICE" screenshot "shots/$name.png"
+            echo "已截图：$name（tab=$tab query=$query）"
+          }
+
+          shot 01-discover    discover  ""      8
+          shot 02-search      search    "晴天"  14
+          shot 03-recognize   recognize ""      5
+          shot 04-downloads   downloads ""      4
+          shot 05-library     library   ""      4
+          shot 06-relaunch    discover  ""      6
           ls -la shots
 
       - name: 留存截图

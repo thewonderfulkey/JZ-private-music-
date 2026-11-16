@@ -9,7 +9,7 @@ import Observation
 @Observable
 final class AppRouter {
 
-    enum Tab: Hashable {
+    enum Tab: String, Hashable {
         case discover, search, recognize, downloads, library
     }
 
@@ -19,4 +19,17 @@ final class AppRouter {
     var pendingSearch: String?
     /// 待消费的"立刻开始识曲"标记
     var pendingRecognize = false
+
+    init() {
+        // 仅给 CI 的模拟器冒烟用：JZ_SMOKE_TAB=search JZ_SMOKE_QUERY=晴天 就能直达某个页面并直接搜，
+        // 这样六个页面都能被截图验证。正常启动不带这两个变量，行为完全不变。
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["JZ_SMOKE_TAB"], let tab = Tab(rawValue: raw) {
+            self.tab = tab
+        }
+        if let query = env["JZ_SMOKE_QUERY"], !query.isEmpty {
+            self.pendingSearch = query
+            self.tab = .search
+        }
+    }
 }
