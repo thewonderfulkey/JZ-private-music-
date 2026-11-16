@@ -127,6 +127,28 @@ final class APIClient {
         return obj
     }
 
+    /// POST 二进制体（酷狗识曲：裸 PCM 要参与签名，不能用字符串体）
+    func postBytes(_ urlString: String,
+                   body: Data,
+                   contentType: String,
+                   headers: [String: String] = [:],
+                   timeout: TimeInterval = 20) async throws -> String {
+        guard let url = URL(string: urlString) else { throw APIError.invalidURL(urlString) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        request.setValue(APIClient.acceptJSON, forHTTPHeaderField: "Accept")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
+        if let s = String(data: data, encoding: .utf8) { return s }
+        return String(data: data, encoding: .isoLatin1) ?? ""
+    }
+
     // MARK: 编码
 
     /// 与 Android `urlEncode` 等价：百分号编码，空格 → %20（不用 `+`）

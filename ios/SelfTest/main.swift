@@ -742,6 +742,69 @@ do {
           })
 }
 
+// MARK: - 识曲打分（P3）
+
+section("识曲打分：原唱标记 / 裸名 / 专辑 / 跨通道互证")
+
+do {
+    func hit(_ title: String, _ artist: String, _ album: String, _ dur: Int,
+             _ source: String, _ rank: Int, _ isOriginal: Int) -> RecognizeCandidate {
+        RecognizeCandidate(title: title, artist: artist, album: album, durationSec: dur,
+                           source: source, rank: rank, isOriginal: isOriginal)
+    }
+
+    let kugouOriginal = hit("晴天", "周杰伦", "叶惠美", 269, RecognizeScore.sourceKugou, 0, 1)
+    let kugouCover = hit("晴天 (Live)", "周杰伦", "叶惠美", 269, RecognizeScore.sourceKugou, 1, 2)
+    let neteaseOriginal = hit("晴天", "周杰伦", "叶惠美", 269, RecognizeScore.sourceNetease, 0, -1)
+    let neteaseCover = hit("晴天(深情版)", "Lucky小爱", "晴天(深情版)", 268,
+                           RecognizeScore.sourceNetease, 0, -1)
+
+    // ① 单条打分：45（原唱）+12（裸名）+15（正式专辑）+4（时长）+7（第 1 条）
+    check("酷狗原唱单条 83 分", RecognizeScore.memberScore(kugouOriginal) == 83,
+          "\(RecognizeScore.memberScore(kugouOriginal))")
+    check("翻唱/现场版明显更低",
+          RecognizeScore.memberScore(kugouCover) < RecognizeScore.memberScore(kugouOriginal),
+          "\(RecognizeScore.memberScore(kugouCover))")
+    check("同名合集专辑被压分", RecognizeScore.memberScore(neteaseCover) < 0,
+          "\(RecognizeScore.memberScore(neteaseCover))")
+
+    // ② 单通道：分数原样带出
+    let single = RecognizeScore.fuse(kugou: [kugouOriginal], netease: [])
+    check("单通道取最高分", single?.ranked.first?.score == 83, "\(single?.ranked.first?.score ?? -999)")
+    check("单通道只报酷狗", single?.bestByChannel[RecognizeScore.sourceKugou] == 83)
+    check("单通道没有网易分", single?.bestByChannel[RecognizeScore.sourceNetease] == nil)
+    check("单通道结论写「采用酷狗」", single?.note.contains("采用酷狗") == true, single?.note ?? "")
+
+    // ③ 双通道互证：同一身份合并 +50
+    let fused = RecognizeScore.fuse(kugou: [kugouOriginal], netease: [neteaseOriginal])
+    check("两通道同一首合成一个身份", fused?.ranked.count == 1, "\(fused?.ranked.count ?? -1)")
+    check("互证加 50 分", fused?.ranked.first?.score == 133, "\(fused?.ranked.first?.score ?? -999)")
+    check("互证结论", fused?.note.contains("双通道互证") == true, fused?.note ?? "")
+
+    // ④ 酷狗给翻唱、网易给原唱时，原唱那一条要赢
+    let covered = RecognizeScore.fuse(kugou: [kugouCover], netease: [neteaseOriginal])
+    check("原唱身份排在翻唱前", covered?.ranked.first?.rep.title == "晴天",
+          covered?.ranked.first?.rep.title ?? "")
+    check("翻唱身份被压到后面", (covered?.ranked.count ?? 0) >= 1)
+    check("原唱那一条分数更高",
+          (covered?.ranked.first?.score ?? -999) > (covered?.ranked.last?.score ?? 999),
+          "\(covered?.ranked.first?.score ?? -999) vs \(covered?.ranked.last?.score ?? 999)")
+
+    // ⑤ 身份键：繁简/标点归一后同键
+    check("身份键跨通道一致",
+          RecognizeScore.identityKey(kugouOriginal) == RecognizeScore.identityKey(neteaseOriginal))
+    check("合唱取第一位歌手", RecognizeScore.firstArtist("张杰、胡迪/范如臣") == "张杰",
+          RecognizeScore.firstArtist("张杰、胡迪/范如臣"))
+
+    // ⑥ 判词：专辑名就是歌名 / 综艺专辑
+    check("专辑名等于歌名判同名合集",
+          RecognizeJudge.isSameAlbumAsTitle("我们都一样 EP", "我们都一样"))
+    check("综艺专辑被认出", RecognizeJudge.isVarietyAlbum("异口同声 第十二期"))
+    check("正式专辑不误判", !RecognizeJudge.isVarietyAlbum("叶惠美"))
+    check("Live 歌名被认出", RecognizeJudge.isVariantTitle("晴天 (Live)"))
+    check("裸名不误判", !RecognizeJudge.isVariantTitle("晴天"))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

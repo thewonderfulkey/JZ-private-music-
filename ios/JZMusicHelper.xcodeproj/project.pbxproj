@@ -56,6 +56,9 @@
 		B00000000000000000000035 /* DiscoverFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000037 /* DiscoverFeed.swift */; };
 		B00000000000000000000036 /* EditorPlaylistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000038 /* EditorPlaylistView.swift */; };
 		B00000000000000000000037 /* HotChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000039 /* HotChartView.swift */; };
+		B00000000000000000000038 /* RecognizeScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003A /* RecognizeScore.swift */; };
+		B00000000000000000000039 /* KugouRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003B /* KugouRecognizer.swift */; };
+		B0000000000000000000003A /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003C /* AudioCapture.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -110,6 +113,9 @@
 		F00000000000000000000037 /* DiscoverFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverFeed.swift; sourceTree = "<group>"; };
 		F00000000000000000000038 /* EditorPlaylistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPlaylistView.swift; sourceTree = "<group>"; };
 		F00000000000000000000039 /* HotChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotChartView.swift; sourceTree = "<group>"; };
+		F0000000000000000000003A /* RecognizeScore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeScore.swift; sourceTree = "<group>"; };
+		F0000000000000000000003B /* KugouRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KugouRecognizer.swift; sourceTree = "<group>"; };
+		F0000000000000000000003C /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +191,9 @@
 				F00000000000000000000033 /* DownloadFlow.swift */,
 				F00000000000000000000036 /* DiscoverRules.swift */,
 				F00000000000000000000037 /* DiscoverFeed.swift */,
+				F0000000000000000000003A /* RecognizeScore.swift */,
+				F0000000000000000000003B /* KugouRecognizer.swift */,
+				F0000000000000000000003C /* AudioCapture.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -338,6 +347,9 @@
 				B00000000000000000000035 /* DiscoverFeed.swift in Sources */,
 				B00000000000000000000036 /* EditorPlaylistView.swift in Sources */,
 				B00000000000000000000037 /* HotChartView.swift in Sources */,
+				B00000000000000000000038 /* RecognizeScore.swift in Sources */,
+				B00000000000000000000039 /* KugouRecognizer.swift in Sources */,
+				B0000000000000000000003A /* AudioCapture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

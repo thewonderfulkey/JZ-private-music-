@@ -60,6 +60,7 @@ jobs:
             ios/JZMusicHelper/Services/PlaybackRules.swift \
             ios/JZMusicHelper/Services/DownloadGuard.swift \
             ios/JZMusicHelper/Services/DiscoverRules.swift \
+            ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Models/DiscoverCatalog.swift \
             ios/JZMusicHelper/Services/LyricsModel.swift \
             ios/JZMusicHelper/Services/LyricsCleaning.swift \
