@@ -208,6 +208,16 @@ jobs:
             echo "| 运行 | [第 $GITHUB_RUN_NUMBER 次]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # 扩展是不是真的被嵌进去了：只看"编译成功"是不够的（copy phase 漏挂也会 BUILD SUCCEEDED）
+      - name: 校验插件已嵌入（PlugIns/*.appex）
+        run: |
+          set -euo pipefail
+          unzip -l "$ARTIFACT_DIR/${{ steps.pkg.outputs.ipa }}" | tee build/ipa-list.txt
+          if ! grep -qE "PlugIns/.*\.appex/" build/ipa-list.txt; then
+            echo "::error::IPA 里没有 PlugIns/*.appex —— Widget/Live Activity 扩展没被嵌进去"
+            exit 1
+          fi
+
       - name: 留存 artifact
         uses: actions/upload-artifact@v4
         with:

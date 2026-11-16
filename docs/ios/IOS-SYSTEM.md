@@ -84,9 +84,9 @@ Tab 的选择状态从 `RootTabView` 的 `@State` 挪到 `AppRouter`：
 
 ---
 
-## 5 下一段：Live Activity / Widget（需要新 target，风险最高）
+## 5 第二段：Widget Extension target（已完成，2026-11-16）
 
-Live Activity 与 Widget 都必须做成 **Extension target**，而这个工程的 `project.pbxproj` 是手写的，加 target 要动：
+Widget 必须做成 **Extension target**，而这个工程的 `project.pbxproj` 是手写的，加 target 要动：
 
 ```
 PBXNativeTarget（新 target + productReference + buildConfigurationList）
@@ -97,11 +97,32 @@ XCBuildConfiguration（扩展自己的 Debug/Release、Info.plist、bundle id �
 ```
 
 少任何一处，`xcodebuild` 的报错都不是"你漏了哪段"，而是很含糊的 "Cycle inside" 或 "target has no product"。
-所以这一段单独一轮做，并且：
 
-1. 先备份 `project.pbxproj`（本仓库已有 `tools/ios/` 下的登记脚本，新的 target 也写成脚本，可重跑）；
-2. 先只做 **App Intents 之外的静态 Widget**（不碰 ActivityKit），确认扩展能被编译进 IPA（看 IPA 里有没有 `PlugIns/`）；
-3. 再做 Live Activity（锁屏歌词/灵动岛），它依赖播放引擎的状态，要额外想清楚"App 不在前台时谁更新它"。
+**这次的做法**：
+
+1. 把"加 target"写成可重跑脚本 [add_widget_target.py](tools/ios/add_widget_target.py)（自动备份 pbxproj）；
+2. 写了离线检查 [check_pbxproj.py](tools/ios/check_pbxproj.py)（括号平衡 / 引用是否都有定义 / target 必填字段 / build phase 有没有挂上 target），并接进 CI 的 logic-tests——以后改工程结构先过这一关，省掉一轮 4 分钟的 CI；
+3. 先做**静态 Widget**（不碰 ActivityKit），用 IPA 里有没有 `PlugIns/*.appex` 作为"真的嵌进去了"的硬证据。
+
+**结果**：`unzip -l` 看到 `Payload/JZMusicHelper.app/PlugIns/JZWidgets.appex/JZWidgets` 与 `Info.plist`，IPA 从 1.31 MB 涨到 **1.38 MB**。
+
+**踩了两个坑**（都已修，写入脚本注释）：
+
+| 坑 | 现象 | 原因/处理 |
+|---|---|---|
+| 分组 path 相对父组解析 | `error: Build input file cannot be found: …/ios/JZMusicHelper/JZWidgets/JZWidgets.swift` | 新建的 JZWidgets 组被挂进 JZMusicHelper 组里，路径变成 `ios/JZMusicHelper/JZWidgets`；改挂到**根组**才对上 `ios/JZWidgets` |
+| 扩展缺类型定义 | `error: cannot find type 'Song' in scope`（DiscoverRules.swift） | 控件复用 `DiscoverRules.rotate`，但该文件里还有吃 `Song` 的 `pick`/`guessKeywords`；把 `Song.swift` 也加进扩展的 Sources |
+
+**控件内容为什么不需要 App Group**：今日精选 3 首完全由 `DiscoverCatalog`（静态池）+ `DiscoverRules.rotate`（纯函数、按天滑窗）算出来，扩展里自带这两份数据与逻辑。一旦要读主 App 的 UserDefaults/文件，就得配 App Group 与对应 provisioning——自签（免费账号）会直接签不过。
+
+---
+
+## 5.1 下一段：Live Activity（锁屏歌词 / 灵动岛）
+
+Live Activity 的 UI 同样住在这个扩展里（`ActivityConfiguration`），但**状态由主 App 推送**：
+`ActivityAttributes` + `ActivityContent` 从 App 进程 `update`，扩展只负责渲染。因此它不需要 App Group，
+但要想清楚三件事：切歌时更新谁、App 被系统杀掉后活动怎么办（`staleDate`）、逐字刷新对功耗的影响
+（`NSSupportsLiveActivitiesFrequentUpdates` 已在 Info.plist 里备好）。
 
 ---
 
@@ -110,3 +131,4 @@ XCBuildConfiguration（扩展自己的 Debug/Release、Info.plist、bundle id �
 1. 打开「快捷指令」→ 搜索 "JZ" → 应能看到「播放我的收藏 / 听歌识曲 / 搜索歌曲」。
 2. 跑「搜索歌曲」并给一个词（如"晴天"）→ App 应被带到搜索页并直接出结果。
 3. 播放页「⋯」→「分享」→ 系统分享面板里文案应是歌名/歌手/专辑/来源，**没有 URL**。
+4. 长按主屏空白处 →「+」→ 搜 "JZ" → 应能添加「今日精选」小组件（小/中两种尺寸），内容三首歌、每天换。
