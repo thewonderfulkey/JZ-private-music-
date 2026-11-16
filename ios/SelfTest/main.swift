@@ -589,6 +589,51 @@ do {
           "\n  got: \(lyric)\n  exp: \(LyricsFixtures.kgLyricQuery)")
 }
 
+// MARK: - 14 封面兜底规则
+
+section("封面兜底（严格匹配）")
+
+do {
+    check("同歌名同歌手命中",
+          CoverResolver.isStrictMatch(name: "晴天", singer: "周杰伦",
+                                      candidateName: "晴天", candidateSinger: "周杰伦"))
+    check("歌名大小写不敏感",
+          CoverResolver.isStrictMatch(name: "IVORY TOWER", singer: "A",
+                                      candidateName: "ivory tower", candidateSinger: "a"))
+    check("带版本后缀不算同一条（宁可没封面）",
+          !CoverResolver.isStrictMatch(name: "晴天", singer: "周杰伦",
+                                       candidateName: "晴天 (Live)", candidateSinger: "周杰伦"))
+    check("多歌手里有一个相同即命中",
+          CoverResolver.isStrictMatch(name: "因为爱情", singer: "陈奕迅/王菲",
+                                      candidateName: "因为爱情", candidateSinger: "王菲"))
+    check("歌手完全不同不命中",
+          !CoverResolver.isStrictMatch(name: "晴天", singer: "周杰伦",
+                                       candidateName: "晴天", candidateSinger: "蔡健雅"))
+    check("目标无歌手时只比歌名",
+          CoverResolver.isStrictMatch(name: "晴天", singer: "",
+                                      candidateName: "晴天", candidateSinger: "任何人"))
+    check("空歌名不命中",
+          !CoverResolver.isStrictMatch(name: "  ", singer: "周杰伦",
+                                       candidateName: "  ", candidateSinger: "周杰伦"))
+    check("歌手片段拆分（斜杠）", CoverResolver.singerParts("A / B") == ["a", "b"],
+          "\(CoverResolver.singerParts("A / B"))")
+}
+
+do {
+    let kugouLegacy = Song(platform: .kugou, platformID: "h", name: "晴天", singer: "周杰伦",
+                           album: "", duration: 269,
+                           picURL: "https://imge.kugou.com/imgessl/500/12345.jpg")
+    check("酷狗旧 imgessl 封面判死", CoverResolver.isLegacyDeadCover(kugouLegacy))
+    let kugouNew = Song(platform: .kugou, platformID: "h", name: "晴天", singer: "周杰伦",
+                        album: "", duration: 269,
+                        picURL: "https://imge.kugou.com/stdmusic/500/x.jpg")
+    check("酷狗新封面不判死", !CoverResolver.isLegacyDeadCover(kugouNew))
+    let qqLegacy = Song(platform: .qq, platformID: "m", name: "晴天", singer: "周杰伦",
+                        album: "", duration: 269, picURL: "https://imge.kugou.com/imgessl/x.jpg")
+    check("非酷狗平台不套用 imgessl 规则", !CoverResolver.isLegacyDeadCover(qqLegacy))
+    check("缓存键 = 歌名|歌手", CoverResolver.cacheKeyFor(kugouNew) == "晴天|周杰伦")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
