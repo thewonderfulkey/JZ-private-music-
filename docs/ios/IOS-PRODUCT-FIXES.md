@@ -153,6 +153,43 @@ ios/SelfTest/main.swift             +16 条断言（切行时间点 8 / 落盘�
 > 群里同一晚还有 `…fe338c4-r56…`、`…ac40b5c-r57…` 两个**失败**的构建通知（编译/断言没过，没出包），
 > 以及 `…e9499bf-r55…`（第一轮 7 项的包）。**这一轮请装 r58**；r55 是上一批改动，不含本轮 6 项。
 
+---
+
+# 第三轮整改（2026-11-16 深夜，老板 4 项）
+
+## 一、逐条结果
+
+| # | 老板原话 | 根因 / 定位 | 改法 |
+|---|---|---|---|
+| ① | 正在播放时点其他 Tab，歌被强行暂停 | 识曲页 `onDisappear → cancelListen() → capture.cancel() → AudioCapture.stop()`，而 `stop()` **无条件**调用 `restorePlaybackSession()`：先 `setActive(false, .notifyOthersOnDeactivation)` 再重开音频会话。那一下会把正在播放的会话掐断，重开后 `AVPlayer` 不会自己恢复 → 表现就是"切 Tab 歌停了" | `AudioCapture.stop()` 只在**真的在录**（`wasRunning`）时才收尾；`restorePlaybackSession()` 不再 `setActive(false)`（只把类别切回 playback 并保持激活）；`RecognizeView.cancelListen()` 只在 `capture.isRunning` 时才动采集。三条一起堵死这条路径 |
+| ② | 播放详情页保持双击封面显示歌词，跟 Light Player 一样 | 上一版把歌词做成了常驻卡片，没有"双击切换"这个交互 | 改成 APK/Light Player 同款：**双击封面 → 大歌词**，**双击歌词 → 回封面**（点某一句仍然跳转到那句）。封面下留一行小字「双击封面看歌词」做提示 |
+| ③ | 歌词滚动时间还是不对，参考 APK 的歌词滚动逻辑 | APK 的 `LyricsService.indexAt` 就一句：`lines[i].timeMs <= positionMs` 就切（**行开始时间**）。上一版我改成"第一个字真正唱出来的时刻"（`max(行时间, 首字起点)`），整体偏晚，正好和 APK 相反 | **逐字照抄 APK**：`indexAt` 用 `line.timeMs`；逐字时间只参与行内染色，不参与切行。25Hz ticker（`lyricPositionMs` = 精确位置 + 用户偏移）保留——APK 那边也有一条高频位置更新，这样才不吃 0.5 秒观察者的延迟。上一版的 `highlightStartMs` 删除 |
+| ④ | 播放页把「顺序播放」和「下载」弄没了；另外要能下拽关闭 | 上一版这两个按钮只留了图标（模式图标在左、下载图标在右），没有文字，窄屏上还容易被挤掉；关闭只能点左上角 | 控制行改回 APK 的「图标 + 文字」：**播放模式（显示"列表循环/单曲循环/随机播放"）/ 上一首 / 播放 / 下一首 / 下载**，两侧列各 56pt、中间键收窄（320pt 窄屏也放得下）；**整页向下拽 ≥110pt（或快速甩）即关闭**，带跟手位移与淡出 |
+
+## 二、改动的文件（第三轮）
+
+```
+Services/AudioCapture.swift        stop() 只在录音时恢复会话；restorePlaybackSession 不再 setActive(false)
+Views/RecognizeView.swift          cancelListen() 只在 capture.isRunning 时动采集
+Services/LyricsCleaning.swift      indexAt 回到 APK 口径（line.timeMs）
+Services/LyricsModel.swift         删掉上一版加的 highlightStartMs
+Views/NowPlayingView.swift         双击封面/歌词切换、图标+文字控制行、整页下拽关闭
+ios/SelfTest/main.swift            歌词切行断言按 APK 口径重写（8 条）
+```
+
+## 三、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 纯逻辑 | CI logic-tests | 见下方出包信息（歌词切行 8 条按 APK 口径重写） |
+| 界面卫生 / 工程结构 / 语法 | 三道本地门禁 | 18 文件 / 175 对象 2 target / 66 文件 0 语法错误 |
+| 真机 | **验不到**（Windows 无 iPhone） | 要你确认：切 Tab 歌还停不停、双击封面出歌词、歌词是否跟得上（可现场 ±200ms 微调）、顺/下载两个键在不在、下拽能不能关 |
+
+## 四、本轮出的包
+
+（CI 跑完后填）
+
+
 
 
 

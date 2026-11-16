@@ -103,9 +103,13 @@ final class AudioCapture {
     }
 
     /// 停止采集并把音频会话还给播放（否则识别完播放没声音）
+    ///
+    /// 只有在**真的在录**的时候才动音频会话：没在录却 setActive(false) 会把正在播放的歌掐断
+    /// （老板反馈「切个 Tab 歌就停了」就是这条路径：识曲页 onDisappear → cancel → 这里）。
     @discardableResult
     func stop() -> (pcm: Data, peak: Float) {
-        if isRunning, let engine {
+        let wasRunning = isRunning
+        if wasRunning, let engine {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
@@ -113,7 +117,7 @@ final class AudioCapture {
         isRunning = false
         let result = snapshot()
         discardInput()
-        restorePlaybackSession()
+        if wasRunning { restorePlaybackSession() }
         return result
     }
 
@@ -176,7 +180,10 @@ final class AudioCapture {
 
     private func restorePlaybackSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        // 注意：这里**不能**先 setActive(false, .notifyOthersOnDeactivation)。
+        // 那一下会把"当前正在播但已暂停"的音频会话整个掐掉，等再 setActive(true) 时
+        // AVPlayer 不会自己恢复——用户看到的就是"切个 Tab/识个曲，歌停了"。
+        // 只要把类别切回 playback 并确保会话是激活的，下一次 play 就能出声。
         try? session.setCategory(.playback, mode: .default, options: [])
         try? session.setActive(true, options: [])
     }

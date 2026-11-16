@@ -1094,46 +1094,32 @@ do {
 
 // MARK: - 第二轮整改：歌词时间轴 + 下载实测档位
 
-section("歌词切行时间点（老板反馈 ④：晚切/早切）")
+section("歌词切行时间点（第三轮：与 APK `indexAt` 逐字一致）")
 
 do {
-    let plain = LyricLine(timeMs: 1000, text: "第一句")
-    check("没有逐字时间时用行时间", plain.highlightStartMs == 1000)
-
-    let withWords = LyricLine(timeMs: 5000, text: "第二句", words: [
-        LyricWord(text: "第", startMs: 5300, durMs: 200),
-        LyricWord(text: "二", startMs: 5500, durMs: 200),
-    ])
-    check("有逐字时间时取第一个字的起点（不再「行到即切」）",
-          withWords.highlightStartMs == 5300, "\(withWords.highlightStartMs)")
-
-    let earlyWord = LyricLine(timeMs: 8000, text: "第三句", words: [
-        LyricWord(text: "第", startMs: 7600, durMs: 200),
-    ])
-    check("逐字时间早于行时间时，仍以行时间为准（不提前切）",
-          earlyWord.highlightStartMs == 8000, "\(earlyWord.highlightStartMs)")
-
+    // APK 的口径就一句：`line.timeMs <= positionMs` 就切。逐字时间只用来做行内染色，不参与切行。
     let lines = [
-        LyricLine(timeMs: 0, text: "前奏"),
+        LyricLine(timeMs: 1000, text: "第一句"),
         LyricLine(timeMs: 5000, text: "第二句", words: [
             LyricWord(text: "第", startMs: 5300, durMs: 200),
         ]),
         LyricLine(timeMs: 9000, text: "第三句"),
     ]
-    check("5100ms 时还停在上一行（字没唱到就不抢）",
-          LyricsCleaning.indexAt(lines, positionMs: 5100) == 0,
-          "\(LyricsCleaning.indexAt(lines, positionMs: 5100))")
-    check("5300ms 时切到第二句",
-          LyricsCleaning.indexAt(lines, positionMs: 5300) == 1,
-          "\(LyricsCleaning.indexAt(lines, positionMs: 5300))")
-    check("9000ms 时切到第三句", LyricsCleaning.indexAt(lines, positionMs: 9000) == 2)
+
+    check("999ms 还没到第一句", LyricsCleaning.indexAt(lines, positionMs: 999) == -1)
+    check("1000ms 切到第一句", LyricsCleaning.indexAt(lines, positionMs: 1000) == 0)
+    check("5000ms 就切到第二句（按行时间，不等第一个字 5300）",
+          LyricsCleaning.indexAt(lines, positionMs: 5000) == 1,
+          "\(LyricsCleaning.indexAt(lines, positionMs: 5000))")
+    check("4999ms 仍停在第一句", LyricsCleaning.indexAt(lines, positionMs: 4999) == 0)
+    check("9000ms 切到第三句", LyricsCleaning.indexAt(lines, positionMs: 9000) == 2)
     check("空歌词返回 -1", LyricsCleaning.indexAt([], positionMs: 1000) == -1)
 
-    // 用户偏移（±600ms）就是在 positionMs 上加减，这里验证"提前 200ms"确实会早切
-    let offset = 200
-    check("偏移 +200ms 会提前切行",
-          LyricsCleaning.indexAt(lines, positionMs: 5300 - offset) == 0
-            && LyricsCleaning.indexAt(lines, positionMs: 5300 - offset + offset) == 1)
+    // 用户偏移（±600ms）由调用方加在 positionMs 上：+200 提前、-200 延后
+    check("偏移 +200ms：4800 的位置按 5000 算，已切到第二句",
+          LyricsCleaning.indexAt(lines, positionMs: 4800 + 200) == 1)
+    check("偏移 -200ms：5200 的位置按 5000 算，仍停在第一句",
+          LyricsCleaning.indexAt(lines, positionMs: 5200 - 200) == 0)
 }
 
 section("下载落盘后的实测档位（老板反馈 ⑥：找到无损却下成 320k）")

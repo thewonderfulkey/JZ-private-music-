@@ -27,16 +27,6 @@ struct LyricLine: Hashable, Sendable {
 
     /// 这一行有没有逐字时间（决定渲染方式：逐字染色 or 行内均分）
     var hasWordTiming: Bool { !words.isEmpty }
-
-    /// 高亮这一行用的时间点。
-    ///
-    /// 为什么不用 `timeMs`：KRC/QRC 的 `[start,dur]` 是**行**开始，而很多歌词行会在第一个字之前
-    /// 留 0.3–1s 的呼吸（前奏/拖音），拿行开始去高亮就会"还没唱就切了"。
-    /// 取两者**较晚**的那个：既不会早于行开始，也不会早于第一个字真正唱出来的时刻。
-    var highlightStartMs: Int {
-        guard let first = words.first else { return timeMs }
-        return max(timeMs, first.startMs)
-    }
 }
 
 /// 一次取词的结果：歌词行 + 来源标签（"酷我" / "LDDC"）

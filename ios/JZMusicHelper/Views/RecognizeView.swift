@@ -407,7 +407,10 @@ struct RecognizeView: View {
     private func cancelListen() {
         task?.cancel()
         task = nil
-        capture.cancel()
+        // 只在**真的在录**的时候收尾。
+        // 以前这里无条件 `capture.cancel()` → `AudioCapture.stop()` → `restorePlaybackSession()`
+        // 会 setActive(false) 一次再重开，等于把正在放歌的音频会话掐断（表现为"切个 Tab 歌就停了"）。
+        if capture.isRunning { capture.cancel() }
         phase = .idle
         remaining = settings.recognizeSeconds
         level = 0
