@@ -39,7 +39,8 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     let song: Song
     let streamURL: String
     let backendName: String
-    let quality: QualityLevel
+    /// 标注档位。落盘后会按实测结果改写（例：接口说有损，文件其实是 320k mp3），所以是 var。
+    var quality: QualityLevel
     var fileName: String
     var localPath: String?
     var status: DownloadStatus
