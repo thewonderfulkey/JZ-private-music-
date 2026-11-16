@@ -37,6 +37,8 @@ struct RecognizeView: View {
 
     @State private var task: Task<Void, Never>?
     @State private var capture = AudioCapture()
+    /// 单通道失败的原因（两条都空时用它决定文案，避免把网络问题说成"没听出来"）
+    @State private var channelError: String?
 
     /// 先问一次酷狗的时长（与 Android `EARLY_SECONDS` 一致）
     private let earlySeconds = 6
@@ -55,6 +57,12 @@ struct RecognizeView: View {
             .padding(.bottom, Tokens.Spacing.xxl)
         }
         .scrollIndicators(.hidden)
+        // 网易指纹引擎（WKWebView 跑 wasm）必须挂在视图层级里才保证执行 JS
+        .background(
+            FingerprintHostView()
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+        )
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -426,7 +434,7 @@ struct RecognizeView: View {
             if !earlyTried, tick >= earlySeconds {
                 earlyTried = true
                 let snapshot = capture.snapshot()
-                if await askKugou(pcm: snapshot.pcm) {
+                if await earlyHit(pcm: snapshot.pcm) {
                     capture.stop()
                     return
                 }
@@ -444,28 +452,65 @@ struct RecognizeView: View {
             phase = .failed("几乎没听到声音。把手机靠近音箱、音量开大一点再试。")
             return
         }
-        if await askKugou(pcm: final.pcm) { return }
-        phase = .noMatch
+        await recognizeChannels(pcm: final.pcm)
     }
 
-    /// 跑一次酷狗通道；命中则落结果并返回 true
-    private func askKugou(pcm: Data) async -> Bool {
+    /// 提前收工：只要酷狗这条通道有命中就先用它（网易要 12 秒窗口，这时候还没采够）
+    private func earlyHit(pcm: Data) async -> Bool {
         guard pcm.count >= 8_000 * 2 else { return false }
-        do {
-            let hits = try await KugouRecognizer.recognize(pcm: pcm)
-            guard !hits.isEmpty else { return false }
-            guard let result = RecognizeScore.fuse(kugou: hits, netease: []) else { return false }
-            guard let top = result.ranked.first else { return false }
+        guard let hits = try? await KugouRecognizer.recognize(pcm: pcm), !hits.isEmpty else { return false }
+        guard let result = RecognizeScore.fuse(kugou: hits, netease: []),
+              let top = result.ranked.first else { return false }
+        recognized = top.rep
+        phase = .result
+        Haptics.success()
+        await resolveVersions(top.rep)
+        return true
+    }
 
-            recognized = top.rep
-            phase = .result
-            Haptics.success()
-            await resolveVersions(top.rep)
-            return true
+    /// 双通道并发：酷狗（PCM）+ 网易（afp 指纹），结果统一交给 RecognizeScore 打分
+    private func recognizeChannels(pcm: Data) async {
+        async let kugou = kugouHits(pcm: pcm)
+        async let netease = neteaseHits(pcm: pcm)
+        let (kg, ne) = await (kugou, netease)
+
+        guard let result = RecognizeScore.fuse(kugou: kg, netease: ne),
+              let top = result.ranked.first else {
+            if let channelError {
+                phase = .failed(channelError)
+            } else {
+                phase = .noMatch
+            }
+            return
+        }
+        recognized = top.rep
+        phase = .result
+        Haptics.success()
+        await resolveVersions(top.rep)
+    }
+
+    private func kugouHits(pcm: Data) async -> [RecognizeCandidate] {
+        do {
+            return try await KugouRecognizer.recognize(pcm: pcm)
         } catch {
-            // 单通道失败不退化成"没听出来"：把原因带出去，用户才知道是网络还是别的问题
-            phase = .failed(error.localizedDescription)
-            return true
+            channelError = "酷狗通道：\(error.localizedDescription)"
+            return []
+        }
+    }
+
+    private func neteaseHits(pcm: Data) async -> [RecognizeCandidate] {
+        // 网易指纹要 12 秒窗口，喂 8 秒会直接 noMatchReason=10
+        guard pcm.count >= 8_000 * 2 * 11 else { return [] }
+        guard await NeteaseFingerprint.shared.waitReady() else { return [] }
+        guard let fingerprint = await NeteaseFingerprint.shared.encode(pcm16: pcm) else {
+            channelError = "网易通道：指纹生成失败"
+            return []
+        }
+        do {
+            return try await NeteaseRecognizer.recognize(fingerprint: fingerprint)
+        } catch {
+            channelError = "网易通道：\(error.localizedDescription)"
+            return []
         }
     }
 
@@ -500,4 +545,20 @@ struct RecognizeView: View {
             .map { $0 }
         isResolvingVersions = false
     }
+}
+
+// MARK: - 指纹引擎宿主（1×1）
+
+private struct FingerprintHostView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        container.isUserInteractionEnabled = false
+        let web = NeteaseFingerprint.shared.hostWebView()
+        web.frame = container.bounds
+        web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(web)
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }

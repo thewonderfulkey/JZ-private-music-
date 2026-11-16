@@ -59,6 +59,12 @@
 		B00000000000000000000038 /* RecognizeScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003A /* RecognizeScore.swift */; };
 		B00000000000000000000039 /* KugouRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003B /* KugouRecognizer.swift */; };
 		B0000000000000000000003A /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003C /* AudioCapture.swift */; };
+		B0000000000000000000003B /* recognizer.html in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003D /* recognizer.html */; };
+		B0000000000000000000003C /* afp_wasm_b64.js in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003E /* afp_wasm_b64.js */; };
+		B0000000000000000000003D /* sandbox.bundle.js in Resources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003F /* sandbox.bundle.js */; };
+		B0000000000000000000003E /* FingerprintPCM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000040 /* FingerprintPCM.swift */; };
+		B0000000000000000000003F /* NeteaseRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000041 /* NeteaseRecognizer.swift */; };
+		B00000000000000000000040 /* NeteaseFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000042 /* NeteaseFingerprint.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -116,6 +122,12 @@
 		F0000000000000000000003A /* RecognizeScore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeScore.swift; sourceTree = "<group>"; };
 		F0000000000000000000003B /* KugouRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KugouRecognizer.swift; sourceTree = "<group>"; };
 		F0000000000000000000003C /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
+		F0000000000000000000003D /* recognizer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = recognizer.html; sourceTree = "<group>"; };
+		F0000000000000000000003E /* afp_wasm_b64.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = afp_wasm_b64.js; sourceTree = "<group>"; };
+		F0000000000000000000003F /* sandbox.bundle.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = sandbox.bundle.js; sourceTree = "<group>"; };
+		F00000000000000000000040 /* FingerprintPCM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FingerprintPCM.swift; sourceTree = "<group>"; };
+		F00000000000000000000041 /* NeteaseRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseRecognizer.swift; sourceTree = "<group>"; };
+		F00000000000000000000042 /* NeteaseFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseFingerprint.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -146,6 +158,7 @@
 				F00000000000000000000001 /* JZMusicHelperApp.swift */,
 				F00000000000000000000012 /* Assets.xcassets */,
 				F00000000000000000000013 /* Info.plist */,
+				G00000000000000000000007 /* Recognizer */,
 			);
 			path = JZMusicHelper;
 			sourceTree = "<group>";
@@ -194,6 +207,9 @@
 				F0000000000000000000003A /* RecognizeScore.swift */,
 				F0000000000000000000003B /* KugouRecognizer.swift */,
 				F0000000000000000000003C /* AudioCapture.swift */,
+				F00000000000000000000040 /* FingerprintPCM.swift */,
+				F00000000000000000000041 /* NeteaseRecognizer.swift */,
+				F00000000000000000000042 /* NeteaseFingerprint.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -227,6 +243,16 @@
 				F00000000000000000000014 /* JZMusicHelper.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		G00000000000000000000007 /* Recognizer */ = {
+			isa = PBXGroup;
+			children = (
+				F0000000000000000000003D /* recognizer.html */,
+				F0000000000000000000003E /* afp_wasm_b64.js */,
+				F0000000000000000000003F /* sandbox.bundle.js */,
+			);
+			path = Recognizer;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -289,6 +315,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				B00000000000000000000012 /* Assets.xcassets in Resources */,
+				B0000000000000000000003B /* recognizer.html in Resources */,
+				B0000000000000000000003C /* afp_wasm_b64.js in Resources */,
+				B0000000000000000000003D /* sandbox.bundle.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -350,6 +379,9 @@
 				B00000000000000000000038 /* RecognizeScore.swift in Sources */,
 				B00000000000000000000039 /* KugouRecognizer.swift in Sources */,
 				B0000000000000000000003A /* AudioCapture.swift in Sources */,
+				B0000000000000000000003E /* FingerprintPCM.swift in Sources */,
+				B0000000000000000000003F /* NeteaseRecognizer.swift in Sources */,
+				B00000000000000000000040 /* NeteaseFingerprint.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

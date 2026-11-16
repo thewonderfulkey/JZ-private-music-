@@ -807,6 +807,95 @@ do {
     check("裸名不误判", !RecognizeJudge.isVariantTitle("晴天"))
 }
 
+// MARK: - 网易通道：指纹输入与响应解析（P3 第二段）
+
+section("网易通道：Float32 指纹输入 / audio-match 解析")
+
+do {
+    // ① Int16LE → Float32LE base64
+    //    三个样本：0、满量程 32767、-32768
+    var pcm = Data()
+    for value in [Int16(0), Int16(32767), Int16(-32768)] {
+        withUnsafeBytes(of: value.littleEndian) { pcm.append(contentsOf: $0) }
+    }
+    // 不足 1 秒（8000 样本）应当拒绝
+    check("不足 1 秒不做指纹", FingerprintPCM.float32Base64(pcm16: pcm) == nil)
+
+    // 补到 1 秒整：后面全 0
+    var oneSecond = pcm
+    oneSecond.append(Data(repeating: 0, count: 8_000 * 2 - pcm.count))
+    if let base64 = FingerprintPCM.float32Base64(pcm16: oneSecond) {
+        let floats = FingerprintPCM.floats(fromBase64: base64)
+        check("1 秒 → 8000 个 float", floats.count == 8_000, "\(floats.count)")
+        check("首个样本为 0", floats.first == 0)
+        check("满量程 32767 ≈ 0.99997", abs((floats[1]) - 0.99997) < 0.001, "\(floats[1])")
+        check("负满量程 -32768 = -1", abs(floats[2] + 1) < 0.0001, "\(floats[2])")
+        check("base64 长度为 4 字节/样本", Data(base64Encoded: base64)?.count == 8_000 * 4,
+              "\(Data(base64Encoded: base64)?.count ?? -1)")
+    } else {
+        check("1 秒整应当能出指纹", false)
+    }
+
+    // ② 只取最后 12 秒
+    var long = Data()
+    for _ in 0..<(8_000 * 20) {
+        withUnsafeBytes(of: Int16(1000).littleEndian) { long.append(contentsOf: $0) }
+    }
+    if let base64 = FingerprintPCM.float32Base64(pcm16: long) {
+        check("20 秒只取最后 12 秒",
+              Data(base64Encoded: base64)?.count == 8_000 * 12 * 4,
+              "\(Data(base64Encoded: base64)?.count ?? -1)")
+    } else {
+        check("20 秒应当能出指纹", false)
+    }
+
+    // ③ 表单体：六个字段齐全，rawdata 参与编码
+    let body = NeteaseRecognizer.formBody(fingerprint: "AA+/=", seconds: 12)
+    check("表单含 algorithmCode=shazam_v2", body.contains("algorithmCode=shazam_v2"))
+    check("表单含 duration=12", body.contains("duration=12"))
+    check("rawdata 做了百分号编码", body.contains("rawdata=AA%2B%2F%3D"), body)
+    check("sessionId 有值", body.contains("sessionId=\(NeteaseRecognizer.sessionID)"))
+
+    // ④ 响应解析：命中
+    let hitJSON = """
+    {"code":200,"data":{"noMatchReason":0,"result":[
+      {"song":{"name":"晴天","duration":269000,
+        "album":{"name":"叶惠美"},
+        "artists":[{"name":"周杰伦"}]}}
+    ]}}
+    """
+    let hits = NeteaseRecognizer.parse(hitJSON)
+    check("命中解析出 1 条", hits.count == 1, "\(hits.count)")
+    check("歌名/歌手/专辑/时长", hits.first?.title == "晴天"
+          && hits.first?.artist == "周杰伦"
+          && hits.first?.album == "叶惠美"
+          && hits.first?.durationSec == 269, "\(String(describing: hits.first))")
+    check("来源标成网易", hits.first?.source == RecognizeScore.sourceNetease)
+    check("网易不提供原唱标记", hits.first?.isOriginal == -1)
+
+    // ⑤ 响应解析：没识别到（noMatchReason=10）
+    let missJSON = """
+    {"code":200,"data":{"noMatchReason":10,"result":[]}}
+    """
+    check("noMatchReason 非 0 判没识别到", NeteaseRecognizer.parse(missJSON).isEmpty)
+
+    // ⑥ 响应解析：code 不是 200
+    check("code 非 200 返回空", NeteaseRecognizer.parse("{\"code\":400}").isEmpty)
+
+    // ⑦ 多歌手拼接与去重
+    let multiJSON = """
+    {"code":200,"data":{"noMatchReason":"0","result":[
+      {"song":{"name":"凉凉","duration":260000,"album":{"name":"三生三世十里桃花"},
+        "artists":[{"name":"张碧晨"},{"name":"杨宗纬"}]}},
+      {"song":{"name":"凉凉","duration":260000,"album":{"name":"三生三世十里桃花"},
+        "artists":[{"name":"张碧晨"},{"name":"杨宗纬"}]}}
+    ]}}
+    """
+    let multi = NeteaseRecognizer.parse(multiJSON)
+    check("多歌手用顿号拼接", multi.first?.artist == "张碧晨、杨宗纬", multi.first?.artist ?? "")
+    check("同歌同歌手去重", multi.count == 1, "\(multi.count)")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

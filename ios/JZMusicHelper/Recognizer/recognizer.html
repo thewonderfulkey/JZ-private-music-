@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>fingerprint</title>
+</head>
+<body>
+<script src="afp_wasm_b64.js"></script>
+<script src="sandbox.bundle.js"></script>
+<script>
+(function () {
+    function post(kind, payload) {
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.onResult) {
+                window.AndroidBridge.onResult(kind, String(payload));
+            }
+        } catch (e) { /* 页面销毁后回调失败，忽略 */ }
+    }
+
+    // 原生侧调 window.__encode(pcmBase64)，指纹结果统一走 AndroidBridge.onResult('ok'|'error', ...)
+    window.__encode = function (pcmBase64) {
+        try {
+            if (!window.__NCM__ || typeof window.__NCM__.encodePcm8kB64 !== 'function') {
+                post('error', 'engine-missing');
+                return;
+            }
+            Promise.resolve(window.__NCM__.encodePcm8kB64(pcmBase64)).then(
+                function (fp) { post('ok', fp); },
+                function (e) { post('error', 'encode-failed:' + String((e && e.message) || e)); }
+            );
+        } catch (e) {
+            post('error', 'encode-threw:' + String((e && e.message) || e));
+        }
+    };
+
+    // 引擎脚本一加载 __NCM__ 就可用（wasm 编译在首次调用内部完成），这里只做一次确认
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries++;
+        if (window.__NCM__ && typeof window.__NCM__.encodePcm8kB64 === 'function') {
+            clearInterval(timer);
+            post('ready', '1');
+        } else if (tries > 80) {
+            clearInterval(timer);
+            post('ready', '0');
+        }
+    }, 120);
+})();
+</script>
+</body>
+</html>
