@@ -76,7 +76,7 @@ Tab 的选择状态从 `RootTabView` 的 `@State` 挪到 `AppRouter`：
 |---|---|---|
 | 信箱语义（先放先取 / 取完清空 / 计数） | CI `logic-tests` | ✅ 6 条断言 |
 | 分享文案（含字段 / 不带链接 / 空歌手） | CI `logic-tests` | ✅ 6 条断言 |
-| 整包编译（Intent 协议实现是否对得上 SDK） | CI `build-ipa` | 见本轮 run |
+| 整包编译（Intent 协议实现是否对得上 SDK） | CI `build-ipa` | ✅ BUILD SUCCEEDED，全套 **322 条断言全绿**，run [#43833684364](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43833684364)；`JZ-Music-v2.1.95-019f58d-r41-ios-unsigned.ipa` 已发飞书群 |
 | **真机：快捷指令里能看到这三个动作、能跑通** | ❌ 无设备 | **未验证** |
 
 > App Intents 的协议细节（`description` 的可选性、`@Parameter` 的初始化器）是最容易跟 SDK 版本错位的地方，
