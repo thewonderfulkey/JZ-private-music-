@@ -1,15 +1,27 @@
 import Foundation
 
 // MARK: - 可用的流地址（一个后端解析出的结果）
-struct StreamSource: Identifiable, Codable, Hashable {
+/// directId=true：按歌曲平台 ID 直连解析（QQ mid / 网易 id），身份可靠；
+/// false：搜索式取流（按歌名+歌手重新搜索），需配合身份校验。
+/// kbps / totalBytes 是取流阶段 Range 探测到的**真实**值，下载前就能按「容器 + 体积」预校验档位。
+struct StreamSource: Identifiable, Codable, Hashable, Sendable {
     let url: String
     let backendName: String
     let platform: MusicPlatform
     let quality: QualityLevel
     let format: String
     let note: String
+    var directId: Bool = false
+    var kbps: Int64 = 0
+    var totalBytes: Int64 = 0
 
     var id: String { "\(platform.rawValue)_\(backendName)_\(quality.rawValue)" }
+
+    /// 码率（kbps）：总字节 × 8 ÷ 时长；任一为 0 时回 0（表示算不出）
+    static func kbps(totalBytes: Int64, durationSec: Int) -> Int64 {
+        guard durationSec > 0, totalBytes > 0 else { return 0 }
+        return totalBytes * 8 / Int64(durationSec) / 1000
+    }
 }
 
 // MARK: - 下载状态

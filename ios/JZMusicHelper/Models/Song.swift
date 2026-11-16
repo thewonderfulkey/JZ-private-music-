@@ -48,7 +48,7 @@ enum QualityLevel: String, Codable, CaseIterable, Identifiable, Hashable {
 // MARK: - 歌曲模型
 /// 一个搜索结果条目，platformID 为对应平台的歌曲 ID：
 /// 酷我 rid（去掉 MUSIC_ 前缀）、QQ songmid、网易 songid、酷狗 hash。
-struct Song: Identifiable, Codable, Hashable {
+struct Song: Identifiable, Codable, Hashable, Sendable {
     let platform: MusicPlatform
     let platformID: String
     let name: String
@@ -59,10 +59,18 @@ struct Song: Identifiable, Codable, Hashable {
 
     var id: String { "\(platform.rawValue)_\(platformID)" }
 
-    /// 搜索关键词（供搜索式取流源使用，如 a.aa.cab / oiapi Kuwo）
+    /// 秒数（整数口径，与 Android `Song.durationSec` 对齐：时长判定、码率换算都用它）
+    var durationSec: Int { Int(duration.rounded()) }
+
+    /// 搜索关键词（歌名 + 空格 + 歌手，供搜索式取流源使用）
     var searchKeyword: String {
         let kw = "\(name) \(singer)".trimmingCharacters(in: .whitespacesAndNewlines)
         return kw.isEmpty ? name : kw
+    }
+
+    /// 无空格拼接「歌名+歌手」——妖狐酷我通道必须这么传（带空格会被服务端转成 "&" 返回错歌）
+    var searchKeywordCompact: String {
+        (name + singer).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 时长格式化 mm:ss

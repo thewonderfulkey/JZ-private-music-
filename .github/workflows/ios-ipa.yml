@@ -27,7 +27,74 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 纯逻辑自测：不碰模拟器、不碰网络，几秒出结果。
+  # 网络层的口径（排序权重 / 原唱判定 / 码率区间 / 酷我文本解析）都钉在 ios/SelfTest 的断言里，
+  # 改坏了在这里就红，不用等 IPA 打出来才发现"这首歌排到后面去了"。
+  logic-tests:
+    name: logic tests (swiftc)
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: Swift 版本
+        run: swift --version
+
+      - name: 编译网络层 + 跑断言
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          swiftc -Onone -swift-version 5 -o build/jz-selftest \
+            ios/JZMusicHelper/Models/Song.swift \
+            ios/JZMusicHelper/Models/DownloadItem.swift \
+            ios/JZMusicHelper/Services/APIClient.swift \
+            ios/JZMusicHelper/Services/SearchAdapters.swift \
+            ios/JZMusicHelper/Services/SearchRanker.swift \
+            ios/JZMusicHelper/Services/NameMatch.swift \
+            ios/JZMusicHelper/Services/StudioPick.swift \
+            ios/JZMusicHelper/Services/KuwoParser.swift \
+            ios/JZMusicHelper/Services/SourceAdapters.swift \
+            ios/JZMusicHelper/Services/SearchService.swift \
+            ios/JZMusicHelper/Services/URLResolver.swift \
+            ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log
+          ./build/jz-selftest 2>&1 | tee build/selftest.log
+
+      - name: 接口实测（信息性，失败不算构建失败）
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          timeout 240 python3 tools/ios/probe_network.py "晴天 周杰伦" 2>&1 | tee build/probe.log || true
+
+      - name: 结果写进 summary
+        if: always()
+        run: |
+          {
+            echo "### 网络层逻辑自测"
+            echo '```'
+            tail -80 build/selftest.log 2>/dev/null || echo "(没有 selftest.log)"
+            echo '```'
+            if [ -f build/probe.log ]; then
+              echo "<details><summary>接口实测</summary>"
+              echo ""
+              echo '```'
+              tail -40 build/probe.log
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 失败时留存日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-log
+          path: build/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   build-ipa:
+    needs: logic-tests
     name: build unsigned ipa
     runs-on: macos-15
     timeout-minutes: 30
