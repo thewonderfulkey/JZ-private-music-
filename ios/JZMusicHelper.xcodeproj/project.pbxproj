@@ -71,6 +71,7 @@
 		B00000000000000000000044 /* JZWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000047 /* JZWidgets.swift */; };
 		B00000000000000000000045 /* DiscoverCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* DiscoverCatalog.swift */; };
 		B00000000000000000000046 /* DiscoverRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* DiscoverRules.swift */; };
+		B00000000000000000000048 /* Song.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* Song.swift */; };
 		B00000000000000000000047 /* JZWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000046 /* JZWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -492,6 +493,7 @@
 				B00000000000000000000044 /* JZWidgets.swift in Sources */,
 				B00000000000000000000045 /* DiscoverCatalog.swift in Sources */,
 				B00000000000000000000046 /* DiscoverRules.swift in Sources */,
+				B00000000000000000000048 /* Song.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

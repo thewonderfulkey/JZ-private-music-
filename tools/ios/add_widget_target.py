@@ -42,7 +42,7 @@ ID = {
     "dependency": "T00000000000000000000001",
 }
 
-WIDGET_SOURCES = ["JZWidgets.swift", "DiscoverCatalog.swift", "DiscoverRules.swift"]
+WIDGET_SOURCES = ["JZWidgets.swift", "DiscoverCatalog.swift", "DiscoverRules.swift", "Song.swift"]
 BUNDLE_ID = "com.jz.musichelper.widgets"
 
 
