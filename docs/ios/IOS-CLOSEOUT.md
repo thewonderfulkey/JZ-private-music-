@@ -75,8 +75,8 @@
 
 | 验证 | 手段 | 结果 |
 |---|---|---|
-| 跳过上限 / 编辑精选轮换 | CI `logic-tests` | ✅ 12 条断言（`section("收尾口径…")`） |
-| 整包编译 | CI `build-ipa` | 见本轮 run |
+| 跳过上限 / 编辑精选轮换 | CI `logic-tests` | ✅ 12 条断言（`section("收尾口径…")`），全套 **311 条全绿**，run [#43832408425](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43832408425) |
+| 整包编译 | CI `build-ipa` | ✅ BUILD SUCCEEDED，`JZ-Music-v2.1.95-8901b18-r40-ios-unsigned.ipa` 已发飞书群 |
 | 真机：离线播下载的歌、补满 20 首队列 | ❌ 无设备 | **未验证** |
 
 ---
