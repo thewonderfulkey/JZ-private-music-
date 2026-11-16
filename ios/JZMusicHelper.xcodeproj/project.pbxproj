@@ -25,10 +25,10 @@
 		B00000000000000000000010 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000010 /* HistoryView.swift */; };
 		B00000000000000000000011 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000011 /* SettingsView.swift */; };
 		B00000000000000000000012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000012 /* Assets.xcassets */; };
-		B00000000000000000000013 /* SearchRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000013 /* SearchRanker.swift */; };
-		B00000000000000000000014 /* NameMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000014 /* NameMatch.swift */; };
-		B00000000000000000000015 /* StudioPick.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000015 /* StudioPick.swift */; };
-		B00000000000000000000016 /* KuwoParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* KuwoParser.swift */; };
+		B00000000000000000000013 /* SearchRanker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000015 /* SearchRanker.swift */; };
+		B00000000000000000000014 /* NameMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* NameMatch.swift */; };
+		B00000000000000000000015 /* StudioPick.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* StudioPick.swift */; };
+		B00000000000000000000016 /* KuwoParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* KuwoParser.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,10 +52,10 @@
 		F00000000000000000000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000014 /* JZMusicHelper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JZMusicHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		F00000000000000000000013 /* SearchRanker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchRanker.swift; sourceTree = "<group>"; };
-		F00000000000000000000014 /* NameMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameMatch.swift; sourceTree = "<group>"; };
-		F00000000000000000000015 /* StudioPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPick.swift; sourceTree = "<group>"; };
-		F00000000000000000000016 /* KuwoParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoParser.swift; sourceTree = "<group>"; };
+		F00000000000000000000015 /* SearchRanker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchRanker.swift; sourceTree = "<group>"; };
+		F00000000000000000000016 /* NameMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameMatch.swift; sourceTree = "<group>"; };
+		F00000000000000000000017 /* StudioPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPick.swift; sourceTree = "<group>"; };
+		F00000000000000000000018 /* KuwoParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoParser.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,10 +110,10 @@
 				F00000000000000000000009 /* DownloadManager.swift */,
 				F0000000000000000000000A /* PlayerManager.swift */,
 				F0000000000000000000000B /* HistoryStore.swift */,
-				F00000000000000000000013 /* SearchRanker.swift */,
-				F00000000000000000000014 /* NameMatch.swift */,
-				F00000000000000000000015 /* StudioPick.swift */,
-				F00000000000000000000016 /* KuwoParser.swift */,
+				F00000000000000000000015 /* SearchRanker.swift */,
+				F00000000000000000000016 /* NameMatch.swift */,
+				F00000000000000000000017 /* StudioPick.swift */,
+				F00000000000000000000018 /* KuwoParser.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
