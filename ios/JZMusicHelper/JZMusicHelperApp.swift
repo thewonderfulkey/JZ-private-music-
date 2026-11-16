@@ -16,8 +16,11 @@ struct JZMusicHelperApp: App {
     @State private var router = AppRouter()
 
     init() {
-        // 下载完成提示（可选权限，拒绝也不影响下载）
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // 下载完成提示（可选权限，拒绝也不影响下载）。
+        // 模拟器冒烟测试时用 JZ_SKIP_NOTIFICATION_PROMPT=1 跳过：否则首启的系统弹窗会盖住截图。
+        if ProcessInfo.processInfo.environment["JZ_SKIP_NOTIFICATION_PROMPT"] != "1" {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        }
     }
 
     var body: some Scene {

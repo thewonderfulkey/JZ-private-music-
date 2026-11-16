@@ -264,6 +264,79 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+
+  # 真机之前能自动做的那一层：iOS 模拟器里装起来、启动、截图。
+  # 能抓：启动崩溃、首屏渲染错乱、393pt 宽度下的布局塌陷。
+  # 抓不到：麦克风识曲、真实出声、锁屏/灵动岛、自签安装、后台音频——那些只能真机。
+  simulator-smoke:
+    needs: build-ipa
+    name: simulator smoke (boot + launch + screenshot)
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 编译模拟器版本
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/JZMusicHelper.xcodeproj \
+            -target JZMusicHelper \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            SYMROOT="$PWD/build/sim" \
+            OBJROOT="$PWD/build/simobj" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO \
+            > build/sim-build.log 2>&1 || { tail -40 build/sim-build.log; exit 1; }
+          grep -E "BUILD (SUCCEEDED|FAILED)" build/sim-build.log
+
+      - name: 启动模拟器并安装
+        run: |
+          set -euo pipefail
+          DEVICE=$(xcrun simctl list devices available | grep -Eo "iPhone 1[6-9]( Pro| Plus)? " | head -1 | xargs)
+          echo "设备：$DEVICE"
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          APP=$(find build/sim -maxdepth 2 -name 'JZMusicHelper.app' | head -1)
+          echo "APP=$APP"
+          xcrun simctl install "$DEVICE" "$APP"
+
+      - name: 启动 App 并截图（首启 + 重进）
+        run: |
+          set -euo pipefail
+          DEVICE=$(xcrun simctl list devices available | grep -Eo "iPhone 1[6-9]( Pro| Plus)? " | head -1 | xargs)
+          mkdir -p shots
+          # 关掉通知权限弹窗，否则首启截图会被系统弹窗盖住
+          SIMCTL_CHILD_JZ_SKIP_NOTIFICATION_PROMPT=1 xcrun simctl launch --terminate-running-process "$DEVICE" com.jz.musichelper
+          sleep 8
+          xcrun simctl io "$DEVICE" screenshot shots/01-launch.png
+          xcrun simctl terminate "$DEVICE" com.jz.musichelper || true
+          sleep 1
+          SIMCTL_CHILD_JZ_SKIP_NOTIFICATION_PROMPT=1 xcrun simctl launch "$DEVICE" com.jz.musichelper
+          sleep 6
+          xcrun simctl io "$DEVICE" screenshot shots/02-relaunch.png
+          ls -la shots
+
+      - name: 留存截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-shots
+          path: shots/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 失败时留存日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-logs
+          path: build/sim-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
 # 要出签名 IPA 时（需要 Apple Developer 账号），在仓库 Secrets 里加：
 #   IOS_CERT_P12_BASE64  IOS_CERT_PASSWORD  IOS_PROFILE_BASE64  IOS_TEAM_ID
 # 然后把"编译"换成 xcodebuild archive + -exportArchive（exportOptions.plist 里
