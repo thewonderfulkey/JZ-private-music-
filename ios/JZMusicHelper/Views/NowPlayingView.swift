@@ -11,6 +11,8 @@ struct NowPlayingView: View {
 
     /// 拖动中的进度（0...1）；nil 表示没在拖，显示真实进度
     @State private var dragFraction: Double?
+    /// 封面 ↔ 歌词
+    @State private var showLyrics = false
 
     private var shownFraction: Double {
         dragFraction ?? player.progress
@@ -26,7 +28,7 @@ struct NowPlayingView: View {
             topBar
             ScrollView {
                 VStack(spacing: 0) {
-                    artwork
+                    stage
                         .padding(.horizontal, 34)
                         .padding(.top, 8)
                     titles
@@ -107,7 +109,67 @@ struct NowPlayingView: View {
         .frame(height: 44)
     }
 
-    // MARK: 封面
+    // MARK: 封面 / 歌词
+
+    /// 封面与歌词共用一个方形区域：点击封面切歌词，点歌词切回封面（设计稿 §3.6）
+    @ViewBuilder
+    private var stage: some View {
+        if showLyrics {
+            lyricsPanel
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.25)) { showLyrics = false } }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("歌词，轻点返回封面")
+        } else {
+            artwork
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.25)) { showLyrics = true } }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("专辑封面，轻点看歌词")
+        }
+    }
+
+    private var lyricsPanel: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 14) {
+                    if player.lyrics.isEmpty {
+                        VStack(spacing: 10) {
+                            if player.isLoadingLyrics { ProgressView() }
+                            Text(player.isLoadingLyrics ? "歌词加载中…" : "暂无歌词")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.top, 60)
+                    } else {
+                        ForEach(Array(player.lyrics.enumerated()), id: \.offset) { idx, line in
+                            Text(line.text)
+                                .font(idx == player.lyricIndex ? .title3.weight(.bold) : .body)
+                                .foregroundStyle(idx == player.lyricIndex
+                                                 ? AnyShapeStyle(Color.accentColor)
+                                                 : AnyShapeStyle(Color.secondary.opacity(0.75)))
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                                .id(idx)
+                                .onTapGesture {
+                                    guard player.duration > 0 else { return }
+                                    player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
+                                }
+                        }
+                    }
+                }
+                .padding(.vertical, 40)
+            }
+            .onChange(of: player.lyricIndex) { _, idx in
+                guard idx >= 0 else { return }
+                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(idx, anchor: .center) }
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
 
     @ViewBuilder
     private var artwork: some View {
@@ -145,16 +207,28 @@ struct NowPlayingView: View {
     // MARK: 题名
 
     private var titles: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(player.currentSong?.name ?? "未在播放")
-                .font(.title2.weight(.bold))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(player.currentSong?.singer ?? "")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.currentSong?.name ?? "未在播放")
+                    .font(.title2.weight(.bold))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(player.currentSong?.singer ?? "")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) { showLyrics.toggle() }
+            } label: {
+                Image(systemName: showLyrics ? "photo" : "quote.bubble")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showLyrics ? "显示封面" : "显示歌词")
         }
     }
 
@@ -316,6 +390,12 @@ struct NowPlayingView: View {
                         .lineLimit(1)
                     Spacer()
                 }
+            }
+            if !player.lyrics.isEmpty {
+                Text("歌词 \(player.lyrics.count) 行 · 来自\(player.lyricsSource)\(player.hasLyrics && player.lyrics.first?.hasWordTiming == true ? " · 逐字" : "")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

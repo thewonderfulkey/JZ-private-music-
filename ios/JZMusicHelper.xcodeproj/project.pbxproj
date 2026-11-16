@@ -38,6 +38,10 @@
 		B0000000000000000000001D /* LyricsCleaning.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001F /* LyricsCleaning.swift */; };
 		B0000000000000000000001E /* TraditionalMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* TraditionalMap.swift */; };
 		B0000000000000000000001F /* LddcCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000021 /* LddcCrypto.swift */; };
+		B00000000000000000000020 /* LddcMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000022 /* LddcMatch.swift */; };
+		B00000000000000000000021 /* LddcLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000023 /* LddcLyrics.swift */; };
+		B00000000000000000000022 /* KwLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000024 /* KwLyrics.swift */; };
+		B00000000000000000000023 /* LyricsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* LyricsService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -74,6 +78,10 @@
 		F0000000000000000000001F /* LyricsCleaning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsCleaning.swift; sourceTree = "<group>"; };
 		F00000000000000000000020 /* TraditionalMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TraditionalMap.swift; sourceTree = "<group>"; };
 		F00000000000000000000021 /* LddcCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LddcCrypto.swift; sourceTree = "<group>"; };
+		F00000000000000000000022 /* LddcMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LddcMatch.swift; sourceTree = "<group>"; };
+		F00000000000000000000023 /* LddcLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LddcLyrics.swift; sourceTree = "<group>"; };
+		F00000000000000000000024 /* KwLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KwLyrics.swift; sourceTree = "<group>"; };
+		F00000000000000000000025 /* LyricsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +147,10 @@
 				F0000000000000000000001F /* LyricsCleaning.swift */,
 				F00000000000000000000020 /* TraditionalMap.swift */,
 				F00000000000000000000021 /* LddcCrypto.swift */,
+				F00000000000000000000022 /* LddcMatch.swift */,
+				F00000000000000000000023 /* LddcLyrics.swift */,
+				F00000000000000000000024 /* KwLyrics.swift */,
+				F00000000000000000000025 /* LyricsService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -266,6 +278,10 @@
 				B0000000000000000000001D /* LyricsCleaning.swift in Sources */,
 				B0000000000000000000001E /* TraditionalMap.swift in Sources */,
 				B0000000000000000000001F /* LddcCrypto.swift in Sources */,
+				B00000000000000000000020 /* LddcMatch.swift in Sources */,
+				B00000000000000000000021 /* LddcLyrics.swift in Sources */,
+				B00000000000000000000022 /* KwLyrics.swift in Sources */,
+				B00000000000000000000023 /* LyricsService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

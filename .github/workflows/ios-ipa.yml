@@ -62,6 +62,10 @@ jobs:
             ios/JZMusicHelper/Services/LyricsCleaning.swift \
             ios/JZMusicHelper/Services/TraditionalMap.swift \
             ios/JZMusicHelper/Services/LddcCrypto.swift \
+            ios/JZMusicHelper/Services/LddcMatch.swift \
+            ios/JZMusicHelper/Services/LddcLyrics.swift \
+            ios/JZMusicHelper/Services/KwLyrics.swift \
+            ios/JZMusicHelper/Services/LyricsService.swift \
             ios/SelfTest/LyricsFixtures.swift \
             ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log
           ./build/jz-selftest 2>&1 | tee build/selftest.log

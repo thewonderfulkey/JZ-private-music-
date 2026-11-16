@@ -30,6 +30,17 @@ final class PlayerEngine {
 
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
+
+    // 歌词（由 LyricsService 取，酷我官方优先、失败回退 LDDC）
+    private(set) var lyrics: [LyricLine] = []
+    private(set) var lyricsSource: String = ""
+    private(set) var lyricIndex: Int = -1
+    private(set) var isLoadingLyrics = false
+    var hasLyrics: Bool { !lyrics.isEmpty }
+    var currentLyricLine: LyricLine? {
+        guard lyricIndex >= 0, lyrics.indices.contains(lyricIndex) else { return nil }
+        return lyrics[lyricIndex]
+    }
     /// 已缓冲到的位置（进度条上那条浅色带）
     private(set) var bufferedTime: Double = 0
 
@@ -104,6 +115,7 @@ final class PlayerEngine {
         rejectedSourceURLs.removeAll()
         consecutiveSkips = 0
         resetProgress()
+        prepareLyrics(for: songs[index])
         Task { await loadCurrent() }
     }
 
@@ -176,6 +188,7 @@ final class PlayerEngine {
         currentSong = queue[newIndex]
         rejectedSourceURLs.removeAll()
         resetProgress()
+        prepareLyrics(for: queue[newIndex])
         Task { await loadCurrent() }
     }
 
@@ -335,7 +348,10 @@ final class PlayerEngine {
             Task { @MainActor in
                 guard let self else { return }
                 let seconds = time.seconds
-                if seconds.isFinite { self.currentTime = seconds }
+                if seconds.isFinite {
+                    self.currentTime = seconds
+                    self.updateLyricIndex()
+                }
                 if let item = self.player.currentItem {
                     let ranges = item.loadedTimeRanges
                     if let last = ranges.last {
@@ -372,6 +388,31 @@ final class PlayerEngine {
         player.play()
         isPlaying = true
         updateNowPlaying()
+    }
+
+    // MARK: 歌词
+
+    /// 切歌时先清空，再异步取词（不阻塞起播：Android 同样是"起播前并发预热歌词"）
+    private func prepareLyrics(for song: Song) {
+        lyrics = []
+        lyricsSource = ""
+        lyricIndex = -1
+        isLoadingLyrics = true
+        Task { [weak self] in
+            let result = await LyricsService.shared.fetch(song)
+            guard let self else { return }
+            // 期间可能又切歌了，只有仍停在同一个 ID 才落地
+            guard self.currentSong?.id == song.id else { return }
+            self.lyrics = result?.lines ?? []
+            self.lyricsSource = result?.source ?? ""
+            self.isLoadingLyrics = false
+            self.updateLyricIndex()
+        }
+    }
+
+    private func updateLyricIndex() {
+        let idx = LyricsCleaning.indexAt(lyrics, positionMs: Int(currentTime * 1000))
+        if idx != lyricIndex { lyricIndex = idx }
     }
 
     private func updateNowPlaying() {

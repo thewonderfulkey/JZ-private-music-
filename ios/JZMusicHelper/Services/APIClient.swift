@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: - 统一 HTTP 客户端
@@ -87,6 +88,45 @@ final class APIClient {
         return arr
     }
 
+    // MARK: POST
+
+    /// POST 文本体（酷狗设备注册、QQ musicu.fcg 都是 POST）
+    func postString(_ urlString: String,
+                    body: String,
+                    contentType: String = "application/json; charset=utf-8",
+                    headers: [String: String] = [:],
+                    timeout: TimeInterval = 15) async throws -> String {
+        guard let url = URL(string: urlString) else { throw APIError.invalidURL(urlString) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.httpMethod = "POST"
+        request.httpBody = Data(body.utf8)
+        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        request.setValue(APIClient.acceptJSON, forHTTPHeaderField: "Accept")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
+        if let s = String(data: data, encoding: .utf8) { return s }
+        return String(data: data, encoding: .isoLatin1) ?? ""
+    }
+
+    /// POST → JSON
+    func postJSON(_ urlString: String,
+                  body: String,
+                  contentType: String = "application/json; charset=utf-8",
+                  headers: [String: String] = [:],
+                  timeout: TimeInterval = 15) async throws -> [String: Any] {
+        let text = try await postString(urlString, body: body, contentType: contentType,
+                                        headers: headers, timeout: timeout)
+        guard let data = text.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.notJSON
+        }
+        return obj
+    }
+
     // MARK: 编码
 
     /// 与 Android `urlEncode` 等价：百分号编码，空格 → %20（不用 `+`）
@@ -173,5 +213,13 @@ extension Dictionary where Key == String {
         if let i = v as? Int { return Double(i) }
         if let s = v as? String { return Double(s) }
         return nil
+    }
+}
+// MARK: - 摘要
+
+enum Digest {
+    /// MD5 十六进制小写（酷狗签名的两处 md5 都用它）
+    static func md5Hex(_ s: String) -> String {
+        Insecure.MD5.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

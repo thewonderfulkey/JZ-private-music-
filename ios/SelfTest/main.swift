@@ -512,6 +512,62 @@ do {
     }
 }
 
+// MARK: - 11 LDDC 评分（与 Python 参考实现对照）
+
+section("LDDC 评分口径")
+
+do {
+    check("全角符号归一", LddcMatch.unifiedSymbol("（Live）：") == "(Live):")
+    check("空白归一", LddcMatch.unifiedSymbol("  A   B ") == "A B")
+    check("文本相似度完全相等 = 1", LddcMatch.textDifference("晴天", "晴天") == 1)
+    check("文本相似度空串 = 0", LddcMatch.textDifference("", "晴天") == 0)
+    check("LCS 相似度（abc/abd = 2·2/6）",
+          abs(LddcMatch.textDifference("abc", "abd") - 2.0 / 3.0) < 0.001,
+          "\(LddcMatch.textDifference("abc", "abd"))")
+    check("歌手串拆分（斜杠）", LddcMatch.artistStr2List("A/B").count == 2)
+    check("歌手括号别名", LddcMatch.artistStr2List("A (CV:B)") == [["A", "B"]],
+          "\(LddcMatch.artistStr2List("A (CV:B)"))")
+    check("歌手顺序无关（列表贪心配对）",
+          abs(LddcMatch.listMaxDifference([["陈奕迅"], ["王菲"]], [["王菲"], ["陈奕迅"]]) - 1.0) < 0.001)
+    check("歌手完全不同 = 0", LddcMatch.artistScore("周杰伦", "蔡健雅") == 0)
+    check("同歌手 = 100", LddcMatch.artistScore("周杰伦", "周杰伦") == 100)
+}
+
+do {
+    // 与 tools/ios/ref_match.py（照 Kotlin 独立转写的 Python 实现）逐条对齐
+    for (index, v) in LyricsFixtures.matchVectors.enumerated() {
+        let ts = LddcMatch.titleScore(v.title, v.candidateTitle)
+        let asScore = LddcMatch.artistScore(v.artist, v.candidateArtist)
+        let total = LddcMatch.score(title: v.title, candidateTitle: v.candidateTitle,
+                                    artist: v.artist, candidateArtist: v.candidateArtist)
+        check("评分向量 \(index + 1) 标题分（\(v.candidateTitle)）",
+              abs(ts - v.titleScore) < 0.01, "\(ts) vs \(v.titleScore)")
+        check("评分向量 \(index + 1) 歌手分", abs(asScore - v.artistScore) < 0.01,
+              "\(asScore) vs \(v.artistScore)")
+        check("评分向量 \(index + 1) 总分", abs(total - v.total) < 0.01,
+              "\(total) vs \(v.total)")
+    }
+    // 反例：词完全对不上时要落在及格线以下（否则会把别的歌的歌词贴上来）
+    let wrong = LddcMatch.score(title: "晴天", candidateTitle: "夜曲",
+                                artist: "周杰伦", candidateArtist: "蔡健雅")
+    check("完全不对的候选不及格", wrong < LddcMatch.minScore, "score=\(wrong)")
+    check("及格线口径 = 55", LddcMatch.minScore == 55)
+    check("时长容差 = 4 秒", LddcMatch.durationToleranceSec == 4)
+}
+
+// MARK: - 12 酷我歌词时间解析
+
+section("酷我歌词时间")
+
+do {
+    check("秒（数字）→ 毫秒", KwLyrics.parseTimeMs(0.12) == 120)
+    check("秒（字符串）→ 毫秒", KwLyrics.parseTimeMs("1.5") == 1500)
+    check("整秒", KwLyrics.parseTimeMs(3) == 3000)
+    check("负值无效", KwLyrics.parseTimeMs(-1.0) == nil)
+    check("非数字无效", KwLyrics.parseTimeMs("abc") == nil)
+    check("缺失无效", KwLyrics.parseTimeMs(nil) == nil)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

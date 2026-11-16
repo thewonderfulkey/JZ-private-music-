@@ -1,4 +1,4 @@
-"""把 probe_lyrics.py 产出的 fixture 转成 Swift 常量文件（给 ios/SelfTest 用）。
+"""把 probe_lyrics.py 产出的 fixture + LDDC 评分参考值转成 Swift 常量文件。
 
 为什么不在测试里读文件：CI 里 swiftc 编的是一个裸命令行程序，运行目录不固定；
 把向量直接编成常量最省事，也保证"测试用的样本"和"仓库里的样本"是同一份。
@@ -12,18 +12,33 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import ref_match  # noqa: E402  同目录的 LDDC 评分参考实现
 
 SRC = Path(".build/lyrics-fixtures")
 DST = Path("ios/SelfTest/LyricsFixtures.swift")
 
+# LDDC 评分的对照样例：(标题, 候选标题, 歌手, 候选歌手)
+MATCH_PAIRS = [
+    ("晴天", "晴天", "周杰伦", "周杰伦"),
+    ("晴天", "晴天 (Live)", "周杰伦", "周杰伦"),
+    ("晴天", "晴天 (钢琴版)", "周杰伦", "纯音乐"),
+    ("晴天", "晴天 - 伴奏", "周杰伦", "周杰伦"),
+    ("龙文", "龙文 (Live)", "谭晶", "谭晶"),
+    ("龙文", "龙文", "谭晶", "谭晶/陈奕迅"),
+    ("富士山下", "富士山下（Live）", "陈奕迅", "陈奕迅"),
+    ("起风了", "起风了 (原唱 周杰伦)", "买辣椒也用券", "RyaVocal"),
+    ("IVORY TOWER", "IVORY", "MYTH & ROID", "MYTH & ROID"),
+    ("可惜不是你", "可惜不是你 (Cover)", "梁静茹", "某翻唱"),
+    ("因为爱情", "因为爱情", "陈奕迅/王菲", "王菲/陈奕迅"),
+]
+
 
 def read(name: str) -> str:
     return (SRC / name).read_text(encoding="utf-8").strip()
-
-
-def two_tuples(raw: str) -> list[tuple[str, str]]:
-    return [(v["plainHex"], v["cipherHex"]) for v in json.loads(raw)]
 
 
 def main() -> int:
@@ -35,66 +50,76 @@ def main() -> int:
         return 1
 
     meta = json.loads(read("_meta"))
-    krc_synth_expect = json.loads(read("krc.synth.expect"))
-    qrc_synth_expect = json.loads(read("qrc.synth.expect"))
-    vectors = two_tuples(read("des-vectors.json"))
+    krc_synth = json.loads(read("krc.synth.expect"))
+    qrc_synth = json.loads(read("qrc.synth.expect"))
+    vectors = [(v["plainHex"], v["cipherHex"]) for v in json.loads(read("des-vectors.json"))]
 
-    vec_lines = "\n".join(
-        f'        ("{p}", "{c}"),' for p, c in vectors
-    )
+    des_lines = "\n".join(f'        ("{p}", "{c}"),' for p, c in vectors)
 
-    body = f'''// 歌词解密测试向量 —— 由 tools/ios/gen_lyrics_fixtures.py 生成，**不要手改**。
+    match_lines = []
+    for title, cand_title, artist, cand_artist in MATCH_PAIRS:
+        ts = ref_match.title_score(title, cand_title)
+        asc = ref_match.artist_score(artist, cand_artist)
+        total = ref_match.score(title, cand_title, artist, cand_artist)
+        match_lines.append(
+            f'        ("{title}", "{cand_title}", "{artist}", "{cand_artist}", '
+            f"{ts:.3f}, {asc:.3f}, {total:.3f}),"
+        )
+    match_block = "\n".join(match_lines)
+
+    body = f'''// 歌词/评分测试向量 —— 由 tools/ios/gen_lyrics_fixtures.py 生成，**不要手改**。
 //
-// 来源分两类：
+// 来源：
 //   · realKrcBase64：2026-11-16 从酷狗真实接口（complexsearch → lyrics.kugou.com → download）
-//     拉到的《{meta["title"]}》KRC 密文，经 Python 参考实现解密得到 63 行逐字歌词；
-//   · synth*：用 Python 参考实现「加密」出来的合成样本（KRC / QRC 各一份），
-//     给 Swift 侧做逐字节往返断言；
-//   · desVectors：6 组 3DES 单块向量（Python 独立实现生成），双向验证 Swift 的 DES 移植。
+//     拉到的《{meta["title"]}》KRC 密文，Python 参考实现解出 63 行逐字歌词；
+//   · synth*：Python 参考实现「加密」出来的合成样本（KRC / QRC 各一份），给 Swift 做往返断言；
+//   · desVectors：6 组 3DES 单块向量，双向验证 Swift 的 DES 移植；
+//   · matchVectors：LDDC 评分对照（期望值由 tools/ios/ref_match.py 独立实现算出）。
 enum LyricsFixtures {{
 
     /// 真实酷狗 KRC（base64，4192 字节密文）
     static let realKrcBase64 = "{read('krc.b64')}"
 
-    /// 真实 KRC 解出来的明文应当包含这个关键词
     static let realKrcContains = "{meta["title"]}"
-
-    /// 真实 KRC 的行数下限（实测 63 行；清洗可能丢极少数不可用行，所以给下限）
     static let realKrcMinLines = 40
 
     /// 合成 KRC（base64）
     static let synthKrcBase64 = "{read('krc.synth.b64')}"
-
-    /// 合成 KRC 的明文逐字：
-    static let synthKrcExpectedLines = {krc_synth_expect["lines"]}
-    static let synthKrcExpectedFirstText = "{krc_synth_expect["firstText"]}"
-    static let synthKrcExpectedFirstTimeMs = {krc_synth_expect["firstTimeMs"]}
-    static let synthKrcExpectedFirstWords = {krc_synth_expect["firstWords"]}
+    static let synthKrcExpectedLines = {krc_synth["lines"]}
+    static let synthKrcExpectedFirstText = "{krc_synth["firstText"]}"
+    static let synthKrcExpectedFirstTimeMs = {krc_synth["firstTimeMs"]}
+    static let synthKrcExpectedFirstWords = {krc_synth["firstWords"]}
 
     /// 合成 QRC（hex）
     static let synthQrcHex = "{read('qrc.synth.hex')}"
+    static let synthQrcExpectedLines = {qrc_synth["lines"]}
+    static let synthQrcExpectedFirstText = "{qrc_synth["firstText"]}"
+    static let synthQrcExpectedFirstTimeMs = {qrc_synth["firstTimeMs"]}
+    static let synthQrcExpectedFirstWords = {qrc_synth["firstWords"]}
 
-    static let synthQrcExpectedLines = {qrc_synth_expect["lines"]}
-    static let synthQrcExpectedFirstText = "{qrc_synth_expect["firstText"]}"
-    static let synthQrcExpectedFirstTimeMs = {qrc_synth_expect["firstTimeMs"]}
-    static let synthQrcExpectedFirstWords = {qrc_synth_expect["firstWords"]}
-
-    /// zlib 压缩的 "hello world"（hex）——用来单独验证解压底座
+    /// zlib 压缩的 "hello world"（hex）——单独验证解压底座
     static let zlibHelloHex = "789ccb48cdc9c95728cf2fca4901001a0b045d"
 
-    /// 裸 deflate 的 "hello world"（hex）——用来分辨 Apple 的 COMPRESSION_ZLIB 到底吃哪种包装
+    /// 裸 deflate 的 "hello world"（hex）
     static let rawDeflateHelloHex = "cb48cdc9c95728cf2fca490100"
+
+    /// LDDC 评分对照：(标题, 候选标题, 歌手, 候选歌手, 标题分, 歌手分, 总分)
+    static let matchVectors: [(title: String, candidateTitle: String, artist: String,
+                               candidateArtist: String, titleScore: Double,
+                               artistScore: Double, total: Double)] = [
+{match_block}
+    ]
 
     /// 3DES 单块向量：(明文 hex, 密文 hex)
     static let desVectors: [(plain: String, cipher: String)] = [
-{vec_lines}
+{des_lines}
     ]
 }}
 '''
     DST.write_text(body, encoding="utf-8")
-    print(f"✓ 写入 {DST}（{len(body)} 字节，{len(vectors)} 组 DES 向量）")
+    print(f"✓ 写入 {DST}（{len(body)} 字节，{len(vectors)} 组 DES / {len(MATCH_PAIRS)} 组评分向量）")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
