@@ -11,13 +11,26 @@ enum Zlib {
     /// 上一次失败的阶段（测试里打出来定位用）
     static var lastError = ""
 
-    /// 用 zlib 解码器试一次（输入是不是 zlib 包装由调用方保证）
+    /// 解 zlib 包装的数据（RFC 1950：2 字节头 + deflate + 4 字节 Adler-32）
+    ///
+    /// 实测（Xcode 16.4 / macOS 15 SDK）：Apple 的 `COMPRESSION_ZLIB` 解码器实际只吃**裸 deflate**，
+    /// 直接喂 zlib 包装会立刻返回 COMPRESSION_STATUS_ERROR。所以先剥 2 字节头，
+    /// 剩下的（deflate + adler + 可能存在的补零）交给裸流解码——流结束后多余的字节不会被消费。
     static func inflate(_ data: Data, maxOutput: Int = 8 * 1024 * 1024) -> Data? {
-        inflate(data, algorithm: COMPRESSION_ZLIB, maxOutput: maxOutput)
+        if data.count > 2, (data[data.startIndex] & 0x0F) == 0x08 {
+            let body = Data(data.dropFirst(2))
+            if let out = inflateRaw(body, maxOutput: maxOutput) { return out }
+        }
+        return inflateRaw(data, maxOutput: maxOutput)
     }
 
-    private static func inflate(_ data: Data, algorithm: compression_algorithm,
-                                maxOutput: Int) -> Data? {
+    /// 裸 deflate 解压
+    static func inflateRaw(_ data: Data, maxOutput: Int = 8 * 1024 * 1024) -> Data? {
+        inflateStream(data, algorithm: COMPRESSION_ZLIB, maxOutput: maxOutput)
+    }
+
+    private static func inflateStream(_ data: Data, algorithm: compression_algorithm,
+                                      maxOutput: Int) -> Data? {
         lastError = ""
         guard !data.isEmpty else { return nil }
 

@@ -413,10 +413,10 @@ do {
     check("zlib 解压底座可用（zlib 包装）", helloText == "hello world",
           "err=\(Zlib.lastError) out=\(helloText ?? "nil")")
 
-    // 同一份数据去掉 zlib 头尾（裸 deflate）再试一次：用来确认该 SDK 的 COMPRESSION_ZLIB 吃哪种包装
+    // 对照：裸 deflate（无 zlib 头）也必须能解——SDK 的 COMPRESSION_ZLIB 实际吃裸流
     let rawBytes = hexToBytes(LyricsFixtures.rawDeflateHelloHex)
-    let rawOut = Zlib.inflate(Data(rawBytes))
-    check("裸 deflate 也能解（说明 SDK 吃裸流）",
+    let rawOut = Zlib.inflateRaw(Data(rawBytes))
+    check("裸 deflate 可用",
           rawOut.flatMap { String(data: $0, encoding: .utf8) } == "hello world",
           "err=\(Zlib.lastError)")
 }
