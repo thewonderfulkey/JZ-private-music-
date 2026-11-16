@@ -82,6 +82,9 @@ enum LyricsFixtures {{
     /// zlib 压缩的 "hello world"（hex）——用来单独验证解压底座
     static let zlibHelloHex = "789ccb48cdc9c95728cf2fca4901001a0b045d"
 
+    /// 裸 deflate 的 "hello world"（hex）——用来分辨 Apple 的 COMPRESSION_ZLIB 到底吃哪种包装
+    static let rawDeflateHelloHex = "cb48cdc9c95728cf2fca490100"
+
     /// 3DES 单块向量：(明文 hex, 密文 hex)
     static let desVectors: [(plain: String, cipher: String)] = [
 {vec_lines}

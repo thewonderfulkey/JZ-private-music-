@@ -11,7 +11,13 @@ enum Zlib {
     /// 上一次失败的阶段（测试里打出来定位用）
     static var lastError = ""
 
+    /// 用 zlib 解码器试一次（输入是不是 zlib 包装由调用方保证）
     static func inflate(_ data: Data, maxOutput: Int = 8 * 1024 * 1024) -> Data? {
+        inflate(data, algorithm: COMPRESSION_ZLIB, maxOutput: maxOutput)
+    }
+
+    private static func inflate(_ data: Data, algorithm: compression_algorithm,
+                                maxOutput: Int) -> Data? {
         lastError = ""
         guard !data.isEmpty else { return nil }
 
@@ -20,7 +26,7 @@ enum Zlib {
         defer { streamPointer.deallocate() }
         // 分配出来是未初始化内存，compression_stream_init 要求 state 字段为 NULL——必须先清零
         memset(streamPointer, 0, MemoryLayout<compression_stream>.size)
-        guard compression_stream_init(streamPointer, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB)
+        guard compression_stream_init(streamPointer, COMPRESSION_STREAM_DECODE, algorithm)
                 == COMPRESSION_STATUS_OK else { lastError = "init 失败"; return nil }
         defer { compression_stream_destroy(streamPointer) }
 

@@ -409,8 +409,16 @@ func hexToBytes(_ hex: String) -> [UInt8] {
 do {
     // 先单独验解压底座：这一层不通，KRC/QRC 全都解不开
     let hello = Zlib.inflate(Data(hexToBytes(LyricsFixtures.zlibHelloHex)))
-    check("zlib 解压底座可用", hello.flatMap { String(data: $0, encoding: .utf8) } == "hello world",
-          "err=\(Zlib.lastError) out=\(hello.map { String(data: $0, encoding: .utf8) ?? "?" } ?? "nil")")
+    let helloText = hello.flatMap { String(data: $0, encoding: .utf8) }
+    check("zlib 解压底座可用（zlib 包装）", helloText == "hello world",
+          "err=\(Zlib.lastError) out=\(helloText ?? "nil")")
+
+    // 同一份数据去掉 zlib 头尾（裸 deflate）再试一次：用来确认该 SDK 的 COMPRESSION_ZLIB 吃哪种包装
+    let rawBytes = hexToBytes(LyricsFixtures.rawDeflateHelloHex)
+    let rawOut = Zlib.inflate(Data(rawBytes))
+    check("裸 deflate 也能解（说明 SDK 吃裸流）",
+          rawOut.flatMap { String(data: $0, encoding: .utf8) } == "hello world",
+          "err=\(Zlib.lastError)")
 }
 
 do {
