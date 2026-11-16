@@ -31,6 +31,13 @@ final class PlayerEngine {
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
 
+    /// 精确播放位置（秒）：直接向 AVPlayer 取，供逐字歌词按 30fps 推进使用。
+    /// 常规 UI 仍用 `currentTime`（0.5 秒一次的时间观察者），避免全页高频重绘。
+    var preciseTime: Double {
+        let t = player.currentTime().seconds
+        return t.isFinite ? max(0, t) : currentTime
+    }
+
     // 歌词（由 LyricsService 取，酷我官方优先、失败回退 LDDC）
     private(set) var lyrics: [LyricLine] = []
     private(set) var lyricsSource: String = ""

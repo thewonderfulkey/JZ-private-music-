@@ -6,6 +6,8 @@ struct SettingsView: View {
     @EnvironmentObject var historyStore: HistoryStore
     @AppStorage("defaultQuality") private var defaultQualityRaw: String = QualityLevel.high.rawValue
     @AppStorage("useBackgroundDownload") private var useBackgroundDownload: Bool = true
+    /// 歌词服务内存缓存里现在有多少首（进设置页时刷新）
+    @State private var lyricsCacheCount = 0
 
     private var defaultQuality: QualityLevel {
         get { QualityLevel(rawValue: defaultQualityRaw) ?? .high }
@@ -49,6 +51,16 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("歌词") {
+                    LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")
+                    Button("清空歌词缓存", role: .destructive) {
+                        Task {
+                            await LyricsService.shared.clearCache()
+                            lyricsCacheCount = await LyricsService.shared.cachedCount()
+                        }
+                    }
+                }
+
                 Section("关于") {
                     LabeledContent("应用", value: "JZ的音乐助手")
                     LabeledContent("版本", value: "1.0")
@@ -58,6 +70,9 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .task {
+                lyricsCacheCount = await LyricsService.shared.cachedCount()
+            }
         }
     }
 

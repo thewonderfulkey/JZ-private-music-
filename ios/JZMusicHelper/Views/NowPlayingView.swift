@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 播放页
 //
@@ -8,6 +9,8 @@ struct NowPlayingView: View {
 
     @Environment(PlayerEngine.self) private var player
     @Environment(\.dismiss) private var dismiss
+    /// 设计稿 §3.6：开「减弱动态效果」时歌词直接跳行，不做位移过渡
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 拖动中的进度（0...1）；nil 表示没在拖，显示真实进度
     @State private var dragFraction: Double?
@@ -130,7 +133,7 @@ struct NowPlayingView: View {
     private var lyricsPanel: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 14) {
+                LazyVStack(spacing: 18) {
                     if player.lyrics.isEmpty {
                         VStack(spacing: 10) {
                             if player.isLoadingLyrics { ProgressView() }
@@ -141,26 +144,30 @@ struct NowPlayingView: View {
                         .padding(.top, 60)
                     } else {
                         ForEach(Array(player.lyrics.enumerated()), id: \.offset) { idx, line in
-                            Text(line.text)
-                                .font(idx == player.lyricIndex ? .title3.weight(.bold) : .body)
-                                .foregroundStyle(idx == player.lyricIndex
-                                                 ? AnyShapeStyle(Color.accentColor)
-                                                 : AnyShapeStyle(Color.secondary.opacity(0.75)))
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
+                            lyricLineView(index: idx, line: line)
                                 .id(idx)
-                                .onTapGesture {
-                                    guard player.duration > 0 else { return }
-                                    player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
-                                }
                         }
                     }
                 }
-                .padding(.vertical, 40)
+                .frame(maxWidth: .infinity)
+                // 上下各留一屏余量，当前行才能稳定停在正中
+                .padding(.vertical, 120)
             }
+            .mask(lyricsFadeMask)
             .onChange(of: player.lyricIndex) { _, idx in
                 guard idx >= 0 else { return }
-                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(idx, anchor: .center) }
+                if reduceMotion {
+                    proxy.scrollTo(idx, anchor: .center)
+                } else {
+                    // 设计稿 §3.6：行推进 spring(0.38, 0.92)
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
+                        proxy.scrollTo(idx, anchor: .center)
+                    }
+                }
+            }
+            .onAppear {
+                guard player.lyricIndex >= 0 else { return }
+                proxy.scrollTo(player.lyricIndex, anchor: .center)
             }
         }
         .frame(maxHeight: .infinity)
@@ -169,6 +176,96 @@ struct NowPlayingView: View {
                 .fill(Color.primary.opacity(0.04))
         )
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// 一行歌词：当前行逐字染色（有逐字时间时），其他行 55% 不透明度。
+    @ViewBuilder
+    private func lyricLineView(index: Int, line: LyricLine) -> some View {
+        let isCurrent = index == player.lyricIndex
+
+        Group {
+            if isCurrent {
+                // 逐字推进要 30fps；用 TimelineView 而不是 0.5s 的时间观察者，否则字是「跳」着亮的
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
+                    Text(currentLineString(line))
+                        .font(.title2.weight(.bold))
+                        .lineSpacing(4)
+                }
+            } else {
+                Text(line.text)
+                    .font(.body)
+                    .lineSpacing(4)
+                    .foregroundStyle(Color.secondary.opacity(0.55))
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        // 设计稿 §1：可点区域 ≥44pt——歌词行本身只有 22~28pt，补 8pt 上下内边距
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard player.duration > 0 else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line.text)
+        .accessibilityValue(isCurrent ? "第 \(index + 1) 行，共 \(player.lyrics.count) 行" : "")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("跳到这一句")
+        .accessibilityAction {
+            guard player.duration > 0 else { return }
+            player.seek(toFraction: (Double(line.timeMs) / 1000) / player.duration)
+        }
+    }
+
+    /// 当前行的富文本：有逐字时间就按每字 start/dur 推进颜色，没有就整行高亮。
+    private func currentLineString(_ line: LyricLine) -> AttributedString {
+        guard line.hasWordTiming else {
+            var whole = AttributedString(line.text)
+            whole.foregroundColor = Color.accentColor
+            return whole
+        }
+
+        let nowMs = Int(player.preciseTime * 1000)
+        let unsung = Color.secondary.opacity(0.55)
+        var result = AttributedString()
+        for word in line.words {
+            // 设计稿 §3.6：单字 140ms 线性过渡
+            let progress = min(max(Double(nowMs - word.startMs) / 140.0, 0), 1)
+            var piece = AttributedString(word.text)
+            piece.foregroundColor = mix(unsung, Color.accentColor, progress)
+            result.append(piece)
+        }
+        return result
+    }
+
+    /// SwiftUI 没有内置 Color 插值，这里用 UIColor 通道手动混一下。
+    private func mix(_ from: Color, _ to: Color, _ t: Double) -> Color {
+        var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0, fa: CGFloat = 0
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        guard UIColor(from).getRed(&fr, green: &fg, blue: &fb, alpha: &fa),
+              UIColor(to).getRed(&tr, green: &tg, blue: &tb, alpha: &ta) else {
+            return to
+        }
+        let k = CGFloat(min(max(t, 0), 1))
+        return Color(uiColor: UIColor(
+            red: fr + (tr - fr) * k,
+            green: fg + (tg - fg) * k,
+            blue: fb + (tb - fb) * k,
+            alpha: fa + (ta - fa) * k
+        ))
+    }
+
+    /// 歌词区上下淡出（设计稿 §3.6 的「上下一屏淡出」）
+    private var lyricsFadeMask: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 64)
+            Rectangle().fill(Color.black)
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: 64)
+        }
     }
 
     @ViewBuilder

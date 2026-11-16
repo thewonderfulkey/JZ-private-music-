@@ -108,7 +108,14 @@ Apple 文档说 `COMPRESSION_ZLIB` 是 RFC 1950（zlib 包装），但实测（X
 | 逐字染色 | 按每字 start/dur 染色 | 数据已带 `words`，**渲染还没用上** | ⏳ |
 | 歌词偏移校准 | Android 也没有 | 同（不做） | ✅ |
 
-## 6 还没做的
+## 6 已完成（逐字染色，第二轮补）与仍未做的
+
+逐字染色已落码：`TimelineView(.animation(1/30))` + `player.preciseTime` 按每字 start/dur 插值（单字 140ms 线性），
+字号阶梯（当前行 `.title2` bold / 其他行 `.body` 55%）、上下 64pt 淡出、行推进 spring(0.38, 0.92)、
+`Reduce Motion` 直接跳行、点行 seek + 轻触觉、44pt 触摸区与 VoiceOver 动作都已对上设计稿 §3.6 / §8。
+参见 [HANDOFF-歌词逐字染色.md](HANDOFF-歌词逐字染色.md)。
+
+仍未做的：
 
 | 缺什么 | 说明 |
 |---|---|
