@@ -934,6 +934,44 @@ do {
                                       key: { $0.name }, lastShown: none, day: 1, take: 20).count == 20)
 }
 
+// MARK: - 系统面：Intent 信箱与分享文案（P4）
+
+section("系统面：Intent 信箱 / 分享文案")
+
+do {
+    // ① 信箱：先放先取、取完清空
+    let inbox = IntentInbox()
+    check("空信箱取到空数组", inbox.takeAll().isEmpty)
+    inbox.post(.playFavorites)
+    inbox.post(.search("晴天"))
+    check("两条都在", inbox.pendingCount == 2, "\(inbox.pendingCount)")
+    let taken = inbox.takeAll()
+    check("顺序保持投递顺序", taken == [.playFavorites, .search("晴天")], "\(taken)")
+    check("取完即清空", inbox.takeAll().isEmpty)
+    check("清空后计数为 0", inbox.pendingCount == 0)
+
+    // ② 分享文案：事实 + 来源，不带链接
+    let shared = Song(platform: .qq, platformID: "1", name: "晴天", singer: "周杰伦",
+                      album: "叶惠美", duration: 269, picURL: nil)
+    let text = SongShare.text(song: shared)
+    check("分享含歌名歌手", text.contains("晴天 - 周杰伦"), text)
+    check("分享含专辑", text.contains("专辑：叶惠美"), text)
+    check("分享含来源平台", text.contains("来源：QQ音乐"), text)
+    check("分享不带链接", !text.contains("http"), text)
+
+    // ③ 空歌手不产生 " - "
+    let noSinger = Song(platform: .kuwo, platformID: "2", name: "纯音乐",
+                        singer: "  ", album: "", duration: 100, picURL: nil)
+    check("空歌手只写歌名", SongShare.text(song: noSinger).hasPrefix("纯音乐"), SongShare.text(song: noSinger))
+
+    // ④ 带音源时的补充行
+    let src = StreamSource(url: "https://x/y.m4a", backendName: "cyapi QQ", platform: .qq,
+                           quality: .high, format: "m4a", note: "")
+    check("分享补音源行",
+          SongShare.text(song: shared, source: src).contains("音源：cyapi QQ · M4A · 0 kbps"),
+          SongShare.text(song: shared, source: src))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

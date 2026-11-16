@@ -65,6 +65,9 @@
 		B0000000000000000000003E /* FingerprintPCM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000040 /* FingerprintPCM.swift */; };
 		B0000000000000000000003F /* NeteaseRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000041 /* NeteaseRecognizer.swift */; };
 		B00000000000000000000040 /* NeteaseFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000042 /* NeteaseFingerprint.swift */; };
+		B00000000000000000000041 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000043 /* AppRouter.swift */; };
+		B00000000000000000000042 /* IntentInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000044 /* IntentInbox.swift */; };
+		B00000000000000000000043 /* JZIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000045 /* JZIntents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -128,6 +131,9 @@
 		F00000000000000000000040 /* FingerprintPCM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FingerprintPCM.swift; sourceTree = "<group>"; };
 		F00000000000000000000041 /* NeteaseRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseRecognizer.swift; sourceTree = "<group>"; };
 		F00000000000000000000042 /* NeteaseFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseFingerprint.swift; sourceTree = "<group>"; };
+		F00000000000000000000043 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
+		F00000000000000000000044 /* IntentInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentInbox.swift; sourceTree = "<group>"; };
+		F00000000000000000000045 /* JZIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JZIntents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -210,6 +216,9 @@
 				F00000000000000000000040 /* FingerprintPCM.swift */,
 				F00000000000000000000041 /* NeteaseRecognizer.swift */,
 				F00000000000000000000042 /* NeteaseFingerprint.swift */,
+				F00000000000000000000043 /* AppRouter.swift */,
+				F00000000000000000000044 /* IntentInbox.swift */,
+				F00000000000000000000045 /* JZIntents.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -382,6 +391,9 @@
 				B0000000000000000000003E /* FingerprintPCM.swift in Sources */,
 				B0000000000000000000003F /* NeteaseRecognizer.swift in Sources */,
 				B00000000000000000000040 /* NeteaseFingerprint.swift in Sources */,
+				B00000000000000000000041 /* AppRouter.swift in Sources */,
+				B00000000000000000000042 /* IntentInbox.swift in Sources */,
+				B00000000000000000000043 /* JZIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -8,6 +8,7 @@ struct SearchTabView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(DownloadFlow.self) private var downloadFlow
+    @Environment(AppRouter.self) private var router
 
     @State private var keyword = ""
     @State private var songs: [Song] = []
@@ -45,6 +46,9 @@ struct SearchTabView: View {
                     prompt: "歌曲、歌手、专辑")
         .onSubmit(of: .search) { runSearch() }
         .onDisappear { searchTask?.cancel() }
+        // App Intent（「搜索歌曲」快捷指令）把词塞进 router，这里消费掉
+        .onChange(of: router.pendingSearch) { _, _ in consumePendingSearch() }
+        .task { consumePendingSearch() }
     }
 
     // MARK: 初始态（最近搜索）
@@ -156,6 +160,16 @@ struct SearchTabView: View {
     }
 
     // MARK: 搜索
+
+    /// 消费 App Intent 留下的搜索词（取走即清空，避免重复触发）
+    private func consumePendingSearch() {
+        guard let pending = router.pendingSearch else { return }
+        router.pendingSearch = nil
+        let trimmed = pending.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        keyword = trimmed
+        runSearch()
+    }
 
     private func runSearch() {
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)

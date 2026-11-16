@@ -15,6 +15,7 @@ struct RecognizeView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
+    @Environment(AppRouter.self) private var router
 
     enum Phase: Equatable {
         case idle
@@ -89,6 +90,18 @@ struct RecognizeView: View {
             }
         }
         .onDisappear { cancelListen() }
+        // App Intent（「听歌识曲」快捷指令）进来时自动开始听
+        .onChange(of: router.pendingRecognize) { _, value in
+            guard value else { return }
+            router.pendingRecognize = false
+            if phase != .listening, phase != .recognizing { startListen() }
+        }
+        .task {
+            if router.pendingRecognize {
+                router.pendingRecognize = false
+                startListen()
+            }
+        }
     }
 
     // MARK: 麦克风舞台

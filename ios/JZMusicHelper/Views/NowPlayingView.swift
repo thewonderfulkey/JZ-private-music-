@@ -116,6 +116,9 @@ struct NowPlayingView: View {
                         } label: {
                             Label("下载…", systemImage: "arrow.down.circle")
                         }
+                        ShareLink(item: SongShare.text(song: song, source: player.source)) {
+                            Label("分享", systemImage: "square.and.arrow.up")
+                        }
                     }
                     if let source = player.source {
                         Section("当前音源") {
