@@ -1122,6 +1122,55 @@ do {
           LyricsCleaning.indexAt(lines, positionMs: 5000 - 200) == 0)
 }
 
+section("第四轮：播放页宽度钉死 + 点歌词跳转口径")
+
+do {
+    // 老板第四轮录屏：播放页整页横向溢出，左右两头的按钮全跑到屏幕外。
+    // 修法是把内容宽度先钉到屏幕上，这里把口径钉成断言。
+    check("iPhone 393：原样用",
+          LayoutRules.playerWidth(available: 393, screen: 393) == 393,
+          "\(LayoutRules.playerWidth(available: 393, screen: 393))")
+    check("外层给到 1200（比屏幕还宽）→ 钉回 393",
+          LayoutRules.playerWidth(available: 1200, screen: 393) == 393,
+          "\(LayoutRules.playerWidth(available: 1200, screen: 393))")
+    check("外层给到 0 / NaN → 退回屏幕宽",
+          LayoutRules.playerWidth(available: 0, screen: 393) == 393
+          && LayoutRules.playerWidth(available: .nan, screen: 393) == 393)
+    check("iPad 1024 → 限 700（与其它页面 readableWidth 同口径）",
+          LayoutRules.playerWidth(available: 1024, screen: 1024) == 700,
+          "\(LayoutRules.playerWidth(available: 1024, screen: 1024))")
+
+    check("LRC 头部 [offset:+500] 解析成 +500",
+          LyricsCleaning.lrcOffsetMs("[offset:+500]\n[00:01.00]第一句") == 500,
+          "\(LyricsCleaning.lrcOffsetMs("[offset:+500]\n[00:01.00]第一句"))")
+    check("没有 offset 标签 → 0",
+          LyricsCleaning.lrcOffsetMs("[00:01.00]第一句") == 0)
+
+    let shifted = LyricsCleaning.parseLrc("[offset:+500]\n[00:01.00]第一句\n[00:02.00]第二句")
+    check("offset +500 → 行时间整体提前 500ms（1000 → 500）",
+          shifted.first?.timeMs == 500,
+          "\(shifted.first?.timeMs ?? -1)")
+    let negativeShift = LyricsCleaning.parseLrc("[offset:-500]\n[00:01.00]第一句")
+    check("offset −500 → 行时间整体延后（1000 → 1500）",
+          negativeShift.first?.timeMs == 1500,
+          "\(negativeShift.first?.timeMs ?? -1)")
+    let clampedShift = LyricsCleaning.parseLrc("[offset:+3000]\n[00:01.00]第一句")
+    check("offset 比行时间还大 → 夹到 0，不出负时间",
+          clampedShift.first?.timeMs == 0,
+          "\(clampedShift.first?.timeMs ?? -1)")
+
+    check("点 5000ms 那句、用户偏移 +200 → 跳到 4800ms",
+          LyricsCleaning.seekTargetMs(lineMs: 5000, userOffsetMs: 200) == 4800,
+          "\(LyricsCleaning.seekTargetMs(lineMs: 5000, userOffsetMs: 200))")
+    check("点 5000ms 那句、用户偏移 -200 → 跳到 5200ms",
+          LyricsCleaning.seekTargetMs(lineMs: 5000, userOffsetMs: -200) == 5200)
+    let seekLines = [LyricLine(timeMs: 1000, text: "第一句"), LyricLine(timeMs: 5000, text: "第二句")]
+    check("跳完以后被点的那一句就是当前行（高亮不串行）",
+          LyricsCleaning.indexAt(
+            seekLines,
+            positionMs: LyricsCleaning.seekTargetMs(lineMs: 5000, userOffsetMs: 200) + 200) == 1)
+}
+
 section("下载落盘后的实测档位（老板反馈 ⑥：找到无损却下成 320k）")
 
 do {

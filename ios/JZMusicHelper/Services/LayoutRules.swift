@@ -22,4 +22,21 @@ enum LayoutRules {
     static func isWide(_ available: Double) -> Bool {
         available.isFinite && available >= 768
     }
+
+    /// 播放页内容宽度：**必须钉在屏幕上，钉死。**
+    ///
+    /// 为什么单独抽出来当一个纯函数：第四轮老板录屏里播放页是"整页横向溢出"——
+    /// 顶部收起/更多、歌名歌手、模式与下载、进度两端时间全被推到屏幕外，只剩居中那三个键。
+    /// 起因是外层给到播放页的宽度比屏幕还宽（全屏 cover + 模糊背景这类组合会偶发），
+    /// 而旧版式全靠 `Spacer` 把元素顶到两头，一宽就顶出屏幕。
+    ///
+    /// 口径：
+    ///   · 可用宽度有效且不超过屏幕 → 原样用（iPhone 竖屏 393 就是 393）
+    ///   · 可用宽度无效（0 / 负数 / NaN / ∞）或比屏幕还宽 → 退回屏幕宽
+    ///   · iPad 之类宽屏再限 700（与其它页面的 `readableWidth` 同口径）
+    static func playerWidth(available: Double, screen: Double) -> Double {
+        let cap = (screen.isFinite && screen > 0) ? min(screen, maxContentWidth) : maxContentWidth
+        guard available.isFinite, available > 0 else { return cap }
+        return min(available, cap)
+    }
 }

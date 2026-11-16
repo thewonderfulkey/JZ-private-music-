@@ -109,7 +109,10 @@ final class SettingsStore {
     var liveActivityEnabled: Bool {
         didSet { defaults.set(liveActivityEnabled, forKey: Key.liveActivity) }
     }
-    /// 歌词时间偏移（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±600，步进 50
+    /// 歌词时间偏移（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±2000，步进 100
+    ///
+    /// 为什么放到 ±2000：第四轮老板说"歌词还是没对上"。同一个歌名不同版本（Live / 重制 / 电视剧版）
+    /// 的前奏能差好几秒，±600 根本调不动；真机上现场按「快一点 / 慢一点」最多 20 下就能对齐。
     var lyricOffsetMs: Int {
         didSet {
             let clamped = Self.clampOffset(lyricOffsetMs)
@@ -119,7 +122,7 @@ final class SettingsStore {
     }
 
     /// 偏移的唯一边界口径（设置页 Stepper、播放页微调、引擎消费都走它）
-    static func clampOffset(_ value: Int) -> Int { min(max(value, -600), 600) }
+    static func clampOffset(_ value: Int) -> Int { min(max(value, -2000), 2000) }
 
     init() {
         let d = UserDefaults.standard

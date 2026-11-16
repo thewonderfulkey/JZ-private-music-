@@ -64,16 +64,7 @@ struct FavoritesView: View {
             }
         }
         .navigationTitle("我的收藏")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                .accessibilityLabel("设置")
-            }
-        }
+        // 第四轮（老板反馈 ③）：设置已经单独占一个 Tab，这里的齿轮撤掉，只留一个入口。
     }
 
     // MARK: 头部

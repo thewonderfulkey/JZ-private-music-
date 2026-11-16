@@ -184,14 +184,49 @@ final class PlayerEngine {
         updateNowPlaying()
     }
 
-    func seek(toFraction fraction: Double) {
+    /// 绝对位置跳转（秒）。所有跳转（进度条拖动 / 点歌词 / 无障碍调整）都走这里，
+    /// 不再各自乘一遍 `duration`——`duration` 一旦与实际音频有毫秒级差，乘除会把误差放大。
+    func seek(toSeconds seconds: Double) {
         guard duration > 0 else { return }
-        let target = max(0, min(duration, duration * fraction))
+        let safe = seconds.isFinite ? seconds : 0
+        let target = max(0, min(duration, safe))
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
-        updateLyricIndex()
+        // 刚 seek 完 `AVPlayer.currentTime()` 还是旧值，而 40ms 的歌词 ticker 只在播放时跑：
+        // 暂停状态下如果照旧用 preciseTime 算，就会出现"跳过去了，高亮还停在上上句"。
+        lyricIndex = LyricsCleaning.indexAt(
+            lyrics,
+            positionMs: Int(target * 1000) + SettingsStore.shared.lyricOffsetMs)
         updateNowPlaying()
+    }
+
+    func seek(toFraction fraction: Double) {
+        guard duration > 0 else { return }
+        seek(toSeconds: duration * min(max(fraction, 0), 1))
+    }
+
+    /// 点某一句歌词 → 跳到那一句。
+    ///
+    /// 目标是「行时间 − 用户偏移」：跳完以后 `indexAt(位置 + 偏移)` 正好等于这一行，
+    /// 所以高亮一定落在被点的那一句上。
+    /// 老板说的"点歌词跳转的位置不对"，一半是这个偏移没算进去，一半是按 fraction 乘出来的误差。
+    func seek(toLyricLine index: Int) {
+        guard lyrics.indices.contains(index) else { return }
+        let offset = SettingsStore.shared.lyricOffsetMs
+        let targetMs = LyricsCleaning.seekTargetMs(lineMs: lyrics[index].timeMs, userOffsetMs: offset)
+        seek(toSeconds: Double(targetMs) / 1000)
+        lyricIndex = index
+    }
+
+    /// 播放列表里点某一首（队列不动，只换当前曲）
+    func jump(to newIndex: Int) {
+        guard queue.indices.contains(newIndex) else { return }
+        if newIndex == index {
+            if !isPlaying { toggle() }
+            return
+        }
+        goTo(newIndex)
     }
 
     /// 队列整体替换（收藏页「播放全部」/ 资料库「随机播放」）

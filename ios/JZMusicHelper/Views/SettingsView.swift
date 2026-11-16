@@ -4,6 +4,9 @@ import SwiftUI
 //
 // 分组顺序照设计稿：外观 / 播放 / 歌词 / 识曲 / 下载 / 数据 / 关于。
 // 键名与 Android 对齐（见 IOS-FEATURE-PARITY §6–§9）；破坏性操作一律二次确认 + 报数量。
+//
+// 第四轮（老板反馈 ③）：这页从"收藏页右上角齿轮"挪成**独立 Tab**（见 RootTabView），
+// 所以标题用大标题、和发现/识曲/下载三个 Tab 保持一致。
 struct SettingsView: View {
 
     @Environment(SettingsStore.self) private var settings
@@ -51,8 +54,9 @@ struct SettingsView: View {
                     }
                 }
                 Stepper("时间偏移：\(lyricOffsetText)",
-                        value: $settings.lyricOffsetMs, in: -600...600, step: 100)
-                Text("歌词比声音慢就往上调（正数 = 歌词提前），反之往下调。播放页歌词区也有「快一点 / 慢一点」现场微调。")
+                        value: $settings.lyricOffsetMs, in: -2000...2000, step: 100)
+                Button("把偏移归零") { settings.lyricOffsetMs = 0 }
+                Text("歌词比声音慢（唱到下一句了字还没亮）就往上调正数（让歌词提前）；反之调负数。播放页歌词区也有「快一点 / 慢一点」现场微调，最多 ±2 秒——同一个歌名不同版本（Live / 重制）前奏差几秒，靠这个手动对齐。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")
@@ -118,7 +122,7 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Tokens.Palette.paper)
         .navigationTitle("设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .task {
             lyricsCacheCount = await LyricsService.shared.cachedCount()
         }

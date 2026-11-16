@@ -1,9 +1,11 @@
 import SwiftUI
 
-// MARK: - 外壳：4 个 Tab
+// MARK: - 外壳：5 个 Tab
 //
 // 2026-11-16 第二轮（老板反馈 ⑤）：Tab = **发现 / 我的收藏 / 识曲 / 下载**
-// （资料库那页整页换成"我的收藏"，并挪到发现与识曲之间；设置仍在右上角齿轮）。
+// （资料库那页整页换成"我的收藏"，并挪到发现与识曲之间）。
+// 2026-11-16 第四轮（老板反馈 ③）：**设置从收藏页右上角挪出来，自己占一个 Tab**，
+// 齿轮从 FavoritesView 撤掉，设置页就是第五个 Tab。
 // 搜索不占 Tab，入口在发现页最上方（上一轮改的）。
 //
 // 迷你播放条挂在**每个 Tab 的 NavigationStack** 上（`miniPlayerInset`），
@@ -68,6 +70,13 @@ struct RootTabView: View {
             .tabItem { Label("下载", systemImage: "arrow.down.circle.fill") }
             .badge(activeDownloads)
             .tag(AppRouter.Tab.downloads)
+
+            NavigationStack {
+                SettingsView()
+            }
+            .miniPlayerInset(onTap: openPlayer)
+            .tabItem { Label("设置", systemImage: "gearshape.fill") }
+            .tag(AppRouter.Tab.settings)
         }
         .tint(Tokens.Palette.vermilion)
         .fullScreenCover(isPresented: Binding(get: { router.showPlayer },

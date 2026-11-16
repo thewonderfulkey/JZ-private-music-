@@ -9,12 +9,13 @@ import Observation
 //
 // 2026-11-16 改版（老板反馈 ⑥）：**搜索不再是 Tab**，入口挪到发现页最上方。
 // 2026-11-16 第二轮（老板反馈 ⑤）：**资料库 → 我的收藏**，并挪到发现与识曲之间。
-// 所以 Tab 是 4 个：发现 / 我的收藏 / 识曲 / 下载，搜索变成发现页 push 出来的页面。
+// 2026-11-16 第四轮（老板反馈 ③）：**设置从收藏页右上角挪出来，单独一个 Tab**。
+// 所以 Tab 是 5 个：发现 / 我的收藏 / 识曲 / 下载 / 设置，搜索变成发现页 push 出来的页面。
 @Observable
 final class AppRouter {
 
     enum Tab: Hashable {
-        case discover, favorites, recognize, downloads
+        case discover, favorites, recognize, downloads, settings
     }
 
     /// 当前 Tab（TabView 直接绑它）

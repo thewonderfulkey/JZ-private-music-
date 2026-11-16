@@ -77,11 +77,32 @@ enum LyricsCleaning {
     private static let timeTag = Pattern.make(
         "\\[(\\d{1,2}):(\\d{1,2})(?:\\.(\\d{1,3}))?\\]")
 
+    /// LRC 头部的时间轴校正标签 `[offset:+500]`（毫秒）。
+    ///
+    /// 通行口径：正数 = 歌词**提前**显示。以前完全没解析这个标签，
+    /// 带 offset 的那些歌词源会整体偏 0.2~1 秒，用户怎么调设置都对不齐。
+    private static let offsetTag = Pattern.make(
+        "\\[offset:\\s*([+-]?\\d+)\\s*\\]", options: [.caseInsensitive])
+
+    static func lrcOffsetMs(_ lrc: String) -> Int {
+        let ns = lrc as NSString
+        guard let m = offsetTag.firstMatch(in: lrc, range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges >= 2 else { return 0 }
+        return Int(ns.substring(with: m.range(at: 1))) ?? 0
+    }
+
+    /// 点某一句歌词时要跳到的播放位置（毫秒）= 行时间 − 用户偏移。
+    /// 这样跳完以后 `indexAt(位置 + 偏移)` 正好落在这一行上，高亮不会串到下一句。
+    static func seekTargetMs(lineMs: Int, userOffsetMs: Int) -> Int {
+        max(0, lineMs - userOffsetMs)
+    }
+
     /// 解析 LRC 文本为时间戳行。
     /// 注意 `[mm:ss.xxx]` 的 `xxx` 是**毫秒**（三位小数秒），不能乘 10 当"十进制小数"用——
     /// Android 那边曾经踩过，这里直接按毫秒处理。
     static func parseLrc(_ lrc: String) -> [LyricLine] {
         guard !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        let offset = lrcOffsetMs(lrc)
         var out: [LyricLine] = []
         for raw in lrc.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = String(raw)
@@ -108,7 +129,8 @@ enum LyricsCleaning {
             let cleaned = cleanLine(text)
             guard !cleaned.isEmpty else { continue }
             for t in times {
-                out.append(LyricLine(timeMs: t, text: cleaned))
+                // `[offset:+500]` = 歌词提前 500ms → 每条时间戳减 500
+                out.append(LyricLine(timeMs: max(0, t - offset), text: cleaned))
             }
         }
         return out.sorted { $0.timeMs < $1.timeMs }
