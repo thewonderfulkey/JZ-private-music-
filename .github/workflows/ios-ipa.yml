@@ -170,12 +170,17 @@ jobs:
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR/Payload"
           cp -R "$APP" "$ARTIFACT_DIR/Payload/"
-          IPA="JZ-Music-v${VERSION}-ios-unsigned.ipa"
+          # 文件名带构建戳：iOS 的版本号是从 Android 的 versionName 读的（2.1.95 要一起改），
+          # 所以纯靠版本号无法区分两次出包——群里两个同名文件，装回旧的都很正常。
+          STAMP="${GITHUB_SHA:0:7}-r${GITHUB_RUN_NUMBER}"
+          IPA="JZ-Music-v${VERSION}-${STAMP}-ios-unsigned.ipa"
           (cd "$ARTIFACT_DIR" && zip -qry "$IPA" Payload)
           SIZE=$(stat -f%z "$ARTIFACT_DIR/$IPA")
           SHA=$(shasum -a 256 "$ARTIFACT_DIR/$IPA" | cut -d' ' -f1)
-          MB=$(( SIZE / 1024 / 1024 ))
+          # 用 awk 出两位小数：这个包只有 ~1MB，整数除法会写成 "0 MB"
+          MB=$(awk "BEGIN{printf \"%.2f\", $SIZE/1048576}")
           echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "stamp=$STAMP" >> "$GITHUB_OUTPUT"
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "mb=$MB" >> "$GITHUB_OUTPUT"
@@ -188,13 +193,14 @@ jobs:
             echo "| 大小 | ${MB} MB |"
             echo "| SHA-256 | \`$SHA\` |"
             echo "| 版本 | v${VERSION}（versionCode ${CODE}）|"
+            echo "| 构建戳 | \`$STAMP\` |"
             echo "| 运行 | [第 $GITHUB_RUN_NUMBER 次]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 留存 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JZ-Music-v${{ steps.meta.outputs.version }}-ios-ipa
+          name: JZ-Music-v${{ steps.meta.outputs.version }}-${{ steps.pkg.outputs.stamp }}-ios-ipa
           path: out/*.ipa
           if-no-files-found: error
           retention-days: 14
@@ -204,10 +210,10 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          BODY=$(printf '版本：v%s（versionCode %s）\n大小：%s MB\nSHA-256：%s\n构建：GitHub Actions · macos-15 · run #%s\n说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。' \
-            "$VERSION" "$CODE" "${{ steps.pkg.outputs.mb }}" "${{ steps.pkg.outputs.sha }}" "$GITHUB_RUN_NUMBER")
+          BODY=$(printf '版本：v%s（versionCode %s）\n构建戳：%s\n大小：%s MB\nSHA-256：%s\n构建：GitHub Actions · macos-15 · run #%s\n说明：未签名包，用 Sideloadly / AltStore 自签后可安装到 iPhone。装之前核对文件名里的构建戳，别装回上一包。' \
+            "$VERSION" "$CODE" "${{ steps.pkg.outputs.stamp }}" "${{ steps.pkg.outputs.mb }}" "${{ steps.pkg.outputs.sha }}" "$GITHUB_RUN_NUMBER")
           python3 tools/notify/lark.py \
-            --title "iOS v${VERSION} 已出包（未签名 IPA）" \
+            --title "iOS v${VERSION} · ${{ steps.pkg.outputs.stamp }} 已出包（未签名 IPA）" \
             --file "out/${{ steps.pkg.outputs.ipa }}" \
             --name "${{ steps.pkg.outputs.ipa }}" \
             --body "$BODY"

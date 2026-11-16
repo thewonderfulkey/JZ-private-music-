@@ -70,12 +70,13 @@
 
 | 验证 | 手段 | 结果 |
 |---|---|---|
-| 95% / 仅 Wi-Fi / 档位顺序 / 体积文案 | CI `logic-tests`（`swiftc` 编 `ios/SelfTest/main.swift` 直接跑） | ✅ 13 条断言（见 `section("下载校验…")`） |
-| 整包能否编译 | CI `build-ipa`（`xcodebuild`，iOS 17 target，device arm64） | 见本轮 CI |
+| 95% / 仅 Wi-Fi / 档位顺序 / 体积文案 | CI `logic-tests`（`swiftc` 编 `ios/SelfTest/main.swift` 直接跑） | ✅ 13 条断言全绿（`section("下载校验…")`） |
+| 整包能否编译 | CI `build-ipa`（`xcodebuild`，iOS 17 target，device arm64） | ✅ BUILD SUCCEEDED，run [#43820907204](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43820907204)；`JZ-Music-v2.1.95-ios-unsigned.ipa`（约 1.0 MB）已发飞书群 |
 | **文件能不能真下下来** | ❌ 本机是 Windows，无模拟器/设备 | **未验证**，见 §6 |
 | 断网 / 切后台 / 杀进程 | ❌ 同上 | **未验证**，见 §6 |
 
 > 说法边界：✅ 只覆盖"逻辑对 + 类型对"，不覆盖"真机上跑起来对"。不要在装机之前说"下载做好了"。
+> 本轮踩到一个编译错并已修：`View` 上没有 `.onDismiss` 修饰符（那是 sheet 的 `onDismiss:` 参数），见 §5。
 
 ---
 
@@ -87,6 +88,7 @@
 | `URLSession` 进度回调给 `totalBytesExpectedToWrite = -1` | 进度条分母被写成 -1，`progressText` 变 `--%` 且体积消失 | 只在 `> 0` 时覆盖 `totalBytes` |
 | 两个 Sheet 同时可达 | 播放页自己弹下载面板 + 外壳也弹，会出现两层音质选择 | 只有 `RootTabView` 一处 `.sheet`，子视图一律只调 `DownloadFlow` |
 | `SettingsStore` 被实例化两份 | 设置页关掉「仅 Wi-Fi」，下载层读的是另一份，开关看起来没生效 | `SettingsStore.shared`，App 与 Service 层共用同一实例 |
+| `View` 上写 `.onDismiss { }` | `xcodebuild` 报 `value of type 'some View' has no member 'onDismiss'`（iOS 17 SDK 没有这个 View 修饰符） | 改用 `sheet(isPresented:onDismiss:content:)` 的 `onDismiss:` 参数，回调里再 `flow.dismiss()` |
 
 ---
 
