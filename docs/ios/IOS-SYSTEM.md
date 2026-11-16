@@ -78,7 +78,8 @@ Tab 的选择状态从 `RootTabView` 的 `@State` 挪到 `AppRouter`：
 | 分享文案（含字段 / 不带链接 / 空歌手） | CI `logic-tests` | ✅ 6 条断言 |
 | 整包编译（Intent 协议实现是否对得上 SDK） | CI `build-ipa` | ✅ BUILD SUCCEEDED（r41） |
 | Widget 扩展是否真嵌进包 | CI 门禁 `unzip -l` 看 `PlugIns/*.appex` + 本地实测 | ✅ `PlugIns/JZWidgets.appex/JZWidgets`（163KB）在包里，IPA 1.38 MB |
-| 锁屏活动的口径（进度/截断/节流/staleDate） | CI `logic-tests` | ✅ 14 条断言 |
+| 锁屏活动的口径（进度/截断/节流/staleDate） | CI `logic-tests` | ✅ 14 条断言；全套 **336 条全绿**，run [#43837921144](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/43837921144) |
+| 锁屏活动的代码是否真编进包 | CI `build-ipa` | ✅ BUILD SUCCEEDED，扩展二进制 163KB → **260KB**（ActivityKit 那部分进去了）；`JZ-Music-v2.1.95-5b9fb7b-r46-ios-unsigned.ipa` 已发飞书群 |
 | **真机：快捷指令里能看到这三个动作、能跑通** | ❌ 无设备 | **未验证** |
 
 > App Intents 的协议细节（`description` 的可选性、`@Parameter` 的初始化器）是最容易跟 SDK 版本错位的地方，
