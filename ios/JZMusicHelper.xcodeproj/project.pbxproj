@@ -68,6 +68,10 @@
 		B00000000000000000000041 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000043 /* AppRouter.swift */; };
 		B00000000000000000000042 /* IntentInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000044 /* IntentInbox.swift */; };
 		B00000000000000000000043 /* JZIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000045 /* JZIntents.swift */; };
+		B00000000000000000000044 /* JZWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000047 /* JZWidgets.swift */; };
+		B00000000000000000000045 /* DiscoverCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* DiscoverCatalog.swift */; };
+		B00000000000000000000046 /* DiscoverRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* DiscoverRules.swift */; };
+		B00000000000000000000047 /* JZWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000046 /* JZWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -134,10 +138,20 @@
 		F00000000000000000000043 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
 		F00000000000000000000044 /* IntentInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentInbox.swift; sourceTree = "<group>"; };
 		F00000000000000000000045 /* JZIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JZIntents.swift; sourceTree = "<group>"; };
+		F00000000000000000000046 /* JZWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = JZWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000047 /* JZWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JZWidgets.swift; sourceTree = "<group>"; };
+		F00000000000000000000048 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		E00000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -165,6 +179,7 @@
 				F00000000000000000000012 /* Assets.xcassets */,
 				F00000000000000000000013 /* Info.plist */,
 				G00000000000000000000007 /* Recognizer */,
+				G00000000000000000000008 /* JZWidgets */,
 			);
 			path = JZMusicHelper;
 			sourceTree = "<group>";
@@ -250,6 +265,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000014 /* JZMusicHelper.app */,
+				F00000000000000000000046 /* JZWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -264,6 +280,15 @@
 			path = Recognizer;
 			sourceTree = "<group>";
 		};
+		G00000000000000000000008 /* JZWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000047 /* JZWidgets.swift */,
+				F00000000000000000000048 /* Info.plist */,
+			);
+			path = JZWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -274,17 +299,54 @@
 				E00000000000000000000001 /* Sources */,
 				E00000000000000000000002 /* Frameworks */,
 				E00000000000000000000003 /* Resources */,
+				E00000000000000000000007 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				T00000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = JZMusicHelper;
 			productName = JZMusicHelper;
 			productReference = F00000000000000000000014 /* JZMusicHelper.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D00000000000000000000002 /* JZWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000008 /* Build configuration list for PBXNativeTarget "JZWidgets" */;
+			buildPhases = (
+				E00000000000000000000004 /* Sources */,
+				E00000000000000000000005 /* Frameworks */,
+				E00000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JZWidgets;
+			productName = JZWidgets;
+			productReference = F00000000000000000000046 /* JZWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		T00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D00000000000000000000002 /* JZWidgets */;
+			targetProxy = P00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		P00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D00000000000000000000002;
+			remoteInfo = JZWidgets;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		A00000000000000000000001 /* Project object */ = {
@@ -295,6 +357,9 @@
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					D00000000000000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					D00000000000000000000002 = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -314,6 +379,7 @@
 			projectRoot = "";
 			targets = (
 				D00000000000000000000001 /* JZMusicHelper */,
+				D00000000000000000000002 /* JZWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -330,7 +396,29 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E00000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E00000000000000000000007 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B00000000000000000000047 /* JZWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 
 /* Begin PBXSourcesBuildPhase section */
 		E00000000000000000000001 /* Sources */ = {
@@ -394,6 +482,16 @@
 				B00000000000000000000041 /* AppRouter.swift in Sources */,
 				B00000000000000000000042 /* IntentInbox.swift in Sources */,
 				B00000000000000000000043 /* JZIntents.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000044 /* JZWidgets.swift in Sources */,
+				B00000000000000000000045 /* DiscoverCatalog.swift in Sources */,
+				B00000000000000000000046 /* DiscoverRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -562,6 +660,54 @@
 			};
 			name = Release;
 		};
+		C00000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JZWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C0000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JZWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -579,6 +725,15 @@
 			buildConfigurations = (
 				C00000000000000000000006 /* Debug */,
 				C00000000000000000000007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000000000000000000008 /* Build configuration list for PBXNativeTarget "JZWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000000000000000000009 /* Debug */,
+				C0000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -62,3 +62,7 @@ desktop/.kotlin/
 # 第三方服务源码（vendored：本地可运行、上游可重新拉取，不入本仓库）
 /services/
 
+
+# pbxproj 备份（tools/ios 下的脚本会自动生成）
+ios/JZMusicHelper.xcodeproj/project.pbxproj.bak-*
+

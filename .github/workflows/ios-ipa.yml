@@ -41,6 +41,11 @@ jobs:
       - name: Swift 版本
         run: swift --version
 
+      # pbxproj 是手写的：先离线判掉"括号不平衡 / 引用了不存在的对象 / target 缺字段"，
+      # 否则 xcodebuild 只会给一句含糊的 "Cycle inside" 或 "target has no product"。
+      - name: 检查手写 pbxproj
+        run: python3 tools/ios/check_pbxproj.py
+
       - name: 编译网络层 + 跑断言
         run: |
           set -euo pipefail
