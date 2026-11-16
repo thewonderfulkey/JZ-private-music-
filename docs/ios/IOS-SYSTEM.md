@@ -1,7 +1,7 @@
 # iOS 系统面（P4 第一段）：分享 / 快捷指令（App Intents）/ 全局路由
 
 > 状态：**已落码、CI 编译与纯逻辑断言通过**（2026-11-16）。真机未验（Windows 无设备）。
-> 这一段是 P4 里**不需要新建 Extension target** 的部分；Live Activity 与 Widget 要单独建 target，放在下一段（§5 有风险说明）。
+> 四件都已完成：分享、三个 App Intents（§1–§3）、Widget 扩展（§5）、Live Activity 锁屏歌词/灵动岛（§5.1）。
 
 ---
 

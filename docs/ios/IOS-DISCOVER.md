@@ -84,7 +84,7 @@
 
 | 顺序 | 内容 | 为什么 |
 |---|---|---|
-| **下一步** | P3 识曲（指纹通道 + 打分 + 结果页 + 其他版本） | 五个 Tab 里最后一个还挂着"通道没接上"的占位 |
+| 已完成 | P3 识曲（双通道）、P4 系统面、P5 打磨 | 见 [IOS-RELEASE.md](IOS-RELEASE.md) |
 | 之后 | P4 系统面：Live Activity（锁屏歌词/灵动岛）+ Widget + App Intents | 自签版能直接用的 iOS 独占体验 |
 | 之后 | 队列追加（让「播放全部」能补满 20 首）、DynamicPool、猜你喜欢理由文案 | 发现页的三处"部分完成" |
 | 之后 | P5 打磨：VoiceOver 全流程 / Dynamic Type AX5 / iPad / 性能 | 交付前最后一遍 |
