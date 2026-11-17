@@ -323,8 +323,14 @@ enum LddcMatch {
 
     // MARK: 综合
 
-    /// 候选总分（对齐 LDDC auto_fetch）：标题×0.5 + 歌手×0.5，标题 <30 再 −35，下限 0
-    /// 注意：版本标签惩罚**不在这里**做，由 `versionPenalty` 单独算（保持本函数与 APK 逐字一致）。
+    /// 候选总分（**与 LDDC `auto_fetch` 逐字一致**）：标题×0.5 + 歌手×0.5，标题 <30 再 −35，下限 0
+    ///
+    /// r72：把 r69 加进来的「版本标记 −35」「时长差 −40」两档删了。
+    /// 那两档是本项目自造的，LDDC 里没有；它们的副作用是"本来能用的歌被扣到线下 → 整首没词"
+    /// （老板反复报的就是这个）。LDDC 的口径是：
+    ///   · 版本对不对**靠标题分自己算**（`titleScore` 里 tag 相同有 +30 的加成，
+    ///     所以歌名带 live 的歌，带 live 的候选天然得高分——这正是老板要的"歌名带 live 就优先 live 词"）；
+    ///   · 时长只管**硬门槛**（差 >4 秒直接不进候选池，见 `durationOK`），不参与打分。
     static func score(title: String, candidateTitle: String,
                       artist: String, candidateArtist: String) -> Double {
         let ts = titleScore(title, candidateTitle)
@@ -337,104 +343,16 @@ enum LddcMatch {
         return total
     }
 
-    // MARK: 结构化打分（r69）
-
-    /// 一个候选的完整打分过程。把每一档单独留出来，好处有三：
-    ///   · 老板能看到"为什么选了这份词"（播放页「音源详情 → 歌词」会显示）；
-    ///   · CI 能把每一档都钉住，改坏一个阈值就红；
-    ///   · 排序和过滤都读同一份数据，不会出现"测过的和跑的不是一套"。
-    struct CandidateScore: Sendable {
-        let titleScore: Double
-        let artistScore: Double
-        /// LDDC 原公式：标题 ×0.5 + 歌手 ×0.5（标题 <30 再 −35）
-        let base: Double
-        /// 候选带了"查询没有"的版本标签（live/醇享版/伴奏…）
-        let versionPenalty: Double
-        /// 与目标时长的差（秒）；目标或候选时长未知时按 0 分差处理
-        let durationDelta: Int
-        /// 时长差扣分（0 / 10 / 25 / 40）
-        let durationPenalty: Double
-        /// 最终排序分（下限 0）
-        let total: Double
-
-        /// 一眼能读的说明（日志 / 详情页 / 文档里的表格都用它）
-        var explanation: String {
-            var parts = [
-                "标题 \(Int(titleScore))",
-                "歌手 \(Int(artistScore))",
-                "基础 \(Int(base))",
-            ]
-            if versionPenalty > 0 { parts.append("版本标记 −\(Int(versionPenalty))") }
-            if durationDelta > 0 { parts.append("时长差 \(durationDelta)s −\(Int(durationPenalty))") }
-            parts.append("合计 \(Int(total))")
-            return parts.joined(separator: " · ")
-        }
-    }
-
-    /// 时长差扣分档位（秒 → 扣分）。
-    ///
-    /// 为什么要有这一档（r69）：以前时长只用来"同分时排先后"，于是
-    /// 《发如雪》的「醇享版」候选（标题 70 分、歌手 100 分 = 85 分）和原版（100 分）都过线，
-    /// 一旦原始候选没取到词，醇享版就顶上来——而它的时间轴是另一个剪辑的。
-    /// 现在把"差多少秒"折成分数：
-    ///   · ≤3 秒：不扣（各家对同一份音频的时长标注本来就有 ±1~2 秒误差）
-    ///   · 4~8 秒：−10（可能是尾奏标注差异）
-    ///   · 9~20 秒：−25（大概率是另一个剪辑）
-    ///   · >20 秒：−40（基本可以确定不是同一版）
-    static func durationPenalty(targetSec: Int, candidateSec: Int) -> Double {
-        guard targetSec > 0, candidateSec > 0 else { return 0 }
-        switch abs(targetSec - candidateSec) {
-        case ...3: return 0
-        case 4...8: return 10
-        case 9...20: return 25
-        default: return 40
-        }
-    }
-
-    /// 完整打分（纯函数）。`total` 才有资格和 `minScore` 比。
-    static func scoreCandidate(queryTitle: String, candidateTitle: String,
-                               queryArtist: String, candidateArtist: String,
-                               targetSec: Int, candidateSec: Int) -> CandidateScore {
-        let ts = titleScore(queryTitle, candidateTitle)
-        let asScore = artistScore(queryArtist, candidateArtist)
-        let base = score(title: queryTitle, candidateTitle: candidateTitle,
-                         artist: queryArtist, candidateArtist: candidateArtist)
-        let version = versionPenalty(queryTitle: queryTitle, candidateTitle: candidateTitle)
-        let delta = (targetSec > 0 && candidateSec > 0) ? abs(targetSec - candidateSec) : 0
-        let duration = durationPenalty(targetSec: targetSec, candidateSec: candidateSec)
-        let total = max(0, base - version - duration)
-        return CandidateScore(titleScore: ts, artistScore: asScore, base: base,
-                              versionPenalty: version, durationDelta: delta,
-                              durationPenalty: duration, total: total)
-    }
-
-    /// 及格线（Android `MIN_SCORE = 55`）
+    /// 及格线（LDDC `auto_fetch` 的 `min_score`）
     static let minScore: Double = 55
 
-    /// 兜底及格线：一个候选都没到 `minScore` 时，允许"分数 ≥20 且歌手 ≥50"的最高分那份过线。
-    ///
-    /// 为什么要兜这一层：r63 的教训是"宁可给最接近的一份词，也别整首空着"。
-    /// 而 r69 又给时长差加了扣分，弱网/元数据不准时可能把整页候选都压到 55 以下——
-    /// 与其整首没词，不如退一步用"至少歌手对得上"的那份。
-    static func passesFallback(_ s: CandidateScore) -> Bool {
-        s.total >= 20 && s.artistScore >= 50
-    }
-
-    /// **最后兜底**档：连 `passesFallback` 都没人过时（例如整页只有一份带版本标记的词），
-    /// 只要歌手对得上（≥80）就还是用它——错版本可以排到最后，但"整首没词"更糟
-    /// （r63 老板的原话：宁可给最接近的一份词，也别空着）。
-    static func isLastResort(_ s: CandidateScore) -> Bool {
-        s.artistScore >= 80 && s.total > 0
-    }
-
-    /// **第 4 档：只要有候选就用**（r70 加的保险）。
-    ///
-    /// 什么时候会走到这里：前三档全空，但搜索**确实返回了候选**——说明是打分把它们都压没了
-    /// （比如整页都是"别的歌手翻唱同名歌"，或者时长差得离谱）。这种情况下宁可拿第 1、2 名去取词，
-    /// 也好过屏幕上写"没取到歌词"。
-    static func isAnyTier(_ s: CandidateScore) -> Bool {
-        s.titleScore > 0 || s.base > 0
-    }
-    /// 时长容差（Android `DURATION_TOLERANCE_MS = 4000`）
+    /// 时长容差（LDDC `auto_fetch` 的 4000ms 硬门槛）
     static let durationToleranceSec: Int = 4
+
+    /// 时长硬门槛：两边都已知、且差 >4 秒 → 不是同一份音频（LDDC 会直接丢掉候选）。
+    /// 任一边未知时放行——宁可多试一个，也别因为元数据缺失整首没词。
+    static func durationOK(targetSec: Int, candidateSec: Int) -> Bool {
+        guard targetSec > 0, candidateSec > 0 else { return true }
+        return abs(targetSec - candidateSec) <= durationToleranceSec
+    }
 }

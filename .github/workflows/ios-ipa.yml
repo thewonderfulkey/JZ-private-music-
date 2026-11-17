@@ -83,6 +83,7 @@ jobs:
             ios/JZMusicHelper/Services/KwLyrics.swift \
             ios/JZMusicHelper/Services/LyricsService.swift \
             ios/JZMusicHelper/Services/NeteaseLyrics.swift \
+            ios/JZMusicHelper/Services/LrclibLyrics.swift \
             ios/JZMusicHelper/Services/DownloadCompanion.swift \
             ios/JZMusicHelper/Services/CoverResolver.swift \
             ios/SelfTest/LyricsFixtures.swift \

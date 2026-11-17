@@ -1296,44 +1296,49 @@ do {
           liveScore - LddcMatch.versionPenalty(queryTitle: "七里香",
                                               candidateTitle: "七里香 (Live)") < LddcMatch.minScore)
 
-    // 排序：分数 → 时长差 → 源
-    let ranked = LddcLyrics.ranked([(score: 60, durationDelta: 10, source: "qq"),
-                                    (score: 70, durationDelta: 20, source: "kg"),
-                                    (score: 70, durationDelta: 5, source: "kg")])
-    check("排序：分数高的在前，同分时长差小的在前",
-          ranked.map { $0.durationDelta } == [5, 20, 10],
-          "\(ranked.map { $0.durationDelta })")
-    check("同分同时长 → QQ 优先",
-          LddcLyrics.ranked([(score: 70, durationDelta: 5, source: "kg"),
-                             (score: 70, durationDelta: 5, source: "qq")]).first?.source == "qq")
-    check("时长未知（Int.max）排在有明确时长的候选之后",
-          LddcLyrics.ranked([(score: 70, durationDelta: Int.max, source: "qq"),
-                             (score: 70, durationDelta: 5, source: "kg")]).first?.source == "kg")
+    // 排序：分数降序 → 时长差升序（r72：`rank` 就是 LDDC 的口径，不再有"源优先/兜底档"）
+    let cands = [
+        LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦", durationSec: 299),
+        LddcLyrics.Candidate(source: "kg", title: "七里香 (Live)", artist: "周杰伦", durationSec: 302),
+        LddcLyrics.Candidate(source: "kg", title: "夜曲", artist: "周杰伦", durationSec: 226),
+    ]
+    let ranked = LddcLyrics.rank(cands, title: "七里香", artist: "周杰伦", targetSec: 299)
+    check("排序：原版第一（标题满分）",
+          ranked.first?.candidate.title == "七里香", "\(ranked.first?.candidate.title ?? "nil")")
+    check("排序：Live 在同一首里排第二（标题分被 tag 拖低）",
+          ranked.count > 1 && ranked[1].candidate.title == "七里香 (Live)")
+    check("排序：别的歌（夜曲）进不来（分数不到 55）",
+          !ranked.contains { $0.candidate.title == "夜曲" }, "\(ranked.map(\.candidate.title))")
+    check("排名里每条都过 55 分", ranked.allSatisfy { $0.score > LddcMatch.minScore })
+    check("有合格候选时，时长差 >4s 的不进池",
+          LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
+                                                durationSec: 299),
+                           LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
+                                                durationSec: 320)],
+                          title: "七里香", artist: "周杰伦", targetSec: 299).count == 1)
+    check("时长门槛把候选全筛光时放宽（元数据时长不准，别整首没词）",
+          LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
+                                                durationSec: 320)],
+                          title: "七里香", artist: "周杰伦", targetSec: 299).count == 1)
+    check("时长未知不放行也不误杀（只按分数）",
+          !LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
+                                                 durationSec: 0)],
+                           title: "七里香", artist: "周杰伦", targetSec: 299).isEmpty)
+    // 歌名自己带 Live：带 Live 的候选要排到前面（老板要的"歌名带 live 就优先 live 词"）
+    let liveRanked = LddcLyrics.rank([
+        LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦", durationSec: 302),
+        LddcLyrics.Candidate(source: "kg", title: "七里香 (Live)", artist: "周杰伦", durationSec: 302),
+    ], title: "七里香 (Live)", artist: "周杰伦", targetSec: 302)
+    check("歌名带 Live → 带 Live 的候选排第一",
+          liveRanked.first?.candidate.title == "七里香 (Live)",
+          "\(liveRanked.map(\.candidate.title))")
 
-    // 文件头验收：有就验，缺就放行
-    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
-    check("文件头时长 320s vs 本曲 299s → 判为别的版本",
-          LddcLyrics.headerRejection(
-            meta: LyricsMeta(title: "七里香", artist: "周杰伦", durationMs: 320_000),
-            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
-    check("时长差恰好 8s（容差边界）→ 放行",
-          LddcLyrics.headerRejection(
-            meta: LyricsMeta(title: "七里香", artist: "周杰伦", durationMs: 291_000),
-            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") == nil)
-    check("文件头标题是另一首歌 → 丢弃",
-          LddcLyrics.headerRejection(
-            meta: LyricsMeta(title: "夜曲", artist: "周杰伦"),
-            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
-    check("文件头歌手是别人（翻唱）→ 丢弃",
-          LddcLyrics.headerRejection(
-            meta: LyricsMeta(title: "七里香", artist: "蔡健雅"),
-            song: qili, queryTitle: "七里香", queryArtist: "周杰伦") != nil)
-    check("元数据全缺 → 放行（老行为不能变）",
-          LddcLyrics.headerRejection(meta: LyricsMeta(), song: qili,
-                                     queryTitle: "七里香", queryArtist: "周杰伦") == nil)
-    check("验收容差是 8000ms", LddcLyrics.headerDurationToleranceMs == 8_000)
+    // 时长硬门槛（LDDC 的 4000ms）
+    check("时长差 4s 以内放行", LddcMatch.durationOK(targetSec: 300, candidateSec: 304))
+    check("时长差 5s 丢掉", !LddcMatch.durationOK(targetSec: 300, candidateSec: 305))
+    check("时长未知放行", LddcMatch.durationOK(targetSec: 300, candidateSec: 0))
 
-    // 真实酷狗 KRC 回归：头部只有 ti/ar/al，没有 [total:] → 必须放行，不能把整批词丢掉
+    // 真实酷狗 KRC 回归：头部只有 ti/ar/al，没有 [total:] → 不能因为"缺时长"把整批词丢掉
     if let data = Data(base64Encoded: LyricsFixtures.realKrcBase64),
        let plain = LddcCrypto.krcDecrypt([UInt8](data)) {
         let realMeta = LyricsCleaning.meta(plain)
@@ -1341,9 +1346,6 @@ do {
         check("真实 KRC 头部能认出歌手", realMeta.artist.contains("周杰伦"), realMeta.artist)
         check("真实 KRC 头部没有 [total:]（缺失时 durationMs = 0）",
               realMeta.durationMs == 0, "\(realMeta.durationMs)")
-        check("真实 KRC 头部缺时长 → 验收放行（不能凭空丢词）",
-              LddcLyrics.headerRejection(meta: realMeta, song: qili,
-                                         queryTitle: "晴天", queryArtist: "周杰伦") == nil)
     } else {
         check("真实 KRC 样本能解密", false)
     }
@@ -1389,66 +1391,12 @@ do {
           !PlaybackRules.shouldReuseCurrentSong(currentID: nil, targetID: "qq_1",
                                                 hasLoadedItem: true, hasError: false))
 
-    // ④ 候选不再被 ±4s 硬过滤（这就是"歌词压根取不到"的真凶）
-    let eightOff = LddcLyrics.Candidate(source: "kg", title: "我不配", artist: "周杰伦",
-                                        durationSec: 288)
-    let scored8 = LddcLyrics.scoredCandidate(eightOff, title: "我不配", artist: "周杰伦",
-                                             targetDur: 296)
-    check("时长差 8s 的候选仍然及格（有词可看，不再整首空着）",
-          scored8.total > LddcMatch.minScore, "\(scored8.total)")
-    check("时长差 8s 记 durationDelta=8", scored8.durationDelta == 8)
-    check("时长差 8s 扣 10 分", scored8.durationPenalty == 10)
-    check("时长未知 → Int.max（排在有时长的候选之后）",
-          LddcLyrics.scoredCandidate(
-            LddcLyrics.Candidate(source: "kg", title: "我不配", artist: "周杰伦", durationSec: 0),
-            title: "我不配", artist: "周杰伦", targetDur: 296).durationDelta == Int.max)
-    let liveCand = LddcLyrics.Candidate(source: "kg", title: "我不配 (Live)", artist: "周杰伦",
-                                        durationSec: 292)
-    check("现场版仍被版本惩罚压到及格线下（版本质量还在管）",
-          LddcLyrics.scoredCandidate(liveCand, title: "我不配", artist: "周杰伦",
-                                     targetDur: 296).total < LddcMatch.minScore)
-
-    // ⑤ r69：时长差进分数（不再是"同分才比"）
-    check("时长差 ≤3s 不扣", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 302) == 0)
-    check("时长差 5s 扣 10", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 305) == 10)
-    check("时长差 13s 扣 25", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 313) == 25)
-    check("时长差 30s 扣 40", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 330) == 40)
-    check("时长未知不扣", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 0) == 0)
-
-    // ⑥ r69 的真实案例：《发如雪》原版 300s vs 「醇享版」313s
-    //
-    // 旧口径只看"标题像不像"：醇享版 = 标题 70 + 歌手 100 → 85 分，直接当选（且版本标记表里
-    // 没有"醇享版"这个词）。新口径：标题 70、歌手 100、基础 85、版本标记 −35、时长差 13s −25
-    // → 合计 25 分，除非整页没有别的候选（走兜底线），否则不会被选中。
-    let zunxiang = LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: "发如雪（醇享版）",
-                                            queryArtist: "周杰伦", candidateArtist: "周杰伦",
-                                            targetSec: 300, candidateSec: 313)
-    check("醇享版：版本标记扣 35", zunxiang.versionPenalty == 35, "\(zunxiang.versionPenalty)")
-    check("醇享版：时长差 13s 扣 25", zunxiang.durationPenalty == 25)
-    check("醇享版：合计 25 分（不再越过 55 线）",
-          zunxiang.total < LddcMatch.minScore, "\(zunxiang.total)")
-    let plain = LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: "发如雪",
-                                         queryArtist: "周杰伦", candidateArtist: "周杰伦",
-                                         targetSec: 300, candidateSec: 301)
-    check("原版：满分 100", plain.total == 100, "\(plain.total)")
-    check("原版排在醇享版之前", plain.total > zunxiang.total)
-    check("醇享版进不了「兜底」档（分数太低）", !LddcMatch.passesFallback(zunxiang))
-    check("但整页只有它时仍可用（最后兜底，别整首没词）", LddcMatch.isLastResort(zunxiang))
-    // r70 第 4 档保险：只要有候选（标题对得上一点）就允许取词，绝不因为打分而整首没词
-    check("第 4 档：只要标题有分就收", LddcMatch.isAnyTier(zunxiang))
-    check("第 4 档：完全无关的候选也不收",
-          !LddcMatch.isAnyTier(LddcMatch.scoreCandidate(
-            queryTitle: "发如雪", candidateTitle: "夜曲", queryArtist: "周杰伦",
-            candidateArtist: "蔡健雅", targetSec: 300, candidateSec: 200)))
-    check("完全不搭的候选兜底也不收",
-          !LddcMatch.passesFallback(LddcMatch.scoreCandidate(
-            queryTitle: "发如雪", candidateTitle: "夜曲", queryArtist: "周杰伦",
-            candidateArtist: "蔡健雅", targetSec: 300, candidateSec: 200)))
-
-    // ⑦ r69：正文首行自报的版本也要管（KRC 第一行常是「歌名（版本）- 歌手」）
+    // ⑧ r72：取词候选的分数**只用 LDDC 公式**（标题 0.5 + 歌手 0.5），
+    //    不再有"版本标记 −35 / 时长差 −40 / 三档四档兜底"——那几档会把本来能用的歌压到线下。
+    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
     let zunxiangLines = [LyricLine(timeMs: 0, text: "发如雪（醇享版）- 周杰伦 (Jay Chou)"),
                          LyricLine(timeMs: 5_000, text: "狼牙月 伊人憔悴")]
-    check("正文首行写着醇享版 → 判为另一版",
+    check("正文首行写着醇享版 → 判为另一版（酷我/网易云/LRCLIB 都走这条）",
           LyricsCleaning.contentVersionRejection(lines: zunxiangLines, queryTitle: "发如雪") != nil)
     let plainLines = [LyricLine(timeMs: 0, text: "发如雪 - 周杰伦"),
                       LyricLine(timeMs: 5_000, text: "狼牙月 伊人憔悴")]
@@ -1458,26 +1406,52 @@ do {
           LyricsCleaning.contentVersionRejection(
             lines: [LyricLine(timeMs: 0, text: "发如雪 (Live) - 周杰伦")],
             queryTitle: "发如雪") != nil)
+    // 《七里香》那次错的正是这一条：歌名干净，词却是演唱会的
+    check("演唱会版正文 → 判为另一版（老板《七里香》那次就错在这里）",
+          LyricsCleaning.contentVersionRejection(
+            lines: [LyricLine(timeMs: 0, text: "七里香 (2024 嘉年华世界巡回演唱会台北站) - 周杰伦")],
+            queryTitle: "七里香") != nil)
 
-    // 文件头验收从"一票否决"改成"优选项"
-    func outcome(_ idx: Int, _ hasLines: Bool, _ headerOK: Bool) -> LddcLyrics.FetchedOutcome {
-        LddcLyrics.FetchedOutcome(
-            idx: idx,
-            lines: hasLines ? LddcLyrics.Picked(lines: [LyricLine(timeMs: 0, text: "x")],
-                                                declaredMs: 0) : nil,
-            headerOK: headerOK)
-    }
-    check("排名第二但通过验收 → 赢过排名第一但不合格的",
-          LddcLyrics.chooseOutcome([outcome(0, true, false), outcome(1, true, true)],
-                                   topCount: 2) == 1)
-    check("全都没通过验收 → 退回排名最高的那份（不整首丢词）",
-          LddcLyrics.chooseOutcome([outcome(0, true, false), outcome(1, true, false)],
-                                   topCount: 2) == 0)
-    check("排名第一没取到词 → 用第二个",
-          LddcLyrics.chooseOutcome([outcome(0, false, false), outcome(1, true, true)],
-                                   topCount: 2) == 1)
-    check("全都没词 → nil",
-          LddcLyrics.chooseOutcome([outcome(0, false, false)], topCount: 1) == nil)
+    // ⑨ r72：LRCLIB 源的选源口径（纯函数）
+    let tracks = [
+        LrclibLyrics.Track(title: "七里香 (Live)", artist: "周杰伦", durationSec: 302,
+                           syncedLyrics: "[00:01.00]x", instrumental: false),
+        LrclibLyrics.Track(title: "七里香", artist: "周杰伦", durationSec: 297,
+                           syncedLyrics: "[00:27.38]窗外的麻雀", instrumental: false),
+        LrclibLyrics.Track(title: "七里香", artist: "周杰伦", durationSec: 299,
+                           syncedLyrics: nil, instrumental: false),
+    ]
+    check("LRCLIB：原版（带时间轴）胜出",
+          LrclibLyrics.pickBest(tracks, queryTitle: "七里香", queryArtist: "周杰伦",
+                                targetSec: 299)?.durationSec == 297)
+    check("LRCLIB：没有时间轴的（纯文本）不收",
+          LrclibLyrics.pickBest([tracks[2]], queryTitle: "七里香", queryArtist: "周杰伦",
+                                targetSec: 299) == nil)
+    check("LRCLIB：时长差 >4s 的不收",
+          LrclibLyrics.pickBest([LrclibLyrics.Track(title: "七里香", artist: "周杰伦",
+                                                   durationSec: 320,
+                                                   syncedLyrics: "[00:01.00]x",
+                                                   instrumental: false)],
+                                queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299) == nil)
+    check("LRCLIB：纯音乐不收",
+          LrclibLyrics.pickBest([LrclibLyrics.Track(title: "七里香", artist: "周杰伦",
+                                                   durationSec: 299,
+                                                   syncedLyrics: "[00:01.00]x",
+                                                   instrumental: true)],
+                                queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299) == nil)
+    check("LRCLIB：歌名/歌手对不上的不收",
+          LrclibLyrics.pickBest([LrclibLyrics.Track(title: "夜曲", artist: "蔡健雅",
+                                                   durationSec: 299,
+                                                   syncedLyrics: "[00:01.00]x",
+                                                   instrumental: false)],
+                                queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299) == nil)
+    check("LRCLIB：同分时选时长更接近的那条（0 秒那条不能靠运气赢）",
+          LrclibLyrics.pickBest([
+            LrclibLyrics.Track(title: "七里香", artist: "周杰伦", durationSec: 0,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+            LrclibLyrics.Track(title: "七里香", artist: "周杰伦", durationSec: 297,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+          ], queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299)?.durationSec == 297)
 
     // ③ 时间轴对齐（r66 根因修复）：**只有歌词自己写了总长才允许拉伸**
     //
@@ -1670,23 +1644,23 @@ do {
     check("没有播放项 → 不用暂停", !PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: false))
 }
 
-section("歌词候选第二轮 + 同曲门槛（r71）")
+section("取词口径（r72：只剩 LDDC 那一套）")
 do {
-    func score(_ title: String, _ artist: String) -> LddcMatch.CandidateScore {
-        LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: title,
-                                 queryArtist: "周杰伦", candidateArtist: artist,
-                                 targetSec: 299, candidateSec: 299)
-    }
-    // 第 2 轮只补"歌名像 + 歌手像"的候选：现场版可以，别的歌不行
-    check("现场版算同一首（可进第 2 轮）",
-          LddcLyrics.plausibleSameSong(score("发如雪 (Live)", "周杰伦")))
-    check("别的歌不算（第 2 轮不碰）",
-          !LddcLyrics.plausibleSameSong(score("以父之名", "周杰伦")))
-    check("别的歌手不算（第 2 轮不碰）",
-          !LddcLyrics.plausibleSameSong(score("发如雪", "张三")))
-    // 兜底档标记：只有第 0 档算"正常"，其余都要让酷我官方词先试
-    check("第 0 档不算兜底", !LyricsResult(lines: [], source: "LDDC", isFallback: false).isFallback)
-    check("兜底档会被标记出来", LyricsResult(lines: [], source: "LDDC·兜底", isFallback: true).isFallback)
+    // 分数就是 LDDC 公式，**不额外扣版本/时长**——这两条是 r69 自造的，会把能用的歌压到线下
+    let zunxiang = LddcMatch.score(title: "发如雪", candidateTitle: "发如雪（醇享版）",
+                                   artist: "周杰伦", candidateArtist: "周杰伦")
+    check("醇享版的标题分被 tag 拖低（不再靠自造的 −35 惩罚）",
+          zunxiang < 100 && zunxiang > LddcMatch.minScore, "\(zunxiang)")
+    let yuanban = LddcMatch.score(title: "发如雪", candidateTitle: "发如雪",
+                                  artist: "周杰伦", candidateArtist: "周杰伦")
+    check("原版 100 分，排第一", yuanban == 100)
+    check("分数只由标题/歌手决定（同一对名字永远是同一个分）",
+          LddcMatch.score(title: "晴天", candidateTitle: "晴天",
+                          artist: "周杰伦", candidateArtist: "周杰伦") == 100)
+    // 歌名自带版本标签时，同标签候选不吃亏
+    let liveQuery = LddcMatch.score(title: "晴天 (Live)", candidateTitle: "晴天 (Live)",
+                                    artist: "周杰伦", candidateArtist: "周杰伦")
+    check("歌名带 Live 时同版本文本分仍满分", liveQuery == 100)
     // krcs 老接口的查询串（不带签名）：只是普通参数拼接 + 百分号编码
     let q = LddcLyrics.plainQuery([("ver", "1"), ("keyword", "发如雪 - 周杰伦")])
     check("krcs 查询串带百分号编码", q.hasPrefix("ver=1&keyword=") && !q.contains("发如雪")

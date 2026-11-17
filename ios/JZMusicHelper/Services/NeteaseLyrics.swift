@@ -34,6 +34,11 @@ enum NeteaseLyrics {
         guard let lines = await lyricLines(platformID: best.platformID), lines.count >= minLines else {
             return nil
         }
+        // r72：歌词**正文**自己写着是另一个版本（演唱会/live/伴奏…）也不收——
+        // 《七里香》那次拿到的就是「2024 嘉年华世界巡回演唱会台北站」的词。
+        guard LyricsCleaning.contentVersionRejection(lines: lines, queryTitle: song.name) == nil else {
+            return nil
+        }
         let note = "《\(best.name)》· 网易云兜底 · 候选 \(best.durationSec)s / 目标 \(target)s"
         return LyricsResult(lines: lines, source: "网易云", matchNote: note)
     }
