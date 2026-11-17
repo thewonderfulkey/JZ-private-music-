@@ -25,6 +25,9 @@
 - 断言新增 4 条（热门模块截取口径）；本地单编 harness **23/23 通过**；WSL typecheck
   `TYPECHECK_EXIT=0`；UI 卫生检查通过（18 个界面文件，少掉已删除的 HotChartView）。
 - 版本 2.3.2（170）。
+- **出包**：CI run #83 / `64ee44f` / **595 条断言全绿**（本轮新增 4 条）/ `build-ipa` 成功、插件已嵌入；
+  IPA `JZ-Music-v2.3.2-64ee44f-r83-ios-unsigned.ipa`（1,826,938 B），已发飞书群。
+  首次跑到 `build-ipa` 前又在 macOS runner 队列里等了约 5 分钟（本周第二次遇到排队），未失败。
 
 ## iOS 第十九轮 · 2026-11-17 23:5x（编辑精选加真榜单 / 酷我封面那两成补上）
 
