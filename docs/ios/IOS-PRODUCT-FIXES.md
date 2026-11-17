@@ -980,3 +980,26 @@ android/app/build.gradle.kts      versionCode 160 / versionName 2.2.2
 2. **随便几首**：歌词页「⋯ → 音源详情 → 歌词」里能看到「命中说明」，把它截图我就能判断是不是选源问题。
 3. **验证是否变空**：如果某首歌以前有词、现在变没词了，把歌名发我——说明它的候选全被新版扣分打到线下了，
    我需要按"最后兜底"再放宽。
+
+## 六、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.2.2-40e3f09-r69-ios-unsigned.ipa` |
+| 大小 | 1,744,034 字节（≈1.66 MB） |
+| SHA-256 | `8c9858d8a3ec85bbf5d83a906244143aaf9f4c390d894cddde9f12805b279411` |
+| CI | [run #69](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44012535674)（逻辑断言 **511 / 0 失败** / `BUILD SUCCEEDED` / 插件已嵌包 / 已发飞书群） |
+| 提交 | `40e3f09` |
+| 包内自证 | `CFBundleShortVersionString = 2.2.2` / `CFBundleVersion = 160`；二进制里能找到 `durationPenalty` / `contentVersionRejection` / `matchNote` |
+
+> 认包只认 `40e3f09-r69`。
+
+## 七、这一轮给下一轮的提醒
+
+- **歌词页顶部标签就是判案第一现场**：`LDDC · 逐字` / `酷我` / `酷我兜底`。
+  若正文第一行出现「（某某版）」，先看「音源详情 → 歌词」里的**命中说明**——
+  它会写清候选标题、目标/候选时长、每一档扣分、走了哪一档兜底。
+- 三档兜底的阈值都在 `LddcMatch`：`minScore = 55`、`passesFallback`（≥20 且歌手 ≥50）、
+  `isLastResort`（歌手 ≥80 且 >0）。如果下一轮发现"某首歌变没词了"，先看它是不是卡在第二档边界上。
+- 时长差档位（0/10/25/40）在 `LddcMatch.durationPenalty`，全部有 CI 断言；
+  要调就一次调一个档，别同时动版本标记表。
