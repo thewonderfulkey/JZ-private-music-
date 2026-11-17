@@ -268,6 +268,10 @@ enum LddcMatch {
         ["片段", "clip"],
         ["demo"],
         ["acoustic", "unplugged"],
+        // r73：非歌曲版本。老板《发如雪》那次 51 行「酷我」的词，正文第一句是
+        // 「本字幕由QQ音乐独家AI字幕技术生成」——它来自酷我里一条「发如雪 拍摄花絮」的
+        // 专访视频，标题分 54.5 + 歌手分 100 正好过线。这类候选必须在标题层就认成"另一个版本"。
+        ["花絮", "拍摄花絮", "访谈", "幕后", "彩排", "清唱", "口播", "纪录片"],
         // r69：音质/母带/重制类"版本标记"。
         // 老板反馈《发如雪》拿到的词是「醇享版」——这一类标记以前不在表里，
         // 于是它只按"标题像"打分（85 分）就当选了，时间轴却是另一个剪辑的。
@@ -296,7 +300,7 @@ enum LddcMatch {
         }
 
     /// 标题里出现了哪些版本标签（按规范名归并：`现场` / `live` / `演唱会` 都算 live）
-    private static func versionTagsIn(_ title: String) -> Set<String> {
+    static func variantTags(_ title: String) -> Set<String> {
         let normalized = unifiedSymbol(title).lowercased()
         guard !normalized.isEmpty else { return [] }
         let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
@@ -308,17 +312,25 @@ enum LddcMatch {
         return found
     }
 
-    /// 候选标题里出现了「原查询没有」的版本标签（live/现场/演唱会/翻唱/cover/remix/伴奏/
-    /// 纯音乐/instrumental/karaoke/片段/demo/acoustic 等）→ 返回应扣的分（0 或 35）。
+    /// 候选带了「查询里没有」的版本标签（live/现场/花絮/伴奏…）→ 这份词属于另一个版本。
+    ///
+    /// 这是 r73 的核心口径，也是老板两次点名的两句话：
+    ///   · 「歌名带 live，就优先选 live 的词」→ 查询自己带 live 时，Live 候选的标签**不额外**，不扣；
+    ///   · 「歌词要优先和歌名、歌手匹配」→ 查询不带 live 时，Live/花絮/伴奏候选就是另一个版本。
+    /// 注意它**不参与打分**（打分公式必须与 LDDC 一致），只用来决定"同分时的先后"和"能不能兜底"。
+    static func extraVariantTags(queryTitle: String, candidateTitle: String) -> Set<String> {
+        variantTags(candidateTitle).subtracting(variantTags(queryTitle))
+    }
+
+    /// 候选标题自带版本标签（live/伴奏/花絮…）——不管查询是什么
+    static func isVariant(_ title: String) -> Bool { !variantTags(title).isEmpty }
+
+    /// 候选标题里出现了「原查询没有」的版本标签 → 返回应扣的分（0 或 35）。
     ///
     /// 查询自己就带版本标签时不扣（用户搜的就是 live）：`晴天 (Live)` 配 `晴天 (Live)` /
     /// `晴天 现场版` 都算同一组，避免同义写法互相打架。大小写不敏感，全角括号先归一。
     static func versionPenalty(queryTitle: String, candidateTitle: String) -> Double {
-        let candidateTags = versionTagsIn(candidateTitle)
-        guard !candidateTags.isEmpty else { return 0 }
-        let queryTags = versionTagsIn(queryTitle)
-        // 候选带的标签查询里都有（例如都带 live）→ 不扣；否则说明是另一个版本 → 扣 35
-        return candidateTags.isSubset(of: queryTags) ? 0 : 35
+        extraVariantTags(queryTitle: queryTitle, candidateTitle: candidateTitle).isEmpty ? 0 : 35
     }
 
     // MARK: 综合

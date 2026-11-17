@@ -1453,6 +1453,59 @@ do {
                                syncedLyrics: "[00:01.00]x", instrumental: false),
           ], queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299)?.durationSec == 297)
 
+    // ⑩ r73：原版优先 / 变体垫底 —— 老板《发如雪》51 行错词的正解
+    //
+    // 实测（2026-11-17）酷我里周杰伦《发如雪》只有 伴奏 / DJ版 / 拍摄花絮 / 现场版，**没有正片**；
+    // 而「发如雪 拍摄花絮」的标题分 54.5 + 歌手 100 = 77 分，比及格线还高 22 分，
+    // 它的"歌词"其实是「本字幕由QQ音乐独家AI字幕技术生成」的专辑介绍口播。
+    check("「拍摄花絮」被认成变体标记",
+          LddcMatch.extraVariantTags(queryTitle: "发如雪",
+                                     candidateTitle: "发如雪 拍摄花絮") == ["花絮"])
+    check("变体标记不参与打分（公式仍与 LDDC 一致，花絮候选照样 77 分过线）",
+          LddcMatch.score(title: "发如雪", candidateTitle: "发如雪 拍摄花絮",
+                          artist: "周杰伦", candidateArtist: "周杰伦") > LddcMatch.minScore)
+    let variantRanked = LddcLyrics.rank([
+        LddcLyrics.Candidate(source: "kg", title: "发如雪 拍摄花絮", artist: "周杰伦", durationSec: 299),
+        LddcLyrics.Candidate(source: "kg", title: "发如雪", artist: "周杰伦", durationSec: 299),
+    ], title: "发如雪", artist: "周杰伦", targetSec: 299)
+    check("原版永远排在花絮/变体前面", variantRanked.first?.candidate.title == "发如雪",
+          "\(variantRanked.map(\.candidate.title))")
+    check("变体不是被丢掉，是排在原版后面（原版取不到时才轮到它）", variantRanked.count == 2)
+    check("只有变体时不至于整首没词",
+          LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "发如雪 (Live)",
+                                                artist: "周杰伦", durationSec: 299)],
+                          title: "发如雪", artist: "周杰伦", targetSec: 299).count == 1)
+
+    // 正文是字幕/文案 → 一律不收（《发如雪》51 行「酷我」那条就是这种）
+    let subtitleLines = [LyricLine(timeMs: 0, text: "本字幕由QQ音乐独家AI字幕技术生成"),
+                         LyricLine(timeMs: 1_230, text: "周杰伦的11月的萧邦推出也有一段时间")]
+    check("字幕文案被判成「不是歌词」", LyricsCleaning.commentaryReason(lines: subtitleLines) != nil)
+    check("正文闸门拦下字幕文案",
+          LyricsCleaning.foreignVersionReason(lines: subtitleLines, queryTitle: "发如雪") != nil)
+    check("正常歌词不被正文闸门误杀",
+          LyricsCleaning.foreignVersionReason(
+            lines: [LyricLine(timeMs: 0, text: "狼牙月"), LyricLine(timeMs: 3_000, text: "伊人憔悴")],
+            queryTitle: "发如雪") == nil)
+
+    // LRCLIB / 网易云这类"按歌名搜"的源：查原版时**不收** Live 那条（r73 起与 LDDC 同口径）
+    check("LRCLIB：查 Live 时优先 Live 那条",
+          LrclibLyrics.pickBest([
+            LrclibLyrics.Track(title: "七里香", artist: "周杰伦", durationSec: 302,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+            LrclibLyrics.Track(title: "七里香 (Live)", artist: "周杰伦", durationSec: 302,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+          ], queryTitle: "七里香 (Live)", queryArtist: "周杰伦", targetSec: 302)?.title == "七里香 (Live)")
+    check("LRCLIB：查原版时不收 Live 那条（宁可没词，也不贴另一版）",
+          LrclibLyrics.pickBest([
+            LrclibLyrics.Track(title: "七里香 (Live)", artist: "周杰伦", durationSec: 299,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+          ], queryTitle: "七里香", queryArtist: "周杰伦", targetSec: 299) == nil)
+    check("LRCLIB：查原版时不收「拍摄花絮」那条",
+          LrclibLyrics.pickBest([
+            LrclibLyrics.Track(title: "发如雪 拍摄花絮", artist: "周杰伦", durationSec: 299,
+                               syncedLyrics: "[00:01.00]x", instrumental: false),
+          ], queryTitle: "发如雪", queryArtist: "周杰伦", targetSec: 299) == nil)
+
     // ③ 时间轴对齐（r66 根因修复）：**只有歌词自己写了总长才允许拉伸**
     //
     // 老板三轮都说"歌词晚了一些"，真因就在这一条：酷我官方词没有总长字段，旧口径拿

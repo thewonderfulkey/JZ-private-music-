@@ -94,17 +94,35 @@ enum LddcLyrics {
         let title = song.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let artist = LyricsCleaning.cleanArtist(song.singer)
         guard !title.isEmpty else { return nil }
+        let target = audioSec > 0 ? audioSec : song.durationSec
 
         // QQ（QM）那条源实测长期空（req.code=2001，换 search_id 也一样），默认不再打——
         // 省一次请求、少 8 秒超时。代码留着（`searchQq` / `fetchQqLines`），QQ 恢复时改回来即可。
+        if let picked = await attempt(title: title, artist: artist, target: target) {
+            return result(picked, song: song)
+        }
+        // LDDC `auto_fetch` 的原样行为：拿「歌名 歌手」一条都过不了线时，**只用歌名再搜一次**。
+        // 现场版/翻唱版的标题常带后缀（「发如雪 (Live)」），加歌手反而搜不到正片。
+        if !artist.isEmpty,
+           let picked = await attempt(title: title, artist: "", target: target) {
+            noteDiag("「\(title) \(artist)」没取到，用歌名再搜一次才取到")
+            return result(picked, song: song)
+        }
+        return nil
+    }
+
+    /// 一轮完整尝试：搜 → LDDC 打分 → 按分数逐个取词
+    private static func attempt(title: String, artist: String, target: Int) async -> Picked? {
         let candidates = await searchKg(title: title, artist: artist)
         guard !candidates.isEmpty else {
             noteDiag("酷狗搜「\(title) \(artist)」0 条候选")
             return nil
         }
-        let target = audioSec > 0 ? audioSec : song.durationSec
-        guard let picked = await pickBest(candidates: candidates, title: title,
-                                          artist: artist, targetSec: target) else { return nil }
+        return await pickBest(candidates: candidates, title: title, artist: artist, targetSec: target)
+    }
+
+    /// 统一出口：时间轴按音源时长对齐，来源标签写明"LDDC"
+    private static func result(_ picked: Picked, song: Song) -> LyricsResult {
         let aligned = LyricsCleaning.alignedToAudio(picked.lines, declaredMs: picked.declaredMs,
                                                     audioSec: song.durationSec)
         let source = aligned.ratio > 1.0001
@@ -155,12 +173,26 @@ enum LddcLyrics {
                 return a.durationDelta < b.durationDelta
             }
         }
+        // r73：**原版优先，变体垫底**（同组内仍按 LDDC 分数降序）。
+        //
+        // 打分公式一个字没改，但公式本身拦不住「同歌手 + 同主标题 + 多一个版本标记」的候选：
+        // 《发如雪》的「拍摄花絮」标题分 54.5、歌手分 100，合计 77，比及格线高 22 分。
+        // 所以过线之后再加一道**顺序**规则——查询里没有的版本标记（live/伴奏/花絮…）只能排在
+        // 原版后面：原版取不到词时才轮到它，而不是让它抢在原版前面。
+        // 查询自己带 live 时（`七里香 (Live)`），带 live 的候选不算"多出来的标记"，照常第一。
+        func order(_ list: [Ranked]) -> [Ranked] {
+            let isPlain = { (r: Ranked) in
+                LddcMatch.extraVariantTags(queryTitle: title,
+                                           candidateTitle: r.candidate.title).isEmpty
+            }
+            return list.filter(isPlain) + list.filter { !isPlain($0) }
+        }
         let inTime = candidates.filter {
             LddcMatch.durationOK(targetSec: targetSec, candidateSec: $0.durationSec)
         }
         let strict = build(inTime)
-        if !strict.isEmpty { return strict }
-        return inTime.count == candidates.count ? [] : build(candidates)
+        if !strict.isEmpty { return order(strict) }
+        return inTime.count == candidates.count ? [] : order(build(candidates))
     }
 
     /// 取词：按排名**逐个**试，第一个拿到的就是答案（LDDC 也是最多试 3 个）。
@@ -201,6 +233,13 @@ enum LddcLyrics {
         guard let fetched, !fetched.lines.isEmpty else { return nil }
         if LyricsCleaning.isBroken(fetched.lines.map(\.text).joined(separator: "\n")) { return nil }
         guard fetched.lines.count >= 6 else { return nil }
+        // r73：文件头写了歌名、却和候选自己的歌名对不上（标题分 <40）→ 下到的是别人的词，
+        // 换下一个候选。这是"取词偶尔取到别人的"的最后一道闸，只在头部有值时生效。
+        let headerTitle = fetched.meta.title
+        if !headerTitle.isEmpty, LddcMatch.titleScore(cand.title, headerTitle) < 40 {
+            noteKgChannel("下到的词头部写的是「\(headerTitle)」，不是这首")
+            return nil
+        }
         return fetched
     }
 

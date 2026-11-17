@@ -1,14 +1,15 @@
 import Foundation
 
-// MARK: - 网易云歌词兜底（r70）
+// MARK: - 网易云歌词兜底（r70 / 口径 r73）
 //
 // 为什么加这一条：r70 老板反馈《发如雪》"整首没词"。查下来打分没问题
 // （用酷狗真实返回的 20 条候选跑一遍：`发如雪 / 周杰伦 / 299s` 是满分 100，第一顺位），
-// 真正断掉的是**取词链**——酷狗/QQ 那次一句候选都没回来，酷我兜底也没成。
-// 一条链抖一下整首歌就没词，代价太大，所以补一个**独立第三条链**：网易云。
+// 真正断掉的是**取词链**——酷狗/QQ 那次一句候选都没回来。一条链抖一下整首歌就没词，
+// 代价太大，所以补一个**独立第三条链**：网易云。
 //
-// 口径与酷我兜底一致：按「歌名 歌手」搜，标题/歌手都要像（`NameMatch`），
-// 带"另一版"标记的候选只有在没有正片时才用；取到的是纯 LRC（行级时间，没有逐字）。
+// r73：选源口径与 LDDC / LRCLIB / 酷我完全统一（`LddcMatch`）：
+// 时长差 ≤4s → 标题×0.5 + 歌手×0.5 > 55 → **查询里没有的版本标记一律不收** →
+// 分数降序试前 3 个 → 正文过 `commentaryReason` / `contentVersionRejection` 才收。
 enum NeteaseLyrics {
 
     private static let timeout: TimeInterval = 8
@@ -22,25 +23,36 @@ enum NeteaseLyrics {
               !results.isEmpty else { return nil }
 
         let target = audioSec > 0 ? audioSec : song.durationSec
-        let pool = results.filter {
-            NameMatch.titleMatches(song.name, $0.name) && NameMatch.singerMatches(song.singer, $0.singer)
-                // 候选带「查询没有」的版本标记（live/伴奏/醇享版…）就先排除
-                && LddcMatch.versionPenalty(queryTitle: song.name, candidateTitle: $0.name) == 0
-        }
-        guard let best = pool.min(by: {
-            abs($0.durationSec - target) < abs($1.durationSec - target)
-        }) else { return nil }
+        let pool = results
+            .filter {
+                LddcMatch.durationOK(targetSec: target, candidateSec: $0.durationSec)
+                    && LddcMatch.extraVariantTags(queryTitle: song.name,
+                                                  candidateTitle: $0.name).isEmpty
+                    && LddcMatch.score(title: song.name, candidateTitle: $0.name,
+                                       artist: song.singer, candidateArtist: $0.singer)
+                        > LddcMatch.minScore
+            }
+            .sorted {
+                let s0 = LddcMatch.score(title: song.name, candidateTitle: $0.name,
+                                         artist: song.singer, candidateArtist: $0.singer)
+                let s1 = LddcMatch.score(title: song.name, candidateTitle: $1.name,
+                                         artist: song.singer, candidateArtist: $1.singer)
+                if s0 != s1 { return s0 > s1 }
+                return abs($0.durationSec - target) < abs($1.durationSec - target)
+            }
+        guard !pool.isEmpty else { return nil }
 
-        guard let lines = await lyricLines(platformID: best.platformID), lines.count >= minLines else {
-            return nil
+        for best in pool.prefix(3) {
+            guard let lines = await lyricLines(platformID: best.platformID),
+                  lines.count >= minLines else { continue }
+            // 正文是文案/字幕，或自报是另一个版本 → 换下一个候选
+            guard LyricsCleaning.foreignVersionReason(lines: lines, queryTitle: song.name) == nil else {
+                continue
+            }
+            let note = "《\(best.name)》· 网易云 · 候选 \(best.durationSec)s / 目标 \(target)s"
+            return LyricsResult(lines: lines, source: "网易云", matchNote: note)
         }
-        // r72：歌词**正文**自己写着是另一个版本（演唱会/live/伴奏…）也不收——
-        // 《七里香》那次拿到的就是「2024 嘉年华世界巡回演唱会台北站」的词。
-        guard LyricsCleaning.contentVersionRejection(lines: lines, queryTitle: song.name) == nil else {
-            return nil
-        }
-        let note = "《\(best.name)》· 网易云兜底 · 候选 \(best.durationSec)s / 目标 \(target)s"
-        return LyricsResult(lines: lines, source: "网易云", matchNote: note)
+        return nil
     }
 
     /// `/api/song/lyric` 返回 `lrc.lyric`（标准 LRC 文本），解析成行级歌词

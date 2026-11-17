@@ -2,17 +2,18 @@ import Foundation
 
 // MARK: - 歌词服务（唯一入口）
 //
-// r72 起整条链只有四步，**每一步都是"整首同一版"的来源**：
+// r73 起整条链只有四步，每步都是"整首同一版"的来源，**任何一个源都不许按名字猜着贴词**：
 //
-//   酷我的歌：酷我官方词（行级）→ 有逐字就升级 → LDDC（酷狗）→ LRCLIB → 网易云
-//   其它平台的歌：LDDC（酷狗，LDDC 打分口径）→ 酷我官方词 → LRCLIB → 网易云
+//   ① LDDC（酷狗，逐字 KRC）—— 老板口径「直接走 LDDC」
+//   ② 酷我官方词 —— 只在该曲**本来就是酷我那一版**时用（平台 ID 精确对应）
+//   ③ LRCLIB —— 独立公开源，不受酷狗限流影响
+//   ④ 网易云 —— 最后一条
 //
-// 为什么这样排：
-//   · LDDC（酷狗）的 KRC 带逐字时间、时间轴最准，排第一；
-//   · 酷我官方词是**按歌曲 ID 精确取**的行级词，稳、命中率高，排第二；
-//   · LRCLIB 是一条**完全独立**的公开源（无需签名、不受酷狗限流影响，实测《发如雪》《七里香》
-//     《晴天》都有同步歌词）。老板报"酷狗能取到词、App 取不到"时，它就是那条兜得住的命；
-//   · 网易云最后（周杰伦等曲库在网易基本没有，但对别的歌仍是多一条命）。
+// 为什么删掉了 r72 的「按名字去酷我兜底」这一步：
+//   老板 r73 录屏里《发如雪》显示的是「51 行 · 酷我」，正文第一句是
+//   「本字幕由QQ音乐独家AI字幕技术生成」，后面全是专辑介绍口播——那不是歌词。
+//   查下来酷我里周杰伦的《发如雪》只有 伴奏/DJ版/拍摄花絮/现场版，**没有正片**，
+//   那条兜底就挑中了「发如雪 拍摄花絮」的专访视频。宁可空着，也不贴一段解说。
 //
 // 缓存：命中后内存缓存 4 小时；同一首歌的并发请求共享同一个 Task。
 // 为什么用 actor：缓存与 in-flight 表是可变状态，且会被多个任务同时访问。
@@ -93,84 +94,39 @@ extension LyricsService {
 
     /// 取词主链（见文件头的四步说明）
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
-        if song.platform == .kuwo {
-            let official = await kuwoOfficial(song)
-            // 官方词拿到就先用它；能升级成逐字（同一首、行数对得上）才换
-            if let official {
-                let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec)
-                if let upgraded = upgrade(lddc, baseline: official) { return upgraded }
-                return official
-            }
-            if let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec) { return lddc }
-        } else if let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec) {
+        // ① LDDC（酷狗）：老板口径「直接走 LDDC」——逐字 KRC、时间轴最准，一律优先
+        if let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec) {
             return lddc
         }
-
-        if let result = await kuwoFallback(song) { return result }
+        // ② 酷我官方词：只有"这首歌本身就是酷我那一版"才用（平台 ID 精确对应，不按名字猜）
+        if song.platform == .kuwo, let official = await kuwoOfficial(song) {
+            return official
+        }
+        // ③ LRCLIB：独立公开源，不受酷狗限流影响，《发如雪》实测 113 行同步词
         if let result = await LrclibLyrics.fetch(song, audioSec: audioSec) { return result }
+        // ④ 网易云
         if let result = await NeteaseLyrics.fallback(song, audioSec: audioSec) { return result }
 
         let diag = LddcLyrics.lastDiagnostics()
-        let base = song.platform == .kuwo
-            ? "酷我官方 / 酷狗 / LRCLIB / 网易云都没取到词"
-            : "酷狗 / 酷我 / LRCLIB / 网易云都没取到词"
-        await LyricsService.shared.noteFailure(diag.isEmpty ? base : base + "（" + diag + "）")
+        await LyricsService.shared.noteFailure(
+            diag.isEmpty ? "LDDC / 酷我官方 / LRCLIB / 网易云都没取到词" : "LDDC 没取到：" + diag)
         return nil
     }
 
-    /// 把 LDDC 那份词"升级"成逐字版本：必须真的有逐字时间、且行数与官方词兼容。
-    /// 对不上就仍用官方词——宁可没有逐字，也不把另一版词的逐字贴上来。
-    private static func upgrade(_ lddc: LyricsResult?, baseline: LyricsResult?) -> LyricsResult? {
-        guard let lddc, lddc.hasWordTiming else { return nil }
-        if let baseline, !baseline.isEmpty {
-            guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, lddc.lines.count) else {
-                return nil
-            }
-        }
-        var upgraded = lddc
-        if !lddc.matchNote.isEmpty { upgraded.matchNote = lddc.matchNote + " · 逐字升级" }
-        return upgraded
-    }
-
-    /// 酷我歌曲：平台 ID 就是精确的 musicId，直接拿官方行级歌词
+    /// 酷我歌曲：平台 ID 就是精确的 musicId，直接拿官方行级歌词。
+    ///
+    /// 只此一条用酷我——**不再按名字去酷我里猜**。r72 之前那条"名字兜底"是《发如雪》
+    /// 51 行错词的来源：酷我里周杰伦的《发如雪》只有伴奏/DJ/花絮/现场版，
+    /// 搜"发如雪 周杰伦"根本搜不到正片，兜底就挑中了「发如雪 拍摄花絮」的专访字幕。
     private static func kuwoOfficial(_ song: Song) async -> LyricsResult? {
         guard let lines = await KwLyrics.fetch(platformID: song.platformID),
               lines.count >= 6 else { return nil }
+        // ID 精确 → 不用再验"是不是别的版本"；只拦"这不是歌词"（字幕/文案）
+        if let reason = LyricsCleaning.commentaryReason(lines: lines) {
+            await LyricsService.shared.noteFailure("酷我官方词是文案不是歌词：" + reason)
+            return nil
+        }
         return alignedResult(lines: lines, declaredMs: 0, song: song, source: "酷我")
-    }
-
-    /// 其它平台的歌：按「歌名 歌手」在酷我里找同一首，取它的官方歌词。
-    ///
-    /// r72：**逐个试前 3 个候选，并且拒收"歌词正文自报是另一个版本"的那份**。
-    /// 老板截图里《七里香》拿到「2024 嘉年华世界巡回演唱会台北站」的词，
-    /// 就是这里以前"只取时长最接近的一条、不检查歌词正文"造成的。
-    static func kuwoFallback(_ song: Song) async -> LyricsResult? {
-        let keyword = song.searchKeyword
-        guard !keyword.isEmpty else { return nil }
-        let adapter = KuwoSearchAdapter()
-        guard let results = try? await adapter.search(keyword: keyword, limit: 20),
-              !results.isEmpty else { return nil }
-
-        let target = song.durationSec
-        let pool = results.filter {
-            NameMatch.titleMatches(song.name, $0.name) && NameMatch.singerMatches(song.singer, $0.singer)
-        }
-        guard !pool.isEmpty else { return nil }
-        // 变体（伴奏/live/翻唱）只在没有正片时才用
-        let plain = pool.filter { !KuwoParser.isVariant($0.name) }
-        let candidates = (plain.isEmpty ? pool : plain).sorted {
-            abs($0.durationSec - target) < abs($1.durationSec - target)
-        }
-        for best in candidates.prefix(3) {
-            guard let lines = await KwLyrics.fetch(platformID: best.platformID),
-                  lines.count >= 6 else { continue }
-            // 歌词正文自己写着是"另一个版本"（演唱会/live/伴奏…）→ 换下一个候选
-            if LyricsCleaning.contentVersionRejection(lines: lines, queryTitle: song.name) != nil {
-                continue
-            }
-            return alignedResult(lines: lines, declaredMs: 0, song: song, source: "酷我")
-        }
-        return nil
     }
 
     /// 统一出口：按音源实际时长对齐，并把比例写进来源标签（播放页顶部那行小字能看到）

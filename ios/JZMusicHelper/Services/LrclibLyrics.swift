@@ -46,8 +46,11 @@ enum LrclibLyrics {
 
     // MARK: 选源（纯函数，CI 可断言）
 
-    /// 从一批候选里挑"确实是同一首、且带时间轴"的那条：
-    /// 时长差 ≤4 秒 → 分数 >55 → 取分数最高；同分时"时长更接近"的优先
+    /// 从一批候选里挑"确实是同一首、且带时间轴"的那条。
+    ///
+    /// r73 口径与 LDDC 相同，但**按歌名搜出来的源一律不收变体**（live/现场/伴奏/花絮…）：
+    /// 时长差 ≤4 秒 → 分数 >55 → 查询里没有的版本标记直接排除（宁可没词，也不贴另一版）
+    /// → 分数降序，同分时"时长更接近"的优先
     /// （LRCLIB 里同一个歌名常既有 299s 的也有 0s 的，0 秒那条不能靠运气赢）。
     static func pickBest(_ tracks: [Track], queryTitle: String, queryArtist: String,
                          targetSec: Int) -> Track? {
@@ -56,6 +59,8 @@ enum LrclibLyrics {
             guard !track.instrumental else { continue }
             guard let synced = track.syncedLyrics, !synced.isEmpty else { continue }
             guard LddcMatch.durationOK(targetSec: targetSec, candidateSec: track.durationSec) else { continue }
+            guard LddcMatch.extraVariantTags(queryTitle: queryTitle,
+                                             candidateTitle: track.title).isEmpty else { continue }
             let score = LddcMatch.score(title: queryTitle, candidateTitle: track.title,
                                         artist: queryArtist, candidateArtist: track.artist)
             guard score > LddcMatch.minScore else { continue }
@@ -68,18 +73,19 @@ enum LrclibLyrics {
         return best?.track
     }
 
-    /// 把一条候选变成取词结果：同一首校验 → 解析 LRC → 行数门槛 → 正文自报版本检查
+    /// 把一条候选变成取词结果：同一首校验 → 解析 LRC → 行数门槛 → 正文闸门（文案/别的版本）
     static func adopt(_ track: Track, song: Song, target: Int) -> LyricsResult? {
         let score = LddcMatch.score(title: song.name, candidateTitle: track.title,
                                     artist: song.singer, candidateArtist: track.artist)
         guard score > LddcMatch.minScore,
-              LddcMatch.durationOK(targetSec: target, candidateSec: track.durationSec) else {
+              LddcMatch.durationOK(targetSec: target, candidateSec: track.durationSec),
+              LddcMatch.extraVariantTags(queryTitle: song.name, candidateTitle: track.title).isEmpty else {
             return nil
         }
         guard let synced = track.syncedLyrics, !synced.isEmpty else { return nil }
         let lines = LyricsCleaning.parseLrc(synced)
         guard lines.count >= minLines else { return nil }
-        guard LyricsCleaning.contentVersionRejection(lines: lines, queryTitle: song.name) == nil else {
+        guard LyricsCleaning.foreignVersionReason(lines: lines, queryTitle: song.name) == nil else {
             return nil
         }
         let note = "《\(track.title)》· LRCLIB · 候选 \(track.durationSec)s / 目标 \(target)s"

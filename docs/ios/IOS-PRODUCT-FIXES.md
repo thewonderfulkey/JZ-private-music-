@@ -1409,3 +1409,164 @@ android/app/build.gradle.kts    versionCode 163 / versionName 2.2.5
 - **判定一份词对不对**只看两样：顶部来源标签 + 正文第一行。正文第一行写着另一个版本的，一律按错版处理。
 - 想调口径就改 `LddcMatch`（公式）、`LddcMatch.durationToleranceSec`（4 秒门槛）、
   `LddcLyrics.rank`（排序）；**不要再往"打分"里加新扣分档**——那是 r69/r70 走过、已经证明会把歌打成没词的路。
+
+# 第十四轮整改（2026-11-17 16:1x，老板：《发如雪》歌词完全错误 / 本地 LDDC 服务有问题 / 直接走 LDDC）
+
+> 老板原话：*"我发现本地的LDDC服务有点问题，去github找 https://github.com/chenmozhijin/LDDC 这个项目，
+> 把这个项目逆向找到API接口，内置到现有的App中，因为我发现歌词还是有点问题，可以查看开发群的5分钟最新录屏实测，
+> 《发如雪》的歌词完全错误，且其他歌曲有时对有时错，不完全准确，我需要重新修改。"*
+>
+> 证据（开发群 15:51 录屏 `10472775.mov`，320 秒，逐帧核对）：
+>
+> | 时间 | 歌 | 顶部标签 | 判定 |
+> |---|---|---|---|
+> | 5s–135s | 那天下雨了 | `55 行 · LDDC · 逐字` | 对 |
+> | 145s | 曾经的你 | `47 行 · LDDC · 逐字` | 对 |
+> | 155s | 发如雪 | `正在取词…` | — |
+> | 165s–175s | **发如雪** | **`51 行 · 酷我`** | **错** |
+> | 195s–205s | 晴天 | `63 行 · LDDC · 逐字` | 对 |
+> | 245s–345s | 爱情转移 | 行级词 | 对 |
+>
+> 《发如雪》那 51 行，正文第一句是 **「本字幕由QQ音乐独家AI字幕技术生成」**，后面是
+> 「周杰伦的11月的萧邦推出也有一段时间 / 整张专辑中歌迷反响最佳的当属发如雪…」——**是专辑介绍口播，不是歌词**。
+
+## 一、错在哪：不是打分，是「按名字去酷我兜底」挑中了一条专访视频
+
+### 1）复现（2026-11-17 实机直连）
+
+`search.kuwo.cn/r.s?all=发如雪 周杰伦` 的 20 条候选，**没有一条是正片**：
+
+```
+发如雪 (伴奏|网友改编) 78s / 发如雪 (DJ版|伴奏) 48s / 发如雪 拍摄花絮 118s /
+发 如 雪 霍 元 甲 562s / 发如雪 现场版 150s / 发如雪-DJ名人版 463s / 发如雪 升2 331s …
+```
+
+其中「发如雪 拍摄花絮」（118s）的官方词就是那 **51 行**字幕文案。
+
+### 2）为什么每一道旧闸门都放行了
+
+| 旧闸门 | 为什么没拦住 |
+|---|---|
+| `NameMatch.titleMatches/singerMatches` | 标题含「发如雪」、歌手是周杰伦 → 通过 |
+| `KuwoParser.isVariant` | 只认 伴奏/DJ/live/翻唱，「拍摄花絮」当时不在表里 |
+| `contentVersionRejection` | 只认「live/演唱会/伴奏」这类版本词，字幕文案不在表里 |
+| 行数门槛 ≥6 行 | 51 行，远超 |
+
+而这条兜底排在 **LRCLIB 之前**——LRCLIB 对《发如雪》有一份**113 行、299.28s 的同步词**（实测），
+根本轮不到出场。
+
+## 二、怎么改（四条硬口径 + 一条删掉）
+
+### 改法 1：删掉「按名字去酷我兜底」
+
+`LyricsService.kuwoFallback` 整段删除。链路收敛为四步：
+
+```
+① LDDC（酷狗 KRC，逐字）   ② 酷我官方词（仅当这首歌本身就是酷我那一版，平台 ID 精确）
+③ LRCLIB                   ④ 网易云
+```
+
+酷我**只剩**「用这首歌自己的 platformID 精确取词」这一种用法——ID 对得上，就不存在"猜错歌"。
+（`LyricsService.swift` 186 → 142 行。）
+
+### 改法 2：原版优先 / 变体垫底（`LddcLyrics.rank`）
+
+打分公式**一个字都没改**（老板上轮的要求，必须与 LDDC 一致），但公式本身拦不住
+「同歌手 + 同主标题 + 多一个版本标记」：实测「发如雪 拍摄花絮」标题分 54.5 + 歌手分 100 = **77 分**，
+比及格线 55 高 22 分。
+
+所以过线之后再加**顺序**规则：查询里没有的版本标记（live/现场/演唱会/伴奏/纯音乐/翻唱/remix/
+花絮/访谈/幕后/彩排/清唱/醇享/臻品…）只能**排在原版后面**，原版取不到词时才轮到它。
+
+- 查询自己带 `(Live)` 时，带 Live 的候选**不算**"多出来的标记"，照常第一 →
+  老板要的「歌名带 live，歌词优先选 live 的」成立。
+- 查询不带 live 时，Live/花絮候选排在原版后面 → 老板《七里香》那类错版不再出现。
+
+### 改法 3：按名字搜出来的源，一律不收变体
+
+LRCLIB / 网易云这类"用歌名搜出来"的源，`extraVariantTags` 非空直接跳过。
+**宁可没词，也不贴另一版**——上一轮的错误就是"有词就贴"。
+
+### 改法 4：正文闸门（`LyricsCleaning.commentaryReason`）
+
+正文前 12 行出现 `本字幕由 / 字幕技术生成 / AI字幕 / 本视频 / 本节目由 / 点击订阅 / 感谢观看 /
+未经授权禁止 / 版权所有` → 判为「字幕/文案」，一律拒收。
+和已有的 `contentVersionRejection`（前两行自报别的版本）合并成 `foreignVersionReason`，三条源共用。
+
+### 顺手补的两条（都是 LDDC 自己的行为）
+
+- **只用歌名再搜一次**：LDDC `auto_fetch` 里，拿「歌名 歌手」一条都过不了线时会用 `title` 重搜一次。
+  Live/翻唱版的标题常带后缀，加歌手反而搜不到正片。App 之前没有这一步。
+- **下到的词头部对不上就换候选**：KRC/QRC 文件头写了 `[ti:]`，与候选歌名标题分 <40 → 判为别人的词。
+
+## 三、老板说的「本地的 LDDC 服务有点问题」——确认了，也在这一轮修了
+
+`services/lddc/code/LDDC/lyrics_api_server.py` 以前**直接拿 `results[0]`**（`song = results[0]`）。
+实测（同参数、同一时刻）：
+
+| 查询 | 源 | `results[0]` |
+|---|---|---|
+| 七里香 周杰伦 | 网易云 | **七里香 (女声版) / 吉拉朵** |
+| 七里香 周杰伦 | LRCLIB | **七里香 周杰伦 / GM Lyric**（一条上传） |
+| 发如雪 周杰伦 | 网易云 | **发如雪(钢琴版) [原唱：周杰伦]** |
+
+现在这个服务改成调 LDDC 自己的 `calculate_title_score` / `calculate_artist_score`，
+套 `auto_fetch` 的同一条线：**时长差 >4s 丢掉 → 分数 >55 才进池 → 分数降序最多试 3 个 →
+正文自报别的版本就换下一个**，并新增 `duration` 参数（LDDC 靠它挡错版）。
+`/lyrics` 响应头会带 `X-LDDC-Source` 与 `X-LDDC-Pick`，一眼看出选的是哪一条。
+
+> 注：`LDDC.exe` 那个 GUI 本来就是对的（它走 `auto_fetch`）；错的只是这个 HTTP 包装。
+
+## 四、改动的文件（第十四轮）
+
+```
+Services/LddcMatch.swift        版本标签表 +花絮/访谈/幕后/彩排/清唱/口播/纪录片；
+                                新增 variantTags / extraVariantTags / isVariant（versionPenalty 改为基于它）
+Services/LyricsCleaning.swift   + commentaryReason / foreignVersionReason（字幕文案闸门）
+Services/LddcLyrics.swift       rank 改「原版优先、变体垫底」；fetch 拆出 attempt（只用歌名再搜一次）；
+                                fetchOne 加"文件头歌名对不上就换候选"
+Services/LyricsService.swift    四步链；删 kuwoFallback / upgrade / lineCountsCompatible 用法；酷我只剩平台精确
+Services/LrclibLyrics.swift     pickBest 不收变体；adopt 走 foreignVersionReason
+Services/NeteaseLyrics.swift    选源改 LDDC 口径（时长门槛 + 55 分 + 不收变体 + 正文闸门），试前 3 个
+services/lddc/.../lyrics_api_server.py  重写：不再取 results[0]，改用 LDDC 打分（见 §三）
+ios/SelfTest/main.swift         +12 条断言（花絮变体 / 原版优先 / 正文闸门 / LRCLIB 不收 Live 与花絮）
+ios/JZMusicHelper.xcodeproj     MARKETING_VERSION 2.2.6 / 164
+android/app/build.gradle.kts    versionCode 164 / versionName 2.2.6
+docs/ios/IOS-LYRICS.md          +§11「r73 取词链（当前口径）」
+```
+
+## 五、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 版本标签 / 原版优先 / 正文闸门 / LRCLIB 选源 | 本机 WSL Swift runner（`.build/r73_logic_run.sh`） | **21 / 0 通过** |
+| 歌词子系统类型检查 | `.build/r73_typecheck.sh`（CryptoKit/Compression 桩） | `TYPECHECK_EXIT=0` |
+| 酷狗真实取词（10 首连打） | `.build/r73_kg_burst.py`（用仓库里的 LDDC `KGAPI`） | 8/10 成功；《发如雪》69 行、时长 299s，**本机连打不触发限流** |
+| 本地取词服务选源 | `.build/r73_api_server_check.py` | 四首歌都选中**原版**（发如雪 69 行 / 七里香 38 行 / 晴天 63 行 / 爱情转移 70 行） |
+| 全量逻辑断言 + 整包 | CI `logic-tests` + `build` | 见 §六 |
+
+## 六、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | 见 CI 完成后回填 |
+| 提交 | 见 CI 完成后回填 |
+| CI | 见 CI 完成后回填 |
+
+## 七、装机按这个顺序试
+
+1. **《发如雪》**：歌词页顶部**不该再是「51 行 · 酷我」**。应当是 `LDDC`（逐字，约 69 行）
+   或 `LRCLIB`（行级，约 113 行）；正文第一句应当是「狼牙月 / 伊人憔悴」或「周杰伦 - 发如雪 词：方文山」，
+   **绝不能是「本字幕由QQ音乐独家AI字幕技术生成」**。
+2. **《七里香》**：正文第一行不该是「2024 嘉年华世界巡回演唱会台北站」。
+3. **带 Live 的歌**（如《七里香 (Live)》）：歌词应当是现场版那一版。
+4. 万一某首没词：空态括号里的诊断会写清是「酷狗搜 X 0 条候选」「酷狗 0/N 个取到词」还是「四个源都没取到」。
+
+## 八、这一轮给下一轮的提醒
+
+- **判定"词对不对"先看正文第一句**。字幕/文案类词（「本字幕由…」「本视频…」）和版本类词
+  （「(Live)」「演唱会」「伴奏」）是两类不同的错，前者靠 `commentaryReason`，后者靠 `contentVersionRejection`。
+- **不要再按名字去某个源"兜底"**。这一轮的错词就是这条兜底造成的；正确做法是**换一条可靠的源**，
+  或者空着并给出诊断。
+- **QQ 音乐（QM）值得接回来**：它的 QRC 是逐字最全的一份，实测同一台机器上前两首通、后两首
+  `req.code=2001`（限流）。接的时候要并行 + 失败静默 + 权重排在 KG 之前。

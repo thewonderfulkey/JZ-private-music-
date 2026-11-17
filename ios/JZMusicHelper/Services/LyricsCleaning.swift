@@ -307,6 +307,34 @@ enum LyricsCleaning {
         return nil
     }
 
+    /// 「这不是歌词，是字幕/口播稿」的硬证据（纯函数）。
+    ///
+    /// 老板 r73 那次的《发如雪》51 行「酷我」词，正文第一句是
+    /// 「本字幕由QQ音乐独家AI字幕技术生成」，后面是专辑介绍口播——
+    /// 它来自酷我里一条「发如雪 拍摄花絮」的专访视频。行数够、时间轴也有，
+    /// 但它是**文案不是歌词**。这类正文一律拒收（宁可空着，也不放一段解说）。
+    private static let commentaryMarkers = [
+        "本字幕由", "字幕技术生成", "AI字幕", "本视频", "本节目由", "点击订阅",
+        "关注我们的频道", "感谢观看", "未经授权禁止", "版权所有",
+    ]
+
+    static func commentaryReason(lines: [LyricLine]) -> String? {
+        for line in lines.prefix(12) {
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            if let hit = commentaryMarkers.first(where: { text.localizedCaseInsensitiveContains($0) }) {
+                return "正文是字幕/文案而不是歌词（命中「\(hit)」）"
+            }
+        }
+        return nil
+    }
+
+    /// 一份歌词正文能不能收：先看是不是文案，再看首行有没有自报别的版本。
+    /// 所有"按歌名搜出来"的源（LRCLIB / 网易云 / 酷我官方词）都过同一个闸门。
+    static func foreignVersionReason(lines: [LyricLine], queryTitle: String) -> String? {
+        commentaryReason(lines: lines) ?? contentVersionRejection(lines: lines, queryTitle: queryTitle)
+    }
+
     // MARK: 定位
 
     /// 当前播放位置对应的歌词行下标（没有则 -1）
