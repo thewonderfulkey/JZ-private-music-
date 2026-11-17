@@ -1438,6 +1438,14 @@ do {
     check("没写总长 + 音源更长也不拉（尾奏不是另一个剪辑）",
           LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 224).ratio == 1)
 
+    // ④ 行数同一版判定（r68：能不能用逐字那份词替换行级那份）
+    check("55 行 vs 55 行 = 同一版", LyricsCleaning.lineCountsCompatible(55, 55))
+    check("55 行 vs 62 行 = 同一版（+13%）", LyricsCleaning.lineCountsCompatible(55, 62))
+    check("46 行 vs 55 行 也能接受（+20%）", LyricsCleaning.lineCountsCompatible(46, 55))
+    check("55 行 vs 30 行 = 不是同一版", !LyricsCleaning.lineCountsCompatible(55, 30))
+    check("55 行 vs 90 行 = 不是同一版", !LyricsCleaning.lineCountsCompatible(55, 90))
+    check("0 行直接否掉", !LyricsCleaning.lineCountsCompatible(0, 40))
+
     // 文件头真写了总长时，才按比例对齐（KRC/QRC 才可能带）
     let headLyric = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 190_000, text: "z")]
     let scaled = LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 218)

@@ -708,3 +708,96 @@ android/app/build.gradle.kts    versionCode 158 / versionName 2.2.0
   差十几秒 → 是**放到了另一个剪辑**（这条流比元数据长），那和词永远对不上，得在取流侧按时长挑源。
 - 进度条那边：`duration` 现在会跟着 AVPlayer 学会的真实值走，并在"音频比容器长"时自适应；
   如果还看到"剩余 0:00 但还在唱"，把「音源 → 时长」那屏截图发群里。
+
+# 第九轮整改（2026-11-17 13:5x，老板 2 条：播放列表重做 / 快进后歌词不准 + 没有逐字）
+
+> 证据：13:43 截屏（播放列表：序号小字 + 大标题 + 细灰副行 + 分隔线 + 导航栏红字「关闭」）、
+> 13:49 的 23 秒录屏（《枫》：头部写着 `46 行 · LDDC · 逐字`，逐字染色正常、跳转正常）、
+> 13:49 的 40 秒录屏（《那天下雨了》：头部写着 `55 行 · 酷我`——**没有逐字**；两次 +8 秒跳转）。
+
+## 一、第 2 条：为什么《枫》对、《那天下雨了》不对
+
+### 1）"没有逐字染色"不是 bug，是词源不同
+
+| 歌 | 词源标签 | 逐字 |
+|---|---|---|
+| 枫 | `46 行 · LDDC · 逐字` | 有（酷狗 KRC / QQ QRC 带每字起止时间） |
+| 那天下雨了 | `55 行 · 酷我` | **没有**（酷我官方 `lrclist` 只有整行 `time`） |
+
+旧口径下酷我的歌**只走酷我官方词**，所以永远拿不到逐字时间，`LyricLineRow` 的逐字染色分支
+（`hasWordTiming`）自然不成立。
+
+**改法**：`LyricsService` 拿到酷我官方词之后，再试一次 LDDC（KRC/QRC）；只有
+「行数在 ±25% 内」（`LyricsCleaning.lineCountsCompatible`，纯函数、CI 有断言）才升级成逐字那份，
+对不上就仍用官方词——宁可没有逐字，也不把另一版词的逐字贴上来。给这次升级**4 秒硬超时**，
+超时先显示官方词，不让首屏被拖到十几秒。
+
+### 2）"快进快退之后滚动不准"——两个可判定的机制
+
+`AVPlayer.seek` 是**异步**的：刚调完的那几十到几百毫秒里，`player.currentTime()` 还会报**旧位置**，
+而歌词 ticker 是 25Hz —— 它会拿着旧位置把刚设好的 `lyricIndex` / `lyricScrollIndex` 拽回去，
+等 seek 真正落地再跳回来。远距离跳转时 `LazyVStack` 的第一次 `scrollTo` 又常常"只把目标行实例化、
+并不居中"，两个毛病叠起来就是"跳完之后那一段滚动不对"。
+
+**改法**：
+
+- `PlayerEngine` 新增 `seekNonce`（每次跳转 +1）与 0.7 秒的**seek 保护窗**：
+  窗内位置离目标 >0.4 秒时 ticker **不更新**高亮/滚动目标；一旦播放器追上目标就提前解保护；
+- `LyricsPane` 监听 `seekNonce`，跳完**强制重排一次**（先无动画落实到目标行，再贴一次），
+  并解除浏览态（`browsing = false`）；
+- `scroll(proxy:to:animated:force:)` 对"远跳"（距离 > 3 行或 force）走两段式：
+  先无动画 `scrollTo` 落实，下一拍再贴中，专治 LazyVStack 远距离不居中。
+
+### 3）加了证据面（下一轮不用猜）
+
+「⋯ → 音源详情」新增两段：
+
+- **时长**：实际播放时长 / 曲目元数据 / 两者差多少（r66 加的）；
+- **当前歌词行**（本轮）：这一行的文本、**行时间**、**播放位置**、**偏差**（秒，带 0.1 位）。
+  偏差长期 ≈0 → 词和时间轴是贴的；差几秒 → 就是词源与这条音源不是同一版。
+
+## 二、第 1 条：播放列表重做
+
+上一版是系统 `List` 原样（序号小字 + 大标题 + 细灰副行 + 一条条分隔线 + 导航栏红字「关闭」），
+像设置页不像播放器。这一版：
+
+- **头部**一行说清三件事：`播放列表` + `12 首 · 列表循环 · 约 48 分钟`，右侧一个圆形关闭键；
+  不再套导航栏、不再有红字「关闭」；
+- **每行**：序号列（当前项换成波形/暂停图标）+ 封面 44（`SongArtwork`，与全 App 同一条取图链）
+  + 歌名/歌手 + 当前项朱砂色 + 右侧「正在播放」胶囊（非当前项显示时长）；
+- 去掉全部分隔线，靠行距区分；按压整行高亮（`.rowPress`）；
+- 底色用 `Tokens.Palette.paper`，`presentationDetents([.medium, .large])` + 拖拽指示条。
+
+## 三、改动的文件（第九轮）
+
+```
+Services/AudioPlayer.swift        + seekNonce / seek 保护窗；updateLyricIndex 里按保护窗跳过旧位置
+Services/LyricsService.swift      + wordTimedUpgrade（酷我官方词 → 试 LDDC 逐字，±25% 行数 + 4s 超时）
+Services/LyricsModel.swift        + LyricsResult.hasWordTiming
+Services/LyricsCleaning.swift     + lineCountsCompatible（纯函数）
+Views/NowPlayingView.swift        PlayerQueueSheet 整页重做；LyricsPane 监听 seekNonce + 两段式 scrollTo
+Views/SongDetailView.swift        + 「当前歌词行」分区（行时间 / 播放位置 / 偏差）
+ios/SelfTest/main.swift           + 6 条（行数同一版判定）
+ios/JZMusicHelper.xcodeproj       MARKETING_VERSION 2.2.1 / CURRENT_PROJECT_VERSION 159
+android/app/build.gradle.kts      versionCode 159 / versionName 2.2.1
+```
+
+## 四、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 语法 / 界面卫生 / 工程文件 | `parse_swift.py` / `check_ui_hygiene.py` / `check_pbxproj.py` | 65 文件 0 错 / 通过 / 通过 |
+| 纯逻辑（对齐口径 + 时长防线 + 行数同一版） | 本机 WSL Swift 6.0.3 小 runner（`.build/r66_small_run.sh`） | **17/17 通过** |
+| 全量纯逻辑 | CI `logic-tests` | 见出包记录 |
+| Views | 本机无 Xcode/SwiftUI | 只能靠 CI 的 xcodebuild，见出包记录 |
+
+## 五、装机按这个顺序试
+
+1. **播放列表**：播放页右下「播放列表」——应当有封面、当前项朱砂 + 「正在播放」胶囊、
+   头部写清首数/模式/总时长，没有分隔线和红字「关闭」。
+2. **歌词跳转**：在歌词页点中间某一句（或拖进度条）跳过去——跳完那一句应当**就在正中间**，
+   并且接着往下唱的换行仍然准。
+3. **逐字**：看歌词页顶部标签——`逐字` 两个字出现就说明这首歌拿到了 KRC；
+   《那天下雨了》如果拿到 KRC 也会有逐字染色（没拿到就仍是整行高亮，这是词源决定的）。
+4. **证据面**：遇到"就是不对"的歌，「⋯ → 音源详情 → 当前歌词行」截图丢群里，
+   我要看 `行时间 / 播放位置 / 偏差` 那三行。

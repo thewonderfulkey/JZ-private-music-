@@ -70,6 +70,24 @@ struct SourceDetailView: View {
                     }
                 }
 
+                // r68：把"当前高亮那句的词时间"和"播放位置"并排摆出来。
+                // 偏差一直 ≈0 → 词和时间轴是贴的；差几秒 → 就是词源与这条音源不是同一版。
+                Section("当前歌词行") {
+                    if let line = player.currentLyricLine {
+                        Text(line.text)
+                            .font(.footnote)
+                        LabeledContent("行时间", value: Self.tenths(line.timeMs))
+                        LabeledContent("播放位置", value: Self.tenths(player.lyricPositionMs))
+                        let delta = Double(player.lyricPositionMs - line.timeMs) / 1000
+                        LabeledContent("偏差", value: String(format: "%+.1f 秒", delta))
+                    } else {
+                        Text("还没有定位到某一行")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("逐字时间", value: player.lyrics.first?.hasWordTiming == true ? "有" : "无")
+                }
+
                 Section {
                     Text("音质不是接口自报的，是取流时用 Range 请求读了容器头、再按体积÷时长算出来的。")
                         .font(.caption)
@@ -84,5 +102,14 @@ struct SourceDetailView: View {
                 }
             }
         }
+    }
+
+    /// 毫秒 → `m:ss.t`（带一位小数，看得出 0.1 秒级的偏差）
+    private static func tenths(_ ms: Int) -> String {
+        let clamped = max(0, ms)
+        let total = Double(clamped) / 1000
+        let m = Int(total) / 60
+        let s = total - Double(m * 60)
+        return String(format: "%d:%04.1f", m, s)
     }
 }

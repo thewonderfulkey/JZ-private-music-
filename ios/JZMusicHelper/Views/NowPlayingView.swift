@@ -903,6 +903,8 @@ private struct LyricsPane: View {
     @State private var lastScrollEnd = Date.distantPast
     /// 停留计时任务
     @State private var resumeTask: Task<Void, Never>?
+    /// 上一次滚到中间的行号（用来判断"远跳"→ 需要两段式 scrollTo）
+    @State private var lastCenteredIndex = -1
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -962,6 +964,20 @@ private struct LyricsPane: View {
         .onChange(of: player.lyricScrollIndex) { _, idx in
             guard idx >= 0, !browsing else { return }
             scroll(proxy: proxy, to: idx, animated: true)
+        }
+        // r68（老板反馈 ②）：快进/快退之后强制重排一次。
+        // 远距离跳转时 `LazyVStack` 的第一次 `scrollTo` 常常只把目标行实例化、并不居中，
+        // 于是"跳完之后滚动不准"。这里在每次跳转后补一次，并解除浏览态。
+        .onChange(of: player.seekNonce) { _, _ in
+            browsing = false
+            resumeTask?.cancel()
+            resumeTask = nil
+            lastInteraction = Date()
+            let idx = player.lyricScrollIndex >= 0 ? player.lyricScrollIndex : player.lyricIndex
+            guard idx >= 0 else { return }
+            DispatchQueue.main.async {
+                scroll(proxy: proxy, to: idx, animated: false, force: true)
+            }
         }
         .onAppear {
             let idx = player.lyricScrollIndex >= 0 ? player.lyricScrollIndex : player.lyricIndex
@@ -1058,7 +1074,28 @@ private struct LyricsPane: View {
         .accessibilityLabel("回到正在唱的一句")
     }
 
-    private func scroll(proxy: ScrollViewProxy, to index: Int, animated: Bool) {
+    /// 把某一行滚到中间。
+    ///
+    /// r68：`LazyVStack` 有个老毛病——跳到离当前位置很远的行时，第一次 `scrollTo` 只会
+    /// 把那一行实例化，落点常常不居中（表现为"快进/快退之后高亮那一句不在中间"）。
+    /// 所以远跳（含每次 seek）先**无动画**贴一次，下一拍再贴一次，确保真的居中。
+    private func scroll(proxy: ScrollViewProxy, to index: Int, animated: Bool,
+                        force: Bool = false) {
+        let far = force || abs(index - lastCenteredIndex) > 3
+        lastCenteredIndex = index
+        if far {
+            proxy.scrollTo(index, anchor: .center)
+            DispatchQueue.main.async {
+                if animated && !reduceMotion {
+                    withAnimation(Tokens.Motion.lyricAdvance) {
+                        proxy.scrollTo(index, anchor: .center)
+                    }
+                } else {
+                    proxy.scrollTo(index, anchor: .center)
+                }
+            }
+            return
+        }
         if animated && !reduceMotion {
             withAnimation(Tokens.Motion.lyricAdvance) {
                 proxy.scrollTo(index, anchor: .center)
@@ -1171,63 +1208,163 @@ private func mixColor(_ from: Color, _ to: Color, _ t: Double) -> Color {
 
 // MARK: - 播放列表（队列）
 
-/// 播放页「播放列表」：当前队列一行一首，点一首直接跳过去。
+/// 播放页「播放列表」。
+///
+/// r68（老板截屏：「播放列表太丑了，需要重新设计一版」）——上一版是系统 `List` 原样：
+/// 序号小字 + 大标题 + 细灰副行 + 一条条分隔线，顶上一个导航栏加红字「关闭」，
+/// 像设置页而不是播放器。这一版：
+///   · 头部说清三件事：多少首 / 什么播放模式 / 总共多长，右侧一个圆形关闭键；
+///   · 每行有封面（`SongArtwork`，和全 App 同一条取图链），当前项朱砂 + 「正在播放」胶囊；
+///   · 去掉导航栏与全部分隔线，靠行距区分；按压有整行高亮（`.rowPress`）。
 struct PlayerQueueSheet: View {
 
     @Environment(PlayerEngine.self) private var player
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if player.queue.isEmpty {
-                    ContentUnavailableView("队列是空的", systemImage: "music.note.list")
-                } else {
-                    List {
+        VStack(spacing: 0) {
+            header
+
+            if player.queue.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: Tokens.Spacing.xxs) {
                         ForEach(Array(player.queue.enumerated()), id: \.offset) { index, song in
-                            Button {
-                                player.jump(to: index)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: Tokens.Spacing.s) {
-                                    Text("\(index + 1)")
-                                        .font(.caption)
-                                        .monospacedDigit()
-                                        .foregroundStyle(.secondary)
-                                        .frame(minWidth: 22, alignment: .trailing)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(song.name)
-                                            .font(.body)
-                                            .foregroundStyle(index == player.index ? Tokens.Palette.vermilion : Color.primary)
-                                            .lineLimit(1)
-                                        Text(song.singer)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer(minLength: 0)
-                                    if index == player.index {
-                                        Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(Tokens.Palette.vermilion)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
+                            row(index: index, song: song)
                         }
+                        Color.clear.frame(height: Tokens.Spacing.m)
                     }
-                    .listStyle(.plain)
+                    .padding(.horizontal, Tokens.Spacing.xs)
                 }
-            }
-            .navigationTitle("播放列表（\(player.queue.count) 首）")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
+                .scrollIndicators(.hidden)
             }
         }
+        .background(Tokens.Palette.paper)
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Tokens.Palette.paper)
+    }
+
+    // MARK: 头部
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: Tokens.Spacing.s) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("播放列表")
+                    .font(.title3.weight(.bold))
+                Text(subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button {
+                Haptics.tap()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.press)
+            .accessibilityLabel("关闭播放列表")
+        }
+        .padding(.horizontal, Tokens.Spacing.m)
+        .padding(.top, Tokens.Spacing.xs)
+        .padding(.bottom, Tokens.Spacing.s)
+    }
+
+    /// 「12 首 · 列表循环 · 约 48 分钟」
+    private var subtitle: String {
+        var parts: [String] = ["\(player.queue.count) 首"]
+        parts.append(player.mode.displayName)
+        let total = player.queue.reduce(0.0) { $0 + max($1.duration, 0) }
+        if total > 0 {
+            parts.append("约 \(Int((total / 60).rounded())) 分钟")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: 行
+
+    private func row(index: Int, song: Song) -> some View {
+        let isCurrent = index == player.index
+        return Button {
+            Haptics.tap()
+            player.jump(to: index)
+            dismiss()
+        } label: {
+            HStack(spacing: Tokens.Spacing.s) {
+                // 序号列：当前项换成波形/暂停（和播放页的语义一致）
+                Group {
+                    if isCurrent {
+                        Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Tokens.Palette.vermilion)
+                    } else {
+                        Text("\(index + 1)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 20)
+
+                SongArtwork(song: song, size: 44, radius: Tokens.Radius.artworkSmall)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(song.name)
+                        .font(.subheadline.weight(isCurrent ? .semibold : .regular))
+                        .foregroundStyle(isCurrent ? Tokens.Palette.vermilion : Color.primary)
+                        .lineLimit(1)
+                    Text(song.singer.isEmpty ? "未知歌手" : song.singer)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: Tokens.Spacing.xs)
+
+                if isCurrent {
+                    Text(player.isPlaying ? "正在播放" : "已暂停")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.14)))
+                } else {
+                    Text(song.durationText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, Tokens.Spacing.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.rowPress)
+        .accessibilityLabel("\(index + 1) \(song.name)，\(song.singer)")
+        .accessibilityHint(isCurrent ? "正在播放" : "轻点跳到这里")
+    }
+
+    // MARK: 空态
+
+    private var emptyState: some View {
+        VStack(spacing: Tokens.Spacing.xs) {
+            Image(systemName: "music.note.list")
+                .font(.title2.weight(.light))
+                .foregroundStyle(.tertiary)
+            Text("播放列表是空的")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

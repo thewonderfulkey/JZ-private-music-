@@ -56,6 +56,14 @@ final class PlayerEngine {
     /// 表现出来就是"唱到下一句了，上一句还亮着"。25Hz 的专用 ticker 把这个误差压到 40ms 内。
     var lyricPositionMs: Int { Int(preciseTime * 1000) + SettingsStore.shared.lyricOffsetMs }
 
+    /// 每次跳转 +1。歌词面板监听它，跳完强制重排一次（r68：快进/快退后滚动不准）
+    private(set) var seekNonce: Int = 0
+
+    /// seek 的"未落地保护窗"：这段时间里 `player.currentTime()` 可能还报旧位置，
+    /// ticker 不能拿它把刚设好的高亮拽回去。窗内一旦追上目标（±0.4s）就提前解保护。
+    private var seekTargetMs: Int?
+    private var seekGuardUntil = Date.distantPast
+
     /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
     private(set) var deadSongKeys: Set<String> = []
     private(set) var isLoadingLyrics = false
@@ -221,6 +229,10 @@ final class PlayerEngine {
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
+        // r68：把"这次要跳到哪里"记下来，保护窗内不让 ticker 用旧位置改高亮
+        seekTargetMs = Int(target * 1000)
+        seekGuardUntil = Date().addingTimeInterval(0.7)
+        seekNonce &+= 1
         // 刚 seek 完 `AVPlayer.currentTime()` 还是旧值，而 40ms 的歌词 ticker 只在播放时跑：
         // 暂停状态下如果照旧用 preciseTime 算，就会出现"跳过去了，高亮还停在上上句"。
         lyricIndex = LyricsCleaning.indexAt(
@@ -583,7 +595,17 @@ final class PlayerEngine {
     }
 
     private func updateLyricIndex() {
+        let offset = SettingsStore.shared.lyricOffsetMs
         let position = lyricPositionMs
+        if let target = seekTargetMs {
+            if Date() < seekGuardUntil {
+                // 播放器还没跳到目标：这段时间的位置是旧的，别改高亮（否则会先弹回上一句）
+                if abs((position - offset) - target) > 400 { return }
+                seekTargetMs = nil
+            } else {
+                seekTargetMs = nil
+            }
+        }
         let idx = LyricsCleaning.indexAt(lyrics, positionMs: position)
         if idx != lyricIndex { lyricIndex = idx }
         let anchor = LyricsCleaning.scrollAnchorIndex(lyrics, positionMs: position,

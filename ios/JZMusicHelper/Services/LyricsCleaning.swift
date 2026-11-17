@@ -279,6 +279,17 @@ enum LyricsCleaning {
         return (scaled, ratio)
     }
 
+    /// 两版歌词是不是"同一版"：行数相差不超过 ±25%。
+    ///
+    /// 用途（r68）：酷我官方词只有行级时间，我们想用 LDDC 的 KRC（逐字）去替换它；
+    /// 但只允许"明显是同一首"的情况——行数差太多就说明是另一版词（多一段 rap、少了前奏），
+    /// 那种情况宁可保留官方词，也不要把别人的逐字贴上来。
+    static func lineCountsCompatible(_ reference: Int, _ candidate: Int) -> Bool {
+        guard reference > 0, candidate > 0 else { return false }
+        let ratio = Double(candidate) / Double(reference)
+        return ratio >= 0.75 && ratio <= 1.25
+    }
+
     // MARK: 定位
 
     /// 当前播放位置对应的歌词行下标（没有则 -1）

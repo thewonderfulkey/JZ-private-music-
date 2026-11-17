@@ -35,6 +35,9 @@ struct LyricsResult: Sendable {
     let source: String
 
     var isEmpty: Bool { lines.isEmpty }
+
+    /// 有没有**逐字**时间（决定播放页能不能做"唱到哪染到哪"）
+    var hasWordTiming: Bool { lines.contains { $0.hasWordTiming } }
 }
 
 /// 取词失败的原因（给状态行显示，不甩英文异常）

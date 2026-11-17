@@ -85,9 +85,15 @@ actor LyricsService {
 extension LyricsService {
 
     /// 取词主链：酷我官方（酷我的歌）→ LDDC（酷狗 + QQ 双源评分）→ 酷我兜底（其它平台的歌）
+    ///
+    /// r68：酷我官方词**只有行级时间**，所以「逐字染色」永远出不来（老板拿《枫》做对照：
+    /// 那首走 LDDC 的 KRC 就有逐字）。现在官方词拿到之后再试一次 LDDC：
+    /// 只有行数对得上（±25%）才升级成逐字那份，对不上仍用官方词。
     static func resolve(_ song: Song) async -> LyricsResult? {
         if song.platform == .kuwo {
-            if let result = await kuwoOfficial(song) { return result }
+            let official = await kuwoOfficial(song)
+            if let upgraded = await wordTimedUpgrade(song, baseline: official) { return upgraded }
+            if let official { return official }
         }
         if let result = await LddcLyrics.fetch(song: song) { return result }
         if song.platform != .kuwo, let result = await kuwoFallback(song) { return result }
@@ -103,6 +109,38 @@ extension LyricsService {
             return nil
         }
         return alignedResult(lines: lines, declaredMs: 0, song: song, source: "酷我")
+    }
+
+    /// 用 LDDC（KRC/QRC）把"只有行级时间"的词升级成带逐字时间的版本。
+    ///
+    /// 三个条件缺一不可：LDDC 取到了词、那份词确实有逐字时间、行数和参照词接近
+    /// （±25% 以外就是另一版词，宁可不升级，也不要把别人的逐字贴上来）。
+    static func wordTimedUpgrade(_ song: Song, baseline: LyricsResult?) async -> LyricsResult? {
+        // 给"升级成逐字"这件事一个硬上限：官方词已经拿到手了，不能让 LDDC 的两条源
+        // 把首屏拖到十几秒（超时就先用官方词显示，逐字下一次再补）
+        let krc = await withTimeoutOrNil(seconds: 4) { await LddcLyrics.fetch(song: song) } ?? nil
+        guard let krc, krc.hasWordTiming else { return nil }
+        if let baseline, !baseline.isEmpty {
+            guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, krc.lines.count) else {
+                return nil
+            }
+        }
+        return krc
+    }
+
+    /// 带超时的异步取值（超时返回 nil，不取消原任务之外的东西）
+    private static func withTimeoutOrNil<T>(seconds: Double,
+                                            _ work: @escaping () async -> T?) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await work() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 
     /// 其它平台的歌：按「歌名 歌手」在酷我里找同一首，取它的官方歌词。
