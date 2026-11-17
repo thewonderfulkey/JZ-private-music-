@@ -129,7 +129,7 @@ struct DiscoverView: View {
                         ChartModuleCard(chart: .hot)
                     }
                     .buttonStyle(.press)
-                    .accessibilityLabel("\(KuwoChart.hot.name)，酷我官方榜，每日更新")
+                    .accessibilityLabel("\(KuwoChart.Chart.hot.name)，酷我官方榜，每日更新")
                 }
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
                 .padding(.vertical, 2)

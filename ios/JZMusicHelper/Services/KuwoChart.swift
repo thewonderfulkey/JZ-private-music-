@@ -28,10 +28,13 @@ enum KuwoChart {
         let name: String
 
         var id: String { mobileId }
-    }
 
-    /// 发现页「编辑精选」里挂的那个榜（酷我热歌榜，100 首，每日更新）
-    static let hot = Chart(webId: "489927", mobileId: "16", name: "酷我热歌榜")
+        /// 发现页「编辑精选」里挂的那个榜（酷我热歌榜，100 首，每日更新）。
+        /// 放在 `Chart` 上而不是 `KuwoChart` 上，调用点才能写 `.hot`
+        /// （写在枚举上时 `KuwoChart.Chart` 里找不到它——只有 xcodebuild 会报这个错，
+        /// 本地 typecheck 不含视图文件，踩过一次）。
+        static let hot = Chart(webId: "489927", mobileId: "16", name: "酷我热歌榜")
+    }
 
     /// 一页榜单：榜名 + 更新日期 + 曲目。日期由接口给（`pub`），不自己猜。
     struct Page {

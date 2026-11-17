@@ -1982,8 +1982,8 @@ if let chart = KuwoChart.parsePage(chartFixture) {
 check("空 musiclist 判失败（不显示一个 0 首的“正常”页）",
       KuwoChart.parsePage(["name": "空榜", "musiclist": []]) == nil)
 check("两级 id 都留着：web 489927 / mobile 16",
-      KuwoChart.hot.webId == "489927" && KuwoChart.hot.mobileId == "16",
-      "\(KuwoChart.hot.webId)/\(KuwoChart.hot.mobileId)")
+      KuwoChart.Chart.hot.webId == "489927" && KuwoChart.Chart.hot.mobileId == "16",
+      "\(KuwoChart.Chart.hot.webId)/\(KuwoChart.Chart.hot.mobileId)")
 
 section("酷我封面（rid_pic 同平台兜底）")
 
