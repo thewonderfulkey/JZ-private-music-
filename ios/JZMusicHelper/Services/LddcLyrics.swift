@@ -52,6 +52,21 @@ enum LddcLyrics {
 
     static func noteDiag(_ text: String) { diagBox.set(text) }
     static func lastDiagnostics() -> String { diagBox.get() }
+
+    /// 最近一次"为什么没词"的**类别**（r78）。
+    ///
+    /// 为什么要分类：空态以前一律写"四个源都没取到词"，可《你好，再见》那次四个源是**都查过了**，
+    /// 只是酷狗里只有一首同名不同人的《你好再见 / Butter》——按老板 r74 的口径"宁可空着也不贴另一版"，
+    /// 这首本来就该空着。分不清"没有原唱词"和"我们没取到"，下一轮就会一直往网络/接口上查。
+    enum MissKind: String, Sendable {
+        case none = ""
+        case noCandidates = "酷狗连候选都没搜到"
+        case rejectedIdentity = "候选都过不了身份闸（只有别的版本/别人唱的）"
+        case fetchFailed = "候选对得上，但取词接口没返回词"
+    }
+    private static let missBox = DiagBox()
+    static func noteMiss(_ kind: MissKind) { missBox.set(kind.rawValue) }
+    static func lastMiss() -> MissKind { MissKind(rawValue: missBox.get()) ?? .none }
     static func noteKgChannel(_ text: String) { kgChannelBox.set(text) }
     static func lastKgChannel() -> String { kgChannelBox.get() }
     private static let netTimeout: TimeInterval = 8
@@ -117,9 +132,11 @@ enum LddcLyrics {
         guard !title.isEmpty else { return nil }
         let target = audioSec > 0 ? audioSec : song.durationSec
 
+        noteMiss(.none)
         let candidates = await searchCandidates(title: title, artist: artist)
         guard !candidates.isEmpty else {
             noteDiag("酷狗搜「\(title) \(artist)」0 条候选")
+            noteMiss(.noCandidates)
             return nil
         }
         guard let picked = await pickBest(candidates: candidates, title: title,
@@ -221,6 +238,7 @@ enum LddcLyrics {
         guard !ranked.isEmpty else {
             let blocked = rejectBox.get()
             noteDiag("候选 \(candidates.count) 条，没有一条过身份闸（\(blocked.isEmpty ? "分数不够" : blocked)）")
+            noteMiss(.rejectedIdentity)
             return nil
         }
         var failures = 0
@@ -374,6 +392,7 @@ enum LddcLyrics {
         }
         guard let hit, let lines = hit.lines, let meta = hit.meta else {
             noteKgChannel("酷狗取词两条通道都没成（lyrics.v1 + krcs 并行，各自 https→http 两试）")
+            noteMiss(.fetchFailed)
             return nil
         }
         noteKgChannel(hit.channel == 1 ? "" : "lyrics.v1 没抢到，krcs 兜住了")
@@ -450,17 +469,35 @@ enum LddcLyrics {
             return nil
         }
         var best: (id: String, accesskey: String, score: Double)?
+        var rejected: [String] = []
         for item in list {
             let songName = item["song"] as? String ?? ""
             let singer = item["singer"] as? String ?? ""
             guard let cid = item["id"] as? String, !cid.isEmpty,
                   let accesskey = item["accesskey"] as? String, !accesskey.isEmpty else { continue }
-            let score = LddcMatch.titleScore(cand.title, songName) * 0.5
-                + LddcMatch.artistScore(cand.artist, singer) * 0.5
+            let ts = LddcMatch.titleScore(cand.title, songName)
+            let as_ = LddcMatch.artistScore(cand.artist, singer)
+            // r78：这里以前只要求「标题×0.5 + 歌手×0.5 ≥ 50」，等于**主要看标题**
+            // （歌手 0 分也能靠标题撑到线上）。实锤：《你好，再见 / 常力俊 / 244s》在酷狗
+            // 只有一条同名不同人的《你好再见 / Butter / 244s》——歌手 0 分、标题 88.9 分，
+            // 合计 44.4 分，这一首**刚好**被旧口径挡掉了；但同形状换个标点更接近的歌名就会放过。
+            // 现在与主链同一个口径（歌手 ≥ `artistGateScore`、标题 ≥ 50），
+            // 并把这批被拒的候选写进诊断——空态才说得清"是只有别的版本，不是没取到"。
+            guard as_ >= LddcMatch.artistGateScore, ts >= 50 else {
+                rejected.append("\(songName) / \(singer)")
+                continue
+            }
+            let score = ts * 0.5 + as_ * 0.5
             if best == nil || score > (best?.score ?? 0) { best = (cid, accesskey, score) }
         }
         // 挑不到"歌名/歌手都对得上"的就别下——避免把别人的词贴上来
-        guard let best, best.score >= 50 else { return nil }
+        guard let best else {
+            if !rejected.isEmpty {
+                noteKgChannel("酷狗只有别的版本（" + rejected.prefix(2).joined(separator: "、") + "）")
+                noteMiss(.rejectedIdentity)
+            }
+            return nil
+        }
         let dlParams: [(String, String)] = [
             ("ver", "1"), ("client", "mobi"), ("id", best.id),
             ("accesskey", best.accesskey), ("fmt", "krc"), ("charset", "utf8"),

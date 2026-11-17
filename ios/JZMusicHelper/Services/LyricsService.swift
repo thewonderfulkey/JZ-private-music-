@@ -118,7 +118,17 @@ extension LyricsService {
         guard var result = hit, !result.isEmpty else {
             let notes = noteBox.text()
             let diag = LddcLyrics.lastDiagnostics()
-            var base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
+            // r78：先看"为什么没词"，别一律说成"没取到词"——
+            // 候选都在、只是全是别人的版本时，那是**这首歌没有原唱词**，不是我们取不到。
+            var base: String
+            switch LddcLyrics.lastMiss() {
+            case .rejectedIdentity:
+                base = "这首歌没有原唱歌词（词源里只有别的版本，按口径不贴另一版）"
+            case .noCandidates:
+                base = "没搜到这首歌的词源"
+            case .fetchFailed, .none:
+                base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
+            }
             if !notes.isEmpty { base += "（" + notes + "）" }
             if !diag.isEmpty { base += "：" + diag }
             await LyricsService.shared.noteFailure(base)

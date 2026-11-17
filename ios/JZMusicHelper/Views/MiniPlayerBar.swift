@@ -165,11 +165,21 @@ struct MiniPlayerOverlay: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
             if player.hasCurrentSong {
-                MiniPlayerBar(onTap: onTap)
-                    .padding(.horizontal, Tokens.Spacing.xs)
-                    .padding(.top, Tokens.Spacing.xxs)
-                    .padding(.bottom, Tokens.Spacing.xxs)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                ZStack(alignment: .bottom) {
+                    // r78（老板 r77："歌词悬浮栏和底层栏还没有严丝合缝，中间透出下面的歌曲"）：
+                    // 条子是**浮层**，它和 Tab 栏之间那圈留白原来没有任何底色——列表从底下滚过，
+                    // 就从那条缝里露出来了。这里铺一条与页面同色的底（`Paper`，和 `paperBackground()`
+                    // 同一个颜色），高度 = 条子 + 上留白，正好从条子上沿贴到 Tab 栏上沿；
+                    // 条子本身**贴底**（下留白归零），缝就没了。
+                    Tokens.Palette.paper
+                        .frame(height: Tokens.Size.miniPlayerHeight + Tokens.Spacing.xxs)
+                        .frame(maxWidth: .infinity)
+                        .allowsHitTesting(false)
+                    MiniPlayerBar(onTap: onTap)
+                        .padding(.horizontal, Tokens.Spacing.xs)
+                        .padding(.top, Tokens.Spacing.xxs)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: player.hasCurrentSong)

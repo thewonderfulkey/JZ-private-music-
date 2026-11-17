@@ -1897,6 +1897,36 @@ do {
           "\(8 - LddcLyrics.chainBudgetSeconds)")
 }
 
+// MARK: - 第十七轮（r78）：酷狗 krcs 通道的身份闸 / 空态分类
+
+section("第十七轮：krcs 通道不许把「同名不同人」的词贴上来")
+
+do {
+    // 实锤：《你好，再见 / 常力俊 / 244s》在酷狗只有一条《你好再见 / Butter / 244s》，
+    // 那份 KRC 词头明写 `[ti:你好再见][ar:Butter]`，词是另一首歌。
+    let ts = LddcMatch.titleScore("你好，再见", "你好再见")
+    let as_ = LddcMatch.artistScore("常力俊", "Butter")
+    check("标题 80~95 分（标点不敏感但不满分）", ts >= 80 && ts < 95, "\(ts)")
+    check("歌手 0 分（Butter 不是常力俊）", as_ == 0, "\(as_)")
+    check("旧口径 44.4 < 50：这一首本来就会被挡掉（差一点就贴错）",
+          ts * 0.5 + as_ * 0.5 < 50, "\(ts * 0.5 + as_ * 0.5)")
+    check("新口径（歌手 ≥ artistGateScore）挡得住", as_ < LddcMatch.artistGateScore,
+          "\(as_) < \(LddcMatch.artistGateScore)")
+    check("身份闸本身也拒收",
+          LddcMatch.identityRejection(queryTitle: "你好，再见", queryArtist: "常力俊",
+                                      candidateTitle: "你好再见", candidateArtist: "Butter",
+                                      targetSec: 244, candidateSec: 244) != nil)
+
+    // 空态分类：老板看到的文案要能分清"没有原唱词"和"我们没取到"
+    check("MissKind.none 是空串", LddcLyrics.MissKind.none.rawValue.isEmpty)
+    check("rejectedIdentity 文案写明「只有别的版本」",
+          LddcLyrics.MissKind.rejectedIdentity.rawValue.contains("别的版本"),
+          LddcLyrics.MissKind.rejectedIdentity.rawValue)
+    check("fetchFailed 文案写明「没返回」",
+          LddcLyrics.MissKind.fetchFailed.rawValue.contains("没返回"),
+          LddcLyrics.MissKind.fetchFailed.rawValue)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

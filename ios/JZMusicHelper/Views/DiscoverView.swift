@@ -86,8 +86,9 @@ struct DiscoverView: View {
             }
             .padding(.horizontal, Tokens.Spacing.s)
             .frame(minHeight: 42)
+            // r78（老板："发现页每一个模块的边框太重，切深色特别丑"）：**去掉描边**，
+            // 只留纸卡底。功能与命中区不变（contentShape 还是整个胶囊）。
             .background(Capsule().fill(Tokens.Palette.paperElevated))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
             .contentShape(Capsule())
         }
         .buttonStyle(.press)
@@ -256,7 +257,10 @@ struct DiscoverView: View {
 
     // MARK: 卡片外壳
 
-    /// 三行一页的列表卡：分页控件 + 纸卡底 + 细描边
+    /// 三行一页的列表卡：分页控件 + 纸卡底
+    ///
+    /// r78（老板："每一个模块的边框太重，深色主题特别丑"）：**去掉 0.5pt 描边**，
+    /// 只留 `paperElevated` 纸卡底——分页器、行、点击行为一律不动。
     private func songListCard<Row: View>(count: Int,
                                          @ViewBuilder row: @escaping (Int) -> Row) -> some View {
         PagedRows(count: count, perPage: 3, content: row)
@@ -264,10 +268,6 @@ struct DiscoverView: View {
             .background(
                 RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
                     .fill(Tokens.Palette.paperElevated)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
             )
             .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
@@ -369,13 +369,10 @@ struct EditorPlaylistCard: View {
         .padding(.vertical, Tokens.Spacing.xs)
         .frame(width: 170, alignment: .leading)
         .frame(minHeight: 64)
+        // r78：去掉描边（同"卡片只留纸卡底"），尺寸/命中区不变
         .background(
             RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
                 .fill(Tokens.Palette.paperElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
         )
         .contentShape(Rectangle())
     }
