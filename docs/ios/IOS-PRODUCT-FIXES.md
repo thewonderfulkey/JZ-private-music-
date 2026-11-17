@@ -1516,6 +1516,8 @@ LRCLIB / 网易云这类"用歌名搜出来"的源，`extraVariantTags` 非空�
 `/lyrics` 响应头会带 `X-LDDC-Source` 与 `X-LDDC-Pick`，一眼看出选的是哪一条。
 
 > 注：`LDDC.exe` 那个 GUI 本来就是对的（它走 `auto_fetch`）；错的只是这个 HTTP 包装。
+> 这个文件在 `services/lddc/…`（vendored 第三方目录，`.gitignore` 里整目录不入库），
+> 所以修在**本机**那份上——老板手动核对时走的就是它。
 
 ## 四、改动的文件（第十四轮）
 
@@ -1543,15 +1545,18 @@ docs/ios/IOS-LYRICS.md          +§11「r73 取词链（当前口径）」
 | 歌词子系统类型检查 | `.build/r73_typecheck.sh`（CryptoKit/Compression 桩） | `TYPECHECK_EXIT=0` |
 | 酷狗真实取词（10 首连打） | `.build/r73_kg_burst.py`（用仓库里的 LDDC `KGAPI`） | 8/10 成功；《发如雪》69 行、时长 299s，**本机连打不触发限流** |
 | 本地取词服务选源 | `.build/r73_api_server_check.py` | 四首歌都选中**原版**（发如雪 69 行 / 七里香 38 行 / 晴天 63 行 / 爱情转移 70 行） |
+| 本地取词服务 HTTP | `uvicorn lyrics_api_server:app --port 8312` + 真实 GET | 发如雪 200 / `X-LDDC-Source: QM` / `[ti:发如雪][ar:周杰伦]`；七里香 200 选中原版；`source=lrclib` 也能单独指定 |
 | 全量逻辑断言 + 整包 | CI `logic-tests` + `build` | 见 §六 |
 
 ## 六、本轮出的包（**装这个**）
 
 | 项 | 值 |
 |---|---|
-| 文件 | 见 CI 完成后回填 |
-| 提交 | 见 CI 完成后回填 |
-| CI | 见 CI 完成后回填 |
+| 文件 | `releases/JZ-Music-v2.2.6-af7255f-r74-ios-unsigned.ipa`（群里显示名 `…-r73-…`，同一份；1,756,339 B） |
+| SHA-256 | `233439853726a20b0a32191644fa37de830a4b4768df3ff2fa2c0a150233f826` |
+| CI | [run #74](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44027663208)（逻辑断言 **523 / 0 失败** / `BUILD SUCCEEDED` / 已发飞书群） |
+| 提交 | `af7255f` |
+| 包内自证 | `CFBundleShortVersionString = 2.2.6` / `CFBundleVersion = 164`；二进制里能找到「本字幕由」「AI字幕」「commentaryReason」 |
 
 ## 七、装机按这个顺序试
 
