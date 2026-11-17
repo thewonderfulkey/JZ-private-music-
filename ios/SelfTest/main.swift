@@ -1434,6 +1434,12 @@ do {
     check("原版排在醇享版之前", plain.total > zunxiang.total)
     check("醇享版进不了「兜底」档（分数太低）", !LddcMatch.passesFallback(zunxiang))
     check("但整页只有它时仍可用（最后兜底，别整首没词）", LddcMatch.isLastResort(zunxiang))
+    // r70 第 4 档保险：只要有候选（标题对得上一点）就允许取词，绝不因为打分而整首没词
+    check("第 4 档：只要标题有分就收", LddcMatch.isAnyTier(zunxiang))
+    check("第 4 档：完全无关的候选也不收",
+          !LddcMatch.isAnyTier(LddcMatch.scoreCandidate(
+            queryTitle: "发如雪", candidateTitle: "夜曲", queryArtist: "周杰伦",
+            candidateArtist: "蔡健雅", targetSec: 300, candidateSec: 200)))
     check("完全不搭的候选兜底也不收",
           !LddcMatch.passesFallback(LddcMatch.scoreCandidate(
             queryTitle: "发如雪", candidateTitle: "夜曲", queryArtist: "周杰伦",

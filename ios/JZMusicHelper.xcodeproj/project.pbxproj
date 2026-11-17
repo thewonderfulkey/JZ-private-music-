@@ -78,6 +78,7 @@
 		B00000000000000000000050 /* LayoutRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004E /* LayoutRules.swift */; };
 		B00000000000000000000051 /* DownloadCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004F /* DownloadCompanion.swift */; };
 		B00000000000000000000052 /* AudioTagEmbedder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000050 /* AudioTagEmbedder.swift */; };
+		B00000000000000000000053 /* NeteaseLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000051 /* NeteaseLyrics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -152,6 +153,7 @@
 		F0000000000000000000004E /* LayoutRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutRules.swift; sourceTree = "<group>"; };
 		F0000000000000000000004F /* DownloadCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadCompanion.swift; sourceTree = "<group>"; };
 		F00000000000000000000050 /* AudioTagEmbedder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTagEmbedder.swift; sourceTree = "<group>"; };
+		F00000000000000000000051 /* NeteaseLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseLyrics.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -249,6 +251,7 @@
 				F0000000000000000000004E /* LayoutRules.swift */,
 				F0000000000000000000004F /* DownloadCompanion.swift */,
 				F00000000000000000000050 /* AudioTagEmbedder.swift */,
+				F00000000000000000000051 /* NeteaseLyrics.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -503,6 +506,7 @@
 				B00000000000000000000050 /* LayoutRules.swift in Sources */,
 				B00000000000000000000051 /* DownloadCompanion.swift in Sources */,
 				B00000000000000000000052 /* AudioTagEmbedder.swift in Sources */,
+				B00000000000000000000053 /* NeteaseLyrics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -640,7 +644,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 160;
+				CURRENT_PROJECT_VERSION = 161;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -649,7 +653,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.2.2;
+				MARKETING_VERSION = 2.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -664,7 +668,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 160;
+				CURRENT_PROJECT_VERSION = 161;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -673,7 +677,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.2.2;
+				MARKETING_VERSION = 2.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -687,7 +691,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 160;
+				CURRENT_PROJECT_VERSION = 161;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -696,7 +700,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.2.2;
+				MARKETING_VERSION = 2.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -711,7 +715,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 160;
+				CURRENT_PROJECT_VERSION = 161;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -720,7 +724,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.2.2;
+				MARKETING_VERSION = 2.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

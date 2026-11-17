@@ -43,7 +43,13 @@ actor LyricsService {
         }
 
         let task = Task<LyricsResult?, Never> {
-            await LyricsService.resolve(song, audioSec: audioSec)
+            // r70：整链失败后再等 1.2 秒重来一轮。
+            // 《发如雪》那次"整首没词"，打分是对的（真实候选里原版是满分 100），
+            // 断的是取词链——酷狗/QQ 那一刻一条候选都没回来。一次抖动就让屏幕写"没取到歌词"代价太大。
+            if let first = await LyricsService.resolve(song, audioSec: audioSec) { return first }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if let second = await LyricsService.resolve(song, audioSec: audioSec) { return second }
+            return nil
         }
         inflight[key] = task
         let result = await task.value
@@ -93,19 +99,40 @@ extension LyricsService {
     /// 那首走 LDDC 的 KRC 就有逐字）。现在官方词拿到之后再试一次 LDDC：
     /// 只有行数对得上（±25%）才升级成逐字那份，对不上仍用官方词。
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
+        // 酷我歌曲：官方词（行级）→ 尝试用 KRC 升级成逐字 → 官方词 → LDDC 词
+        // r70：LDDC 只取**一次**（以前"升级失败"和"兜底"各取一次，等于把请求打了两遍）
         if song.platform == .kuwo {
             let official = await kuwoOfficial(song)
-            if let upgraded = await wordTimedUpgrade(song, baseline: official, audioSec: audioSec) {
-                return upgraded
-            }
+            let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec)
+            if let upgraded = upgrade(lddc, baseline: official) { return upgraded }
             if let official { return official }
+            if let lddc { return lddc }
+        } else if let result = await LddcLyrics.fetch(song: song, audioSec: audioSec) {
+            return result
         }
-        if let result = await LddcLyrics.fetch(song: song, audioSec: audioSec) { return result }
+
         if song.platform != .kuwo, let result = await kuwoFallback(song) { return result }
-        await LyricsService.shared.noteFailure(song.platform == .kuwo
-                                               ? "酷我官方歌词与本曲都没有词"
-                                               : "LDDC 双源 + 酷我兜底都没取到词")
+        if let result = await NeteaseLyrics.fallback(song, audioSec: audioSec) { return result }
+
+        let diag = LddcLyrics.lastDiagnostics()
+        let base = song.platform == .kuwo
+            ? "酷我官方歌词与本曲都没有词"
+            : "LDDC 双源 + 酷我 + 网易云兜底都没取到词"
+        await LyricsService.shared.noteFailure(diag.isEmpty ? base : base + "（" + diag + "）")
         return nil
+    }
+
+    /// 把 LDDC 那份词"升级"成逐字版本：必须真的有逐字时间、且行数与官方词兼容。
+    private static func upgrade(_ lddc: LyricsResult?, baseline: LyricsResult?) -> LyricsResult? {
+        guard let lddc, lddc.hasWordTiming else { return nil }
+        if let baseline, !baseline.isEmpty {
+            guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, lddc.lines.count) else {
+                return nil
+            }
+        }
+        var upgraded = lddc
+        if !lddc.matchNote.isEmpty { upgraded.matchNote = lddc.matchNote + " · 逐字升级" }
+        return upgraded
     }
 
     /// 酷我歌曲：平台 ID 就是精确的 musicId，直接拿官方行级歌词
@@ -114,44 +141,6 @@ extension LyricsService {
             return nil
         }
         return alignedResult(lines: lines, declaredMs: 0, song: song, source: "酷我")
-    }
-
-    /// 用 LDDC（KRC/QRC）把"只有行级时间"的词升级成带逐字时间的版本。
-    ///
-    /// 三个条件缺一不可：LDDC 取到了词、那份词确实有逐字时间、行数和参照词接近
-    /// （±25% 以外就是另一版词，宁可不升级，也不要把别人的逐字贴上来）。
-    static func wordTimedUpgrade(_ song: Song, baseline: LyricsResult?,
-                                 audioSec: Int = 0) async -> LyricsResult? {
-        // 给"升级成逐字"这件事一个硬上限：官方词已经拿到手了，不能让 LDDC 的两条源
-        // 把首屏拖到十几秒（超时就先用官方词显示，逐字下一次再补）
-        let krc = await withTimeoutOrNil(seconds: 4) {
-            await LddcLyrics.fetch(song: song, audioSec: audioSec)
-        } ?? nil
-        guard let krc, krc.hasWordTiming else { return nil }
-        // 升级成逐字那份时，说明里补一句（原来的候选信息保留，方便对照）
-        var upgraded = krc
-        if let baseline, !baseline.isEmpty {
-            guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, krc.lines.count) else {
-                return nil
-            }
-        }
-        if !krc.matchNote.isEmpty { upgraded.matchNote = krc.matchNote + " · 逐字升级" }
-        return upgraded
-    }
-
-    /// 带超时的异步取值（超时返回 nil，不取消原任务之外的东西）
-    private static func withTimeoutOrNil<T>(seconds: Double,
-                                            _ work: @escaping () async -> T?) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask { await work() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
     }
 
     /// 其它平台的歌：按「歌名 歌手」在酷我里找同一首，取它的官方歌词。

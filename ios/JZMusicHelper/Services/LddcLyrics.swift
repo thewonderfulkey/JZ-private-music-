@@ -37,6 +37,18 @@ import Foundation
 enum LddcLyrics {
 
     private static let kgSalt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+
+    /// 最近一次取词"断在哪一环"（老板截图里的失败原因会带上它，r70）
+    private final class DiagBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var text = ""
+        func set(_ value: String) { lock.lock(); text = value; lock.unlock() }
+        func get() -> String { lock.lock(); defer { lock.unlock() }; return text }
+    }
+    private static let diagBox = DiagBox()
+
+    static func noteDiag(_ text: String) { diagBox.set(text) }
+    static func lastDiagnostics() -> String { diagBox.get() }
     private static let netTimeout: TimeInterval = 8
     private static let minScore = LddcMatch.minScore
 
@@ -76,7 +88,21 @@ enum LddcLyrics {
 
         async let kgTask = searchKg(title: title, artist: artist)
         async let qqTask = searchQq(title: title, artist: artist)
-        let candidates = await kgTask + qqTask
+        let kgs = await kgTask
+        let qqs = await qqTask
+        var candidates = kgs + qqs
+        if candidates.isEmpty {
+            // 双源同时空：多半是弱网/限流的一次抖动，等 0.8 秒再试一轮（r70）
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            async let kgRetry = searchKg(title: title, artist: artist)
+            async let qqRetry = searchQq(title: title, artist: artist)
+            let kgs2 = await kgRetry
+            let qqs2 = await qqRetry
+            candidates = kgs2 + qqs2
+            noteDiag("候选 0 条（酷狗 \(kgs.count) / QQ \(qqs.count)），重试后又 \(kgs2.count)+\(qqs2.count) 条")
+        } else {
+            noteDiag("候选 \(candidates.count) 条（酷狗 \(kgs.count) / QQ \(qqs.count)）")
+        }
         guard !candidates.isEmpty else { return nil }
 
         let target = audioSec > 0 ? audioSec : song.durationSec
@@ -141,7 +167,21 @@ enum LddcLyrics {
             }
             fallbackTier = 2
         }
-        guard !scored.isEmpty else { return nil }
+        // 第 4 档（r70 保险）：前三档全空但确实有候选 → 按基础分取前几名去取词。
+        // 屏幕上写"没取到歌词"是最后手段，不该是"打分把它们都压没了"的结果。
+        if scored.isEmpty {
+            for cand in candidates {
+                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
+                if LddcMatch.isAnyTier(one) {
+                    scored.append((one, cand.source, cand))
+                }
+            }
+            fallbackTier = 3
+        }
+        guard !scored.isEmpty else {
+            noteDiag(lastDiagnostics() + "，但没有一条能进候选池")
+            return nil
+        }
 
         // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）
         scored.sort {
@@ -183,6 +223,8 @@ enum LddcLyrics {
             for await r in group { out.append(r) }
             return out
         }
+        let withLines = outcomes.filter { $0.hasLines }.count
+        noteDiag(lastDiagnostics() + "，取词成功 \(withLines)/\(top.count) 份")
         guard let winner = chooseOutcome(outcomes, topCount: top.count) else { return nil }
         return outcomes.first(where: { $0.idx == winner })?.lines
     }
@@ -194,6 +236,7 @@ enum LddcLyrics {
             + score.explanation
         if tier == 1 { text += " · 未过 55，按兜底线采纳" }
         if tier == 2 { text += " · 只有这一份，按最后兜底采纳" }
+        if tier == 3 { text += " · 打分全没过线，按第 4 档硬取" }
         if rejected { text += " · 版本验收未过" }
         return text
     }

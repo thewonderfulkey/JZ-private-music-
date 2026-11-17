@@ -426,6 +426,15 @@ enum LddcMatch {
     static func isLastResort(_ s: CandidateScore) -> Bool {
         s.artistScore >= 80 && s.total > 0
     }
+
+    /// **第 4 档：只要有候选就用**（r70 加的保险）。
+    ///
+    /// 什么时候会走到这里：前三档全空，但搜索**确实返回了候选**——说明是打分把它们都压没了
+    /// （比如整页都是"别的歌手翻唱同名歌"，或者时长差得离谱）。这种情况下宁可拿第 1、2 名去取词，
+    /// 也好过屏幕上写"没取到歌词"。
+    static func isAnyTier(_ s: CandidateScore) -> Bool {
+        s.titleScore > 0 || s.base > 0
+    }
     /// 时长容差（Android `DURATION_TOLERANCE_MS = 4000`）
     static let durationToleranceSec: Int = 4
 }
