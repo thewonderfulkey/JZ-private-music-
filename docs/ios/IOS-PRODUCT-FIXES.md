@@ -1250,7 +1250,7 @@ android/app/build.gradle.kts      versionCode 162 / versionName 2.2.4
 | 语法 / 界面卫生 / 工程文件 | `syntax_swift.py` / `check_ui_hygiene.py` / `check_pbxproj.py` | 66 文件（28 条为 SelfTest 多行字符串的老误报）/ 通过 / 通过（173 对象） |
 | 真机取词链复刻 | `.build/r71_probe_faruxue_fetch.py`（酷狗真实候选 → 解密 → 行数/乱码校验） | 原版 79 行、非乱码 |
 | 第二条通道 | `.build/r71_probe_lyric_channel2.py`（krcs 老接口） | 20 条候选、KRC 79 行 |
-| 全量逻辑断言 | CI `logic-tests` | 见出包记录 |
+| 全量逻辑断言 | CI `logic-tests` | **529 / 0 失败**（r70 的 513 + 本轮 16） |
 
 ## 六、装机按这个顺序试
 
@@ -1265,8 +1265,12 @@ android/app/build.gradle.kts      versionCode 162 / versionName 2.2.4
 
 | 项 | 值 |
 |---|---|
-| 文件 | 见 CI 完成后回填 |
-| 提交 | 见 CI 完成后回填 |
+| 文件 | `releases/JZ-Music-v2.2.4-e4a771b-r71-ios-unsigned.ipa`（已发群） |
+| 大小 | 1,759,757 字节（≈1.68 MB） |
+| SHA-256 | `87607993300b1ccdc50b8f74c46e8a9f3d4d20188eaa8ff6f319403ca5ffea61` |
+| CI | [run #71](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44019191799)（逻辑断言 **529 / 0 失败** / `BUILD SUCCEEDED` / 插件已嵌包 / 已发飞书群） |
+| 提交 | `e4a771b` |
+| 包内自证 | `CFBundleShortVersionString = 2.2.4` / `CFBundleVersion = 162`；二进制里能找到 `stopCurrentForSwitch` / `plausibleSameSong` / `krcs.kugou.com` |
 
 ## 八、这一轮给下一轮的提醒
 
