@@ -30,6 +30,11 @@
   （时长错误会直接打穿 ±25s 闸门）。所以本轮先用"首次解析 + 长期落盘"达到同样体感，
   生成脚本留在 `tools/ios/` 里等接口稳定再接。
 - 版本 2.3.3（171）。
+- **出包**：CI run #85 / `7947793` / **606 条断言全绿** / `build-ipa` 成功、插件已嵌入；
+  IPA `JZ-Music-v2.3.3-7947793-r85-ios-unsigned.ipa`（1,857,731 B），已发飞书群。
+  过程：run #84 先在 `xcodebuild` 报 `APIClient.md5Hex` 不存在（`md5Hex` 其实在 `enum Digest` 上，
+  而 `CoverImageCache` 依赖 UIKit、不在本地 typecheck 清单里——和上一轮 `.hot` 同一类盲区，已改成 `Digest.md5Hex` 并记一笔）；
+  run #85 首轮因 GitHub runner 容量（页面明示 macOS arm64 排队）两次排队后自动 cancel，重跑第 2 次才拿到机器。
 
 ## iOS 第二十轮 · 2026-11-18 00:5x（悬浮栏封面不换 / 热歌榜并入热门音乐 / 榜单与歌单页的"太细"）
 
