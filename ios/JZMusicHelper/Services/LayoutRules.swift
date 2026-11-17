@@ -138,6 +138,36 @@ enum LyricsUXRules {
     /// 与这条口径冲突，所以归零：滚动与高亮用同一个下标（同一时刻）。
     /// 动画时长也压到 0.18s，尽量做到"时间戳一到就在中间"（见 `NowPlayingView.scroll`）。
     static let scrollLeadMs: Int = 0
+
+    // MARK: seek 保护窗（r77）
+
+    /// 保护窗内"现在能不能用播放位置改高亮"。
+    ///
+    /// 为什么要有这条判定：`AVPlayer.seek` 是异步的，跳转刚发出时 `currentTime()` 还是旧值。
+    /// 以前是**写死 0.7 秒**：窗一过就无条件解保护，于是真机上（seek 常要 1~2 秒）ticker
+    /// 会拿旧位置把刚设好的高亮拽回上一句，seek 落地后再弹回目标句 —— 老板 r76 说的
+    /// "一旦通过歌词快进或者后退就变得不准了"就是这个。现在改成"**追上目标才解**，
+    /// 超时只作为兜底"，超时上限放到 10 秒（由 seek 的完成回调提前解除）。
+    static let seekGuardToleranceMs: Int = 400
+    static let seekGuardMaxSeconds: Double = 10
+
+    /// `.wait` = 这段时间的位置不可信，别动高亮；`.release` = 位置可信（追上目标了，或兜底超时）
+    enum SeekGuardDecision: Equatable {
+        case wait
+        case release
+    }
+
+    /// - Parameters:
+    ///   - positionMs: 当前播放位置（毫秒，**不含**用户偏移）
+    ///   - targetMs: 这次 seek 的目标（毫秒）
+    ///   - guardExpired: 兜底上限到了没有
+    static func seekGuardDecision(positionMs: Int, targetMs: Int,
+                                  guardExpired: Bool) -> SeekGuardDecision {
+        // 已经跳到目标附近（±400ms）：位置可信，提前解保护
+        if abs(positionMs - targetMs) <= seekGuardToleranceMs { return .release }
+        // 还没到目标：窗内继续等（这时的位置一定是旧的）；窗过了也不能永远等
+        return guardExpired ? .release : .wait
+    }
 }
 
 // MARK: - 播放页下拽收起（纯函数）

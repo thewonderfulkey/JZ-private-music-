@@ -910,6 +910,8 @@ private struct LyricsPane: View {
     @State private var resumeTask: Task<Void, Never>?
     /// 上一次滚到中间的行号（用来判断"远跳"→ 需要两段式 scrollTo）
     @State private var lastCenteredIndex = -1
+    /// r77：远跳之后连贴几次的收尾任务（换目标/换歌时取消）
+    @State private var settleTask: Task<Void, Never>?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -927,6 +929,8 @@ private struct LyricsPane: View {
         .onDisappear {
             resumeTask?.cancel()
             resumeTask = nil
+            settleTask?.cancel()
+            settleTask = nil
         }
         .onChange(of: player.currentSong?.id) { _, _ in
             browsing = false
@@ -934,6 +938,9 @@ private struct LyricsPane: View {
             lastScrollEnd = Date.distantPast
             resumeTask?.cancel()
             resumeTask = nil
+            settleTask?.cancel()
+            settleTask = nil
+            lastCenteredIndex = -1
         }
     }
 
@@ -973,6 +980,11 @@ private struct LyricsPane: View {
         // r68（老板反馈 ②）：快进/快退之后强制重排一次。
         // 远距离跳转时 `LazyVStack` 的第一次 `scrollTo` 常常只把目标行实例化、并不居中，
         // 于是"跳完之后滚动不准"。这里在每次跳转后补一次，并解除浏览态。
+        //
+        // r77（老板 r76："一跳就不准，而且不会自己好"）：只补"下一拍再贴一次"仍然太早——
+        // 真机上目标行常常还没进布局，落点偏了，而 `lastCenteredIndex` 已经记成目标行，
+        // 后面每句单行滚动都按这个错位走。改成**连续贴几次**（立即 / +40ms / +140ms / +320ms），
+        // 任一次贴中画面就稳定在中间，也不必再赌"哪一拍刚好布局完"。
         .onChange(of: player.seekNonce) { _, _ in
             browsing = false
             resumeTask?.cancel()
@@ -980,9 +992,7 @@ private struct LyricsPane: View {
             lastInteraction = Date()
             let idx = player.lyricScrollIndex >= 0 ? player.lyricScrollIndex : player.lyricIndex
             guard idx >= 0 else { return }
-            DispatchQueue.main.async {
-                scroll(proxy: proxy, to: idx, animated: false, force: true)
-            }
+            pinLine(proxy: proxy, to: idx)
         }
         .onAppear {
             let idx = player.lyricScrollIndex >= 0 ? player.lyricScrollIndex : player.lyricIndex
@@ -1083,30 +1093,43 @@ private struct LyricsPane: View {
     ///
     /// r68：`LazyVStack` 有个老毛病——跳到离当前位置很远的行时，第一次 `scrollTo` 只会
     /// 把那一行实例化，落点常常不居中（表现为"快进/快退之后高亮那一句不在中间"）。
-    /// 所以远跳（含每次 seek）先**无动画**贴一次，下一拍再贴一次，确保真的居中。
+    ///
+    /// r77：远跳（含每次 seek）交给 `pinLine` 连贴几次；单行推进仍然只滚一次（带动画）。
     private func scroll(proxy: ScrollViewProxy, to index: Int, animated: Bool,
                         force: Bool = false) {
         let far = force || abs(index - lastCenteredIndex) > 3
-        lastCenteredIndex = index
         if far {
-            proxy.scrollTo(index, anchor: .center)
-            DispatchQueue.main.async {
-                if animated && !reduceMotion {
-                    withAnimation(Tokens.Motion.lyricAdvance) {
-                        proxy.scrollTo(index, anchor: .center)
-                    }
-                } else {
-                    proxy.scrollTo(index, anchor: .center)
-                }
-            }
+            pinLine(proxy: proxy, to: index)
             return
         }
+        lastCenteredIndex = index
         if animated && !reduceMotion {
             withAnimation(Tokens.Motion.lyricAdvance) {
                 proxy.scrollTo(index, anchor: .center)
             }
         } else {
             proxy.scrollTo(index, anchor: .center)
+        }
+    }
+
+    /// 远跳之后把目标行**多次**贴到中间（r77）。
+    ///
+    /// 为什么要连贴：`LazyVStack` 的目标行在远跳那一刻常常还没进布局，`scrollTo` 会静默
+    /// 落到一个不准的位置；而调用方已经把 `lastCenteredIndex` 记成目标行了，于是后面的
+    /// 单行滚动都按这个错位走（老板："一跳就不准，而且不会自己好"）。
+    /// 这里在 0 / 40 / 140 / 320ms 各贴一次（都是无动画，视觉上就是"跳过去就已经在中间"），
+    /// 用户中途自己滑了（`browsing`）就立刻放弃，不跟手指抢。
+    private func pinLine(proxy: ScrollViewProxy, to index: Int) {
+        lastCenteredIndex = index
+        settleTask?.cancel()
+        settleTask = Task { @MainActor in
+            for delayMs in [0, 40, 140, 320] {
+                if delayMs > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+                }
+                if Task.isCancelled || browsing { return }
+                proxy.scrollTo(index, anchor: .center)
+            }
         }
     }
 }

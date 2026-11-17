@@ -55,6 +55,16 @@ enum LddcLyrics {
     static func noteKgChannel(_ text: String) { kgChannelBox.set(text) }
     static func lastKgChannel() -> String { kgChannelBox.get() }
     private static let netTimeout: TimeInterval = 8
+    /// 单条酷狗取词通道的封顶时间（r77：两条通道并行；每条通道内部 https 失败会再试一次 http）
+    static let kgChannelDeadline: TimeInterval = 3.5
+    /// 投给单个酷狗请求的时间（r77：以前是 8 秒，一次握手挂掉就能吃光整条链）
+    static let kgAttemptTimeout: TimeInterval = 2.5
+    /// 只有"快速失败"（连接/TLS 层就断，<1.2 秒）才值得换 http 再试——超时说明是慢网，换 http 一样慢
+    static let kgFastFailureSeconds: TimeInterval = 1.2
+    /// 酷狗搜索请求的时间（搜索正常 0.7~2.5 秒）
+    static let kgSearchTimeout: TimeInterval = 3
+    /// 酷狗取词在整条链里的预算（r77：不许把 8 秒总死线吃光，否则 ③④ 永远轮不上）
+    static let chainBudgetSeconds: TimeInterval = 5.5
     private static let minScore = LddcMatch.minScore
 
     // MARK: 候选
@@ -305,7 +315,7 @@ enum LddcLyrics {
         let query = kgQuery(params: params, module: "SearchSong", mid: mid, dfid: dfid)
         let url = "https://complexsearch.kugou.com/v2/search/song?" + query
         guard let json = try? await APIClient.shared.getJSON(
-            url, headers: kgHeaders(module: "SearchSong", mid: mid), timeout: netTimeout),
+            url, headers: kgHeaders(module: "SearchSong", mid: mid), timeout: kgSearchTimeout),
               let lists = (json["data"] as? [String: Any])?["lists"] as? [[String: Any]] else {
             return []
         }
@@ -325,21 +335,72 @@ enum LddcLyrics {
         return out
     }
 
+    /// 一条通道抢到的结果（带通道号，写进诊断用）
+    private struct KgChannelHit: Sendable {
+        let channel: Int
+        let lines: [LyricLine]?
+        let meta: LyricsMeta?
+    }
+
     private static func fetchKgLines(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
         // 通道 1：lyrics.kugou.com/v1（LDDC 原来那条）
-        if let one = await fetchKgViaLyricsV1(cand) {
-            noteKgChannel("")
-            return one
-        }
         // 通道 2（r71）：krcs.kugou.com 老接口——**不同主机、不同限流池**。
-        // 老板《发如雪》那次通道 1 在真机上失败（"取词成功 0/1 份"），而这条老接口
-        // 现在仍然能返回同一批候选并下到 KRC（实测 2026-11-17）。
-        if let one = await fetchKgViaKrcs(cand) {
-            noteKgChannel("lyrics.v1 没取到，krcs 兜住了")
-            return one
+        //
+        // r77：两条通道**并行抢答**，谁先解密出合格歌词就用谁。
+        // 以前是"通道 1 失败才走通道 2"（串行）：真机上通道 1 一挂就要等满 8 秒超时，
+        // 通道 2 根本还没发出去就已经撞上 8 秒总死线——老板截图里"酷狗取词两条通道都没成"
+        // 有一半是这么来的。现在每条通道各自 3.5 秒封顶（内部还带 https→http 兜底），
+        // 两条同时打，最坏 3.5 秒出结果。
+        let hit = await withTaskGroup(of: KgChannelHit.self) { group -> KgChannelHit? in
+            group.addTask {
+                let one = await withDeadline(seconds: kgChannelDeadline) {
+                    await fetchKgViaLyricsV1(cand)
+                } ?? nil
+                return KgChannelHit(channel: 1, lines: one?.lines, meta: one?.meta)
+            }
+            group.addTask {
+                let one = await withDeadline(seconds: kgChannelDeadline) {
+                    await fetchKgViaKrcs(cand)
+                } ?? nil
+                return KgChannelHit(channel: 2, lines: one?.lines, meta: one?.meta)
+            }
+            var winner: KgChannelHit?
+            for await item in group where item.lines != nil {
+                winner = item
+                break
+            }
+            group.cancelAll()
+            return winner
         }
-        noteKgChannel("酷狗取词两条通道都没成（lyrics.v1 + krcs）")
-        return nil
+        guard let hit, let lines = hit.lines, let meta = hit.meta else {
+            noteKgChannel("酷狗取词两条通道都没成（lyrics.v1 + krcs 并行，各自 https→http 两试）")
+            return nil
+        }
+        noteKgChannel(hit.channel == 1 ? "" : "lyrics.v1 没抢到，krcs 兜住了")
+        return (lines: lines, meta: meta)
+    }
+
+    /// 酷狗歌词请求（r77）：先走 https，不通再**同一台主机的 http** 试一次。
+    ///
+    /// 为什么要这条：老板那台 iPhone 上出现过"搜索宿主 complexsearch 通、两个取词宿主
+    /// （lyrics.kugou.com / krcs.kugou.com）都不通"的形状，而同一时刻本机两条通道都正常。
+    /// 最典型的一类原因是运营商/代理按 SNI 掐 TLS——握手阶段就失败，80 端口却是通的。
+    /// 歌词是公开数据、不走鉴权，明文没有额外风险（Info.plist 里本来就有
+    /// `NSAllowsArbitraryLoads`），所以这条兜底值得留着；https 通的时候它一次都不会发生。
+    private static func kgGetJSON(_ httpsURL: String, module: String,
+                                  mid: String) async -> [String: Any]? {
+        let headers = kgHeaders(module: module, mid: mid)
+        let began = Date()
+        if let json = try? await APIClient.shared.getJSON(httpsURL, headers: headers,
+                                                          timeout: kgAttemptTimeout) {
+            return json
+        }
+        // 超时（慢网）不换 http：一样的路，一样慢，白花时间
+        guard Date().timeIntervalSince(began) < kgFastFailureSeconds,
+              httpsURL.hasPrefix("https://") else { return nil }
+        let plain = "http://" + httpsURL.dropFirst("https://".count)
+        return try? await APIClient.shared.getJSON(plain, headers: headers,
+                                                   timeout: kgAttemptTimeout)
     }
 
     /// 通道 1：`lyrics.kugou.com/v1/search` → `accesskey` → `/download`（带签名）
@@ -353,8 +414,7 @@ enum LddcLyrics {
         ]
         let lrcURL = "https://lyrics.kugou.com/v1/search?"
             + kgQuery(params: lrcParams, module: "Lyric", mid: mid)
-        guard let lrcJson = try? await APIClient.shared.getJSON(
-            lrcURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout),
+        guard let lrcJson = await kgGetJSON(lrcURL, module: "Lyric", mid: mid),
               let cands = lrcJson["candidates"] as? [[String: Any]],
               let first = cands.first,
               let cid = first["id"] as? String, !cid.isEmpty,
@@ -367,10 +427,7 @@ enum LddcLyrics {
         ]
         let dlURL = "https://lyrics.kugou.com/download?"
             + kgQuery(params: dlParams, module: "Lyric", mid: mid)
-        guard let dlJson = try? await APIClient.shared.getJSON(
-            dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout) else {
-            return nil
-        }
+        guard let dlJson = await kgGetJSON(dlURL, module: "Lyric", mid: mid) else { return nil }
         return decodeKrcDownload(dlJson)
     }
 
@@ -388,8 +445,7 @@ enum LddcLyrics {
             ("duration", String(cand.durationSec * 1000)), ("hash", hash),
         ]
         let searchURL = "https://krcs.kugou.com/search?" + plainQuery(searchParams)
-        guard let json = try? await APIClient.shared.getJSON(
-            searchURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout),
+        guard let json = await kgGetJSON(searchURL, module: "Lyric", mid: mid),
               let list = json["candidates"] as? [[String: Any]], !list.isEmpty else {
             return nil
         }
@@ -410,10 +466,7 @@ enum LddcLyrics {
             ("accesskey", best.accesskey), ("fmt", "krc"), ("charset", "utf8"),
         ]
         let dlURL = "https://krcs.kugou.com/download?" + plainQuery(dlParams)
-        guard let dlJson = try? await APIClient.shared.getJSON(
-            dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout) else {
-            return nil
-        }
+        guard let dlJson = await kgGetJSON(dlURL, module: "Lyric", mid: mid) else { return nil }
         return decodeKrcDownload(dlJson)
     }
 

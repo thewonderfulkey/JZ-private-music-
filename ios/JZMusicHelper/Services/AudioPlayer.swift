@@ -69,8 +69,19 @@ final class PlayerEngine {
 
     /// seek 的"未落地保护窗"：这段时间里 `player.currentTime()` 可能还报旧位置，
     /// ticker 不能拿它把刚设好的高亮拽回去。窗内一旦追上目标（±0.4s）就提前解保护。
+    ///
+    /// r76 老板："一旦通过歌词快进或者后退就变得不准了"——根因就是这个窗**靠猜**：
+    /// 以前写死 0.7 秒，而真机上远端流 seek 常要 1~2 秒。窗一过，40ms 的 ticker 立刻拿
+    /// 旧位置重算一次高亮 → 画面先弹回上一句、seek 真落地再弹到目标句；这期间歌词面板
+    /// 已经被 `seekNonce` 贴着"目标行"重排过，`lastCenteredIndex` 也记成了目标行，
+    /// 于是后面每句单行滚动都按这个错位走，**直到下一次跳转或换歌才复位**。
+    /// r77：改成由 `player.seek(...)` 的**完成回调**驱动（`seekToken` 丢弃过期回调）。
     private var seekTargetMs: Int?
     private var seekGuardUntil = Date.distantPast
+    /// 最近一次 seek 的目标（completion 回调里用来判断"落地偏差大不大"）
+    private var lastSeekTargetMs: Int = -1
+    /// 每次 seek +1：完成回调回来时如果已经不是最新那次，直接丢掉
+    private var seekToken: Int = 0
 
     /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
     private(set) var deadSongKeys: Set<String> = []
@@ -233,16 +244,20 @@ final class PlayerEngine {
 
     /// 绝对位置跳转（秒）。所有跳转（进度条拖动 / 点歌词 / 无障碍调整）都走这里，
     /// 不再各自乘一遍 `duration`——`duration` 一旦与实际音频有毫秒级差，乘除会把误差放大。
+    ///
+    /// r77：等 AVPlayer **真的落地**再解除保护窗（见 `seekTargetMs` 的注释）。
     func seek(toSeconds seconds: Double) {
         guard duration > 0 else { return }
         let safe = seconds.isFinite ? seconds : 0
         let target = max(0, min(duration, safe))
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
+        seekToken &+= 1
+        let token = seekToken
         currentTime = target
         // r68：把"这次要跳到哪里"记下来，保护窗内不让 ticker 用旧位置改高亮
         seekTargetMs = Int(target * 1000)
-        seekGuardUntil = Date().addingTimeInterval(0.7)
+        lastSeekTargetMs = Int(target * 1000)
+        // 上限 10 秒：真机上极慢的流也不会把保护窗永远挂着（正常由 completion 先解除）
+        seekGuardUntil = Date().addingTimeInterval(LyricsUXRules.seekGuardMaxSeconds)
         seekNonce &+= 1
         // 刚 seek 完 `AVPlayer.currentTime()` 还是旧值，而 40ms 的歌词 ticker 只在播放时跑：
         // 暂停状态下如果照旧用 preciseTime 算，就会出现"跳过去了，高亮还停在上上句"。
@@ -251,6 +266,27 @@ final class PlayerEngine {
             positionMs: Int(target * 1000) + lyricOffsetMs)
         lyricScrollIndex = lyricIndex
         updateNowPlaying()
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard finished, let self else { return }
+            Task { @MainActor in
+                guard self.seekToken == token else { return }
+                self.settleSeek()
+            }
+        }
+    }
+
+    /// seek 真落地之后收尾：解除保护窗，并决定要不要用**实际位置**纠正高亮。
+    ///
+    /// 落在目标 ±450ms 内就保持"点下去时钉住的那一行"——点歌词跳转的语义就是"亮这一句"，
+    /// 而 `indexAt` 是"行时间 <= 位置"，差 20ms 也会退回上一句，来回抖一下很脏。
+    /// 差得多（流被服务端挪了位置）就用实际位置重算，宁可高亮跟着音频走。
+    private func settleSeek() {
+        seekTargetMs = nil
+        seekGuardUntil = .distantPast
+        let actual = Int(preciseTime * 1000)
+        if lastSeekTargetMs >= 0, abs(actual - lastSeekTargetMs) <= 450 { return }
+        updateLyricIndex()
     }
 
     func seek(toFraction fraction: Double) {
@@ -329,6 +365,11 @@ final class PlayerEngine {
         duration = Double(currentSong?.durationSec ?? 0)
         bufferedTime = 0
         errorText = nil
+        // r77：换曲时把 seek 保护窗也清掉。上一首的 completion 有可能因为 item 被换掉
+        // 而回 finished=false，窗要是留着，新曲前 10 秒的高亮会被冻住。
+        seekTargetMs = nil
+        seekGuardUntil = .distantPast
+        lastSeekTargetMs = -1
     }
 
     private func loadCurrent() async {
@@ -615,6 +656,8 @@ final class PlayerEngine {
 
     /// 取词时用的"目标时长"（秒）：真实时长远晚于它时才值得重取一次
     private var lyricsTargetSec: Int = 0
+    /// 歌空态出来之后的那一次静默重试（换歌时取消）
+    private var lyricsRetryTask: Task<Void, Never>?
     /// 这首歌是否已经因为"时长后知后觉"重取过（每首最多一次，避免循环）
     private var lyricsRefetched = false
 
@@ -656,6 +699,8 @@ final class PlayerEngine {
             SettingsStore.shared.resetOffset(forSong: previous)
         }
         previousLyricSongID = song.id
+        lyricsRetryTask?.cancel()
+        lyricsRetryTask = nil
         lyrics = []
         lyricsSource = ""
         lyricIndex = -1
@@ -685,6 +730,34 @@ final class PlayerEngine {
                 let reason = await LyricsService.shared.failureReason()
                 guard self.currentSong?.id == song.id else { return }
                 self.lyricsFailure = reason
+                self.scheduleLyricsRetry(for: song, targetSec: targetSec)
+            }
+        }
+    }
+
+    /// 空态画出来之后**静默再试一次**（1.5 秒后，仍停在这首、仍然没词才动手）。
+    ///
+    /// r74 去掉的是"整条链重跑"——那会让一次取词拖到几十秒、还挡着界面。
+    /// 这里改在空态已经出现之后补一次：用户看到的是"过一两秒词自己出来了"，
+    /// 而第二次也失败也不会让他多等一轮（不占首屏时间）。
+    private func scheduleLyricsRetry(for song: Song, targetSec: Int) {
+        lyricsRetryTask?.cancel()
+        lyricsRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            guard self.currentSong?.id == song.id, self.lyrics.isEmpty,
+                  !self.isLoadingLyrics else { return }
+            self.isLoadingLyrics = true
+            let result = await LyricsService.shared.fetch(song, audioSec: targetSec, force: true)
+            guard self.currentSong?.id == song.id else {
+                self.isLoadingLyrics = false
+                return
+            }
+            if let result, !result.lines.isEmpty {
+                self.adoptLyrics(result, for: song)
+                self.lyricsFailure = ""
+            } else {
+                self.isLoadingLyrics = false
             }
         }
     }
@@ -693,13 +766,16 @@ final class PlayerEngine {
         let offset = lyricOffsetMs
         let position = lyricPositionMs
         if let target = seekTargetMs {
-            if Date() < seekGuardUntil {
-                // 播放器还没跳到目标：这段时间的位置是旧的，别改高亮（否则会先弹回上一句）
-                if abs((position - offset) - target) > 400 { return }
-                seekTargetMs = nil
-            } else {
-                seekTargetMs = nil
+            // 播放器还没跳到目标：这段时间的位置是旧的，别改高亮（否则会先弹回上一句）。
+            // r77：判定收进 `LyricsUXRules.seekGuardDecision`（纯函数，CI 钉住），
+            // "追上目标才解保护"，兜底上限 10 秒——不再用 0.7 秒去猜远端流的 seek 时长。
+            let expired = Date() >= seekGuardUntil
+            if LyricsUXRules.seekGuardDecision(positionMs: position - offset,
+                                               targetMs: target,
+                                               guardExpired: expired) == .wait {
+                return
             }
+            seekTargetMs = nil
         }
         let idx = LyricsCleaning.indexAt(lyrics, positionMs: position)
         if idx != lyricIndex { lyricIndex = idx }

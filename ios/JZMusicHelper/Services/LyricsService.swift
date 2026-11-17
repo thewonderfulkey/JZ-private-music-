@@ -96,8 +96,19 @@ actor LyricsService {
 
 extension LyricsService {
 
+    /// 逐源写一条"断在哪一环"的笔记（空态诊断用；每次取词开头清空，只留本次的几个源）
+    private final class NoteBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var parts: [String] = []
+        func add(_ text: String) { lock.lock(); parts.append(text); lock.unlock() }
+        func clear() { lock.lock(); parts.removeAll(); lock.unlock() }
+        func text() -> String { lock.lock(); defer { lock.unlock() }; return parts.joined(separator: "｜") }
+    }
+    private static let noteBox = NoteBox()
+
     /// 取词主链（见文件头的四步说明）。整条链 8 秒硬超时。
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
+        noteBox.clear()
         let target = audioSec > 0 ? audioSec : song.durationSec
         let began = Date()
         let raw = await LddcLyrics.withDeadline(seconds: 8) { await chain(song, target: target) }
@@ -105,9 +116,12 @@ extension LyricsService {
         let ms = Int(Date().timeIntervalSince(began) * 1000)
 
         guard var result = hit, !result.isEmpty else {
+            let notes = noteBox.text()
             let diag = LddcLyrics.lastDiagnostics()
-            let base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
-            await LyricsService.shared.noteFailure(diag.isEmpty ? base : base + "：" + diag)
+            var base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
+            if !notes.isEmpty { base += "（" + notes + "）" }
+            if !diag.isEmpty { base += "：" + diag }
+            await LyricsService.shared.noteFailure(base)
             return nil
         }
         result.elapsedMs = ms
@@ -116,20 +130,47 @@ extension LyricsService {
         return result
     }
 
-    /// 实际顺序（①②③④），每条都是"整首同一版"的来源
+    /// 实际顺序（①②③④），每条都是"整首同一版"的来源。
+    ///
+    /// r77 改的是**并发结构，不是顺序**（老板 r74 拍板的 ①②③④ 一字不动）：
+    ///   · ③④ **提前开跑**：主链失败时它们的结果通常已经在手上，省掉串行的 1~3 秒；
+    ///   · ② 单独 5.5 秒预算：一次 ② 最多 2 候选 × 2 轮 × 2 通道，真机上串行跑完能吃掉
+    ///     整个 8 秒，把 ③④ 一起挤掉——"网易云明明有词却显示没词"就是这么来的；
+    ///   · 每个源都往空态诊断里写一行"几分钟几秒、断在哪"，下一轮不用猜。
     private static func chain(_ song: Song, target: Int) async -> LyricsResult? {
+        let began = Date()
+        func elapsed() -> Int { Int(Date().timeIntervalSince(began) * 1000) }
+
+        let lrclib = Task { await LrclibLyrics.fetch(song, audioSec: target) }
+        let netease = Task { await NeteaseLyrics.fallback(song, audioSec: target) }
+        defer {
+            lrclib.cancel()
+            netease.cancel()
+        }
+
         // ① 酷我平台的歌：musicId 精确取词，1 个请求
-        if song.platform == .kuwo, let official = await kuwoOfficial(song) {
-            return official
+        if song.platform == .kuwo {
+            if let official = await kuwoOfficial(song) { return official }
+            noteBox.add("① 酷我官方 \(elapsed())ms 无词")
+        } else {
+            noteBox.add("① 酷我官方 跳过（非酷我歌）")
         }
-        // ② 酷狗逐字（身份闸在 LddcLyrics 里）
-        if let lddc = await LddcLyrics.fetch(song: song, audioSec: target) {
-            return lddc
+
+        // ② 酷狗逐字（身份闸在 LddcLyrics 里）；5.5 秒预算，超了就止损交给 ③④
+        let kgRaw = await LddcLyrics.withDeadline(seconds: LddcLyrics.chainBudgetSeconds) {
+            await LddcLyrics.fetch(song: song, audioSec: target)
         }
-        // ③ LRCLIB
-        if let result = await LrclibLyrics.fetch(song, audioSec: target) { return result }
+        if let kg = kgRaw ?? nil { return kg }
+        let kgDiag = LddcLyrics.lastDiagnostics()
+        noteBox.add("② 酷狗 \(elapsed())ms " + (kgDiag.isEmpty ? "无词" : kgDiag))
+
+        // ③ LRCLIB（早就在跑了，这里只是取结果）
+        if let result = await lrclib.value { return result }
+        noteBox.add("③ LRCLIB \(elapsed())ms 无匹配")
+
         // ④ 网易云
-        if let result = await NeteaseLyrics.fallback(song, audioSec: target) { return result }
+        if let result = await netease.value { return result }
+        noteBox.add("④ 网易云 \(elapsed())ms 无匹配")
         return nil
     }
 

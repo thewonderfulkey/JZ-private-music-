@@ -12,15 +12,24 @@ import Foundation
 // 分数降序试前 3 个 → 正文过 `commentaryReason` / `contentVersionRejection` 才收。
 enum NeteaseLyrics {
 
-    private static let timeout: TimeInterval = 8
+    private static let timeout: TimeInterval = 4
     private static let minLines = 6
+
+    /// 网易对"裸请求"（没有浏览器 UA、没有 cookie）经常直接回 405，
+    /// 老板真机上"四个源都没取到词"里的那条 ④ 有一半是这个。r77 补齐。
+    private static let headers: [String: String] = [
+        "Referer": "https://music.163.com/",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Cookie": "os=pc; appver=8.9.70; NMTID=00O-1uZ0Vf8m5Gq2yY6b8s4k0",
+    ]
 
     static func fallback(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
         let keyword = song.searchKeyword
         guard !keyword.isEmpty else { return nil }
-        let adapter = NeteaseSearchAdapter()
-        guard let results = try? await adapter.search(keyword: keyword, limit: 15),
-              !results.isEmpty else { return nil }
+
+        let results = await search(keyword, limit: 15)
+        guard !results.isEmpty else { return nil }
 
         let target = audioSec > 0 ? audioSec : song.durationSec
         let pool = results
@@ -56,12 +65,43 @@ enum NeteaseLyrics {
         return nil
     }
 
+    /// 搜索（**不复用 SearchTab 那个 adapter**）。
+    ///
+    /// 两个原因：adapter 会顺手补封面（多一个请求、多一两秒，取词链只要 id/歌名/歌手/时长）；
+    /// 而且它没有浏览器头。这里主域名不通就换 `interface.music.163.com` 再试一次。
+    private static func search(_ keyword: String, limit: Int) async -> [Song] {
+        for host in ["music.163.com", "interface.music.163.com"] {
+            let url = "https://\(host)/api/search/get?s=\(APIClient.encode(keyword))"
+                + "&type=1&offset=0&limit=\(limit)"
+            guard let json = try? await APIClient.shared.getJSON(url, headers: headers,
+                                                                 timeout: timeout),
+                  (json["code"] as? Int) == 200,
+                  let list = (json["result"] as? [String: Any])?["songs"] as? [[String: Any]],
+                  !list.isEmpty else { continue }
+            var songs: [Song] = []
+            for item in list {
+                guard let id = item["id"] as? Int, id > 0,
+                      let name = item["name"] as? String, !name.isEmpty else { continue }
+                let artists = (item["artists"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["name"] as? String }
+                    .joined(separator: "/")
+                let album = (item["album"] as? [String: Any])?["name"] as? String ?? ""
+                let durMs = (item["duration"] as? Int) ?? 0
+                songs.append(Song.make(platform: .netease, platformID: String(id), name: name,
+                                       singer: artists, album: album,
+                                       duration: Double(durMs / 1000), picURL: nil))
+            }
+            if !songs.isEmpty { return songs }
+        }
+        return []
+    }
+
     /// `/api/song/lyric` 返回 `lrc.lyric`（标准 LRC 文本），解析成行级歌词
     static func lyricLines(platformID: String) async -> [LyricLine]? {
         guard let id = Int(platformID), id > 0 else { return nil }
         let url = "https://music.163.com/api/song/lyric?id=\(id)&lv=-1&kv=-1&tv=-1"
         guard let json = try? await APIClient.shared.getJSON(
-            url, headers: ["Referer": "https://music.163.com/"], timeout: timeout),
+            url, headers: headers, timeout: timeout),
               let lrc = (json["lrc"] as? [String: Any])?["lyric"] as? String,
               !lrc.isEmpty else { return nil }
         let lines = LyricsCleaning.parseLrc(lrc)

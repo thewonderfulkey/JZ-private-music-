@@ -1855,6 +1855,48 @@ do {
     check("最坏偏差 ≤ 40ms（ticker 粒度）", worst <= 40, "\(worst)")
 }
 
+// MARK: - 第十六轮（r77）：seek 保护窗 / 取词链预算
+
+section("第十六轮：seek 撞上旧位置不许改高亮 / 取词链各档预算")
+
+do {
+    // ① 老板 r76："一旦通过歌词快进或者后退就变得不准了"
+    //
+    // 旧口径是**写死 0.7 秒**：只要窗过了就无条件解保护。真机上远端流 seek 常要 1~2 秒，
+    // 于是 40ms 的 ticker 拿"旧位置"把刚设好的高亮拽回上一句，落地后再弹回来；那一下还会把
+    // `lastCenteredIndex` 记错，后面每句单行滚动都按这个错位走（"不会自己好"）。
+    check("窗内、位置还是旧的（45s → 120s）→ 等，不许改高亮",
+          LyricsUXRules.seekGuardDecision(positionMs: 45_000, targetMs: 120_000,
+                                          guardExpired: false) == .wait)
+    check("窗内、已经跳到目标附近（差 200ms）→ 提前解保护",
+          LyricsUXRules.seekGuardDecision(positionMs: 119_800, targetMs: 120_000,
+                                          guardExpired: false) == .release)
+    check("窗过了、位置还是旧的 → 也必须解（不能永远不动）",
+          LyricsUXRules.seekGuardDecision(positionMs: 45_000, targetMs: 120_000,
+                                          guardExpired: true) == .release)
+    check("正好 400ms 边界 → 解",
+          LyricsUXRules.seekGuardDecision(positionMs: 119_600, targetMs: 120_000,
+                                          guardExpired: false) == .release)
+    check("兜底上限 10 秒（以前是 0.7 秒）", LyricsUXRules.seekGuardMaxSeconds == 10)
+    check("容差 400ms", LyricsUXRules.seekGuardToleranceMs == 400)
+
+    // ② 取词链预算：单条酷狗通道 3 秒、酷狗整段 4.5 秒——必须给 ③④ 留出时间，
+    //    否则"网易云明明有词却显示没词"（老板截图里那首《你好，再见》就是这条）。
+    check("单条酷狗通道封顶 3.5 秒（内部还含 https→http 两试）",
+          LddcLyrics.kgChannelDeadline == 3.5, "\(LddcLyrics.kgChannelDeadline)")
+    check("单个酷狗请求只给 2.5 秒", LddcLyrics.kgAttemptTimeout == 2.5,
+          "\(LddcLyrics.kgAttemptTimeout)")
+    check("只有快速失败（<1.2s）才换 http 再试", LddcLyrics.kgFastFailureSeconds == 1.2,
+          "\(LddcLyrics.kgFastFailureSeconds)")
+    check("酷狗搜索只给 3 秒", LddcLyrics.kgSearchTimeout == 3,
+          "\(LddcLyrics.kgSearchTimeout)")
+    check("酷狗在整条链里只占 5.5 秒", LddcLyrics.chainBudgetSeconds == 5.5,
+          "\(LddcLyrics.chainBudgetSeconds)")
+    check("酷狗预算之后还给 ③④ 留 2 秒以上",
+          8 - LddcLyrics.chainBudgetSeconds >= 2,
+          "\(8 - LddcLyrics.chainBudgetSeconds)")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
