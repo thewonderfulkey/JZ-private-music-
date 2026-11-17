@@ -129,7 +129,9 @@ final class CoverImageCache: @unchecked Sendable {
     // MARK: 磁盘读写（全部在后台任务里调用）
 
     private static func fileURL(for url: URL, directory: URL) -> URL {
-        let name = APIClient.md5Hex(url.absoluteString)
+        // 文件名用 URL 的 MD5：`Digest.md5Hex`（APIClient.swift 里那个，酷狗签名同款）。
+        // 不能用 `hashValue`——Swift 的字符串哈希每次启动都换种子，重启后文件名全变，缓存等于没有。
+        let name = Digest.md5Hex(url.absoluteString)
         return directory.appendingPathComponent(name).appendingPathExtension("img")
     }
 
