@@ -98,13 +98,17 @@ enum LddcLyrics {
 
         // QQ（QM）那条源实测长期空（req.code=2001，换 search_id 也一样），默认不再打——
         // 省一次请求、少 8 秒超时。代码留着（`searchQq` / `fetchQqLines`），QQ 恢复时改回来即可。
-        if let picked = await attempt(title: title, artist: artist, target: target) {
+        if let picked = await attempt(title: title, keywordArtist: artist,
+                                      scoreArtist: artist, target: target) {
             return result(picked, song: song)
         }
         // LDDC `auto_fetch` 的原样行为：拿「歌名 歌手」一条都过不了线时，**只用歌名再搜一次**。
         // 现场版/翻唱版的标题常带后缀（「发如雪 (Live)」），加歌手反而搜不到正片。
+        // 注意：**搜索词换成歌名，打分仍然拿原歌手去比**（LDDC 也是这么算的）——
+        // 否则"只按歌名"会把同名的别人的版本也算成 100 分。
         if !artist.isEmpty,
-           let picked = await attempt(title: title, artist: "", target: target) {
+           let picked = await attempt(title: title, keywordArtist: "",
+                                      scoreArtist: artist, target: target) {
             noteDiag("「\(title) \(artist)」没取到，用歌名再搜一次才取到")
             return result(picked, song: song)
         }
@@ -112,13 +116,15 @@ enum LddcLyrics {
     }
 
     /// 一轮完整尝试：搜 → LDDC 打分 → 按分数逐个取词
-    private static func attempt(title: String, artist: String, target: Int) async -> Picked? {
-        let candidates = await searchKg(title: title, artist: artist)
+    private static func attempt(title: String, keywordArtist: String, scoreArtist: String,
+                                target: Int) async -> Picked? {
+        let candidates = await searchKg(title: title, artist: keywordArtist)
         guard !candidates.isEmpty else {
-            noteDiag("酷狗搜「\(title) \(artist)」0 条候选")
+            noteDiag("酷狗搜「\(title) \(keywordArtist)」0 条候选")
             return nil
         }
-        return await pickBest(candidates: candidates, title: title, artist: artist, targetSec: target)
+        return await pickBest(candidates: candidates, title: title, artist: scoreArtist,
+                              targetSec: target)
     }
 
     /// 统一出口：时间轴按音源时长对齐，来源标签写明"LDDC"

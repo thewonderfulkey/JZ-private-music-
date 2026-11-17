@@ -45,8 +45,12 @@ actor LyricsService {
         }
 
         let task = Task<LyricsResult?, Never> {
-            // 四个源全空 → 等 1 秒把整条链再跑一遍（弱网时第一个请求常常是超时）
+            // 四个源全空 → 等 1 秒把整条链再跑一遍（弱网时第一个请求常常是超时）。
+            // r73：整条链每源 8 秒超时，最坏一轮就要 30 秒；首轮已经跑这么久时不再重跑，
+            // 否则播放页的"正在取歌词…"会转一分多钟。
+            let began = Date()
             if let first = await LyricsService.resolve(song, audioSec: audioSec) { return first }
+            guard Date().timeIntervalSince(began) < 12 else { return nil }
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             return await LyricsService.resolve(song, audioSec: audioSec)
         }
