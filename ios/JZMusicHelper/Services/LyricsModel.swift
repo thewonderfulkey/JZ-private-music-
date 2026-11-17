@@ -33,6 +33,8 @@ struct LyricLine: Hashable, Sendable {
 struct LyricsResult: Sendable {
     let lines: [LyricLine]
     let source: String
+    /// 「为什么选了这份词」——候选标题 / 时长 / 各档分数（r69 起给详情页和日志看）
+    var matchNote: String = ""
 
     var isEmpty: Bool { lines.isEmpty }
 

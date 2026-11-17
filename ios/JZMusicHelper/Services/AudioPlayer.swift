@@ -462,6 +462,38 @@ final class PlayerEngine {
         guard seconds.isFinite, seconds > 0 else { return }
         guard abs(seconds - duration) > 0.5 else { return }
         duration = max(seconds, currentTime)
+        refetchLyricsIfDurationChanged()
+    }
+
+    /// 真实时长与"取词时用的目标时长"差了 8 秒以上 → 重取一次词（r69）。
+    ///
+    /// 为什么值一次重取：歌词候选的分数里有"时长差"这一档，差 8 秒足够让排序翻盘
+    /// （《发如雪》那次就是元数据 5:00、候选 5:13 的醇享版压过了原版）。
+    private func refetchLyricsIfDurationChanged() {
+        guard !lyricsRefetched, !isLoadingLyrics, lyricsTargetSec > 0 else { return }
+        let actual = Int(duration)
+        guard actual > 0, abs(actual - lyricsTargetSec) > 8 else { return }
+        guard let song = currentSong else { return }
+        lyricsRefetched = true
+        lyricsTargetSec = actual
+        isLoadingLyrics = true
+        Task { [weak self] in
+            let result = await LyricsService.shared.fetch(song, audioSec: actual, force: true)
+            guard let self else { return }
+            guard self.currentSong?.id == song.id else {
+                self.isLoadingLyrics = false
+                return
+            }
+            if let result, !result.lines.isEmpty {
+                self.lyrics = result.lines
+                self.lyricsSource = result.source
+                self.lyricsMatchNote = result.matchNote
+                self.lyricIndex = LyricsCleaning.indexAt(self.lyrics,
+                                                         positionMs: self.lyricPositionMs)
+                self.lyricScrollIndex = self.lyricIndex
+            }
+            self.isLoadingLyrics = false
+        }
     }
 
     private func rejectSource(_ source: StreamSource, reason: String) {
@@ -556,6 +588,14 @@ final class PlayerEngine {
     /// 歌词取不到时的原因（播放页空状态里显示给人看，r63 加：下一轮一眼就能定位是哪条链断了）
     private(set) var lyricsFailure: String = ""
 
+    /// 「这份词是怎么选出来的」——候选标题 / 时长 / 各档分数（r69，详情页可见）
+    private(set) var lyricsMatchNote: String = ""
+
+    /// 取词时用的"目标时长"（秒）：真实时长远晚于它时才值得重取一次
+    private var lyricsTargetSec: Int = 0
+    /// 这首歌是否已经因为"时长后知后觉"重取过（每首最多一次，避免循环）
+    private var lyricsRefetched = false
+
     /// 切歌时先清空，再异步取词（不阻塞起播：Android 同样是"起播前并发预热歌词"）
     ///
     /// 第五轮（老板反馈 ⑧）：已下载的歌**先读下载时一起存下的本地 LRC**——
@@ -567,6 +607,9 @@ final class PlayerEngine {
         lyricIndex = -1
         lyricScrollIndex = -1
         lyricsFailure = ""
+        lyricsMatchNote = ""
+        lyricsRefetched = false
+        lyricsTargetSec = duration > 2 ? Int(duration) : song.durationSec
 
         if let local = DownloadManager.shared.localLyrics(for: song), !local.isEmpty {
             lyrics = local
@@ -577,13 +620,15 @@ final class PlayerEngine {
         }
 
         isLoadingLyrics = true
+        let targetSec = lyricsTargetSec
         Task { [weak self] in
-            let result = await LyricsService.shared.fetch(song)
+            let result = await LyricsService.shared.fetch(song, audioSec: targetSec)
             guard let self else { return }
             // 期间可能又切歌了，只有仍停在同一个 ID 才落地
             guard self.currentSong?.id == song.id else { return }
             self.lyrics = result?.lines ?? []
             self.lyricsSource = result?.source ?? ""
+            self.lyricsMatchNote = result?.matchNote ?? ""
             self.isLoadingLyrics = false
             if result == nil {
                 let reason = await LyricsService.shared.failureReason()

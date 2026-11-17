@@ -86,6 +86,11 @@ struct SourceDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     LabeledContent("逐字时间", value: player.lyrics.first?.hasWordTiming == true ? "有" : "无")
+                    if !player.lyricsMatchNote.isEmpty {
+                        Text(player.lyricsMatchNote)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section {

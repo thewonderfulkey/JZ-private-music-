@@ -32,16 +32,19 @@ actor LyricsService {
 
     // MARK: 入口
 
-    func fetch(_ song: Song) async -> LyricsResult? {
+    /// `audioSec`：真正在放的这条音频时长（0 = 用曲目元数据）；`force` = 绕过缓存重取
+    func fetch(_ song: Song, audioSec: Int = 0, force: Bool = false) async -> LyricsResult? {
         let key = cacheKey(song)
-        if let hit = cache[key], Date().timeIntervalSince(hit.at) < ttl {
+        if !force, let hit = cache[key], Date().timeIntervalSince(hit.at) < ttl {
             return hit.result
         }
         if let running = inflight[key] {
             return await running.value
         }
 
-        let task = Task<LyricsResult?, Never> { await LyricsService.resolve(song) }
+        let task = Task<LyricsResult?, Never> {
+            await LyricsService.resolve(song, audioSec: audioSec)
+        }
         inflight[key] = task
         let result = await task.value
         inflight[key] = nil
@@ -89,13 +92,15 @@ extension LyricsService {
     /// r68：酷我官方词**只有行级时间**，所以「逐字染色」永远出不来（老板拿《枫》做对照：
     /// 那首走 LDDC 的 KRC 就有逐字）。现在官方词拿到之后再试一次 LDDC：
     /// 只有行数对得上（±25%）才升级成逐字那份，对不上仍用官方词。
-    static func resolve(_ song: Song) async -> LyricsResult? {
+    static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
         if song.platform == .kuwo {
             let official = await kuwoOfficial(song)
-            if let upgraded = await wordTimedUpgrade(song, baseline: official) { return upgraded }
+            if let upgraded = await wordTimedUpgrade(song, baseline: official, audioSec: audioSec) {
+                return upgraded
+            }
             if let official { return official }
         }
-        if let result = await LddcLyrics.fetch(song: song) { return result }
+        if let result = await LddcLyrics.fetch(song: song, audioSec: audioSec) { return result }
         if song.platform != .kuwo, let result = await kuwoFallback(song) { return result }
         await LyricsService.shared.noteFailure(song.platform == .kuwo
                                                ? "酷我官方歌词与本曲都没有词"
@@ -115,17 +120,23 @@ extension LyricsService {
     ///
     /// 三个条件缺一不可：LDDC 取到了词、那份词确实有逐字时间、行数和参照词接近
     /// （±25% 以外就是另一版词，宁可不升级，也不要把别人的逐字贴上来）。
-    static func wordTimedUpgrade(_ song: Song, baseline: LyricsResult?) async -> LyricsResult? {
+    static func wordTimedUpgrade(_ song: Song, baseline: LyricsResult?,
+                                 audioSec: Int = 0) async -> LyricsResult? {
         // 给"升级成逐字"这件事一个硬上限：官方词已经拿到手了，不能让 LDDC 的两条源
         // 把首屏拖到十几秒（超时就先用官方词显示，逐字下一次再补）
-        let krc = await withTimeoutOrNil(seconds: 4) { await LddcLyrics.fetch(song: song) } ?? nil
+        let krc = await withTimeoutOrNil(seconds: 4) {
+            await LddcLyrics.fetch(song: song, audioSec: audioSec)
+        } ?? nil
         guard let krc, krc.hasWordTiming else { return nil }
+        // 升级成逐字那份时，说明里补一句（原来的候选信息保留，方便对照）
+        var upgraded = krc
         if let baseline, !baseline.isEmpty {
             guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, krc.lines.count) else {
                 return nil
             }
         }
-        return krc
+        if !krc.matchNote.isEmpty { upgraded.matchNote = krc.matchNote + " · 逐字升级" }
+        return upgraded
     }
 
     /// 带超时的异步取值（超时返回 nil，不取消原任务之外的东西）

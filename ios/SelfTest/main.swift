@@ -1394,9 +1394,10 @@ do {
                                         durationSec: 288)
     let scored8 = LddcLyrics.scoredCandidate(eightOff, title: "我不配", artist: "周杰伦",
                                              targetDur: 296)
-    check("时长差 8s 的候选照样及格（有词可看，不再整首空着）",
-          scored8.score > LddcMatch.minScore, "\(scored8.score)")
-    check("时长差 8s 记为 durationDelta=8（只影响排序）", scored8.durationDelta == 8)
+    check("时长差 8s 的候选仍然及格（有词可看，不再整首空着）",
+          scored8.total > LddcMatch.minScore, "\(scored8.total)")
+    check("时长差 8s 记 durationDelta=8", scored8.durationDelta == 8)
+    check("时长差 8s 扣 10 分", scored8.durationPenalty == 10)
     check("时长未知 → Int.max（排在有时长的候选之后）",
           LddcLyrics.scoredCandidate(
             LddcLyrics.Candidate(source: "kg", title: "我不配", artist: "周杰伦", durationSec: 0),
@@ -1405,7 +1406,52 @@ do {
                                         durationSec: 292)
     check("现场版仍被版本惩罚压到及格线下（版本质量还在管）",
           LddcLyrics.scoredCandidate(liveCand, title: "我不配", artist: "周杰伦",
-                                     targetDur: 296).score < LddcMatch.minScore)
+                                     targetDur: 296).total < LddcMatch.minScore)
+
+    // ⑤ r69：时长差进分数（不再是"同分才比"）
+    check("时长差 ≤3s 不扣", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 302) == 0)
+    check("时长差 5s 扣 10", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 305) == 10)
+    check("时长差 13s 扣 25", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 313) == 25)
+    check("时长差 30s 扣 40", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 330) == 40)
+    check("时长未知不扣", LddcMatch.durationPenalty(targetSec: 300, candidateSec: 0) == 0)
+
+    // ⑥ r69 的真实案例：《发如雪》原版 300s vs 「醇享版」313s
+    //
+    // 旧口径只看"标题像不像"：醇享版 = 标题 70 + 歌手 100 → 85 分，直接当选（且版本标记表里
+    // 没有"醇享版"这个词）。新口径：标题 70、歌手 100、基础 85、版本标记 −35、时长差 13s −25
+    // → 合计 25 分，除非整页没有别的候选（走兜底线），否则不会被选中。
+    let zunxiang = LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: "发如雪（醇享版）",
+                                            queryArtist: "周杰伦", candidateArtist: "周杰伦",
+                                            targetSec: 300, candidateSec: 313)
+    check("醇享版：版本标记扣 35", zunxiang.versionPenalty == 35, "\(zunxiang.versionPenalty)")
+    check("醇享版：时长差 13s 扣 25", zunxiang.durationPenalty == 25)
+    check("醇享版：合计 25 分（不再越过 55 线）",
+          zunxiang.total < LddcMatch.minScore, "\(zunxiang.total)")
+    let plain = LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: "发如雪",
+                                         queryArtist: "周杰伦", candidateArtist: "周杰伦",
+                                         targetSec: 300, candidateSec: 301)
+    check("原版：满分 100", plain.total == 100, "\(plain.total)")
+    check("原版排在醇享版之前", plain.total > zunxiang.total)
+    check("醇享版进不了「兜底」档（分数太低）", !LddcMatch.passesFallback(zunxiang))
+    check("但整页只有它时仍可用（最后兜底，别整首没词）", LddcMatch.isLastResort(zunxiang))
+    check("完全不搭的候选兜底也不收",
+          !LddcMatch.passesFallback(LddcMatch.scoreCandidate(
+            queryTitle: "发如雪", candidateTitle: "夜曲", queryArtist: "周杰伦",
+            candidateArtist: "蔡健雅", targetSec: 300, candidateSec: 200)))
+
+    // ⑦ r69：正文首行自报的版本也要管（KRC 第一行常是「歌名（版本）- 歌手」）
+    let zunxiangLines = [LyricLine(timeMs: 0, text: "发如雪（醇享版）- 周杰伦 (Jay Chou)"),
+                         LyricLine(timeMs: 5_000, text: "狼牙月 伊人憔悴")]
+    check("正文首行写着醇享版 → 判为另一版",
+          LyricsCleaning.contentVersionRejection(lines: zunxiangLines, queryTitle: "发如雪") != nil)
+    let plainLines = [LyricLine(timeMs: 0, text: "发如雪 - 周杰伦"),
+                      LyricLine(timeMs: 5_000, text: "狼牙月 伊人憔悴")]
+    check("普通正文首行 → 不拦",
+          LyricsCleaning.contentVersionRejection(lines: plainLines, queryTitle: "发如雪") == nil)
+    check("正文首行带 live → 判为另一版",
+          LyricsCleaning.contentVersionRejection(
+            lines: [LyricLine(timeMs: 0, text: "发如雪 (Live) - 周杰伦")],
+            queryTitle: "发如雪") != nil)
 
     // 文件头验收从"一票否决"改成"优选项"
     func outcome(_ idx: Int, _ hasLines: Bool, _ headerOK: Bool) -> LddcLyrics.FetchedOutcome {

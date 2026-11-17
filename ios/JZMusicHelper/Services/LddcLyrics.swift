@@ -66,7 +66,10 @@ enum LddcLyrics {
     // MARK: 入口
 
     /// 双源并行搜索 → 评分选优 → 逐候选取词。全部失败返回 nil。
-    static func fetch(song: Song) async -> LyricsResult? {
+    ///
+    /// `audioSec`：**真正在放的这条音频**的时长（引擎拿到后传进来）。传 0 就退回曲目元数据时长。
+    /// r69 起时长差会进打分，所以这个数越准越好。
+    static func fetch(song: Song, audioSec: Int = 0) async -> LyricsResult? {
         let title = song.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let artist = LyricsCleaning.cleanArtist(song.singer)
         guard !title.isEmpty else { return nil }
@@ -76,21 +79,25 @@ enum LddcLyrics {
         let candidates = await kgTask + qqTask
         guard !candidates.isEmpty else { return nil }
 
+        let target = audioSec > 0 ? audioSec : song.durationSec
         guard let picked = await pickBest(candidates: candidates, song: song,
-                                          title: title, artist: artist) else { return nil }
+                                          title: title, artist: artist,
+                                          targetSec: target) else { return nil }
         // 时间轴按音源实际时长对齐（r63：宁可给最接近的一份词，也别整首空着）
         let aligned = LyricsCleaning.alignedToAudio(picked.lines, declaredMs: picked.declaredMs,
                                                     audioSec: song.durationSec)
         let source = aligned.ratio > 1.0001
             ? "LDDC·已对齐 ×" + String(format: "%.2f", aligned.ratio)
             : "LDDC"
-        return LyricsResult(lines: aligned.lines, source: source)
+        return LyricsResult(lines: aligned.lines, source: source, matchNote: picked.note)
     }
 
     /// 一次取词的结果（连同歌词文件自己声明的总时长，供时间轴对齐用）
     struct Picked: Sendable {
         let lines: [LyricLine]
         let declaredMs: Int
+        /// 这个人话说明写的是"为什么选了这份词"（播放页「音源详情 → 歌词」会显示）
+        var note: String = ""
     }
 
     /// 评分 + 版本标签惩罚 + 排序（**不设时长硬门槛**）+ 取前 3 个候选取词 + 文件头软验收
@@ -104,24 +111,46 @@ enum LddcLyrics {
     ///   · **文件头验收从"一票否决"改成"优选项"**：先在所有候选里找通过验收的（按排名），
     ///     一份都没通过才退回到排名最高的那份。
     static func pickBest(candidates: [Candidate], song: Song,
-                         title: String, artist: String) async -> Picked? {
-        let targetDur = song.durationSec
-        var scored: [(score: Double, durationDelta: Int, source: String, candidate: Candidate)] = []
+                         title: String, artist: String, targetSec: Int) async -> Picked? {
+        let targetDur = targetSec > 0 ? targetSec : song.durationSec
+        var scored: [(rank: LddcMatch.CandidateScore, source: String, candidate: Candidate)] = []
         for cand in candidates {
             let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
-            if one.score > minScore {
-                scored.append((one.score, one.durationDelta, cand.source, cand))
+            if one.total > minScore {
+                scored.append((one, cand.source, cand))
             }
         }
+        // 一个都没过及格线：先退到"至少歌手对得上"的兜底池；
+        // 连兜底池都空（整页只有一份带版本标记的词）→ 最后兜底，宁可词差一点也别整首空着。
+        var fallbackTier = 0        // 0 = 正常过线，1 = 兜底，2 = 最后兜底
+        if scored.isEmpty {
+            for cand in candidates {
+                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
+                if LddcMatch.passesFallback(one) {
+                    scored.append((one, cand.source, cand))
+                }
+            }
+            fallbackTier = 1
+        }
+        if scored.isEmpty {
+            for cand in candidates {
+                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
+                if LddcMatch.isLastResort(one) {
+                    scored.append((one, cand.source, cand))
+                }
+            }
+            fallbackTier = 2
+        }
         guard !scored.isEmpty else { return nil }
+
         // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）
         scored.sort {
-            precedes((score: $0.score, durationDelta: $0.durationDelta, source: $0.source),
-                     (score: $1.score, durationDelta: $1.durationDelta, source: $1.source))
+            precedes((score: $0.rank.total, durationDelta: $0.rank.durationDelta, source: $0.source),
+                     (score: $1.rank.total, durationDelta: $1.rank.durationDelta, source: $1.source))
         }
 
         // 前 3 个候选并行取词：谁先成不重要，最后按"候选排名"取——
-        // 排在前面且通过文件头验收的先赢，全都没通过就退回排名最高的那份。
+        // 排在前面且通过版本验收的先赢，全都没通过就退回排名最高的那份。
         let top = Array(scored.prefix(3))
         let outcomes: [FetchedOutcome] = await withTaskGroup(of: FetchedOutcome.self) { group in
             for (idx, item) in top.enumerated() {
@@ -129,15 +158,24 @@ enum LddcLyrics {
                     guard let one = await fetchOne(item.candidate) else {
                         return FetchedOutcome(idx: idx, lines: nil, headerOK: false)
                     }
-                    let rejection = headerRejection(meta: one.meta, song: song,
-                                                    queryTitle: title, queryArtist: artist)
+                    // 两道验收：文件头（[ti:]/[total:]）+ **正文第一行自报的版本**
+                    // （老板 r69：《发如雪》拿到的词，第一行就写着「发如雪（醇享版）」）
+                    let headReject = headerRejection(meta: one.meta, song: song,
+                                                     queryTitle: title, queryArtist: artist)
+                    let bodyReject = LyricsCleaning.contentVersionRejection(lines: one.lines,
+                                                               queryTitle: title)
+                    let rejection = headReject ?? bodyReject
                     if let rejection {
                         print("[LddcLyrics] 候选 \(item.candidate.source)「\(item.candidate.title)」"
                               + "未通过版本验收（仍可兜底）：\(rejection)")
                     }
+                    let note = matchNote(candidate: item.candidate, score: item.rank,
+                                         targetSec: targetDur, tier: fallbackTier,
+                                         rejected: rejection != nil)
                     return FetchedOutcome(idx: idx,
                                           lines: Picked(lines: one.lines,
-                                                        declaredMs: one.meta.durationMs),
+                                                        declaredMs: one.meta.durationMs,
+                                                        note: note),
                                           headerOK: rejection == nil)
                 }
             }
@@ -149,19 +187,36 @@ enum LddcLyrics {
         return outcomes.first(where: { $0.idx == winner })?.lines
     }
 
+    /// 一句人话说明"为什么选了这份词"（详情页 + 日志）
+    static func matchNote(candidate: Candidate, score: LddcMatch.CandidateScore,
+                          targetSec: Int, tier: Int, rejected: Bool) -> String {
+        var text = "《\(candidate.title)》· 目标 \(targetSec)s / 候选 \(candidate.durationSec)s · "
+            + score.explanation
+        if tier == 1 { text += " · 未过 55，按兜底线采纳" }
+        if tier == 2 { text += " · 只有这一份，按最后兜底采纳" }
+        if rejected { text += " · 版本验收未过" }
+        return text
+    }
+
     /// 单个候选的评分（含版本标签惩罚）与时长差 —— 纯函数，CI 能直接断言。
     ///
     /// r63 的关键：**时长差不参与过滤，只参与排序**。原来 `abs(目标 - 候选) > 4` 直接丢，
     /// 实测 蓝莲花/后来/倔强/我不配 整首一个候选都不剩 → 没词。
     static func scoredCandidate(_ cand: Candidate, title: String, artist: String, targetDur: Int)
-        -> (score: Double, durationDelta: Int) {
-        var total = LddcMatch.score(title: title, candidateTitle: cand.title,
-                                    artist: artist, candidateArtist: cand.artist)
-        total = max(0, total - LddcMatch.versionPenalty(queryTitle: title,
-                                                        candidateTitle: cand.title))
-        let delta = (targetDur > 0 && cand.durationSec > 0)
-            ? abs(targetDur - cand.durationSec) : Int.max
-        return (total, delta)
+        -> LddcMatch.CandidateScore {
+        var one = LddcMatch.scoreCandidate(queryTitle: title, candidateTitle: cand.title,
+                                           queryArtist: artist, candidateArtist: cand.artist,
+                                           targetSec: targetDur, candidateSec: cand.durationSec)
+        // 时长未知时 `durationDelta` 用 Int.max 表示"排在有明确时长的后面"（不影响扣分）
+        if !(targetDur > 0 && cand.durationSec > 0) {
+            one = LddcMatch.CandidateScore(titleScore: one.titleScore,
+                                           artistScore: one.artistScore, base: one.base,
+                                           versionPenalty: one.versionPenalty,
+                                           durationDelta: Int.max,
+                                           durationPenalty: one.durationPenalty,
+                                           total: one.total)
+        }
+        return one
     }
 
     /// 一个候选的取词结果（供 `chooseOutcome` 做纯逻辑断言）

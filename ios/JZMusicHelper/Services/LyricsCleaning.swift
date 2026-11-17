@@ -290,6 +290,23 @@ enum LyricsCleaning {
         return ratio >= 0.75 && ratio <= 1.25
     }
 
+    /// 歌词正文第一两行自报的版本标签检查（纯函数）。
+    ///
+    /// KRC/QRC/LRC 的第一行经常就是 `歌名（版本）- 歌手`。老板 r69 那次《发如雪》的候选，
+    /// 第一行明明白白写着「发如雪（醇享版）- 周杰伦 (Jay Chou)」，但当时只看文件头
+    /// `[ti:]`/`[total:]`，正文这行没看。现在把它也当"版本证据"：
+    /// 正文带了查询没有的版本标签 → 这份词视为另一个剪辑（仍可兜底，但排在通过的候选之后）。
+    static func contentVersionRejection(lines: [LyricLine], queryTitle: String) -> String? {
+        for line in lines.prefix(2) {
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            if LddcMatch.versionPenalty(queryTitle: queryTitle, candidateTitle: text) > 0 {
+                return "正文首行「\(text)」带查询没有的版本标签"
+            }
+        }
+        return nil
+    }
+
     // MARK: 定位
 
     /// 当前播放位置对应的歌词行下标（没有则 -1）
