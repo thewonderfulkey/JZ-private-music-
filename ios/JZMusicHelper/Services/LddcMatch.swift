@@ -272,6 +272,10 @@ enum LddcMatch {
         // 「本字幕由QQ音乐独家AI字幕技术生成」——它来自酷我里一条「发如雪 拍摄花絮」的
         // 专访视频，标题分 54.5 + 歌手分 100 正好过线。这类候选必须在标题层就认成"另一个版本"。
         ["花絮", "拍摄花絮", "访谈", "幕后", "彩排", "清唱", "口播", "纪录片"],
+        // r74：「粤语版 / 国语版」这类**语言改写版**也算另一个版本类。
+        // 老板点名的《发如雪》74 行错词，就是一条标题一字不差的「发如雪 / 常颖杰」翻唱
+        // （正文首行自报"粤语版"）；标题里没有标记时，靠歌手闸拦，有标记时这里直接判类。
+        ["粤语版", "粤语", "国语版", "国语", "日语版", "英语版", "韩语版", "台语版"],
         // r69：音质/母带/重制类"版本标记"。
         // 老板反馈《发如雪》拿到的词是「醇享版」——这一类标记以前不在表里，
         // 于是它只按"标题像"打分（85 分）就当选了，时间轴却是另一个剪辑的。
@@ -324,6 +328,61 @@ enum LddcMatch {
 
     /// 候选标题自带版本标签（live/伴奏/花絮…）——不管查询是什么
     static func isVariant(_ title: String) -> Bool { !variantTags(title).isEmpty }
+
+    // MARK: 版本类（r74：身份闸的第二道）
+
+    /// 版本类：原版 / 现场 / 翻唱 / 伴奏纯音乐 / Remix / 其它非原版（花絮、片段、醇享…）
+    ///
+    /// 老板 r74 口径：「播放原版 → 候选不得含 Live/演唱会/伴奏/粤语版/翻唱/Remix/花絮；
+    /// 播放 Live → 只配 Live」。所以不能只比"是否带标记"，必须比**类**——
+    /// 《七里香》原版配到 `七里香 (Live)`（同歌手、同主标题、时长差 3s）就是这一条没做，
+    /// 《发如雪》配到「同名不同人」的粤语翻唱则是"歌手闸"没做。
+    enum VersionClass: String, Sendable {
+        case plain, live, cover, instrumental, remix, other
+    }
+
+    /// 语言改写版的规范名（`versionTags` 里那组的首项）。
+    /// 只在**候选标题**上算版本类；"词头自报"那一层不算它——
+    /// 《富士山下》的正式词头就写着「富士山下 (《爱情转移》粤语版)」，那是歌名注记不是另一个版本。
+    private static let languageTagNames: Set<String> = ["粤语版"]
+
+    static func versionClass(_ title: String, languageCounts: Bool = true) -> VersionClass {
+        var tags = variantTags(title)
+        if !languageCounts { tags.subtract(languageTagNames) }
+        if tags.isEmpty { return .plain }
+        if tags.contains("inst") { return .instrumental }
+        if tags.contains("live") { return .live }
+        if tags.contains("cover") { return .cover }
+        if tags.contains("remix") { return .remix }
+        return .other
+    }
+
+    /// 歌手闸：低于 90 分一律不算同一首歌（「周杰伦 vs 常颖杰」实测只有 33.3 分）
+    static let artistGateScore: Double = 90
+
+    /// 身份闸（纯函数）：时长 / 歌手 / 版本类，三道都过才算"同一版录音"
+    ///
+    /// 返回 nil = 通过；否则返回人话原因（写进诊断）。
+    static func identityRejection(queryTitle: String, queryArtist: String,
+                                  candidateTitle: String, candidateArtist: String,
+                                  targetSec: Int, candidateSec: Int) -> String? {
+        guard durationOK(targetSec: targetSec, candidateSec: candidateSec) else {
+            return "时长差 \(abs(targetSec - candidateSec))s > 4s"
+        }
+        if !queryArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !candidateArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let a = artistScore(queryArtist, candidateArtist)
+            guard a >= artistGateScore else {
+                return "歌手对不上（\(Int(a)) 分 < \(Int(artistGateScore))）：\(candidateArtist)"
+            }
+        }
+        let q = versionClass(queryTitle)
+        let c = versionClass(candidateTitle)
+        guard q == c else {
+            return "版本类不同（播放 \(q.rawValue) / 候选 \(c.rawValue)）：\(candidateTitle)"
+        }
+        return nil
+    }
 
     /// 候选标题里出现了「原查询没有」的版本标签 → 返回应扣的分（0 或 35）。
     ///

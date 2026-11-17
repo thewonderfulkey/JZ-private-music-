@@ -61,6 +61,7 @@ final class SettingsStore {
         static let skipLimit = "skip_limit"
         static let lyricAnimation = "lyric_anim"
         static let lyricFont = "lyrics_font"
+        static let lyricsQQ = LddcLyrics.qqPrefKey
         static let recognizeSeconds = "rec_seconds"
         static let pauseBeforeRecognize = "rec_pause"
         static let wifiOnlyDownload = "wifi_only"
@@ -91,6 +92,13 @@ final class SettingsStore {
     var lyricAnimation: Bool {
         didSet { defaults.set(lyricAnimation, forKey: Key.lyricAnimation) }
     }
+    /// QQ 歌词源（实验，默认关）：老板手机开回国代理时可能可用。
+    /// 打开后 QQ 作为**并行候选**参与（2.5 秒上限），只在其返回可用且身份一致时采用，
+    /// 不挡主链、超时也不拖慢取词（见 `LddcLyrics.searchCandidates`）。
+    var lyricsQQEnabled: Bool {
+        didSet { defaults.set(lyricsQQEnabled, forKey: Key.lyricsQQ) }
+    }
+
     var lyricFontScale: LyricFontScale {
         didSet { defaults.set(lyricFontScale.rawValue, forKey: Key.lyricFont) }
     }
@@ -181,6 +189,7 @@ final class SettingsStore {
         skipLimit = limit > 0 ? limit : 3
         lyricAnimation = d.object(forKey: Key.lyricAnimation) as? Bool ?? true
         lyricFontScale = LyricFontScale(rawValue: d.string(forKey: Key.lyricFont) ?? "system") ?? .system
+        lyricsQQEnabled = d.object(forKey: Key.lyricsQQ) as? Bool ?? false
         let seconds = d.integer(forKey: Key.recognizeSeconds)
         recognizeSeconds = [12, 15, 20].contains(seconds) ? seconds : 12
         pauseBeforeRecognize = d.object(forKey: Key.pauseBeforeRecognize) as? Bool ?? true

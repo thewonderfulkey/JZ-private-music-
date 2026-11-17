@@ -991,14 +991,15 @@ do {
         LyricLine(timeMs: 9_000, text: "第三句", words: []),
     ]
 
-    check("提前量 220ms", LyricsUXRules.scrollLeadMs == 220)
+    // r74：老板口径「滚动必须与时间戳严格对应」→ 提前量归零，滚动与高亮同一时刻
+    check("提前量 0（滚动与时间戳严格对应）", LyricsUXRules.scrollLeadMs == 0)
 
     // 第 1 句唱到 4.9 秒时高亮还在第 1 句，但滚动目标已经是第 2 句（提前 220ms 起滚）
     check("高亮仍第 1 句",
           LyricsCleaning.indexAt(lines, positionMs: 4_900) == 0)
-    check("滚动目标已提前到第 2 句",
+    check("提前量为 0 时滚动目标 == 高亮行（不再抢跑）",
           LyricsCleaning.scrollAnchorIndex(lines, positionMs: 4_900,
-                                          leadMs: LyricsUXRules.scrollLeadMs) == 1)
+                                          leadMs: LyricsUXRules.scrollLeadMs) == 0)
     check("离切换还远时两者一致",
           LyricsCleaning.scrollAnchorIndex(lines, positionMs: 2_000,
                                           leadMs: LyricsUXRules.scrollLeadMs) == 0)
@@ -1305,8 +1306,10 @@ do {
     let ranked = LddcLyrics.rank(cands, title: "七里香", artist: "周杰伦", targetSec: 299)
     check("排序：原版第一（标题满分）",
           ranked.first?.candidate.title == "七里香", "\(ranked.first?.candidate.title ?? "nil")")
-    check("排序：Live 在同一首里排第二（标题分被 tag 拖低）",
-          ranked.count > 1 && ranked[1].candidate.title == "七里香 (Live)")
+    // r74：Live 不再"排第二等兜底"——版本类不同，直接被身份闸挡掉
+    check("排序：Live 不进池（版本类不同，身份闸挡掉）",
+          !ranked.contains { $0.candidate.title.contains("(Live)") },
+          "\(ranked.map(\.candidate.title))")
     check("排序：别的歌（夜曲）进不来（分数不到 55）",
           !ranked.contains { $0.candidate.title == "夜曲" }, "\(ranked.map(\.candidate.title))")
     check("排名里每条都过 55 分", ranked.allSatisfy { $0.score > LddcMatch.minScore })
@@ -1316,10 +1319,10 @@ do {
                            LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
                                                 durationSec: 320)],
                           title: "七里香", artist: "周杰伦", targetSec: 299).count == 1)
-    check("时长门槛把候选全筛光时放宽（元数据时长不准，别整首没词）",
+    check("时长门槛不再放宽（差 >4s 一律不进池，宁可空着也不贴另一版）",
           LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
                                                 durationSec: 320)],
-                          title: "七里香", artist: "周杰伦", targetSec: 299).count == 1)
+                          title: "七里香", artist: "周杰伦", targetSec: 299).isEmpty)
     check("时长未知不放行也不误杀（只按分数）",
           !LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "七里香", artist: "周杰伦",
                                                  durationSec: 0)],
@@ -1468,13 +1471,13 @@ do {
         LddcLyrics.Candidate(source: "kg", title: "发如雪 拍摄花絮", artist: "周杰伦", durationSec: 299),
         LddcLyrics.Candidate(source: "kg", title: "发如雪", artist: "周杰伦", durationSec: 299),
     ], title: "发如雪", artist: "周杰伦", targetSec: 299)
-    check("原版永远排在花絮/变体前面", variantRanked.first?.candidate.title == "发如雪",
+    check("花絮候选被身份闸挡掉，池里只剩原版",
+          variantRanked.count == 1 && variantRanked.first?.candidate.title == "发如雪",
           "\(variantRanked.map(\.candidate.title))")
-    check("变体不是被丢掉，是排在原版后面（原版取不到时才轮到它）", variantRanked.count == 2)
-    check("只有变体时不至于整首没词",
+    check("只有变体时**空着**（老板口径：宁可不给，也不拿 Live 词糊弄）",
           LddcLyrics.rank([LddcLyrics.Candidate(source: "kg", title: "发如雪 (Live)",
                                                 artist: "周杰伦", durationSec: 299)],
-                          title: "发如雪", artist: "周杰伦", targetSec: 299).count == 1)
+                          title: "发如雪", artist: "周杰伦", targetSec: 299).isEmpty)
 
     // 正文是字幕/文案 → 一律不收（《发如雪》51 行「酷我」那条就是这种）
     let subtitleLines = [LyricLine(timeMs: 0, text: "本字幕由QQ音乐独家AI字幕技术生成"),
@@ -1527,11 +1530,12 @@ do {
 
     // 文件头真写了总长时，才按比例对齐（KRC/QRC 才可能带）
     let headLyric = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 190_000, text: "z")]
+    // r74：老板口径「时间戳就是唯一依据」→ 一律不拉伸
     let scaled = LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 218)
-    check("文件头 200s × 音源 218s → 拉 ×1.09",
-          scaled.ratio > 1.08 && scaled.ratio < 1.10, "\(scaled.ratio)")
-    check("拉伸后最后一行也跟着走",
-          (scaled.lines.last?.timeMs ?? 0) > 200_000, "\(scaled.lines.last?.timeMs ?? 0)")
+    check("文件头 200s × 音源 218s 也不再拉伸（r74 去掉 ±12% 缩放）",
+          scaled.ratio == 1, "\(scaled.ratio)")
+    check("不拉伸时最后一行时间戳原样保留",
+          scaled.lines.last?.timeMs == 190_000, "\(scaled.lines.last?.timeMs ?? 0)")
     check("偏差 >12% 不猜（更可能是另一首歌）",
           LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 240).ratio == 1)
     check("偏差 <3% 不动",
@@ -1718,6 +1722,137 @@ do {
     let q = LddcLyrics.plainQuery([("ver", "1"), ("keyword", "发如雪 - 周杰伦")])
     check("krcs 查询串带百分号编码", q.hasPrefix("ver=1&keyword=") && !q.contains("发如雪")
           && !q.contains("signature"), q)
+}
+
+// MARK: - 第十五轮（r74）：身份闸、严格时间轴、8 秒超时
+
+section("第十五轮：身份闸（歌手/版本类/词自报）/ 严格时间轴 / 8 秒超时")
+
+do {
+    // ① 版本类：原版 / Live / 翻唱 / 伴奏 / Remix / 其它非原版
+    check("原版 → plain", LddcMatch.versionClass("七里香") == .plain)
+    check("(Live) → live", LddcMatch.versionClass("七里香 (Live)") == .live)
+    check("现场版 → live", LddcMatch.versionClass("七里香（现场版）") == .live)
+    check("Cover → cover", LddcMatch.versionClass("晴天 (Cover)") == .cover)
+    check("伴奏 → instrumental", LddcMatch.versionClass("晴天 - 伴奏") == .instrumental)
+    check("(粤语版) → other（非原版）", LddcMatch.versionClass("发如雪 (粤语版)") == .other)
+    check("拍摄花絮 → other", LddcMatch.versionClass("发如雪 拍摄花絮") == .other)
+
+    // ② 身份闸：歌手 ≥90 + 版本类一致 + 时长 ≤4s
+    let chang = LddcMatch.identityRejection(queryTitle: "发如雪", queryArtist: "周杰伦",
+                                            candidateTitle: "发如雪", candidateArtist: "常颖杰",
+                                            targetSec: 299, candidateSec: 299)
+    check("同名不同人（常颖杰）→ 判废", chang != nil, chang ?? "nil")
+    check("原版候选（周杰伦 299s）→ 通过",
+          LddcMatch.identityRejection(queryTitle: "发如雪", queryArtist: "周杰伦",
+                                      candidateTitle: "发如雪", candidateArtist: "周杰伦",
+                                      targetSec: 299, candidateSec: 299) == nil)
+    let liveForPlain = LddcMatch.identityRejection(queryTitle: "七里香", queryArtist: "周杰伦",
+                                                   candidateTitle: "七里香 (Live)",
+                                                   candidateArtist: "周杰伦",
+                                                   targetSec: 299, candidateSec: 302)
+    check("播原唱配 Live 词 → 判废", liveForPlain != nil, liveForPlain ?? "nil")
+    check("播 Live 配 Live 词 → 通过",
+          LddcMatch.identityRejection(queryTitle: "七里香 (Live)", queryArtist: "周杰伦",
+                                      candidateTitle: "七里香 (Live)", candidateArtist: "周杰伦",
+                                      targetSec: 302, candidateSec: 302) == nil)
+    let longDelta = LddcMatch.identityRejection(queryTitle: "发如雪", queryArtist: "周杰伦",
+                                                candidateTitle: "发如雪", candidateArtist: "周杰伦",
+                                                targetSec: 299, candidateSec: 331)
+    check("时长差 32s → 判废", longDelta != nil, longDelta ?? "nil")
+
+    // ③ 用真实候选（2026-11-17 酷狗实测）跑 rank：只剩原版
+    let real = [
+        LddcLyrics.Candidate(source: "kg", title: "发如雪", artist: "周杰伦", durationSec: 299),
+        LddcLyrics.Candidate(source: "kg", title: "发如雪", artist: "常颖杰", durationSec: 299),
+        LddcLyrics.Candidate(source: "kg", title: "发如雪 (粤语版)", artist: "常颖杰", durationSec: 304),
+        LddcLyrics.Candidate(source: "kg", title: "发如雪 (Live)", artist: "周杰伦", durationSec: 366),
+        LddcLyrics.Candidate(source: "kg", title: "发如雪 (纯音乐)", artist: "周杰伦", durationSec: 322),
+    ]
+    let kept = LddcLyrics.rank(real, title: "发如雪", artist: "周杰伦", targetSec: 299)
+    check("真实候选池里只剩原版一条", kept.count == 1, "\(kept.map(\.candidate.title))")
+    check("留下的是周杰伦原版", kept.first?.candidate.artist == "周杰伦"
+          && kept.first?.candidate.title == "发如雪")
+
+    // ④ 词自报身份：KRC 头 / 首行
+    let changMeta = LyricsMeta(title: "发如雪", artist: "常颖杰", album: "", durationMs: 0, offsetMs: 0)
+    let changReport = LyricsCleaning.selfReportReason(meta: changMeta,
+                                                      firstLine: "发如雪 (粤语版) - 常颖杰",
+                                                      songTitle: "发如雪", songArtist: "周杰伦")
+    check("词头 [ar:常颖杰] → 判废", changReport != nil, changReport ?? "nil")
+    let okMeta = LyricsMeta(title: "发如雪", artist: "周杰伦", album: "十一月的萧邦",
+                            durationMs: 0, offsetMs: 0)
+    check("词头 [ti:发如雪][ar:周杰伦] → 通过",
+          LyricsCleaning.selfReportReason(meta: okMeta, firstLine: "周杰伦 - 发如雪 词：方文山",
+                                          songTitle: "发如雪", songArtist: "周杰伦") == nil)
+    let liveMeta = LyricsMeta(title: "七里香 (Live)", artist: "周杰伦", album: "", durationMs: 0, offsetMs: 0)
+    let liveReport = LyricsCleaning.selfReportReason(meta: liveMeta, firstLine: nil,
+                                                     songTitle: "七里香", songArtist: "周杰伦")
+    check("词头 [ti:七里香 (Live)] 配原唱 → 判废", liveReport != nil, liveReport ?? "nil")
+    // 没有头部标签时看首行（酷我官方词就是这种）
+    let noMeta = LyricsMeta()
+    check("酷我式首行「七里香 - 周杰伦 (Jay Chou)」→ 通过",
+          LyricsCleaning.selfReportReason(meta: noMeta, firstLine: "七里香 - 周杰伦 (Jay Chou)",
+                                          songTitle: "七里香", songArtist: "周杰伦") == nil)
+    let cantoneseLine = LyricsCleaning.selfReportReason(meta: noMeta,
+                                                        firstLine: "发如雪 (粤语版) - 常颖杰",
+                                                        songTitle: "发如雪", songArtist: "周杰伦")
+    check("首行「发如雪 (粤语版) - 常颖杰」→ 判废", cantoneseLine != nil, cantoneseLine ?? "nil")
+    // 括注处理：`七里香 (Live)` 的括注是关键版本词；`富士山下 (《爱情转移》粤语版)` 的括注是注记
+    let fujiMeta = LyricsMeta(title: "富士山下 (《爱情转移》粤语版)", artist: "陈奕迅",
+                              album: "", durationMs: 0, offsetMs: 0)
+    check("词头括注是歌名注记 → 通过（不误杀富士山下）",
+          LyricsCleaning.selfReportReason(meta: fujiMeta, firstLine: "富士山下 - 陈奕迅",
+                                          songTitle: "富士山下", songArtist: "陈奕迅") == nil)
+    let liveQueryMeta = LyricsMeta(title: "七里香 (Live)", artist: "周杰伦",
+                                   album: "", durationMs: 0, offsetMs: 0)
+    check("播 Live 时 [ti:七里香 (Live)] → 通过",
+          LyricsCleaning.selfReportReason(meta: liveQueryMeta, firstLine: nil,
+                                          songTitle: "七里香 (Live)", songArtist: "周杰伦") == nil)
+    check("剥括注 coreTitle", LyricsCleaning.coreTitle("七里香 (Live)") == "七里香"
+          && LyricsCleaning.coreTitle("富士山下 (《爱情转移》粤语版)") == "富士山下")
+
+    check("首行是正文（狼牙月）→ 照常通过",
+          LyricsCleaning.selfReportReason(meta: noMeta, firstLine: "狼牙月",
+                                          songTitle: "发如雪", songArtist: "周杰伦") == nil)
+
+    // ⑤ 8 秒硬超时：到点必须放弃，而不是继续等
+    let slow = await LddcLyrics.withDeadline(seconds: 0.15) {
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        return 42
+    }
+    check("超时到点放弃（1.5s 的活 / 0.15s 上限 → nil）", slow == nil)
+    let fast = await LddcLyrics.withDeadline(seconds: 2) { 7 }
+    check("没超时就拿到值", fast == 7)
+
+    // ⑥ 逐句高亮打点（模拟时钟）：高亮时刻 = 该句时间戳，偏差 ≤ 40ms（远小于 0.3s 验收线）
+    //
+    // 老板口径：LRC 中括号里的时间戳就是该句出现的时刻。这里用 40ms 的 ticker（播放器实际频率）
+    // 扫一遍，记录每句第一次亮起的时刻，与句首时间戳对比。
+    let lines = [
+        LyricLine(timeMs: 22_020, text: "狼牙月"),
+        LyricLine(timeMs: 24_180, text: "伊人憔悴"),
+        LyricLine(timeMs: 26_150, text: "我举杯"),
+        LyricLine(timeMs: 70_140, text: "你发如雪"),
+        LyricLine(timeMs: 121_110, text: "狼牙月（二段）"),
+    ]
+    var firstLit = [Int](repeating: -1, count: lines.count)
+    var t = 0
+    let end = 130_000
+    while t <= end {
+        let idx = LyricsCleaning.indexAt(lines, positionMs: t)
+        if idx >= 0, firstLit[idx] < 0 { firstLit[idx] = t }
+        t += 40
+    }
+    var worst = 0
+    for (i, line) in lines.enumerated() {
+        let dev = abs(firstLit[i] - line.timeMs)
+        worst = max(worst, dev)
+        check("第 \(i + 1) 句高亮偏差 \(dev)ms ≤ 300ms",
+              firstLit[i] >= line.timeMs && dev <= 300,
+              "lineMs=\(line.timeMs) litAt=\(firstLit[i])")
+    }
+    check("最坏偏差 ≤ 40ms（ticker 粒度）", worst <= 40, "\(worst)")
 }
 
 // MARK: - 汇总

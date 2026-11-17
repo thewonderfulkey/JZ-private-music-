@@ -241,42 +241,16 @@ enum LyricsCleaning {
 
     // MARK: 时间轴对齐
 
-    /// 把歌词时间轴按**音源实际时长**线性对齐（纯函数），返回 (对齐后的行, 拉伸比例)。
+    /// 时间轴**不再拉伸**（r74，老板口径：LRC 每句前的中括号时间戳就是该句出现的时刻，
+    /// 除非 LRC 文件本身错，否则滚动必须与时间戳严格对应）。
     ///
-    /// ## r66 根因修复：**只有拿到「歌词自己写的总长」才允许拉伸**
-    ///
-    /// r63 加这个函数时，为了"不同剪辑版本（Live / 不同专辑）总长差 8~40 秒"把时间轴整体缩放一遍。
-    /// 但绝大多数歌词源（酷我官方、LRC）**根本没有总长字段**，于是退化成
-    /// 「总长 = 最后一行时间 + 3 秒」——而真实歌曲几乎都有一段尾奏（10~30 秒）。
-    /// 结果就是：**一首完全正常的歌也被"拉长"**，而且误差随时间线性变大：
-    ///
-    ///   实测《那天下雨了》：最后一行 208s + 3s = 211s，元数据时长 224s
-    ///   → ratio = 224/211 = 1.06（播放页顶部当时就写着「已对齐 ×1.06」）
-    ///   → 60s 处晚 3.6 秒、120s 处晚 7.2 秒、200s 处晚 12 秒
-    ///
-    /// 这就是老板三轮都说的"歌词滚动晚了一些"的真正原因——高亮口径一直是对的，
-    /// 是**词的时间轴被整体拉长了**。所以现在的口径：
-    ///
-    ///   · `declaredMs <= 0`（歌词源没写总长，酷我/LRC 都是这种）→ **一律不拉伸**
-    ///   · `declaredMs > 0`（KRC/QRC 文件头真写了 total）→ 才按比例对齐，且窗口收紧到 0.88…1.12、
-    ///     偏差 ≥ 3% 才动（超过 12% 就更可能是完全另一首歌，宁可不动）
+    /// 历史：r63 为对齐「不同剪辑版本总长差 8~40 秒」加过按总长线性缩放（±12%），
+    /// r66 收紧成「只有文件头写了 [total:] 才拉伸」。但它本质是**改时间戳**：
+    /// 一首 200 秒的词拉 9%，100 秒处就偏 9 秒。既然口径是「时间戳即唯一依据」，这层一律不做。
+    /// 保留函数签名（调用方与 SelfTest 都按这个名字），行为变成恒等，ratio 恒为 1。
     static func alignedToAudio(_ lines: [LyricLine], declaredMs: Int, audioSec: Int)
         -> (lines: [LyricLine], ratio: Double) {
-        guard !lines.isEmpty, audioSec > 0, declaredMs > 0 else { return (lines, 1) }
-        let audioMs = Double(audioSec) * 1_000
-        let total = Double(declaredMs)
-        guard total > 0 else { return (lines, 1) }
-        let ratio = audioMs / total
-        guard ratio >= 0.88, ratio <= 1.12, abs(ratio - 1) >= 0.03 else { return (lines, 1) }
-        func scale(_ ms: Int) -> Int { Int((Double(ms) * ratio).rounded()) }
-        let scaled = lines.map { line in
-            LyricLine(timeMs: max(0, scale(line.timeMs)), text: line.text,
-                      words: line.words.map {
-                          LyricWord(text: $0.text, startMs: max(0, scale($0.startMs)),
-                                    durMs: max(0, scale($0.durMs)))
-                      })
-        }
-        return (scaled, ratio)
+        (lines, 1)
     }
 
     /// 两版歌词是不是"同一版"：行数相差不超过 ±25%。
@@ -333,6 +307,70 @@ enum LyricsCleaning {
     /// 所有"按歌名搜出来"的源（LRCLIB / 网易云 / 酷我官方词）都过同一个闸门。
     static func foreignVersionReason(lines: [LyricLine], queryTitle: String) -> String? {
         commentaryReason(lines: lines) ?? contentVersionRejection(lines: lines, queryTitle: queryTitle)
+    }
+
+    /// 词自报身份校验（r74）：文件头 `[ti:]/[ar:]`，或（没有头时）正文第一行的「歌名 - 歌手」。
+    ///
+    /// 老板口径：「`[ti:]`/`[ar:]` 或首行必须与播放曲一致（`发如雪 (粤语版) / 常颖杰`、
+    /// `七里香 (Live)` 这类直接判废或按版本类路由）」。
+    /// 为什么不能只信候选：酷狗里那条翻唱的 KRC 头写的是 `[ti:发如雪][ar:常颖杰]`——
+    /// 歌名对得上，**歌手对不上**，正好被这一层抓住。
+    /// 剥掉歌名里的括注：`富士山下 (《爱情转移》粤语版)` → `富士山下`。
+    /// 只用于**歌名相似度**；版本类判断仍然看完整标题（`(Live)` 就在括注里）。
+    static func coreTitle(_ title: String) -> String {
+        let stripped = title.replacingOccurrences(of: "[（(][^）)]*[）)]", with: "",
+                                                  options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? title : stripped
+    }
+
+    static func selfReportReason(meta: LyricsMeta, firstLine: String?,
+                                 songTitle: String, songArtist: String) -> String? {
+        let title = songTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = songArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !meta.artist.isEmpty, !artist.isEmpty {
+            let a = LddcMatch.artistScore(artist, meta.artist)
+            if a < LddcMatch.artistGateScore {
+                return "词头 [ar:\(meta.artist)] 与播放歌手对不上（\(Int(a)) 分）"
+            }
+        }
+        if !meta.title.isEmpty, !title.isEmpty {
+            // 完整标题与剥括注后取较大分：`七里香 (Live)` 的括注里是关键版本词，剥掉反而对不上；
+            // `富士山下 (《爱情转移》粤语版)` 的括注是注记，剥掉才对得上。
+            let t = max(LddcMatch.titleScore(title, meta.title),
+                        LddcMatch.titleScore(title, coreTitle(meta.title)))
+            if t < LddcMatch.artistGateScore {
+                return "词头 [ti:\(meta.title)] 与播放歌名对不上（\(Int(t)) 分）"
+            }
+            if LddcMatch.versionClass(meta.title, languageCounts: false)
+                != LddcMatch.versionClass(title, languageCounts: false) {
+                return "词头 [ti:\(meta.title)] 是另一个版本类"
+            }
+            return nil
+        }
+        // 没有头部标签：看首行是不是「歌名 - 歌手」
+        guard let firstLine, !firstLine.isEmpty else { return nil }
+        let separators = [" - ", " – ", " — ", "－", "-"]
+        for sep in separators {
+            guard let range = firstLine.range(of: sep) else { continue }
+            let head = String(firstLine[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let tail = String(firstLine[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !head.isEmpty, !tail.isEmpty else { continue }
+            if !title.isEmpty,
+               max(LddcMatch.titleScore(title, head),
+                   LddcMatch.titleScore(title, coreTitle(head))) < LddcMatch.artistGateScore {
+                return "首行「\(head)」与播放歌名对不上"
+            }
+            if !artist.isEmpty, LddcMatch.artistScore(artist, tail) < LddcMatch.artistGateScore {
+                return "首行「\(tail)」与播放歌手对不上"
+            }
+            if LddcMatch.versionClass(head, languageCounts: false)
+                != LddcMatch.versionClass(title, languageCounts: false) {
+                return "首行「\(head)」是另一个版本类"
+            }
+            return nil
+        }
+        return nil
     }
 
     // MARK: 定位

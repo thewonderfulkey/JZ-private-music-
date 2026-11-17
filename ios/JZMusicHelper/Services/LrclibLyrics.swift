@@ -58,9 +58,11 @@ enum LrclibLyrics {
         for track in tracks {
             guard !track.instrumental else { continue }
             guard let synced = track.syncedLyrics, !synced.isEmpty else { continue }
-            guard LddcMatch.durationOK(targetSec: targetSec, candidateSec: track.durationSec) else { continue }
-            guard LddcMatch.extraVariantTags(queryTitle: queryTitle,
-                                             candidateTitle: track.title).isEmpty else { continue }
+            guard LddcMatch.identityRejection(queryTitle: queryTitle, queryArtist: queryArtist,
+                                              candidateTitle: track.title,
+                                              candidateArtist: track.artist,
+                                              targetSec: targetSec,
+                                              candidateSec: track.durationSec) == nil else { continue }
             let score = LddcMatch.score(title: queryTitle, candidateTitle: track.title,
                                         artist: queryArtist, candidateArtist: track.artist)
             guard score > LddcMatch.minScore else { continue }
@@ -78,8 +80,11 @@ enum LrclibLyrics {
         let score = LddcMatch.score(title: song.name, candidateTitle: track.title,
                                     artist: song.singer, candidateArtist: track.artist)
         guard score > LddcMatch.minScore,
-              LddcMatch.durationOK(targetSec: target, candidateSec: track.durationSec),
-              LddcMatch.extraVariantTags(queryTitle: song.name, candidateTitle: track.title).isEmpty else {
+              LddcMatch.identityRejection(queryTitle: song.name, queryArtist: song.singer,
+                                          candidateTitle: track.title,
+                                          candidateArtist: track.artist,
+                                          targetSec: target,
+                                          candidateSec: track.durationSec) == nil else {
             return nil
         }
         guard let synced = track.syncedLyrics, !synced.isEmpty else { return nil }

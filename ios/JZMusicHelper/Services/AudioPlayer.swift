@@ -511,12 +511,8 @@ final class PlayerEngine {
                 return
             }
             if let result, !result.lines.isEmpty {
-                self.lyrics = result.lines
-                self.lyricsSource = result.source
-                self.lyricsMatchNote = result.matchNote
-                self.lyricIndex = LyricsCleaning.indexAt(self.lyrics,
-                                                         positionMs: self.lyricPositionMs)
-                self.lyricScrollIndex = self.lyricIndex
+                self.adoptLyrics(result, for: song)
+                return
             }
             self.isLoadingLyrics = false
         }
@@ -627,7 +623,39 @@ final class PlayerEngine {
     /// 第五轮（老板反馈 ⑧）：已下载的歌**先读下载时一起存下的本地 LRC**——
     /// 无网络环境（飞机上、地铁里）点开下载好的歌，也要有词可看，不能只剩播放器。
     /// 本地没有才走网络；网络失败时保持空态（播放页有「重试」+ 失败原因）。
+    /// 同一首歌的歌词来源变了（酷我 → LDDC → LRCLIB…）→ 把这首的偏移归零。
+    ///
+    /// 老板 r74 口径：「快一点/慢一点保留，但默认 0、换歌或换歌词来源时归零，只在用户手动调过之后生效」。
+    /// 不同来源的时间轴基准本来就不同，沿用上一个来源的偏移只会更不准。
+    private var lyricSourceBySong: [String: String] = [:]
+
+    private func adoptLyrics(_ result: LyricsResult?, for song: Song) {
+        if let result {
+            let previous = lyricSourceBySong[song.id]
+            // 只比"来源名"（标签里有耗时，如 `LDDC · 逐字 · 1.8s`，按首个 · 前的前缀比）
+            let tag = result.source.split(separator: "·").first.map {
+                $0.trimmingCharacters(in: .whitespaces)
+            } ?? result.source
+            if let previous, previous != tag {
+                SettingsStore.shared.resetOffset(forSong: song.id)
+            }
+            lyricSourceBySong[song.id] = tag
+        }
+        lyrics = result?.lines ?? []
+        lyricsSource = result?.source ?? ""
+        lyricsMatchNote = result?.matchNote ?? ""
+        isLoadingLyrics = false
+        updateLyricIndex()
+    }
+
+    /// 上一首（用来在换歌时清掉它那次手动调的偏移，老板 r74：「换歌…归零」）
+    private var previousLyricSongID: String?
+
     private func prepareLyrics(for song: Song) {
+        if let previous = previousLyricSongID, previous != song.id {
+            SettingsStore.shared.resetOffset(forSong: previous)
+        }
+        previousLyricSongID = song.id
         lyrics = []
         lyricsSource = ""
         lyricIndex = -1
@@ -652,16 +680,12 @@ final class PlayerEngine {
             guard let self else { return }
             // 期间可能又切歌了，只有仍停在同一个 ID 才落地
             guard self.currentSong?.id == song.id else { return }
-            self.lyrics = result?.lines ?? []
-            self.lyricsSource = result?.source ?? ""
-            self.lyricsMatchNote = result?.matchNote ?? ""
-            self.isLoadingLyrics = false
+            self.adoptLyrics(result, for: song)
             if result == nil {
                 let reason = await LyricsService.shared.failureReason()
                 guard self.currentSong?.id == song.id else { return }
                 self.lyricsFailure = reason
             }
-            self.updateLyricIndex()
         }
     }
 

@@ -32,9 +32,12 @@ struct LyricLine: Hashable, Sendable {
 /// 一次取词的结果：歌词行 + 来源标签（"酷我" / "LDDC" / "LRCLIB" / "网易云"）
 struct LyricsResult: Sendable {
     let lines: [LyricLine]
-    let source: String
+    /// 来源标签（r74 起末尾会带耗时，如 `LDDC · 逐字 · 1.8s`）
+    var source: String
     /// 「为什么选了这份词」——候选标题 / 时长 / 标题分 / 歌手分（r69 起给详情页看）
     var matchNote: String = ""
+    /// 这次取词花了多少毫秒（r74：老板要在真机上看"取词耗时"）
+    var elapsedMs: Int = 0
 
     var isEmpty: Bool { lines.isEmpty }
 

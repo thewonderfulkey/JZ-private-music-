@@ -25,9 +25,10 @@ enum NeteaseLyrics {
         let target = audioSec > 0 ? audioSec : song.durationSec
         let pool = results
             .filter {
-                LddcMatch.durationOK(targetSec: target, candidateSec: $0.durationSec)
-                    && LddcMatch.extraVariantTags(queryTitle: song.name,
-                                                  candidateTitle: $0.name).isEmpty
+                LddcMatch.identityRejection(queryTitle: song.name, queryArtist: song.singer,
+                                            candidateTitle: $0.name, candidateArtist: $0.singer,
+                                            targetSec: target,
+                                            candidateSec: $0.durationSec) == nil
                     && LddcMatch.score(title: song.name, candidateTitle: $0.name,
                                        artist: song.singer, candidateArtist: $0.singer)
                         > LddcMatch.minScore

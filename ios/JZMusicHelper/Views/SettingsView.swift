@@ -48,6 +48,8 @@ struct SettingsView: View {
 
             Section("歌词") {
                 Toggle("逐字动画", isOn: $settings.lyricAnimation)
+                // 实验开关：老板手机开回国代理后可实测 QQ 歌词；默认关，不影响主链
+                Toggle("QQ 歌词源（实验）", isOn: $settings.lyricsQQEnabled)
                 Picker("歌词字号", selection: $settings.lyricFontScale) {
                     ForEach(SettingsStore.LyricFontScale.allCases) { item in
                         Text(item.displayName).tag(item)
