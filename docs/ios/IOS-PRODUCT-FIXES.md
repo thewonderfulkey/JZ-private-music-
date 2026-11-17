@@ -801,3 +801,25 @@ android/app/build.gradle.kts      versionCode 159 / versionName 2.2.1
    《那天下雨了》如果拿到 KRC 也会有逐字染色（没拿到就仍是整行高亮，这是词源决定的）。
 4. **证据面**：遇到"就是不对"的歌，「⋯ → 音源详情 → 当前歌词行」截图丢群里，
    我要看 `行时间 / 播放位置 / 偏差` 那三行。
+
+## 六、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.2.1-6c02cb7-r68-ios-unsigned.ipa` |
+| 大小 | 1,733,692 字节（≈1.65 MB） |
+| SHA-256 | `574df21b61f1a2a64aed63b3ee9e1e0f177be06eff105ae808ac41b6d6b8ead0` |
+| CI | [run #68](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44009871815)（逻辑断言 **494 / 0 失败** / `BUILD SUCCEEDED` / 插件已嵌包 / 已发飞书群） |
+| 提交 | `6c02cb7` |
+| 包内自证 | `CFBundleShortVersionString = 2.2.1` / `CFBundleVersion = 159`；二进制里能找到 `seekNonce` / `wordTimedUpgrade` |
+
+> 认包只认 `6c02cb7-r68`。
+
+## 七、这一轮给下一轮的提醒
+
+- **"某首歌没有逐字"先看歌词页顶部标签**：`逐字` 两个字没有出现 = 这份词源本来就没有逐字时间，
+  不是染色坏了。升级成逐字要 LDDC 能取到同一首的 KRC（酷狗/QQ），且行数在 ±25% 内。
+- **"跳完不准"先看「音源详情 → 当前歌词行」**：`偏差` 一直在 0 附近才算时间轴贴住；
+  如果偏差是常数（比如固定 −1.8 秒），那是词源与这条音源不是同一版，属于选源问题，不是渲染问题。
+- seek 保护窗是 0.7 秒 / 0.4 秒容差（`AudioPlayer.seekTargetMs` / `seekGuardUntil`）。
+  如果弱网下跳转特别慢（>0.7 秒才落地），ticker 会在窗后照常按播放器位置纠正一次，不会卡住。
