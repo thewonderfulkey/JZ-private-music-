@@ -574,3 +574,114 @@ ios/SelfTest/main.swift             删「锁屏活动」整段；+14 条（滚�
 - 本机 typecheck 的做法（`.build/r65_swiftcheck.sh`）：源码复制到 /tmp 并补 `import FoundationNetworking`（Linux 的 URLSession 在
   FoundationNetworking 里），`CryptoKit` / `Compression` 用 `.build/swiftcheck/*Stub.swift` 编成模块，
   再加一个 `URLSession.bytes` 桩（`LinuxURLSessionBytesStub.swift`，只给 typecheck 用、不入仓库）。
+
+# 第八轮整改（2026-11-17 13:2x，老板 3 条：歌词滚动 / 发现页点搜索卡顿 / 搜索行标签竖排）
+
+> 证据：开发群 13:12 的 15 秒录屏（《那天下雨了》播到尾段，进度 3:44 → 3:50 仍在唱）+ 13:16 的搜索页截屏
+> （平台胶囊被挤成竖排「酷/狗」、时长折成「03:4 / 3」）+ 上一轮 12:06 的 113 秒歌词页录屏（顶部写着 `已对齐 ×1.06`）。
+
+## 一、第 1 条：歌词"统一晚了一些"的**真根因**
+
+老板的判断方向是对的——**是时间和歌曲没对齐，但不是"时间进度"错，而是词的时间轴被 App 自己拉长了**。
+
+### 证据链
+
+1. 上一轮歌词页顶部那行小字：`那天下雨了 · 55 行 · 酷我 · 已对齐 ×1.06`。
+   `×1.06` 是 `LyricsCleaning.alignedToAudio` 打出来的**拉伸比例**——它真的把整首词的时间轴按 1.06 拉长了。
+2. 这个比例怎么来的：酷我官方歌词**只有行时间、没有总长字段**（`declaredMs = 0`），
+   于是旧口径拿「**最后一行 + 3 秒**」当歌曲总长：
+   ```
+   total  = 208.3s（最后一行） + 3s = 211.3s
+   ratio  = 音源元数据时长 224s / 211.3s = 1.06
+   ```
+   而真实歌曲几乎都有一段 10~30 秒的尾奏——**这不是"另一个剪辑"，这是歌的结尾**。
+3. 线性拉长的后果（正是老板说的"明显晚了"，而且越到后面越明显）：
+
+   | 播放位置 | 高亮位置 | 晚 |
+   |---|---|---|
+   | 30s | 31.8s | +1.8s |
+   | 60s | 63.6s | +3.6s |
+   | 120s | 127.2s | +7.2s |
+   | 200s | 212s | +12s |
+
+4. 这条不是本轮引入的——r63 为了让"Live / 另一版剪辑"的词也能用，加了整轴缩放；
+   但它顺手把**本来就准的词**也拉歪了，所以三轮都没修好（r65 我只改了滚动动画的提前量，
+   等于在"被拉长的时间轴"上做微调，当然没效果）。
+
+### 改法
+
+`LyricsCleaning.alignedToAudio` 的新口径（纯函数，CI 有断言）：
+
+- `declaredMs <= 0`（酷我官方 / 普通 LRC，**实际占绝大多数**）→ **一律不拉伸**，原样使用；
+- `declaredMs > 0`（只有 KRC/QRC 文件头真写了 `[total:]`）→ 才按比例对齐，
+  且窗口从 `0.75…1.35` 收紧到 `0.88…1.12`、偏差 ≥3% 才动（超过 12% 更可能是另一首歌，宁可不猜）。
+
+> 顺带：歌词页顶部那行 `已对齐 ×N` 以后只有"真的拉过"才会出现。
+
+## 二、第 1 条的另一半：进度条"已经完了但还在唱"
+
+这是**独立的第二个 bug**，但它解释了老板为什么会怀疑"时间进度"：
+
+- 录屏逐帧读数：13:12:0x 那一串 `3:36 → 3:38 → 3:40 … → 3:44`（**1:1 跟着真实时间走**，说明播放时钟本身是对的），
+  到 `3:44 / -0:00` 时进度条满格，之后 `3:45、3:46 … 3:50` 还在继续，`-0:00` 一直是 0。
+- 根因：`duration` **只在 `AVPlayerItem.status == .readyToPlay` 那一次**从 `item.duration` 读一遍。
+  远端渐进式流在那一刻的 `item.duration` 常常还是 `indefinite`（要读一会儿文件头），
+  于是 `duration` 就永远停在搜索结果的**元数据时长（224s）**，而真正在放的这条流比它长；
+  AVPlayer 后来学会的真实时长**没人再读**。
+- 改法（`AudioPlayer`）：
+  1. 单独观察 `item.duration`（KVO），值一有效就采纳；
+  2. 0.5 秒的进度观察者里每拍再对齐一次（兜住 KVO 的时序）；
+  3. `currentTime > duration` 时（容器比内容短）把 `duration` 跟着实际位置往后推，
+     不再出现"剩余 0:00 但还在唱"；
+  4. 播到真结尾时把 `currentTime` 记成时长（下次进这首至少是准的）；
+  5. 时长防线 `durationToleranceSec` 5s → **25s**：同一首多一段尾奏（差 10~20 秒）不再被当成坏源反复换源。
+
+## 三、第 2 条：发现页点搜索卡一下
+
+- 根因：搜索入口是 `Button { showSearch = true }`，而 `showSearch` 是**发现页自己的 State**；
+  一点就整个发现页 body 重算，这一页里有两组 `TabView(.page)` 分页器（UIKit 背书的翻页容器），
+  跟着重建就会卡一下；同时 `SearchView.onAppear` 里立刻 `fieldFocused = true`，
+  键盘又要和导航转场抢主线程。
+- 改法：入口换成 **`NavigationLink`**（push 由导航栈处理，发现页状态不变、不重算）；
+  `showSearch` 只留给快捷指令的程序化 push；搜索页的键盘改成 **push 动画走完再弹（0.3s）**。
+
+## 四、第 3 条：搜索结果右侧标签被挤成竖排
+
+- 根因：`SongRow` 里歌名/歌手是弹性宽度，右侧那组（平台胶囊 + 时长 + 爱心）**没有布局优先级**，
+  标题一长就被压扁——胶囊里「酷狗」挤成一字一行，时长的 `03:43` 折成 `03:4 / 3`。
+- 改法：右侧整组 `.fixedSize(horizontal: true, vertical: false)` + `.layoutPriority(1)`，
+  胶囊文字和时长都 `lineLimit(1)`；宁可让左边歌名打省略号，也不让标签换行。
+
+## 五、改动的文件（第八轮）
+
+```
+Services/LyricsCleaning.swift   alignedToAudio：无总长不拉伸；有总长才在 0.88…1.12 内对齐
+Services/AudioPlayer.swift      + durationObservation(KVO) / adoptDuration / 超长自适应 / 结尾冻结时长
+Services/PlaybackRules.swift    durationToleranceSec 5 → 25
+Views/DiscoverView.swift        搜索入口 Button → NavigationLink（不再动发现页 State）
+Views/SearchTabView.swift       键盘延后 0.3s 弹出（避开 push 转场）
+Views/Components.swift          SongRow 尾部标签 fixedSize + layoutPriority；PlatformChip 单行
+Views/SongDetailView.swift      + 「时长」分区：实际播放时长 / 曲目元数据 / 差值（下一轮的证据面）
+ios/SelfTest/main.swift         对齐口径 8 条改写 + 时长防线 2 条（净 +2）
+ios/JZMusicHelper.xcodeproj     MARKETING_VERSION 2.2.0 / CURRENT_PROJECT_VERSION 158
+android/app/build.gradle.kts    versionCode 158 / versionName 2.2.0
+```
+
+## 六、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 语法 / 界面卫生 / 工程文件 | `parse_swift.py` / `check_ui_hygiene.py` / `check_pbxproj.py` | 65 文件 0 错 / 通过 / 通过 |
+| 本轮纯逻辑（对齐口径 + 时长防线） | 本机 WSL Swift 6.0.3 单编小 runner（`.build/r66_small_run.sh`） | **12/12 通过** |
+| 全量纯逻辑 | CI `logic-tests` | 见下节出包记录 |
+| Views | 本机无 Xcode/SwiftUI | 只能靠 CI 的 xcodebuild，见出包记录 |
+
+## 七、装机按这个顺序试
+
+1. **歌词（最重要）**：播《那天下雨了》看歌词——高亮应当**贴着唱词**，不再"越到后面越晚"；
+   歌词页顶部**不该再出现 `已对齐 ×1.0x`**（这条只对 KRC 文件头有总长的歌才可能出现）。
+2. **歌词后段**：跳到 2:30、3:00 附近看是否还对得上（旧版这里会晚 8~12 秒）。
+3. **进度条**：放到结尾——`剩余` 归零时歌曲应当**也已经结束**；进「音源 → 时长」能看到
+   「实际播放时长 / 曲目元数据」两个数，若两者差得多，把那行截图丢群里，我下一轮按它调。
+4. **搜索页**：发现页点搜索——应当是"页面先滑进来、键盘再上"，不再卡一下。
+5. **搜索结果**：右侧「QQ / 网易 / 酷我 / 酷狗」胶囊和时长都是**横着**的，不再竖排。

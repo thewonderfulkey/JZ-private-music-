@@ -87,12 +87,17 @@ struct SongRow: View {
 
             Spacer(minLength: Tokens.Spacing.xs)
 
+            // r66（老板反馈 ③"后面的标签统一都被挤压了，要横着显示"）：
+            // 歌名/专辑一长，HStack 就把右边这组挤扁 —— 平台胶囊被压成一字一行、
+            // 时长 "03:43" 折成 "03:4 / 3"。这一组给 `fixedSize` + 最高布局优先级，
+            // 宁可让左边的歌名省略号，也不让标签换行。
             HStack(spacing: Tokens.Spacing.xs) {
                 PlatformChip(platform: song.platform)
                 Text(song.durationText)
                     .font(FontRole.metadata)
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
                     .frame(minWidth: 36, alignment: .trailing)
                 if showsFavorite, let onFavorite {
                     Button(action: onFavorite) {
@@ -105,6 +110,9 @@ struct SongRow: View {
                     .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
                 }
             }
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
         }
         // 行高用 minHeight 而不是 height：Dynamic Type 最大档（AX5）时行要能长高，不能截断
         .frame(minHeight: Tokens.Size.songRowHeight)
@@ -122,12 +130,17 @@ struct SongRow: View {
 }
 
 /// 平台胶囊（§3.3）：统一墨色胶囊 + 文字，不用四家各自的颜色
+///
+/// r66：胶囊里的文字**必须单行且不压缩**——搜索结果是两字平台名（酷狗/酷我），
+/// 被挤窄以后会变成一字一行（老板截屏里就是竖着排的）。
 struct PlatformChip: View {
     let platform: MusicPlatform
 
     var body: some View {
         Text(platform.shortName)
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(

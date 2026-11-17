@@ -47,8 +47,12 @@ enum PlaybackRules {
     /// 连跳上限（Android `AUTO_SKIP_MAX = 3`）：连续这么多首无源就停，别把整个队列烧光
     static let autoSkipLimit = 3
 
-    /// 实际时长与曲目时长允许的误差（Android：>5s 判为劣质/伪装源并拒绝播放）
-    static let durationToleranceSec: Double = 5
+    /// 实际时长与曲目时长允许的误差。
+    ///
+    /// Android 原来是 5s，那条口径在 iOS 上误伤太多：同一首歌的另一个剪辑（多一段前奏/尾奏）
+    /// 动辄差 10~20 秒，本身完全正常，却被判成坏源反复换源（观感就是"刚播就换源"）。
+    /// r66 起放宽到 25s —— 真正的危险源（30 秒试听、别的歌）差得远不止 25s。
+    static let durationToleranceSec: Double = 25
 
     /// 下一首的索引；nil = 没有可播的下一首（队列为空）
     ///

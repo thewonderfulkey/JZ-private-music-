@@ -63,9 +63,14 @@ struct DiscoverView: View {
 
     // MARK: 顶部搜索入口（反馈 ⑥）
 
+    /// r66（老板反馈 ②"点搜索会卡一下非常明显"）：这里从 `Button { showSearch = true }` 改成
+    /// **NavigationLink**。`showSearch` 是发现页自己的 State，一点就整个发现页 body 重算一遍——
+    /// 而这一页里有两组 `TabView(.page)` 分页器（UIKit 背书的翻页容器），跟着重建就会卡一下。
+    /// NavigationLink 由导航栈自己处理 push，发现页的状态不变，也就不重算。
+    /// `showSearch` 只留给快捷指令（App Intent）走"程序化 push"。
     private var searchEntry: some View {
-        Button {
-            showSearch = true
+        NavigationLink {
+            SearchView()
         } label: {
             HStack(spacing: Tokens.Spacing.xs) {
                 Image(systemName: "magnifyingglass")
@@ -83,6 +88,7 @@ struct DiscoverView: View {
             .frame(minHeight: 42)
             .background(Capsule().fill(Tokens.Palette.paperElevated))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            .contentShape(Capsule())
         }
         .buttonStyle(.press)
         .padding(.horizontal, Tokens.Spacing.pageMargin)

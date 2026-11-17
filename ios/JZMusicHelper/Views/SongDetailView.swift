@@ -52,6 +52,24 @@ struct SourceDetailView: View {
                     LabeledContent("逐字", value: player.lyrics.first?.hasWordTiming == true ? "有" : "无")
                 }
 
+                // r66：时长是"歌词对不上、进度先到头"这一族问题的关键证据，
+                // 摊开来给下一轮直接看（老板截图就能定位是元数据短了还是流本身更长）。
+                Section("时长") {
+                    LabeledContent("实际播放时长", value: player.duration > 0
+                                   ? NowPlayingView.timeText(player.duration) : "未知")
+                    LabeledContent("曲目元数据", value: player.currentSong.map {
+                        $0.duration > 0 ? NowPlayingView.timeText($0.duration) : "未知"
+                    } ?? "—")
+                    if let song = player.currentSong, song.duration > 0, player.duration > 0,
+                       abs(player.duration - song.duration) > 1 {
+                        Text(String(format: "两者差 %+.0f 秒：实际在放的这条比元数据%@，歌词时间轴按元数据算就会偏。",
+                                    player.duration - song.duration,
+                                    player.duration > song.duration ? "长" : "短"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section {
                     Text("音质不是接口自报的，是取流时用 Range 请求读了容器头、再按体积÷时长算出来的。")
                         .font(.caption)

@@ -312,9 +312,16 @@ do {
 }
 
 do {
-    // 时长防线：差 >5s 才算"不是同一份音频"
+    // 时长防线：差 >25s 才算"不是同一份音频"
+    //
+    // r66：原来是 5s，可"同一首歌的另一个剪辑"（多一段尾奏/前奏）动辄差 10~20 秒，
+    // 那首歌本身没问题，却被判成坏源反复换源。真正的"冒充"（30 秒试听、别的歌）差得更远，
+    // 所以门槛放宽到 25s；而且现在时长会跟着 AVPlayer 学会的真实值走（AudioPlayer.adoptDuration）。
+    check("时长容差 = 25 秒", PlaybackRules.durationToleranceSec == 25)
     check("时长一致不拦", !PlaybackRules.durationMismatch(actual: 269, expected: 269))
     check("差 4s 不拦", !PlaybackRules.durationMismatch(actual: 273, expected: 269))
+    check("差 16s 也不拦（同一首、多一段尾奏）",
+          !PlaybackRules.durationMismatch(actual: 285, expected: 269))
     check("差 31s 拦下（现场版冒充原唱）",
           PlaybackRules.durationMismatch(actual: 300, expected: 269))
     check("曲目时长未知不拦", !PlaybackRules.durationMismatch(actual: 300, expected: 0))
@@ -1420,21 +1427,31 @@ do {
     check("全都没词 → nil",
           LddcLyrics.chooseOutcome([outcome(0, false, false)], topCount: 1) == nil)
 
-    // ③ 时间轴对齐：词的总长和音源时长差得多就按比例拉一遍
+    // ③ 时间轴对齐（r66 根因修复）：**只有歌词自己写了总长才允许拉伸**
+    //
+    // 老板三轮都说"歌词晚了一些"，真因就在这一条：酷我官方词没有总长字段，旧口径拿
+    // 「最后一行 + 3 秒」当总长，于是每首正常歌都被当成"另一个剪辑"拉长：
+    // 《那天下雨了》208s+3s=211s、元数据 224s → ×1.06 → 200 秒处晚 12 秒。
     let shortLyric = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 270_000, text: "z")]
-    let aligned = LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 362)
-    check("270s 的词 × 362s 音源 → 比例约 1.33",
-          aligned.ratio > 1.30 && aligned.ratio < 1.40, "\(aligned.ratio)")
-    check("最后一行被拉到音源尾部附近（不再越唱越偏）",
-          abs(Double(aligned.lines.last!.timeMs) - 362_000) < 6_000,
-          "\(aligned.lines.last!.timeMs)")
-    check("差不到 2% 就不动（本来准的词别搓歪）",
-          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 275).ratio == 1)
-    check("差到 3 倍以上不硬拉（明显不是同一版）",
-          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 900).ratio == 1)
+    check("没写总长的词一律不拉伸（这条就是歌词越唱越晚的根因）",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 362).ratio == 1)
+    check("没写总长 + 音源更长也不拉（尾奏不是另一个剪辑）",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 224).ratio == 1)
+
+    // 文件头真写了总长时，才按比例对齐（KRC/QRC 才可能带）
+    let headLyric = [LyricLine(timeMs: 0, text: "a"), LyricLine(timeMs: 190_000, text: "z")]
+    let scaled = LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 218)
+    check("文件头 200s × 音源 218s → 拉 ×1.09",
+          scaled.ratio > 1.08 && scaled.ratio < 1.10, "\(scaled.ratio)")
+    check("拉伸后最后一行也跟着走",
+          (scaled.lines.last?.timeMs ?? 0) > 200_000, "\(scaled.lines.last?.timeMs ?? 0)")
+    check("偏差 >12% 不猜（更可能是另一首歌）",
+          LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 240).ratio == 1)
+    check("偏差 <3% 不动",
+          LyricsCleaning.alignedToAudio(headLyric, declaredMs: 200_000, audioSec: 202).ratio == 1)
     check("音源时长未知 → 原样返回",
-          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 0, audioSec: 0).ratio == 1)
-    check("文件头写了总长 → 用文件头的（不是最后一行）",
+          LyricsCleaning.alignedToAudio(shortLyric, declaredMs: 200_000, audioSec: 0).ratio == 1)
+    check("文件头总长与音源一致 → 不动",
           LyricsCleaning.alignedToAudio([LyricLine(timeMs: 0, text: "a")],
                                         declaredMs: 100_000, audioSec: 100).ratio == 1)
 }

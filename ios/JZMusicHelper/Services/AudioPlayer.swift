@@ -89,6 +89,8 @@ final class PlayerEngine {
     private var endObserver: NSObjectProtocol?
     private var failedObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
+    /// `item.duration` 的观察（远端流要读一会儿头才知道总长，可能在 readyToPlay 之后才有效）
+    private var durationObservation: NSKeyValueObservation?
 
     private var consecutiveSkips = 0
     /// 被判为坏源（时长不符 / 放不出来）的 URL，换源时跳过，避免同一首歌反复撞同一条
@@ -374,18 +376,24 @@ final class PlayerEngine {
     private func wire(item: AVPlayerItem, song: Song, source: StreamSource) {
         teardownObservers()
 
+        // r66：时长单独观察。远端渐进式流在 readyToPlay 那一刻 `item.duration` 常是 indefinite，
+        // 只在 status 回调里读一次就会永远停在元数据时长（→ 进度条先到头、歌还在唱）。
+        durationObservation = item.observe(\.duration, options: [.initial, .new]) { [weak self] item, _ in
+            let seconds = item.duration.seconds
+            guard seconds.isFinite, seconds > 0 else { return }
+            Task { @MainActor in self?.adoptDuration(seconds) }
+        }
+
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
                 guard let self else { return }
                 switch item.status {
                 case .readyToPlay:
                     let actual = item.duration.seconds
-                    if actual.isFinite, actual > 0 {
-                        self.duration = actual
-                    }
-                    // 时长防线：与曲目时长差 >5s 就是"标着这首歌、给的是别的版本"
+                    self.adoptDuration(actual)
+                    // 时长防线：与曲目时长差 >25s 就是"标着这首歌、给的是别的版本"
                     if PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
-                        self.rejectSource(source, reason: "拿到的音频时长 \(Int(actual))s 与曲目 \(Int(song.duration))s 不符（±5s），已换源")
+                        self.rejectSource(source, reason: "拿到的音频时长 \(Int(actual))s 与曲目 \(Int(song.duration))s 不符（±\(Int(PlaybackRules.durationToleranceSec))s），已换源")
                     }
                     self.updateNowPlaying()
                 case .failed:
@@ -414,6 +422,8 @@ final class PlayerEngine {
     }
 
     private func handleTrackFinished() {
+        // 播到真结尾了：这时 currentTime 就是这条音频的真实长度，覆盖掉容器/元数据那份
+        if currentTime > duration { duration = currentTime }
         switch mode {
         case .singleLoop:
             // 单曲循环：同一份音频重播，不重新解析（省 1~12s）
@@ -433,6 +443,13 @@ final class PlayerEngine {
     private var skipLimit: Int {
         let settings = SettingsStore.shared
         return settings.autoSkipDeadSongs ? max(1, settings.skipLimit) : 1
+    }
+
+    /// 采纳播放项的时长（只往"更可信"的方向走：有效、且和现有值差 > 0.5 秒）
+    private func adoptDuration(_ seconds: Double) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        guard abs(seconds - duration) > 0.5 else { return }
+        duration = max(seconds, currentTime)
     }
 
     private func rejectSource(_ source: StreamSource, reason: String) {
@@ -477,6 +494,12 @@ final class PlayerEngine {
                     self.updateLyricIndex()
                 }
                 if let item = self.player.currentItem {
+                    self.adoptDuration(item.duration.seconds)
+                    // 容器/元数据说已经结束，但音频还在走：以实际播放位置为准，
+                    // 别让界面停在"剩余 0:00"（老板 r66：明明进度完了还在唱）
+                    if self.currentTime > self.duration + 0.5 {
+                        self.duration = self.currentTime + 0.5
+                    }
                     let ranges = item.loadedTimeRanges
                     if let last = ranges.last {
                         let range = last.timeRangeValue
@@ -492,6 +515,8 @@ final class PlayerEngine {
     private func teardownObservers() {
         statusObservation?.invalidate()
         statusObservation = nil
+        durationObservation?.invalidate()
+        durationObservation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = nil
         if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }

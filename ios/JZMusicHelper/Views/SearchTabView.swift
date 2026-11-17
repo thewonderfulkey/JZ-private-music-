@@ -51,7 +51,13 @@ struct SearchView: View {
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { fieldFocused = true }
+        // r66（老板反馈 ②）：键盘**等 push 动画走完再弹**。
+        // 原来 `onAppear` 里立刻 fieldFocused = true，键盘要跟导航转场抢同一帧的主线程，
+        // 表现就是"点搜索卡一下"。晚 0.3 秒弹键盘，观感是"页面先到、键盘再上"，反而顺。
+        .task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if !Task.isCancelled { fieldFocused = true }
+        }
         .onDisappear { searchTask?.cancel() }
         // App Intent（「搜索歌曲」快捷指令）把词塞进 router，这里消费掉
         .onChange(of: router.pendingSearch) { _, _ in consumePendingSearch() }
