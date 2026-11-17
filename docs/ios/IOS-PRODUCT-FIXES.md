@@ -553,3 +553,24 @@ ios/SelfTest/main.swift             删「锁屏活动」整段；+14 条（滚�
 9. **点击反馈（⑨）**：随便按住一行，整条会亮一下再淡出；按钮按下去会缩一下。
 10. **锁屏（⑩）**：播放后锁屏只有**系统那条透明播放卡**，不再有下面那张黑色卡片；灵动岛也不再显示歌词。
 
+## 五、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `JZ-Music-v2.1.99-ad8e6e5-r66-ios-unsigned.ipa` |
+| 大小 | 1,703,558 字节（≈1.62 MB） |
+| SHA-256 | `e7fb2c8968fda84a20c0af376bf24292b9d25537fe3ab0dd345e604416ca9073` |
+| CI | [run #66](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44002634064)（逻辑断言 **484 / 0 失败** / `BUILD SUCCEEDED` / `PlugIns/JZWidgets.appex` 在包里 / 已发飞书群） |
+| 提交 | `ad8e6e5`（主改动 `b0bce4d` + 去掉 Widget 里没用的 ActivityKit import） |
+| 包内自证 | `CFBundleShortVersionString = 2.1.99` / `CFBundleVersion = 157`；`Info.plist` 里**已没有** `NSSupportsLiveActivities`；二进制里能找到 `lyricScrollIndex`，`LiveActivity` / `SongActivityAttributes` 命中 **0**；Widget 扩展里 `SongActivityAttributes` 也是 0（每日推荐 `DailyPicks` 还在） |
+
+> 认包只认 `ad8e6e5-r66`。群里那条 `b0bce4d-r65` 是同一份代码的中间包（只差一行 import 清理），装 r66 就行。
+
+## 六、本轮 CI 口径（给下一轮的我）
+
+- 断言总数这次**刚好没变**（484）：删掉的「锁屏活动」14 条 + 新增的「滚动提前量 7 + 下拽阈值 7」14 条。
+- 本机 WSL 跑全量 selftest 会停在「歌词解密」那一段（`Compression` 桩解不出 zlib，`err=init 失败`），
+  这是本机桩的限制、不是回归；**新加的纯逻辑用单编小 runner 验**（`.build/r65_small_run.sh`，13/13）。
+- 本机 typecheck 的做法（`.build/r65_swiftcheck.sh`）：源码复制到 /tmp 并补 `import FoundationNetworking`（Linux 的 URLSession 在
+  FoundationNetworking 里），`CryptoKit` / `Compression` 用 `.build/swiftcheck/*Stub.swift` 编成模块，
+  再加一个 `URLSession.bytes` 桩（`LinuxURLSessionBytesStub.swift`，只给 typecheck 用、不入仓库）。
