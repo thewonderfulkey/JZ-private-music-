@@ -972,52 +972,48 @@ do {
           SongShare.text(song: shared, source: src))
 }
 
-// MARK: - 锁屏歌词 / 灵动岛（P4 第三段）
+// MARK: - 歌词滚动提前量 / 下拽关闭灵敏度（r65）
 
-section("锁屏活动：进度 / 歌词截断 / 刷新节流")
+section("歌词滚动提前量与下拽关闭（r65）")
 
 do {
-    // ① 进度
-    check("一半时长 = 0.5", PlaybackActivityRules.progress(current: 135, duration: 270) == 0.5)
-    check("超出时长夹到 1", PlaybackActivityRules.progress(current: 300, duration: 270) == 1.0)
-    check("负数夹到 0", PlaybackActivityRules.progress(current: -5, duration: 270) == 0.0)
-    check("时长未知给 0", PlaybackActivityRules.progress(current: 30, duration: 0) == 0)
+    // ① 滚动要早于高亮（老板："歌词统一都是滚动晚了一些"）
+    let lines = [
+        LyricLine(timeMs: 1_000, text: "第一句", words: []),
+        LyricLine(timeMs: 5_000, text: "第二句", words: []),
+        LyricLine(timeMs: 9_000, text: "第三句", words: []),
+    ]
 
-    // ② 歌词截断（锁屏只有一行）
-    check("短句原样", PlaybackActivityRules.shorten("晴天") == "晴天")
-    let longLine = "故事的小黄花从出生那年就飘着童年的荡秋千随记忆一直晃到现在"
-    let shortened = PlaybackActivityRules.shorten(longLine)
-    check("长句截断到上限", shortened.count == PlaybackActivityRules.maxLyricLength, "\(shortened.count)")
-    check("截断以省略号结尾", shortened.hasSuffix("…"))
-    check("前后空白被去掉", PlaybackActivityRules.shorten("  晴天  ") == "晴天")
+    check("提前量 220ms", LyricsUXRules.scrollLeadMs == 220)
 
-    // ③ 刷新节流
-    let now = Date()
-    let base = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "A",
-                                        progress: 0.1, isPlaying: true, updatedAt: now)
-    check("第一次一定刷新",
-          PlaybackActivityRules.shouldRefresh(previous: nil, next: base,
-                                              lastUpdate: now.addingTimeInterval(-100), now: now))
-    let sameContent = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "A",
-                                               progress: 0.11, isPlaying: true, updatedAt: now)
-    check("内容没变 1 秒内不刷",
-          !PlaybackActivityRules.shouldRefresh(previous: base, next: sameContent,
-                                               lastUpdate: now.addingTimeInterval(-1), now: now))
-    check("内容没变 6 秒后刷（进度条要对齐）",
-          PlaybackActivityRules.shouldRefresh(previous: base, next: sameContent,
-                                              lastUpdate: now.addingTimeInterval(-7), now: now))
-    let nextLine = PlaybackActivitySnapshot(title: "晴天", artist: "周杰伦", lyricLine: "B",
-                                            progress: 0.2, isPlaying: true, updatedAt: now)
-    check("换歌词行 0.6 秒后立刻刷",
-          PlaybackActivityRules.shouldRefresh(previous: base, next: nextLine,
-                                              lastUpdate: now.addingTimeInterval(-0.6), now: now))
-    check("换歌词行 0.2 秒内仍节流",
-          !PlaybackActivityRules.shouldRefresh(previous: base, next: nextLine,
-                                               lastUpdate: now.addingTimeInterval(-0.2), now: now))
+    // 第 1 句唱到 4.9 秒时高亮还在第 1 句，但滚动目标已经是第 2 句（提前 220ms 起滚）
+    check("高亮仍第 1 句",
+          LyricsCleaning.indexAt(lines, positionMs: 4_900) == 0)
+    check("滚动目标已提前到第 2 句",
+          LyricsCleaning.scrollAnchorIndex(lines, positionMs: 4_900,
+                                          leadMs: LyricsUXRules.scrollLeadMs) == 1)
+    check("离切换还远时两者一致",
+          LyricsCleaning.scrollAnchorIndex(lines, positionMs: 2_000,
+                                          leadMs: LyricsUXRules.scrollLeadMs) == 0)
+    check("提前量 0 时退化为高亮行",
+          LyricsCleaning.scrollAnchorIndex(lines, positionMs: 4_900, leadMs: 0) == 0)
+    check("空歌词返回 -1",
+          LyricsCleaning.scrollAnchorIndex([], positionMs: 4_900, leadMs: 220) == -1)
+    check("负数提前量按 0 处理",
+          LyricsCleaning.scrollAnchorIndex(lines, positionMs: 4_900, leadMs: -500) == 0)
 
-    // ④ 过期时间：App 被杀后锁屏不该永远显示旧歌
-    check("staleDate 是 2 分钟后",
-          abs(PlaybackActivityRules.staleDate(from: now).timeIntervalSince(now) - 120) < 0.001)
+    // ② 下拽关闭：比上一版（110 / 280）灵敏，但轻点、上滑、横滑都不关
+    check("阈值 56 / 170",
+          PlayerDismissRules.dismissDistance == 56 && PlayerDismissRules.dismissPredictedDistance == 170)
+    check("拖到 60pt 就关", PlayerDismissRules.shouldDismiss(translation: 60, predicted: 90))
+    check("拖 90pt 随便预测都关",
+          PlayerDismissRules.shouldDismiss(translation: 90, predicted: 90))
+    check("只拖 20pt 不关", !PlayerDismissRules.shouldDismiss(translation: 20, predicted: 40))
+    check("轻扫（预测 180）也关",
+          PlayerDismissRules.shouldDismiss(translation: 30, predicted: 180))
+    check("上滑不关", !PlayerDismissRules.shouldDismiss(translation: -80, predicted: -200))
+    check("NaN 不崩也不关",
+          !PlayerDismissRules.shouldDismiss(translation: .nan, predicted: .nan))
 }
 
 // MARK: - 版式规则（P5 打磨）

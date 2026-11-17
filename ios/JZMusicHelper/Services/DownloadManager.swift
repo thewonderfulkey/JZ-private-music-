@@ -676,19 +676,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // 上一次是被用户上滑强杀的：系统不给 willTerminate，灵动岛/锁屏活动会留在那儿。
-        // 启动时按类型扫一遍，全部收掉（正常启动时这里是空集合，没有副作用）。
-        LiveActivityController.endAllActivities()
         return true
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
         // 用户/系统正在收掉 App：把"音乐软件留在系统里的东西"一次性清干净。
         // `assumeIsolated`：UIKit 一定在主线程调 willTerminate，而这里要碰的
-        // NowPlayingCenter / LiveActivityController 都是 @MainActor —— 同步执行，不排进队列
+        // NowPlayingCenter 是 @MainActor —— 同步执行，不排进队列
         // （排进队列的话进程可能已经没了，清理根本不会跑）。
         MainActor.assumeIsolated {
-            LiveActivityController.shared.resetForTermination()
             NowPlayingCenter.shared.teardown()
         }
     }

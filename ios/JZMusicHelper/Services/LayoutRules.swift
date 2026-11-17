@@ -129,4 +129,41 @@ enum LyricsUXRules {
         guard secondsSinceScrollEnd.isFinite else { return false }
         return secondsSinceScrollEnd < tapCooldownAfterScroll
     }
+
+    /// 滚动的**提前量**（毫秒）。
+    ///
+    /// r65 老板："歌词现在统一都是滚动晚了一些"。高亮切行本身是准的（`indexAt` 就是 APK 口径：
+    /// 行时间一到就亮），晚的是**那一下滚动**——旧版等高亮变了才开始 `scrollTo(anchor: .center)`，
+    /// 动画本身 0.38 秒，于是新的一行在它已经开唱之后才慢慢滑到屏幕中间。
+    /// 现在滚动比高亮早 `scrollLeadMs` 开始，动画再压到 0.28 秒，两者叠起来刚好抵消。
+    static let scrollLeadMs: Int = 220
+}
+
+// MARK: - 播放页下拽收起（纯函数）
+//
+// r65 老板："播放页手指下滑关闭播放页有点太不灵敏了，可以再灵敏一点，但不要影响歌词逻辑，
+// 歌词上下滑动还是不能退出播放页。"
+//
+// 旧口径：位移 > 110pt，或预测位移 > 280pt → 关。实测手感很钝：手指要划掉四分之一屏才关得掉。
+// 现在的口径（都调小，但保留"必须确实在往下拽"的约束，避免横滑/轻点误关）：
+//   · 位移 ≥ 56pt 就关（约一个半指节的行程）
+//   · 或者预测位移 ≥ 170pt（快速轻扫那一下）
+// 歌词页压根不挂这个手势（见 NowPlayingView.page），所以调灵敏不会影响歌词上下滑。
+enum PlayerDismissRules {
+
+    /// 手指移动超过这个距离才算"在拽"（低于它当成轻点，交给按钮/双击）
+    static let minDragDistance: Double = 8
+
+    /// 松手时位移达到这个值就关（旧版 110，太钝）
+    static let dismissDistance: Double = 56
+
+    /// 或者"再滑一点点就到位"的预测位移达到这个值（快速轻扫）
+    static let dismissPredictedDistance: Double = 170
+
+    /// 松手判定：位移够远，或者预测位移够远
+    static func shouldDismiss(translation: Double, predicted: Double) -> Bool {
+        guard translation.isFinite, predicted.isFinite else { return false }
+        guard translation > 0 else { return false }
+        return translation >= dismissDistance || predicted >= dismissPredictedDistance
+    }
 }

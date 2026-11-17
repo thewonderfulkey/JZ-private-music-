@@ -48,10 +48,9 @@ struct HotChartView: View {
                                                 reason: song.singer,
                                                 showReason: false,
                                                 rank: index + 1)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
-                            .buttonStyle(.press)
-                            .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            Divider().padding(.leading, Tokens.Spacing.pageMargin + 44)
+                            .buttonStyle(.rowPress)
                         }
 
                         // 迷你条是浮层：榜单末尾让出高度（第五轮反馈 ⑨）

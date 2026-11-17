@@ -23,6 +23,14 @@ struct SearchView: View {
     @State private var showHidden = false
     @FocusState private var fieldFocused: Bool
 
+    // r65（老板反馈 ⑦）：搜索只回第一页，底部要能「查看更多结果」。
+    // 翻页时按 `SearchRanker.dedupeKey` 跟已经显示的做去重，翻到"这一页没有新的"就收口。
+    @State private var page = 1
+    @State private var isLoadingMore = false
+    @State private var canLoadMore = true
+    @State private var seenKeys: Set<String> = []
+    private let pageSize = 20
+
     private var visibleSongs: [Song] {
         songs.filter { !player.deadSongKeys.contains($0.id) }
     }
@@ -187,9 +195,9 @@ struct SearchView: View {
                                     showsFavorite: true,
                                     isFavorite: library.isFavorite(song),
                                     onFavorite: { library.toggleFavorite(song) })
+                                .padding(.horizontal, Tokens.Spacing.pageMargin)
                         }
-                        .buttonStyle(.press)
-                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        .buttonStyle(.rowPress)
                         .contextMenu {
                             Button {
                                 downloadFlow.start(song: song, want: player.quality)
@@ -203,7 +211,6 @@ struct SearchView: View {
                                       systemImage: library.isFavorite(song) ? "heart.slash" : "heart")
                             }
                         }
-                        Divider().padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                     }
 
                     if !hiddenSongs.isEmpty {
@@ -215,6 +222,8 @@ struct SearchView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
                     }
+
+                    moreResultsFooter
 
                     MiniPlayerSpacer()
                 }
@@ -259,15 +268,101 @@ struct SearchView: View {
         searchTask?.cancel()
         songs = []
         platformResults = []
+        seenKeys = []
+        page = 1
+        canLoadMore = true
+        isLoadingMore = false
         isSearching = true
         library.recordSearch(trimmed)
 
         searchTask = Task { @MainActor in
-            let result = await SearchService.shared.searchRanked(keyword: trimmed, limit: 20)
+            let result = await SearchService.shared.searchRanked(keyword: trimmed,
+                                                                limit: pageSize, page: 1)
             guard !Task.isCancelled else { return }
             songs = result.songs
             platformResults = result.platforms
+            seenKeys = Set(result.songs.map(SearchRanker.dedupeKey))
+            canLoadMore = !result.songs.isEmpty
             isSearching = false
+        }
+    }
+
+    // MARK: 查看更多结果（老板 r65 反馈 ⑦）
+
+    private var moreResultsFooter: some View {
+        VStack(spacing: Tokens.Spacing.xs) {
+            if canLoadMore {
+                Button {
+                    Haptics.tap()
+                    loadMore()
+                } label: {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        if isLoadingMore {
+                            ProgressView().scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.footnote.weight(.semibold))
+                        }
+                        Text(isLoadingMore ? "正在加载…" : "查看更多结果")
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .foregroundStyle(Tokens.Palette.vermilion)
+                    .padding(.horizontal, Tokens.Spacing.l)
+                    .frame(minHeight: 44)
+                    .background(Capsule().fill(Tokens.Palette.paperElevated))
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                }
+                .buttonStyle(.press)
+                .disabled(isLoadingMore)
+                .accessibilityHint("往下再取一页搜索结果")
+            } else {
+                Text("已经到底了 · 共 \(songs.count) 首")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.top, Tokens.Spacing.m)
+        .padding(.bottom, Tokens.Spacing.xs)
+    }
+
+    /// 再取一页：四个平台同时翻页，合并排序后只留下没显示过的那些
+    private func loadMore() {
+        guard !isLoadingMore, canLoadMore else { return }
+        let trimmed = trimmedKeyword
+        guard !trimmed.isEmpty else { return }
+        isLoadingMore = true
+        let next = page + 1
+        let already = seenKeys
+
+        Task { @MainActor in
+            let result = await SearchService.shared.searchRanked(keyword: trimmed,
+                                                                limit: pageSize, page: next)
+            // 期间又搜了别的词 → 这一页作废
+            guard trimmedKeyword == trimmed, keyword.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else {
+                return
+            }
+            page = next
+            isLoadingMore = false
+            let fresh = result.songs.filter { !already.contains(SearchRanker.dedupeKey($0)) }
+            guard !fresh.isEmpty else {
+                canLoadMore = false
+                return
+            }
+            seenKeys.formUnion(fresh.map(SearchRanker.dedupeKey))
+            songs.append(contentsOf: fresh)
+            platformResults = merged(platformResults, with: result.platforms)
+        }
+    }
+
+    /// 平台状态行累加各平台已取到的条数
+    private func merged(_ old: [SearchService.PlatformResult],
+                        with new: [SearchService.PlatformResult]) -> [SearchService.PlatformResult] {
+        new.map { item in
+            guard let previous = old.first(where: { $0.platform == item.platform }) else { return item }
+            return SearchService.PlatformResult(platform: item.platform,
+                                                songs: previous.songs + item.songs,
+                                                error: item.error ?? previous.error,
+                                                elapsedMs: previous.elapsedMs + item.elapsedMs)
         }
     }
 }

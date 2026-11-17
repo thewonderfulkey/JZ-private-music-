@@ -31,7 +31,6 @@ struct EditorPlaylistView: View {
                 header
                 ForEach(Array(seeds.enumerated()), id: \.offset) { index, seed in
                     row(index: index, seed: seed)
-                    Divider().padding(.leading, Tokens.Spacing.pageMargin + 24 + Tokens.Spacing.s)
                 }
                 if let status {
                     StatusLine(kind: .info(status))
@@ -144,11 +143,13 @@ struct EditorPlaylistView: View {
                 }
             }
             .frame(minHeight: Tokens.Size.songRowHeight)
+            .padding(.vertical, Tokens.Spacing.xxs)
+            .padding(.horizontal, Tokens.Spacing.xxs)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.press)
+        .buttonStyle(.rowPress)
         .disabled(resolvingIndex != nil || preparing)
-        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.horizontal, Tokens.Spacing.pageMargin - Tokens.Spacing.xxs)
         .accessibilityLabel("第 \(index + 1) 首，\(seed.name)，\(seed.singer)")
         .accessibilityHint("点一下解析并播放")
     }

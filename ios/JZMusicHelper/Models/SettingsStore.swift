@@ -65,7 +65,6 @@ final class SettingsStore {
         static let pauseBeforeRecognize = "rec_pause"
         static let wifiOnlyDownload = "wifi_only"
         static let backgroundDownload = "bg_download"
-        static let liveActivity = "live_activity"
         static let lyricOffset = "lyric_offset_ms"
     }
 
@@ -105,10 +104,6 @@ final class SettingsStore {
     var backgroundDownload: Bool {
         didSet { defaults.set(backgroundDownload, forKey: Key.backgroundDownload) }
     }
-    /// 锁屏 / 灵动岛实时活动：关掉之后完全不创建（退出 App 后不会留任何残影）
-    var liveActivityEnabled: Bool {
-        didSet { defaults.set(liveActivityEnabled, forKey: Key.liveActivity) }
-    }
     /// 歌词时间偏移（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±2000，步进 100
     ///
     /// 为什么放到 ±2000：第四轮老板说"歌词还是没对上"。同一个歌名不同版本（Live / 重制 / 电视剧版）
@@ -139,7 +134,6 @@ final class SettingsStore {
         pauseBeforeRecognize = d.object(forKey: Key.pauseBeforeRecognize) as? Bool ?? true
         wifiOnlyDownload = d.object(forKey: Key.wifiOnlyDownload) as? Bool ?? true
         backgroundDownload = d.object(forKey: Key.backgroundDownload) as? Bool ?? true
-        liveActivityEnabled = d.object(forKey: Key.liveActivity) as? Bool ?? true
         let offset = d.integer(forKey: Key.lyricOffset)
         lyricOffsetMs = Self.clampOffset(offset)
     }

@@ -292,9 +292,8 @@ struct RecognizeView: View {
                             } label: {
                                 versionRow(song)
                             }
-                            .buttonStyle(.press)
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            Divider().padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
+                            .buttonStyle(.rowPress)
                         }
                     }
                 }

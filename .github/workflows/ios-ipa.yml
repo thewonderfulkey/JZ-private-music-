@@ -72,7 +72,6 @@ jobs:
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
             ios/JZMusicHelper/Services/IntentInbox.swift \
-            ios/JZMusicHelper/Services/PlaybackActivityModel.swift \
             ios/JZMusicHelper/Services/LayoutRules.swift \
             ios/JZMusicHelper/Models/DiscoverCatalog.swift \
             ios/JZMusicHelper/Services/LyricsModel.swift \

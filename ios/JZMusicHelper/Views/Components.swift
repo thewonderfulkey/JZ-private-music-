@@ -20,12 +20,7 @@ struct SongArtwork: View {
     var size: CGFloat = Tokens.Size.songRowArtwork
     var radius: CGFloat = Tokens.Radius.artworkSmall
 
-    @State private var resolvedURL: String?
     @State private var image: UIImage?
-
-    private var url: URL? {
-        (resolvedURL ?? song.picURL).flatMap { $0.isEmpty ? nil : URL(string: $0) }
-    }
 
     var body: some View {
         Group {
@@ -43,20 +38,13 @@ struct SongArtwork: View {
     }
 
     /// 封面走内存缓存：滚动离开再回来不重新下载（AsyncImage 会重下）
+    ///
+    /// r65：取图逻辑收进 `CoverImageCache.image(for:)`，播放页也走同一条链
+    /// ——老板反馈"列表里有封面、点进播放页却没有封面"，根因就是播放页只读 `song.picURL`，
+    /// 没有走这条路（网易/酷我的歌常常 picURL 为空，靠 CoverResolver 兜底才有图）。
     private func load() async {
         if image != nil { return }
-        // 第五轮（老板反馈 ⑧）：下过的歌先读下载时一起存的本地封面，无网络也显示真封面
-        if let path = DownloadManager.shared.localCoverURL(for: song)?.path,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-           let localImage = UIImage(data: data) {
-            image = localImage
-            return
-        }
-        if resolvedURL == nil {
-            resolvedURL = await CoverResolver.shared.coverURL(for: song)
-        }
-        guard let url else { return }
-        image = await CoverImageCache.shared.image(for: url)
+        image = await CoverImageCache.shared.image(for: song)
     }
 
     private var placeholder: some View {
@@ -71,7 +59,11 @@ struct SongArtwork: View {
 
 // MARK: SongRow（§2.1）
 
-/// 全 App 唯一行样式：48 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长
+/// 全 App 唯一行样式：52 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长
+///
+/// r65（老板反馈 ⑧："每一条返回结果都太细了，显得挨的很紧，可以查看图片中的样式"）：
+/// 参照群里那张截屏的排布——封面 48→52、行内上下各留 12（行高 ≈ 76）、标题与副行间距 3、
+/// 列表**不再用分隔线**，靠行高本身隔开；按压时整行铺一层高亮（见 `.rowPress`）。
 struct SongRow: View {
     let song: Song
     var showsFavorite = false
@@ -83,7 +75,7 @@ struct SongRow: View {
         HStack(spacing: Tokens.Spacing.s) {
             SongArtwork(song: song)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(song.name)
                     .font(FontRole.songTitle)
                     .lineLimit(1)
@@ -116,6 +108,8 @@ struct SongRow: View {
         }
         // 行高用 minHeight 而不是 height：Dynamic Type 最大档（AX5）时行要能长高，不能截断
         .frame(minHeight: Tokens.Size.songRowHeight)
+        .padding(.vertical, Tokens.Spacing.xxs)
+        .padding(.horizontal, Tokens.Spacing.xxs)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(song.name)，\(song.singer)，\(song.durationText)")
@@ -395,21 +389,24 @@ struct PendingFeatureRow: View {
     }
 }
 
-// MARK: - 按压反馈（老板反馈 ③：点击反馈不明显）
+// MARK: - 按压反馈（老板反馈 ③ / r65 反馈 ⑨：点击反馈不明显）
 
-/// 全 App 统一的按压反馈：按下缩到 0.97、压暗到 0.8、松手弹回。
+/// 全 App 统一的按压反馈：按下缩到 0.94、压暗到 0.72、松手弹回。
 ///
 /// 为什么不用 `.plain`：`.plain` 把系统的按下高亮也一起去掉了，行/卡片点下去毫无反馈，
 /// 加上"卡了一下"的体感就变成"点了没反应"。触觉由调用方在动作里补（`Haptics.tap()`）。
+///
+/// r65：老板对着群里那段 Light Player 的录屏说"所有的点击反馈都不明显"，所以缩得更狠、压得更暗，
+/// 松手用更快的 spring 弹回——按下去要立刻有"被按住了"的感觉。
 struct PressFeedbackButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.97
-    var dim: Double = 0.82
+    var scale: CGFloat = 0.94
+    var dim: Double = 0.72
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
             .opacity(configuration.isPressed ? dim : 1)
-            .animation(.spring(response: 0.22, dampingFraction: 0.72),
+            .animation(.spring(response: 0.18, dampingFraction: 0.6),
                        value: configuration.isPressed)
     }
 }
@@ -417,8 +414,36 @@ struct PressFeedbackButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == PressFeedbackButtonStyle {
     /// 用法：`.buttonStyle(.press)`
     static var press: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
-    /// 大块卡片用更轻的缩放（整张卡缩 0.97 会显得晃）
+    /// 大块卡片用更轻的缩放（整张卡缩 0.94 会显得晃）
     static var pressSubtle: PressFeedbackButtonStyle {
-        PressFeedbackButtonStyle(scale: 0.99, dim: 0.92)
+        PressFeedbackButtonStyle(scale: 0.97, dim: 0.88)
     }
+}
+
+/// 列表行 / 卡片专用：按下时**整块铺一层高亮**（Light Player 那种"整条压暗"），再轻缩一点。
+///
+/// 为什么行不能只靠 `.press` 的缩放：行太宽，0.94 的缩放肉眼几乎看不出来；
+/// 而"按下就有一整条底色"是手机上最容易被看见的反馈。高亮淡出比淡入慢，按一下有拖尾感。
+struct RowPressButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.985
+    var highlight: Double = 0.10
+    var cornerRadius: CGFloat = 12
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed ? highlight : 0))
+            )
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(configuration.isPressed
+                       ? .easeOut(duration: 0.06)
+                       : .easeOut(duration: 0.22),
+                       value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == RowPressButtonStyle {
+    /// 用法（列表行）：`Button { … } label: { SongRow(song: song) }.buttonStyle(.rowPress)`
+    static var rowPress: RowPressButtonStyle { RowPressButtonStyle() }
 }

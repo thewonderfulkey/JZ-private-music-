@@ -73,11 +73,6 @@
 		B00000000000000000000046 /* DiscoverRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* DiscoverRules.swift */; };
 		B00000000000000000000048 /* Song.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* Song.swift */; };
 		B00000000000000000000047 /* JZWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000046 /* JZWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		B00000000000000000000049 /* PlaybackActivityModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000049 /* PlaybackActivityModel.swift */; };
-		B0000000000000000000004A /* PlaybackActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004A /* PlaybackActivity.swift */; };
-		B0000000000000000000004B /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004B /* LiveActivityController.swift */; };
-		B0000000000000000000004C /* PlaybackActivityModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000049 /* PlaybackActivityModel.swift */; };
-		B0000000000000000000004D /* PlaybackActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004A /* PlaybackActivity.swift */; };
 		B0000000000000000000004E /* ReadableWidth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004C /* ReadableWidth.swift */; };
 		B0000000000000000000004F /* CoverImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004D /* CoverImageCache.swift */; };
 		B00000000000000000000050 /* LayoutRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004E /* LayoutRules.swift */; };
@@ -152,9 +147,6 @@
 		F00000000000000000000046 /* JZWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = JZWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000047 /* JZWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JZWidgets.swift; sourceTree = "<group>"; };
 		F00000000000000000000048 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		F00000000000000000000049 /* PlaybackActivityModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackActivityModel.swift; sourceTree = "<group>"; };
-		F0000000000000000000004A /* PlaybackActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackActivity.swift; sourceTree = "<group>"; };
-		F0000000000000000000004B /* LiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityController.swift; sourceTree = "<group>"; };
 		F0000000000000000000004C /* ReadableWidth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadableWidth.swift; sourceTree = "<group>"; };
 		F0000000000000000000004D /* CoverImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverImageCache.swift; sourceTree = "<group>"; };
 		F0000000000000000000004E /* LayoutRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutRules.swift; sourceTree = "<group>"; };
@@ -253,9 +245,6 @@
 				F00000000000000000000043 /* AppRouter.swift */,
 				F00000000000000000000044 /* IntentInbox.swift */,
 				F00000000000000000000045 /* JZIntents.swift */,
-				F00000000000000000000049 /* PlaybackActivityModel.swift */,
-				F0000000000000000000004A /* PlaybackActivity.swift */,
-				F0000000000000000000004B /* LiveActivityController.swift */,
 				F0000000000000000000004D /* CoverImageCache.swift */,
 				F0000000000000000000004E /* LayoutRules.swift */,
 				F0000000000000000000004F /* DownloadCompanion.swift */,
@@ -509,9 +498,6 @@
 				B00000000000000000000041 /* AppRouter.swift in Sources */,
 				B00000000000000000000042 /* IntentInbox.swift in Sources */,
 				B00000000000000000000043 /* JZIntents.swift in Sources */,
-				B00000000000000000000049 /* PlaybackActivityModel.swift in Sources */,
-				B0000000000000000000004A /* PlaybackActivity.swift in Sources */,
-				B0000000000000000000004B /* LiveActivityController.swift in Sources */,
 				B0000000000000000000004E /* ReadableWidth.swift in Sources */,
 				B0000000000000000000004F /* CoverImageCache.swift in Sources */,
 				B00000000000000000000050 /* LayoutRules.swift in Sources */,
@@ -528,8 +514,6 @@
 				B00000000000000000000045 /* DiscoverCatalog.swift in Sources */,
 				B00000000000000000000046 /* DiscoverRules.swift in Sources */,
 				B00000000000000000000048 /* Song.swift in Sources */,
-				B0000000000000000000004C /* PlaybackActivityModel.swift in Sources */,
-				B0000000000000000000004D /* PlaybackActivity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -656,7 +640,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 156;
+				CURRENT_PROJECT_VERSION = 157;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -665,7 +649,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.98;
+				MARKETING_VERSION = 2.1.99;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -680,7 +664,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 156;
+				CURRENT_PROJECT_VERSION = 157;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -689,7 +673,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.98;
+				MARKETING_VERSION = 2.1.99;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -703,7 +687,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 156;
+				CURRENT_PROJECT_VERSION = 157;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -712,7 +696,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.98;
+				MARKETING_VERSION = 2.1.99;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -727,7 +711,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 156;
+				CURRENT_PROJECT_VERSION = 157;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -736,7 +720,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.98;
+				MARKETING_VERSION = 2.1.99;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

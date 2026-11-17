@@ -87,92 +87,11 @@ struct DailyPicksWidget: Widget {
     }
 }
 
-// MARK: - 锁屏歌词 / 灵动岛（Live Activity）
-//
-// 一个活动 = 一首歌。标题/歌手/歌词行/进度都在 ContentState 里（Attributes 只放 songID），
-// 主 App 侧的 LiveActivityController 负责 request / update / end。
-struct SongLockScreenView: View {
-    let state: SongActivityAttributes.ContentState
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(state.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(state.artist)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text(state.lyricLine.isEmpty ? " " : state.lyricLine)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                ProgressView(value: state.progress)
-                    .tint(Color(.sRGB, red: 0.69, green: 0.23, blue: 0.18))
-                    .padding(.top, 2)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                .font(.system(size: 30))
-                .foregroundStyle(.primary)
-        }
-        .padding(14)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(state.title)，\(state.artist)，\(state.lyricLine)")
-    }
-}
-
-struct SongLiveActivity: Widget {
-    private var accent: Color { Color(.sRGB, red: 0.69, green: 0.23, blue: 0.18) }
-
-    var body: some WidgetConfiguration {
-        ActivityConfiguration(for: SongActivityAttributes.self) { context in
-            SongLockScreenView(state: context.state)
-                .activityBackgroundTint(Color.black.opacity(0.55))
-                .activitySystemActionForegroundColor(.white)
-        } dynamicIsland: { context in
-            DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: context.state.isPlaying ? "waveform" : "pause.fill")
-                        .foregroundStyle(accent)
-                }
-                DynamicIslandExpandedRegion(.center) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(context.state.title)
-                            .font(.caption)
-                            .lineLimit(1)
-                        Text(context.state.lyricLine.isEmpty ? context.state.artist : context.state.lyricLine)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                DynamicIslandExpandedRegion(.bottom) {
-                    ProgressView(value: context.state.progress)
-                        .tint(accent)
-                }
-            } compactLeading: {
-                Image(systemName: context.state.isPlaying ? "waveform" : "pause.fill")
-                    .foregroundStyle(accent)
-            } compactTrailing: {
-                Text(context.state.lyricLine.isEmpty ? context.state.artist : context.state.lyricLine)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .frame(maxWidth: 60)
-            } minimal: {
-                Image(systemName: context.state.isPlaying ? "waveform" : "pause.fill")
-                    .foregroundStyle(accent)
-            }
-            .keylineTint(accent)
-        }
-    }
-}
-
 @main
 struct JZWidgetsBundle: WidgetBundle {
     var body: some Widget {
+        // r65：实时活动（锁屏歌词卡 / 灵动岛）已整体下线——老板要的是"只留系统自带的透明播放器"。
+        // 扩展留着是给主屏幕的「每日推荐」小组件用。
         DailyPicksWidget()
-        SongLiveActivity()
     }
 }

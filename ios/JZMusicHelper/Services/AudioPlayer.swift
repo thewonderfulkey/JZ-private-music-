@@ -43,6 +43,12 @@ final class PlayerEngine {
     private(set) var lyricsSource: String = ""
     private(set) var lyricIndex: Int = -1
 
+    /// 该被滚到屏幕中间的那一行（比 `lyricIndex` 早 `LyricsUXRules.scrollLeadMs`）。
+    ///
+    /// r65 老板："歌词现在统一都是滚动晚了一些"——高亮是准的，晚的是滚动动画。
+    /// 播放页用 `lyricIndex` 决定哪一行白字，用这个决定 `scrollTo` 滚到哪一行。
+    private(set) var lyricScrollIndex: Int = -1
+
     /// 歌词判定用的位置（毫秒）= 精确播放位置 + 用户设置的偏移。
     ///
     /// 为什么要 `preciseTime` 而不是 0.5 秒才更新一次的 `currentTime`：
@@ -218,6 +224,7 @@ final class PlayerEngine {
         lyricIndex = LyricsCleaning.indexAt(
             lyrics,
             positionMs: Int(target * 1000) + SettingsStore.shared.lyricOffsetMs)
+        lyricScrollIndex = lyricIndex
         updateNowPlaying()
     }
 
@@ -237,6 +244,7 @@ final class PlayerEngine {
         let targetMs = LyricsCleaning.seekTargetMs(lineMs: lyrics[index].timeMs, userOffsetMs: offset)
         seek(toSeconds: Double(targetMs) / 1000)
         lyricIndex = index
+        lyricScrollIndex = index
     }
 
     /// 播放列表里点某一首（队列不动，只换当前曲）
@@ -520,6 +528,7 @@ final class PlayerEngine {
         lyrics = []
         lyricsSource = ""
         lyricIndex = -1
+        lyricScrollIndex = -1
         lyricsFailure = ""
 
         if let local = DownloadManager.shared.localLyrics(for: song), !local.isEmpty {
@@ -549,8 +558,12 @@ final class PlayerEngine {
     }
 
     private func updateLyricIndex() {
-        let idx = LyricsCleaning.indexAt(lyrics, positionMs: lyricPositionMs)
+        let position = lyricPositionMs
+        let idx = LyricsCleaning.indexAt(lyrics, positionMs: position)
         if idx != lyricIndex { lyricIndex = idx }
+        let anchor = LyricsCleaning.scrollAnchorIndex(lyrics, positionMs: position,
+                                                     leadMs: LyricsUXRules.scrollLeadMs)
+        if anchor != lyricScrollIndex { lyricScrollIndex = anchor }
     }
 
     /// 25Hz 的歌词定位 ticker（只在播放时推进）
@@ -580,14 +593,7 @@ final class PlayerEngine {
     }
 
     private func updateNowPlaying() {
-        // 锁屏歌词 / 灵动岛：这里每 0.5 秒被调一次，节流在 PlaybackActivityRules 里
-        LiveActivityController.shared.sync(
-            song: currentSong,
-            isPlaying: isPlaying,
-            currentTime: currentTime,
-            duration: duration,
-            lyric: currentLyricLine?.text)
-
+        // r65：实时活动（锁屏黑卡 / 灵动岛）已下线，这里只喂系统自带的锁屏播放器
         NowPlayingCenter.shared.update(
             song: currentSong,
             source: source,

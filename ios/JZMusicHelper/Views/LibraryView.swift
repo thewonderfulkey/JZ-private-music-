@@ -38,9 +38,9 @@ struct FavoritesView: View {
                                                 library.toggleFavorite(song)
                                             }
                                         })
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
-                            .buttonStyle(.press)
-                            .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            .buttonStyle(.rowPress)
                             .contextMenu {
                                 Button {
                                     downloadFlow.start(song: song, want: player.quality)
@@ -53,8 +53,6 @@ struct FavoritesView: View {
                                     Label("取消收藏", systemImage: "heart.slash")
                                 }
                             }
-                            Divider()
-                                .padding(.leading, Tokens.Spacing.pageMargin + 48 + Tokens.Spacing.s)
                         }
                         // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
                         MiniPlayerSpacer()

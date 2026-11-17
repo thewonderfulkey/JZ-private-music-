@@ -3,7 +3,15 @@ import Foundation
 // MARK: - 搜索适配器协议
 protocol SearchAdapter: Sendable {
     var platform: MusicPlatform { get }
-    func search(keyword: String, limit: Int) async throws -> [Song]
+    /// `page` 从 1 开始（r65 老板反馈 ⑦：「查看更多结果」按页往下翻）
+    func search(keyword: String, limit: Int, page: Int) async throws -> [Song]
+}
+
+extension SearchAdapter {
+    /// 只取第一页（封面兜底这类"够用就行"的调用方走这个）
+    func search(keyword: String, limit: Int) async throws -> [Song] {
+        try await search(keyword: keyword, limit: limit, page: 1)
+    }
 }
 
 // MARK: - QQ 音乐
@@ -11,9 +19,9 @@ protocol SearchAdapter: Sendable {
 struct QQSearchAdapter: SearchAdapter {
     let platform: MusicPlatform = .qq
 
-    func search(keyword: String, limit: Int) async throws -> [Song] {
+    func search(keyword: String, limit: Int, page: Int = 1) async throws -> [Song] {
         let url = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
-            + "?p=1&n=\(limit)&w=\(APIClient.encode(keyword))&format=json"
+            + "?p=\(max(1, page))&n=\(limit)&w=\(APIClient.encode(keyword))&format=json"
         let json = try await APIClient.shared.getJSON(url, headers: ["Referer": "https://y.qq.com/"])
         guard let list = json.nested(["data", "song", "list"]) as? [[String: Any]] else {
             throw APIError.parse("QQ 搜索结果结构异常")
@@ -44,9 +52,11 @@ struct QQSearchAdapter: SearchAdapter {
 struct NeteaseSearchAdapter: SearchAdapter {
     let platform: MusicPlatform = .netease
 
-    func search(keyword: String, limit: Int) async throws -> [Song] {
+    func search(keyword: String, limit: Int, page: Int = 1) async throws -> [Song] {
+        // 网易用 offset 分页：第 n 页 = 跳过 (n-1)*limit 条
+        let offset = max(0, page - 1) * limit
         let url = "https://music.163.com/api/search/get"
-            + "?s=\(APIClient.encode(keyword))&type=1&offset=0&limit=\(limit)"
+            + "?s=\(APIClient.encode(keyword))&type=1&offset=\(offset)&limit=\(limit)"
         let json = try await APIClient.shared.getJSON(url, headers: ["Referer": "https://music.163.com/"])
         if (json["code"] as? Int) != 200 { return [] }
         guard let list = json.nested(["result", "songs"]) as? [[String: Any]] else {
@@ -98,10 +108,10 @@ struct NeteaseSearchAdapter: SearchAdapter {
 struct KuwoSearchAdapter: SearchAdapter {
     let platform: MusicPlatform = .kuwo
 
-    func search(keyword: String, limit: Int) async throws -> [Song] {
+    func search(keyword: String, limit: Int, page: Int = 1) async throws -> [Song] {
         let rn = min(limit, 50)
         let url = "https://search.kuwo.cn/r.s"
-            + "?all=\(APIClient.encode(keyword))&ft=music&rn=\(rn)&pn=1"
+            + "?all=\(APIClient.encode(keyword))&ft=music&rn=\(rn)&pn=\(max(1, page))"
             + "&rformat=json&encoding=utf8&vipver=MUSIC_8.7.8.0_WX"
         let text = try await APIClient.shared.getString(url, headers: ["Referer": "https://www.kuwo.cn/"])
         let records = KuwoParser.relevantRecords(KuwoParser.extractAbsList(from: text), keyword: keyword)
@@ -134,9 +144,9 @@ struct KuwoSearchAdapter: SearchAdapter {
 struct KugouSearchAdapter: SearchAdapter {
     let platform: MusicPlatform = .kugou
 
-    func search(keyword: String, limit: Int) async throws -> [Song] {
+    func search(keyword: String, limit: Int, page: Int = 1) async throws -> [Song] {
         let url = "https://mobiles.kugou.com/api/v3/search/song"
-            + "?format=json&keyword=\(APIClient.encode(keyword))&page=1&pagesize=\(limit)&showtype=1"
+            + "?format=json&keyword=\(APIClient.encode(keyword))&page=\(max(1, page))&pagesize=\(limit)&showtype=1"
         let json = try await APIClient.shared.getJSON(url, headers: ["Referer": "https://www.kugou.com/"])
         guard let list = json.nested(["data", "info"]) as? [[String: Any]] else {
             throw APIError.parse("酷狗搜索结果结构异常")

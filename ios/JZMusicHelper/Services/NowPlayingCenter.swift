@@ -18,7 +18,7 @@ final class NowPlayingCenter {
     private weak var engine: PlayerEngine?
     private var configured = false
 
-    private var lastArtworkURL: String?
+    private var lastArtworkSongID: String?
     private var artwork: MPMediaItemArtwork?
     private var artworkTask: Task<Void, Never>?
 
@@ -26,9 +26,9 @@ final class NowPlayingCenter {
 
     /// 退出 App 时清掉系统面的残留：控制中心/锁屏的"正在播放"卡片、音频会话占用。
     ///
-    /// 用户上滑杀掉 App 后，锁屏卡片和灵动岛如果没人收，会一直挂在那儿——
-    /// 这里在 `applicationWillTerminate` 里把能清的都清掉（真正被强杀时 iOS 不给回调，
-    /// 那部分只能靠下次启动时扫 `Activity.activities` 收尾，见 LiveActivityController）。
+    /// 用户上滑杀掉 App 后，系统那条锁屏播放卡片如果没人收，会一直挂在那儿——
+    /// 这里在 `applicationWillTerminate` 里把能清的都清掉。
+    /// （r65 起 App 自己的实时活动 / 灵动岛已整体下线，只剩系统自带的这条透明卡片）
     func teardown() {
         engine = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -36,7 +36,7 @@ final class NowPlayingCenter {
         artworkTask?.cancel()
         artworkTask = nil
         artwork = nil
-        lastArtworkURL = nil
+        lastArtworkSongID = nil
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
@@ -165,7 +165,7 @@ final class NowPlayingCenter {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             MPNowPlayingInfoCenter.default().playbackState = .stopped
             artwork = nil
-            lastArtworkURL = nil
+            lastArtworkSongID = nil
             return
         }
 
@@ -191,20 +191,22 @@ final class NowPlayingCenter {
         loadArtworkIfNeeded(for: song)
     }
 
+    /// 锁屏卡的封面。
+    ///
+    /// r65：以前只读 `song.picURL`，于是"列表里有封面、锁屏/播放页却是空占位"
+    /// （老板截屏里那条系统卡片就是空的）。现在跟列表行、播放页共用
+    /// `CoverImageCache.image(for:)`：本地封面 → picURL → CoverResolver 兜底。
     private func loadArtworkIfNeeded(for song: Song) {
-        guard let urlString = song.picURL, !urlString.isEmpty else { return }
-        guard urlString != lastArtworkURL else { return }
-        lastArtworkURL = urlString
+        guard song.id != lastArtworkSongID else { return }
+        lastArtworkSongID = song.id
         artworkTask?.cancel()
         artworkTask = Task { [weak self] in
-            guard let url = URL(string: urlString) else { return }
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 8
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
-                  let image = UIImage(data: data) else { return }
+            guard let image = await CoverImageCache.shared.image(for: song) else { return }
             let art = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             await MainActor.run {
                 guard let self else { return }
+                // 期间又切歌了：这张图属于上一首，丢掉
+                guard self.lastArtworkSongID == song.id else { return }
                 self.artwork = art
                 if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
                     info[MPMediaItemPropertyArtwork] = art

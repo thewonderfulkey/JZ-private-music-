@@ -42,6 +42,15 @@ struct NowPlayingView: View {
     /// 收起播放页的下拽距离
     @State private var sheetOffset: CGFloat = 0
 
+    /// 当前封面图（封面卡与背景模糊共用同一张）。
+    ///
+    /// r65 反馈 ①：列表里明明有封面，播放页却是空占位——因为以前播放页只读 `song.picURL`，
+    /// 而网易/酷我大量歌曲这个字段是空的，列表是靠 `CoverResolver` 兜底才有图。
+    /// 现在播放页也走 `CoverImageCache.image(for:)` 同一条链。
+    /// r65 反馈 ④（切封面/歌词黑一下）：图存在**页面级状态**里，两个模式的切换不会重建加载，
+    /// 所以不会再闪回黑色。
+    @State private var coverImage: UIImage?
+
     // MARK: 尺寸
 
     /// 屏幕宽（只用来给"外层给到多宽"做上限，不参与任何布局计算）
@@ -95,6 +104,8 @@ struct NowPlayingView: View {
                     player.reloadLyrics()
                 }
             }
+            // 封面：换歌才重新取（同一个 song.id 不重跑，切封面/歌词也不会重取 → 不闪黑）
+            .task(id: player.currentSong?.id) { await loadCover() }
             // 切歌时只清掉拖动中的进度；歌词模式**保留**——
             // 列表循环自动播下一首时，老板正看着歌词，不该被弹回封面。
             .onChange(of: player.currentSong?.id) { _, _ in
@@ -102,20 +113,37 @@ struct NowPlayingView: View {
             }
     }
 
+    /// 取封面（本地已下载的图 → picURL / CoverResolver 兜底 → 加载失败再兜底一次）
+    private func loadCover() async {
+        guard let song = player.currentSong else {
+            coverImage = nil
+            return
+        }
+        let image = await CoverImageCache.shared.image(for: song)
+        guard !Task.isCancelled else { return }
+        guard player.currentSong?.id == song.id else { return }
+        withAnimation(.easeOut(duration: 0.24)) { coverImage = image }
+    }
+
     /// 歌词模式下**不挂**整页下拽手势（老板反馈 ⑦：在歌词页上下滑只是想快进/后退，
     /// 结果播放页被收起来了）。收起播放页仍然有左上角 chevron。
-    @ViewBuilder
+    ///
+    /// r65：这里不再用 `if/else` 分两个分支——两个分支会让 SwiftUI 把整棵 `canvas` 重建，
+    /// 背景那张封面图跟着重加载，于是切封面/歌词时先黑一下（老板反馈 ④）。
+    /// 现在永远只有一棵 `canvas`，用手势掩码关掉歌词模式下的下拽。
     private var page: some View {
-        if showLyrics {
-            canvas
-        } else {
-            canvas.simultaneousGesture(dismissDrag)
-        }
+        canvas.simultaneousGesture(dismissDrag, including: showLyrics ? .none : .all)
     }
 
     private var canvas: some View {
         ZStack {
+            // 背景兼"回封面"的落点：r65 反馈 ⑤——双击**非歌词区域**（背景 / 空白处）也要能回封面。
+            // 放在最底层，歌词行与各个按钮在上面，点到它们时不会穿透到这里。
             backdrop.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    if showLyrics { backToCover() }
+                }
 
             GeometryReader { geo in
                 // 先把宽度钉到屏幕上（外层给多宽都不认），后面每一行都按这个 w 排
@@ -142,6 +170,7 @@ struct NowPlayingView: View {
                 // 全屏歌词：顶栏下面一路铺到进度条，中间不再有卡片、不再有功能键行
                 lyricsStage(width: w)
                     .frame(maxHeight: .infinity)
+                    .transition(.opacity)
 
                 progressRow(width: w)
                     .padding(.top, Tokens.Spacing.xs)
@@ -150,25 +179,28 @@ struct NowPlayingView: View {
                     .padding(.top, Tokens.Spacing.xxs)
                     .padding(.bottom, Tokens.Spacing.xs)
             } else {
-                Spacer(minLength: gap)
-                coverStage(width: w, side: coverSide)
-                Spacer(minLength: gap)
-                titleStage(width: w)
-                Spacer(minLength: gap)
-                quickRow(width: w)
-                Spacer(minLength: gap)
-                progressRow(width: w)
-                transportRow(width: w)
-                    .padding(.top, Tokens.Spacing.xs)
-
-                // 状态行只在出错时出现（老板 r63：暂停键下面那行小字不要了，
-                // 但"无源/换源失败"必须让人看见，否则点歌没反应像卡死）
-                if let error = player.errorText {
-                    errorLine(width: w, text: error)
+                Group {
+                    Spacer(minLength: gap)
+                    coverStage(width: w, side: coverSide)
+                    Spacer(minLength: gap)
+                    titleStage(width: w)
+                    Spacer(minLength: gap)
+                    quickRow(width: w)
+                    Spacer(minLength: gap)
+                    progressRow(width: w)
+                    transportRow(width: w)
                         .padding(.top, Tokens.Spacing.xs)
-                }
 
-                Spacer(minLength: gap)
+                    // 状态行只在出错时出现（老板 r63：暂停键下面那行小字不要了，
+                    // 但"无源/换源失败"必须让人看见，否则点歌没反应像卡死）
+                    if let error = player.errorText {
+                        errorLine(width: w, text: error)
+                            .padding(.top, Tokens.Spacing.xs)
+                    }
+
+                    Spacer(minLength: gap)
+                }
+                .transition(.opacity)
             }
         }
         .frame(width: w, height: h, alignment: .top)
@@ -176,8 +208,10 @@ struct NowPlayingView: View {
 
     // MARK: 收起手势
 
+    /// 下拽收起（r65 反馈 ⑥：原来太不灵敏了，要划掉四分之一屏才关得掉）。
+    /// 阈值全部收进 `PlayerDismissRules`（纯函数、CI 有断言），这里只管"是不是在往下拽"。
     private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 24)
+        DragGesture(minimumDistance: CGFloat(PlayerDismissRules.minDragDistance))
             .onChanged { value in
                 guard value.translation.height > 0 else { return }
                 if abs(value.translation.height) > abs(value.translation.width) {
@@ -185,9 +219,10 @@ struct NowPlayingView: View {
                 }
             }
             .onEnded { value in
-                let far = value.translation.height > 110
-                let fast = value.predictedEndTranslation.height > 280
-                if far || fast {
+                let closing = PlayerDismissRules.shouldDismiss(
+                    translation: Double(value.translation.height),
+                    predicted: Double(value.predictedEndTranslation.height))
+                if closing {
                     dismiss()
                 } else {
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
@@ -199,39 +234,16 @@ struct NowPlayingView: View {
 
     // MARK: 背景（模糊封面 + 压暗）
 
-    /// 已下载的歌优先用下载时一起存的本地封面（老板反馈 ⑧：无网络也要有图）。
-    /// `AsyncImage` 不能读 file://，本地图直接走 `UIImage(contentsOfFile:)`。
-    private var localCoverImage: UIImage? {
-        guard let song = player.currentSong,
-              let url = DownloadManager.shared.localCoverURL(for: song) else { return nil }
-        return UIImage(contentsOfFile: url.path)
-    }
-
-    private var remoteCoverURL: URL? {
-        guard let raw = player.currentSong?.picURL, !raw.isEmpty else { return nil }
-        return URL(string: raw)
-    }
-
     private var backdrop: some View {
         ZStack {
             Color.black
-            if let local = localCoverImage {
-                Image(uiImage: local)
+            // 图已经取好在 `coverImage` 里：切封面/歌词不会重载，也就不会先黑一下
+            if let coverImage {
+                Image(uiImage: coverImage)
                     .resizable()
                     .scaledToFill()
                     .blur(radius: 46)
                     .opacity(0.85)
-            } else if let url = remoteCoverURL {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable()
-                            .scaledToFill()
-                            .blur(radius: 46)
-                            .opacity(0.85)
-                    } else {
-                        Color.black
-                    }
-                }
             }
             LinearGradient(
                 colors: [Color.black.opacity(0.30), Color.black.opacity(0.10), Color.black.opacity(0.82)],
@@ -345,16 +357,8 @@ struct NowPlayingView: View {
     private func coverStage(width: CGFloat, side: CGFloat) -> some View {
         VStack(spacing: Tokens.Spacing.xs) {
             Group {
-                if let local = localCoverImage {
-                    Image(uiImage: local).resizable().scaledToFill()
-                } else if let url = remoteCoverURL {
-                    AsyncImage(url: url) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
-                        } else {
-                            coverPlaceholder
-                        }
-                    }
+                if let coverImage {
+                    Image(uiImage: coverImage).resizable().scaledToFill()
                 } else {
                     coverPlaceholder
                 }
@@ -397,18 +401,22 @@ struct NowPlayingView: View {
 
     // MARK: 歌名 / 歌手 / 音质标签（居中）
 
+    /// r65 反馈 ②：唱歌名和歌手"太小了，想放大一些"——标题 title2(22) → title(28)，
+    /// 歌手 subheadline(15) → title3(20)，两个字都靠 `FontRole` 统一改（别的页面不受影响）。
     private func titleStage(width: CGFloat) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 5) {
             Text(player.currentSong?.name ?? "未在播放")
                 .font(FontRole.playerTitle)
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .minimumScaleFactor(0.7)
 
             Text(player.currentSong?.singer ?? "")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.62))
+                .font(FontRole.playerArtist)
+                .foregroundStyle(.white.opacity(0.66))
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             chipsRow(width: width)
                 .padding(.top, 2)
@@ -740,7 +748,7 @@ struct NowPlayingView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { backToCover() }
             } else {
-                LyricsPane(width: width)
+                LyricsPane(width: width, onDoubleTap: { backToCover() })
                     .padding(.top, Tokens.Spacing.xs)
             }
         }
@@ -884,6 +892,8 @@ private struct LyricsPane: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let width: CGFloat
+    /// 双击**非歌词区域**（行与行之间、左右留白）→ 回封面（r65 反馈 ⑤）
+    var onDoubleTap: () -> Void = {}
 
     /// 用户正停在自己滑到的位置（true 时不再自动跟随）
     @State private var browsing = false
@@ -936,19 +946,29 @@ private struct LyricsPane: View {
             .frame(width: max(80, width - Tokens.Spacing.l * 2))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 160)
+            // 行与行之间、左右留白这些"非歌词区域"双击 = 回封面（老板 r65 反馈 ⑤）。
+            // 贴在歌词栈的**背景**上：点到字本身仍然只是跳到那一句，不会被这里抢走。
+            .background(
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { onDoubleTap() }
+            )
         }
         .frame(width: width)
         .mask(lyricsFade)
         .simultaneousGesture(browseGesture(proxy: proxy))
-        .onChange(of: player.lyricIndex) { _, idx in
+        // 滚动跟着**提前量**走（`lyricScrollIndex` 比高亮那一行早 220ms），
+        // 这样新的一句在开唱的那一刻就已经滑到中间，不会"唱完了才滚过来"（r65 反馈 ③）
+        .onChange(of: player.lyricScrollIndex) { _, idx in
             guard idx >= 0, !browsing else { return }
             scroll(proxy: proxy, to: idx, animated: true)
         }
         .onAppear {
-            guard player.lyricIndex >= 0 else { return }
+            let idx = player.lyricScrollIndex >= 0 ? player.lyricScrollIndex : player.lyricIndex
+            guard idx >= 0 else { return }
             // 首帧行还没布局完，等一拍再滚
             DispatchQueue.main.async {
-                proxy.scrollTo(player.lyricIndex, anchor: .center)
+                proxy.scrollTo(idx, anchor: .center)
             }
         }
     }

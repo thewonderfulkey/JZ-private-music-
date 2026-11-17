@@ -105,10 +105,7 @@ struct RootTabView: View {
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
             if phase == .active { drainIntents() }
-            // 退到后台且没在放歌 → 立刻收掉灵动岛/锁屏活动（老板反馈 ①：退出后台不该还挂着）
-            if phase == .background, !player.isPlaying {
-                LiveActivityController.shared.end()
-            }
+            // r65：实时活动已下线，"退出后台还挂着灵动岛"这件事不会再发生，这里不再需要收尾
         }
     }
 

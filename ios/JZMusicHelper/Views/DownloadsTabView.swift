@@ -112,15 +112,39 @@ private struct DownloadRowView: View {
     let item: DownloadItem
 
     var body: some View {
+        Button {
+            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页。
+            //
+            // 第五轮（老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"）：
+            // 从列表里点一首时，**整列已完成下载**就是队列——否则队列里只有这一首，
+            // 列表循环退化成单曲循环。
+            Haptics.tap()
+            let songs = downloads.completedSongs
+            if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
+                player.play(queue: songs, startAt: index)
+            } else {
+                player.playSingle(item.song)
+            }
+            router.showPlayer = true
+        } label: {
+            rowContent
+        }
+        // r65 反馈 ⑨：点击反馈要"一按就有"——下载行原来只有 onTapGesture，按下去毫无变化
+        .buttonStyle(.rowPress)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("轻点播放")
+    }
+
+    private var rowContent: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
             HStack(spacing: Tokens.Spacing.s) {
                 SongArtwork(song: item.song)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.song.name)
                         .font(FontRole.songTitle)
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.caption)
+                        .font(FontRole.songSubtitle)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -159,23 +183,9 @@ private struct DownloadRowView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, Tokens.Spacing.xs)
+        .padding(.horizontal, Tokens.Spacing.xxs)
         .contentShape(Rectangle())
-        .onTapGesture {
-            // 点行直接用播放器放这首（本地文件与在线取流都走同一条链），并进播放页。
-            //
-            // 第五轮（老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"）：
-            // 从列表里点一首时，**整列已完成下载**就是队列——否则队列里只有这一首，
-            // 列表循环退化成单曲循环。
-            Haptics.tap()
-            let songs = downloads.completedSongs
-            if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
-                player.play(queue: songs, startAt: index)
-            } else {
-                player.playSingle(item.song)
-            }
-            router.showPlayer = true
-        }
         .accessibilityElement(children: .combine)
     }
 

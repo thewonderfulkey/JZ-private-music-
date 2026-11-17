@@ -36,7 +36,7 @@ final class SearchService {
     }
 
     /// 并发搜索全部平台，等所有完成（单平台失败只标 error，绝不抛出）
-    func searchAll(keyword: String, limit: Int = 20) async -> [PlatformResult] {
+    func searchAll(keyword: String, limit: Int = 20, page: Int = 1) async -> [PlatformResult] {
         let timeout = perSourceTimeout
         return await withTaskGroup(of: PlatformResult.self) { group in
             for adapter in adapters {
@@ -44,7 +44,9 @@ final class SearchService {
                     let started = Date()
                     do {
                         let songs = try await withThrowingTaskGroup(of: [Song].self) { inner -> [Song] in
-                            inner.addTask { try await adapter.search(keyword: keyword, limit: limit) }
+                            inner.addTask {
+                                try await adapter.search(keyword: keyword, limit: limit, page: page)
+                            }
                             inner.addTask {
                                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                                 throw APIError.timeout
@@ -79,21 +81,22 @@ final class SearchService {
     /// 去重口径与 Android v2.1.10 一致：**先排序、再按归一化歌名+歌手 distinct**，
     /// 所以同一个（歌名, 歌手）留下的是匹配度最高的那条（平台位次先验也参与在内）。
     /// 被合并掉的其他平台版本不是丢失——点播放时 `SameSongCrossResolver` 仍会跨平台补源。
-    func searchRanked(keyword: String, limit: Int = 20) async -> (songs: [Song], platforms: [PlatformResult]) {
-        let results = await searchAll(keyword: keyword, limit: limit)
+    func searchRanked(keyword: String, limit: Int = 20, page: Int = 1)
+        async -> (songs: [Song], platforms: [PlatformResult]) {
+        let results = await searchAll(keyword: keyword, limit: limit, page: page)
         let merged = results.flatMap(\.songs)
         let ranked = SearchRanker.dedupe(SearchRanker.rank(keyword: keyword, songs: merged))
         return (ranked, results)
     }
 
     /// 流式搜索（边到边显示；UI 用）
-    func search(keyword: String, limit: Int = 20) -> AsyncStream<SearchEvent> {
+    func search(keyword: String, limit: Int = 20, page: Int = 1) -> AsyncStream<SearchEvent> {
         AsyncStream { continuation in
             let task = Task {
                 for adapter in self.adapters {
                     continuation.yield(.started(adapter.platform))
                 }
-                let results = await self.searchAll(keyword: keyword, limit: limit)
+                let results = await self.searchAll(keyword: keyword, limit: limit, page: page)
                 for r in results {
                     if let err = r.error {
                         continuation.yield(.failed(r.platform, err))

@@ -65,15 +65,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("锁屏与灵动岛") {
-                Toggle("实时活动（锁屏歌词 / 灵动岛）", isOn: $settings.liveActivityEnabled)
-                Text(settings.liveActivityEnabled
-                     ? "播放时会在锁屏与灵动岛显示歌词卡片；暂停着退到后台、或退出 App 时会收掉，不留残影。"
-                     : "已关闭：播放时不会创建任何实时活动，退出 App 后系统里也不会留音乐组件。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("识曲") {
                 Picker("聆听时长", selection: $settings.recognizeSeconds) {
                     Text("12 秒").tag(12)

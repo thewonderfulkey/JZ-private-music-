@@ -51,8 +51,8 @@ enum Tokens {
     // MARK: 尺寸
 
     enum Size {
-        static let songRowArtwork: CGFloat = 48
-        static let songRowHeight: CGFloat = 60
+        static let songRowArtwork: CGFloat = 52
+        static let songRowHeight: CGFloat = 72
         static let miniPlayerHeight: CGFloat = 56
         static let playButton: CGFloat = 56
         static let transportButton: CGFloat = 52
@@ -64,7 +64,7 @@ enum Tokens {
         /// 封面 ↔ 歌词
         static let coverToggle = Animation.spring(response: 0.42, dampingFraction: 0.86)
         /// 歌词行推进
-        static let lyricAdvance = Animation.spring(response: 0.38, dampingFraction: 0.92)
+        static let lyricAdvance = Animation.spring(response: 0.28, dampingFraction: 1.0)
         /// 收藏心跳
         static let favorite = Animation.bouncy(duration: 0.26)
         /// 列表状态切换
@@ -85,8 +85,8 @@ enum FontRole {
     static let songSubtitle = Font.subheadline
     static let metadata = Font.footnote
     static let navInline = Font.headline
-    static let playerTitle = Font.title2.weight(.bold)
-    static let playerArtist = Font.title3
+    static let playerTitle = Font.title.weight(.bold)
+    static let playerArtist = Font.title3.weight(.medium)
     static let lyricCurrent = Font.title2.weight(.bold)
     static let lyricOther = Font.body
     static let button = Font.body.weight(.semibold)

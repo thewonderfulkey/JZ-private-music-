@@ -289,4 +289,15 @@ enum LyricsCleaning {
         }
         return idx
     }
+
+    /// 该被滚到屏幕中间的那一行——比"亮起来"的那一行**早 `leadMs`**。
+    ///
+    /// 为什么需要两个下标：高亮要准（行时间到就亮，见 `indexAt`），但滚动有动画，
+    /// 等亮起来再滚，新的一行就在"已经开唱之后"才滑到中间（老板 r65：滚动晚了一些）。
+    /// 播放页拿 `indexAt` 决定白字，拿这个决定 `scrollTo` 的目标。
+    static func scrollAnchorIndex(_ lines: [LyricLine], positionMs: Int, leadMs: Int) -> Int {
+        guard !lines.isEmpty else { return -1 }
+        let lead = max(0, leadMs)
+        return indexAt(lines, positionMs: positionMs + lead)
+    }
 }

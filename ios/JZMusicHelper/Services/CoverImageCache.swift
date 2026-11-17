@@ -62,6 +62,32 @@ final class CoverImageCache: @unchecked Sendable {
         cache.setObject(image, forKey: url as NSURL, cost: 64 * 64 * 4)
     }
 
+    /// 按**歌曲**取封面（列表行与播放页共用同一条链，r65 老板反馈 ① 就修在这里）：
+    ///   1. 已下载 → 下载时一起存的本地封面（无网络也有图）
+    ///   2. 歌曲自带的 `picURL`（若没有/已失效，`CoverResolver` 会用「歌名 + 歌手」去 QQ 兜底）
+    ///   3. 兜底解析出来的 URL 也加载失败 → 忽略原图，强制再兜底一次
+    ///
+    /// 旧版播放页只读 `song.picURL`，所以"列表里有封面、进播放页却是空占位"
+    /// （网易/酷我大量歌曲 picURL 为空，全靠 CoverResolver 才有图）。
+    func image(for song: Song) async -> UIImage? {
+        if let path = DownloadManager.shared.localCoverURL(for: song)?.path,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let local = UIImage(data: data) {
+            return local
+        }
+
+        let resolved = await CoverResolver.shared.coverURL(for: song)
+        if let raw = resolved, let url = URL(string: raw), let image = await image(for: url) {
+            return image
+        }
+
+        let fallback = await CoverResolver.shared.coverURLIgnoringOriginal(for: song)
+        if let raw = fallback, let url = URL(string: raw), let image = await image(for: url) {
+            return image
+        }
+        return nil
+    }
+
     func clear() {
         cache.removeAllObjects()
     }

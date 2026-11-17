@@ -471,3 +471,85 @@ android/app/build.gradle.kts      versionCode 156 / versionName 2.1.98
   GCM 的账号选择框。可用写法：
   `git -c http.proxy= -c https.proxy= -c credential.helper= -c "credential.helper=store --file=D:/Projects/Private_music/.build/.gcred" push origin main`
   其中 store 文件用 `.build/try_creds.ps1` 从「GitHub for Visual Studio」那条凭据生成（**路径必须用正斜杠**）。
+
+# 第七轮整改（2026-11-17 12:2x，老板 10 条 + 群内 113 秒录屏 + 锁屏截屏 + Light Player 参考录屏）
+
+> 证据来源：开发群 12:06 那张锁屏截屏（透明播放卡 + 黑色实时活动卡）、11:5x 的 113 秒真机录屏
+> （《那天下雨了》播放页 / 歌词页 / 搜索 周杰伦 20 条 / 我的收藏 / 设置 / 控制中心），
+> 以及 12:23 那段 13 秒的 Light Player 录屏（行按压反馈 + 行间距）。
+>
+> 老板第 10 条有两个可能的读法（"只留透明那条"到底是留系统卡还是留灵动岛），动手前问了一次，
+> 选的是「两个都去掉，只留系统自带的透明播放器」。
+
+## 一、逐条结果
+
+| # | 老板原话（摘要） | 问题定位（改前） | 改法（改后） |
+|---|---|---|---|
+| ① | 有些歌外面有封面，点进去播放页却没有封面（例：《那天下雨了》） | 播放页只认 `song.picURL`（`AsyncImage`），而列表行走的是 `CoverResolver` 兜底。网易/酷我大量歌曲 `picURL` 是空的，所以列表有图、播放页空占位；**锁屏那条系统卡片同理也是空的**（老板自己的截屏里就能看到） | 取图逻辑收进 `CoverImageCache.image(for:)`：本地已下载封面 → `picURL` → `CoverResolver`（"歌名+歌手"严格匹配去 QQ 兜）→ 原图加载失败再兜一次。列表行、播放页、锁屏卡**共用同一条链** |
+| ② | 播放页歌名和歌手太小，放大一些 | `FontRole.playerTitle = title2(22)`，歌手用的是 `subheadline(15)` | 标题 `title2(22) → title(28).bold`；歌手 `subheadline(15) → title3(20).medium`；两行间距 4 → 5，都走 `FontRole`（别的页面不受影响） |
+| ③ | 歌词统一都是滚动晚了一些 | **高亮本身是准的**（`indexAt` 就是 APK 口径：行时间一到就切；上一轮试过"等第一个字"被否回来了）。晚的是**滚动**：旧版等 `lyricIndex` 变了才 `scrollTo(anchor: .center)`，而滚动动画本身 0.38 秒 → 新的一句开唱之后才慢慢滑到中间 | 新增 `lyricScrollIndex`（比高亮行早 `LyricsUXRules.scrollLeadMs = 220ms` 的"该滚到中间"行，纯函数 `LyricsCleaning.scrollAnchorIndex` + CI 断言）；动画 `spring(response:)` 0.38 → 0.28。两者叠加，开唱那一刻已经到位 |
+| ④ | 封面↔歌词切换时背景先黑一下 | `page` 用 `if showLyrics { canvas } else { canvas.gesture(...) }` ——两个分支 = 两棵不同的视图树，切换时 SwiftUI 重建整棵 `canvas`，里面的 `AsyncImage` 重新加载 → 先黑 | ①`page` 改成**永远一棵 `canvas`**，歌词模式下用 `simultaneousGesture(..., including: .none)` 关掉下拽；②封面图存进页面级 `@State`，切模式不重载；③两个模式各加 `.transition(.opacity)`，切过去是淡入而不是闪 |
+| ⑤ | 双击封面能进歌词，双击**非歌词区域**却回不来 | 只有「顶部歌名行」「空态」两处挂了 `onTapGesture(count: 2)` | 补三处落点：**背景层**（`backdrop`）、**歌词栈背景**（行与行之间 + 左右留白，点字本身仍然只是跳那一句）、原顶部歌名行；点歌词行仍走"跳到这一句" |
+| ⑥ | 下滑关闭播放页太不灵敏；歌词上下滑仍不能退出 | 关闭阈值：位移 > 110pt 或预测位移 > 280pt（差不多要划掉四分之一屏）；最小拖动 24pt | 阈值收进 `PlayerDismissRules`（纯函数 + CI 断言）：位移 ≥ **56pt** 或预测 ≥ **170pt** 就关；最小拖动 24 → **8pt**。歌词模式仍然 **完全不挂**这个手势（`GestureMask.none`），上下滑不会退出 |
+| ⑦ | 搜索结果明显没返回完，底部要「查看更多结果」 | 四个适配器都把页码写死成第 1 页（`p=1` / `offset=0` / `pn=1` / `page=1`），`SearchService` 也只取一页 20 条再跨平台去重 | 适配器加 `page` 参数（QQ `p` / 网易 `offset` / 酷我 `pn` / 酷狗 `page`）；搜索页底部新增「**查看更多结果**」按钮，翻页按 `SearchRanker.dedupeKey` 跟已显示的跨页去重，翻到"这一页没有新的"就收口成「已经到底了 · 共 N 首」 |
+| ⑧ | 下载 / 我的收藏 / 搜索结果每一条都太细，挨得太紧 | `SongRow`：封面 48、行高 60、标题与副行间距 1、列表带分隔线；下载行只有 2pt 内边距 | 按群里那张截屏重排：封面 **48 → 52**、行高 **60 → 72**、行内上下各留 4（连 padding ≈ 80）、标题/副行间距 **3**；**搜索结果 / 我的收藏 / 识曲 / 编辑精选 / 榜单全部去掉分隔线**（靠行高隔开）；下载行同口径（副行 `subheadline`、上下 8） |
+| ⑨ | 所有点击反馈都不明显，要像 Light Player 那样 | `.press` 是 0.97 缩放 + 0.82 压暗（宽行上几乎看不出来）；下载行、部分卡片用的是 `onTapGesture` / `.plain`，**按下去毫无变化** | `.press` 加重到 **0.94 / 0.72**、弹回 spring 0.18；新增 **`.rowPress`**：按下时整条铺一层高亮（10%）、淡入 0.06 / 淡出 0.22（有拖尾），并轻缩 0.985。搜索结果、我的收藏、识曲结果、榜单、编辑精选、**下载行**（原来是 `onTapGesture`，已改成 Button）全部用上 |
+| ⑩ | 锁屏那个黑色悬浮窗不要，只留透明那条 | 透明那条是**系统自带**的锁屏播放卡（`MPNowPlayingInfoCenter` 驱动）；黑色那张是 App 自己的 `ActivityKit` 实时活动（同一个 Activity 同时驱动灵动岛）——系统不允许"只留灵动岛、锁屏不出卡" | 按老板拍板**整块下线**：删 `SongLiveActivity`（锁屏卡 + 灵动岛）、`LiveActivityController`、`PlaybackActivity` / `PlaybackActivityModel`，设置里的「实时活动」开关、`Info.plist` 的 `NSSupportsLiveActivities*` 一并去掉；Widget 扩展保留（每日推荐小组件还在）。系统那条透明卡仍在，而且现在**带封面了**（见 ①） |
+
+## 二、改动的文件（第七轮）
+
+```
+Services/LayoutRules.swift          + LyricsUXRules.scrollLeadMs（220ms）+ PlayerDismissRules（56 / 170）
+Services/LyricsCleaning.swift       + scrollAnchorIndex（滚动提前量，纯函数）
+Services/AudioPlayer.swift          + lyricScrollIndex（滚动跟着提前量走）；不再同步实时活动
+Services/CoverImageCache.swift      + image(for song:)（本地 → picURL → CoverResolver → 再兜一次）
+Services/NowPlayingCenter.swift     锁屏卡封面走同一条取图链（原来只读 picURL）
+Services/SearchAdapters.swift       四个适配器 + page 参数
+Services/SearchService.swift       searchAll / searchRanked / search 全部透传 page
+Services/SettingsStore.swift        - liveActivityEnabled
+Services/DownloadManager.swift      AppDelegate 里去掉实时活动收尾
+Services/LiveActivityController.swift     ← 删除
+Services/PlaybackActivity.swift           ← 删除
+Services/PlaybackActivityModel.swift      ← 删除
+Services/NowPlayingCenter.swift     注释与清理口径更新
+Views/Components.swift              SongArtwork 走共用取图链；SongRow 加高加宽；.press 加重；+ .rowPress
+Views/NowPlayingView.swift          封面状态化 / 无黑闪切换 / 歌名歌手放大 / 双击落点 / 下拽阈值 / 歌词滚动提前量
+Views/SearchTabView.swift           + 分页状态 +「查看更多结果」+ 行样式
+Views/LibraryView / RecognizeView / EditorPlaylistView / HotChartView   行样式 + 去分隔线
+Views/DownloadsTabView.swift        下载行改成 Button + .rowPress + 行距
+Views/RootTabView.swift             去掉 LiveActivity 收尾
+Views/SettingsView.swift            去掉「锁屏与灵动岛」分组
+Views/Tokens.swift                  封面 52 / 行高 72 / 播放页字号 / 歌词推进动画 0.28
+ios/JZWidgets/JZWidgets.swift       删掉 SongLockScreenView + SongLiveActivity（只留每日推荐）
+ios/JZMusicHelper/Info.plist        去掉 NSSupportsLiveActivities / ...FrequentUpdates
+ios/JZMusicHelper.xcodeproj         删 3 个文件、MARKETING_VERSION 2.1.99 / CURRENT_PROJECT_VERSION 157
+android/app/build.gradle.kts        versionCode 157 / versionName 2.1.99
+.github/workflows/ios-ipa.yml       swiftc 清单去掉已删的 PlaybackActivityModel.swift
+ios/SelfTest/main.swift             删「锁屏活动」整段；+14 条（滚动提前量 7 / 下拽阈值 7）
+```
+
+## 三、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 语法 | `python .build/parse_swift.py`（tree-sitter） | 65 个文件 / 0 错误 |
+| 界面卫生 | `python tools/ios/check_ui_hygiene.py` | 通过（18 个界面文件） |
+| 工程文件 | `python tools/ios/check_pbxproj.py` | 通过（171 个对象 / 2 target） |
+| 本轮新增纯逻辑 | 本机 WSL + Swift 6.0.3（`CryptoKit` / `Compression` 桩 + `FoundationNetworking` 影印件）：`LayoutRules + LyricsModel + LyricsCleaning + TraditionalMap` 单编小 runner | **13/13 通过**（滚动提前量 7 条、下拽阈值 6 条） |
+| 全量纯逻辑 | CI `logic-tests`（macOS + 真 zlib/CryptoKit） | 见下方出包记录 |
+| Views | 本机没有 Xcode/SwiftUI（Windows） | **只能靠 CI 的 xcodebuild**，见出包记录里的 `BUILD SUCCEEDED` |
+| 真机观感 | 验不到（没有 iPhone） | 需要老板装机确认，见下节 |
+
+## 四、装机按这个顺序试
+
+1. **封面（①）**：播《那天下雨了》→ 播放页和锁屏那条卡片都**有封面**；随便再点两首网易/酷我的歌确认。
+2. **字号（②）**：歌名、歌手明显比上一版大。
+3. **歌词滚动（③）**：看歌词，新的一句应当在**开唱的同时**就滑到屏幕中间（以前是唱出来之后才滑过去）。
+4. **切换不闪黑（④）**：双击封面进歌词、双击空白回封面，来回三次——背景应当一直保持模糊封面，不能先黑一下。
+5. **双击回封面（⑤）**：歌词页双击**行与行之间 / 左右留白 / 顶部歌名**都能回封面；点某一句仍然只是跳到那句。
+6. **下滑关闭（⑥）**：封面页轻轻往下一划（约半个指节）就关；歌词页上下滑**不会**退出。
+7. **查看更多（⑦）**：搜「周杰伦」→ 拉到列表底部点「查看更多结果」→ 继续出下一批，直到「已经到底了 · 共 N 首」。
+8. **行间距（⑧）**：搜索结果 / 我的收藏 / 下载 / 识曲结果，每一条变高、不再贴在一起、没有分隔线。
+9. **点击反馈（⑨）**：随便按住一行，整条会亮一下再淡出；按钮按下去会缩一下。
+10. **锁屏（⑩）**：播放后锁屏只有**系统那条透明播放卡**，不再有下面那张黑色卡片；灵动岛也不再显示歌词。
+
