@@ -120,6 +120,16 @@ struct DiscoverView: View {
                         .buttonStyle(.press)
                         .accessibilityLabel("\(playlist.title)，20 首，每日换一批")
                     }
+
+                    // 榜单模块：本地池是"每天换一批"，榜单是**平台真榜**（酷我官方，每日更新）。
+                    // 排在编辑池之后——换一批只作用于前四张池卡，榜单不参与轮换。
+                    NavigationLink {
+                        ChartSongsView(chart: .hot)
+                    } label: {
+                        ChartModuleCard(chart: .hot)
+                    }
+                    .buttonStyle(.press)
+                    .accessibilityLabel("\(KuwoChart.hot.name)，酷我官方榜，每日更新")
                 }
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
                 .padding(.vertical, 2)
@@ -333,13 +343,17 @@ struct DiscoverSectionHeader: View {
 
 // MARK: - 编辑精选卡（长方形，对齐 Android `EditorCard`）
 
-/// Android 是 150×66dp 的白卡：左边色条 + 歌单名 + 首数 + 右箭头。
-/// iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
-struct EditorPlaylistCard: View {
+/// 编辑精选那一排卡片的外壳：3pt 类别色条 + 标题 + 副行 + 右箭头，170×64。
+///
+/// 为什么抽成外壳：这一排现在有两种内容（本地编辑池 / 平台真榜），
+/// 两处各写一遍的话，下次调宽度或去内缩必然只改一处，看着就是"同一排两种尺寸"。
+///
+/// Android 是 150×66dp 的白卡；iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
+struct EditorCardShell: View {
 
-    let playlist: DiscoverCatalog.Playlist
-
-    private var accent: Color { Color(hex: playlist.accentHex) }
+    let title: String
+    let meta: String
+    let accent: Color
 
     var body: some View {
         HStack(spacing: Tokens.Spacing.xs) {
@@ -349,10 +363,10 @@ struct EditorPlaylistCard: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(playlist.title)
+                Text(title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text("20 首 · 每日换一批")
+                Text(meta)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -371,6 +385,30 @@ struct EditorPlaylistCard: View {
         // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
         // 间距改由外层 HStack 统一给（见 `editorSection`）。
         .contentShape(Rectangle())
+    }
+}
+
+struct EditorPlaylistCard: View {
+
+    let playlist: DiscoverCatalog.Playlist
+
+    var body: some View {
+        EditorCardShell(title: playlist.title,
+                        meta: "20 首 · 每日换一批",
+                        accent: Color(hex: playlist.accentHex))
+    }
+}
+
+/// 编辑精选里的「榜单歌曲」入口卡：色条用朱砂（全页唯一强调色），
+/// 副行写「官方榜 · 每日更新」——与编辑池的「每日换一批」区分开，不混成同一个口径。
+struct ChartModuleCard: View {
+
+    let chart: KuwoChart.Chart
+
+    var body: some View {
+        EditorCardShell(title: chart.name,
+                        meta: "官方榜 · 每日更新",
+                        accent: Tokens.Palette.vermilion)
     }
 }
 

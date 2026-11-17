@@ -85,6 +85,7 @@ jobs:
             ios/JZMusicHelper/Services/NeteaseLyrics.swift \
             ios/JZMusicHelper/Services/LrclibLyrics.swift \
             ios/JZMusicHelper/Services/DownloadCompanion.swift \
+            ios/JZMusicHelper/Services/KuwoChart.swift \
             ios/JZMusicHelper/Services/CoverResolver.swift \
             ios/SelfTest/LyricsFixtures.swift \
             ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log

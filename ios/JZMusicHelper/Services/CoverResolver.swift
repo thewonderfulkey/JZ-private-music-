@@ -2,11 +2,16 @@ import Foundation
 
 // MARK: - 封面兜底
 //
-// 与 Android `CoverResolver.kt` 同口径：**只兜没有封面的歌**，用「同歌名 + 同歌手」去 QQ 搜一次，
-// 严格匹配（歌名完全相等 + 歌手任一片段相等）才取这张封面；匹配不上就返回 nil，让 UI 落占位图。
+// 兜底顺序（2026-11-17 起，iOS 比 Android 多出第 ① 步）：
+//   ① 酷我歌曲：按 **rid 同平台取专辑图**（`artistpicserver` 的 `rid_pic`）——同曲目必然同专辑图
+//   ② 其余平台 / ① 取不到：用「同歌名 + 同歌手」去 QQ 搜一次，严格匹配才取
+//   ③ 都取不到：返回 nil，让 UI 落占位图
+//
+// 为什么加 ①：实测（2026-11-16）酷我搜索结果里约两成没有 MVPIC 字段，
+// 以前这 20% 全靠 QQ 跨平台兜底——跨平台本质上是猜（同名不同专辑就会贴错图）。
+// 而榜单曲（`KuwoChart`）**一个封面字段都没有**，100 行全靠兜底，所以同平台取图是刚需。
 //
 // 为什么必须严格：模糊匹配会把别的版本的封面贴上来（翻唱 / 同名不同歌），比没有封面更糟。
-// 为什么需要兜底：实测（2026-11-16）酷我搜索结果里约两成没有 MVPIC 字段；
 // 另外酷狗旧版 `imgessl` 封面已被 CDN 软失败（HTTP 200 但固定返回黑胶占位图），也当作没有。
 //
 // 三条约束（照搬 Android，都是为了首屏不炸）：
@@ -36,7 +41,7 @@ actor CoverResolver {
 
     // MARK: 对外
 
-    /// 返回可展示的封面 URL：有封面直接用（旧的 imgessl 除外），没有才去 QQ 兜底
+    /// 返回可展示的封面 URL：有封面直接用（旧的 imgessl 除外），没有才走兜底
     func coverURL(for song: Song) async -> String? {
         loadIfNeeded()
         if let pic = song.picURL, !pic.isEmpty, !Self.isLegacyDeadCover(song) {
@@ -64,7 +69,15 @@ actor CoverResolver {
         let task = Task<String?, Never> { [weak self] in
             guard let self else { return nil }
             await self.acquire()
-            let url = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout)
+            // ① 酷我：先同平台按 rid 取（同曲目必然同专辑图；跨平台兜底只是猜）
+            var url: String?
+            if let rid = Self.kuwoRid(song) {
+                url = await Self.lookupKuwoRidCover(rid: rid, timeout: timeout)
+            }
+            // ② 其余平台，以及酷我 rid 取不到时：QQ 严格匹配
+            if url == nil {
+                url = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout)
+            }
             await self.release()
             if let url {
                 await self.store(url, for: key)
@@ -75,6 +88,53 @@ actor CoverResolver {
         let result = await task.value
         inFlight[key] = nil
         return result
+    }
+
+    // MARK: 酷我同平台封面（rid_pic）
+
+    /// 只有酷我歌曲、且 `platformID` 是纯数字 rid 时才走这条路。
+    /// 酷我搜索给的是 `DC_TARGETID`（数字），榜单给的是 `id`（数字）——都不是数字的说明不是 rid，不猜。
+    static func kuwoRid(_ song: Song) -> String? {
+        guard song.platform == .kuwo else { return nil }
+        let rid = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rid.isEmpty, rid.allSatisfy({ $0.isNumber }) else { return nil }
+        return rid
+    }
+
+    /// 按 rid 取酷我专辑图 URL。
+    ///
+    /// `artistpicserver` 的响应是**一段裸 URL 文本**（不是 JSON），而且给的地址有三个坑：
+    ///   · 协议是 `http`：iOS 已开 ATS 严格（`NSAllowsArbitraryLoads` 已移除），http 会被系统直接拦掉；
+    ///   · 域名常是 `img1.kwcdn.kuwo.cn`：这台机器实测该域**根本不提供 https**（TLS 直接失败），
+    ///     也就是说"图补上了但永远加载不出来"；
+    ///   · 同一路径在 `img1/2/4.kuwo.cn` 上 https 200 且字节一致（三张图实测同上同大小）。
+    ///
+    /// 所以统一做「升 https + `.kwcdn.kuwo.cn` → `.kuwo.cn`」。
+    /// 另外**拒收歌手头像**：`/starheads/` 是歌手图，贴到歌曲行上就是张冠李戴，比没图更糟
+    /// （实测有个别 rid 会返回 starheads）。纯函数，CI 有断言。
+    static func ridPicURL(fromBody body: String) -> String? {
+        let firstLine = body.split(whereSeparator: \.isNewline).first.map(String.init) ?? body
+        var url = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard url.hasPrefix("http://") || url.hasPrefix("https://") else { return nil }
+        guard !url.lowercased().contains("/starheads/") else { return nil }
+        if url.hasPrefix("http://") {
+            url = "https://" + url.dropFirst("http://".count)
+        }
+        if url.contains(".kwcdn.kuwo.cn") {
+            url = url.replacingOccurrences(of: ".kwcdn.kuwo.cn", with: ".kuwo.cn")
+        }
+        guard url.count <= 2048 else { return nil }
+        return url
+    }
+
+    static func lookupKuwoRidCover(rid: String, timeout: TimeInterval = 5) async -> String? {
+        let url = "https://artistpicserver.kuwo.cn/pic.web"
+            + "?type=rid_pic&pictype=url&content=list&size=320&rid=\(rid)"
+        guard let body = try? await APIClient.shared.getString(
+            url, headers: ["Referer": "https://www.kuwo.cn/"], timeout: timeout) else {
+            return nil
+        }
+        return ridPicURL(fromBody: body)
     }
 
     /// QQ 搜「歌名 歌手」→ 严格匹配（歌名完全相等 + 歌手任一片段相等 + 有封面）

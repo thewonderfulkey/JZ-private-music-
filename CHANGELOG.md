@@ -1,3 +1,31 @@
+## iOS 第十九轮 · 2026-11-17 23:5x（编辑精选加真榜单 / 酷我封面那两成补上）
+**发现页第一次有了"平台真榜"；酷我没有 MVPIC 的歌不再全靠跨平台猜封面**
+
+来源：复核一份三家音乐 App 的逆向报告后，挑出两条能落在现有架构上的（其余接口按报告结论**不采纳**：
+酷我 H5 歌词端点实测反向、`mobi.s`/`anti.s` 只给片段或占位曲）。
+
+- **编辑精选一排末尾加一个榜单模块**（`KuwoChart.swift` + `ChartSongsView.swift`）：
+  卡名「酷我热歌榜」，副行「官方榜 · 每日更新」，点进去是整榜 100 首（带名次 + 播放全部 + 整榜起播）。
+  与编辑池的根本差别：榜单曲**已经带平台 id（酷我 rid）**，点行不用再四平台搜索，直接进队列。
+  - 数据：`wapi.kuwo.cn/api/pc/bang/list`（36 个叶子榜）+ `kbangserver.kuwo.cn/ksong.s`（100 首/榜），
+    匿名、无签名、**https 直连即通**，不需要 ATS 例外。
+  - 两个坑写进文件头：① 两级 id——目录 `id`(489927) 喂给 `ksong.s` 只回 `{}`，必须用 `sourceid`(16)；
+    ② 曲长在 `song_duration`（189）不在 `duration`（4/1/41 这类值），用错会打穿 ±25s 时长闸门。
+  - 可播性：本机取 3 个榜各 6 首走妖狐酷我，**18/18 拿到无损直链**，所以不加「试听」标记、不动播放引擎。
+- **封面兜底链加一环：酷我同平台按 rid 取图**（`CoverResolver` 的 `rid_pic` 分支，排在 QQ 兜底之前）：
+  ① 先按 rid 取（`artistpicserver/pic.web`）→ ② 取不到才跨平台 QQ 严格匹配 → ③ 都没有落占位。
+  这条同时修掉两个面：榜单 100 行**一个封面字段都没有**，以及原来那约两成没有 `MVPIC` 的酷我搜索结果
+  （此前全靠"去 QQ 猜"，同名不同专辑就贴错图）。
+  `rid_pic` 响应三个坑逐条处理：`http` 升 `https`（ATS 严格）、`img1.kwcdn.kuwo.cn` 换 `img1.kuwo.cn`
+  （该域**不提供 https**，TLS 直连失败；同路径在 img1/2/4 上 200 且字节一致）、`/starheads/`
+  （个别 rid 返回歌手头像）直接拒收。
+- **本地验证**：新口径单编 harness（`.build/swiftcheck/run-r80.sh`）**19/19 通过**；
+  WSL `typecheck` `TYPECHECK_EXIT=0`；UI 卫生检查通过；pbxproj 179 对象 / 2 target。
+  顺带把 `.build` 里两个本地校验脚本的文件清单对齐到 CI（它们缺 `NeteaseLyrics`/`LrclibLyrics`、
+  多一个已删除的 `PlaybackActivityModel`，此前跑不出可信结果）。
+- CI 断言新增 18 条（榜单解析 10 + `rid_pic` 规则 8），口径见 `docs/ios/IOS-DISCOVER.md` §2.1。
+- 版本 2.3.1（169）。Android / 桌面端未同步（这两端的 `CoverResolver` 仍是旧的三步链，榜单模块未加）。
+
 ## iOS 第十八轮整改 · 2026-11-17 21:3x（模块去阴影=纯色背景 / 识曲历史可点播放）
 **发现页与迷你条一起走"无阴影、无描边、纯色底"；识曲历史那几行终于能点了**
 

@@ -1927,6 +1927,88 @@ do {
           LddcLyrics.MissKind.fetchFailed.rawValue)
 }
 
+// MARK: - 第十八轮（r79）：发现页榜单模块（酷我 bang/list + ksong.s）
+
+section("榜单歌曲解析（酷我官方榜）")
+
+// 真响应裁成三条：一条完整的、一条数字型字段 + 空歌手、一条缺 rid（必须被丢掉）。
+// 其中第一条特意让 `duration`(4) 与 `song_duration`(189) 不一致——这就是线上真实形态，
+// 断言钉死"取 song_duration"，否则时长闸门会拿 4s 当期望值，把真歌全判成坏源。
+let chartFixture: [String: Any] = [
+    "name": "酷我热歌榜",
+    "pub": "2026-11-17",
+    "num": "100",
+    "musiclist": [
+        [
+            "id": "668801544",
+            "name": "慌啥子嘛 (赵本山版)",
+            "artist": "赵本山",
+            "album": "慌啥子嘛（赵本山版）",
+            "duration": "4",
+            "song_duration": "189",
+            "score100": "89"
+        ],
+        [
+            "id": 669608403,
+            "name": "阴天也会有烦恼吗",
+            "artist": "",
+            "album": "",
+            "duration": 272
+        ],
+        [
+            "name": "没有 rid 的歌",
+            "artist": "某人"
+        ]
+    ] as [[String: Any]]
+]
+
+if let chart = KuwoChart.parsePage(chartFixture) {
+    check("榜名取接口给的", chart.name == "酷我热歌榜", chart.name)
+    check("更新日期取 pub", chart.publishedDate == "2026-11-17", chart.publishedDate)
+    check("缺 rid 的那条被丢掉", chart.songs.count == 2, "\(chart.songs.count)")
+    check("曲长取 song_duration 而不是 duration", chart.songs.first?.durationSec == 189,
+          "\(String(describing: chart.songs.first?.durationSec))")
+    check("rid 进 platformID", chart.songs.first?.platformID == "668801544",
+          chart.songs.first?.platformID ?? "nil")
+    check("榜单曲没有封面字段 → 交给封面链兜底", chart.songs.first?.picURL == nil)
+    check("数字型 id / duration 也能解",
+          chart.songs.last?.platformID == "669608403" && chart.songs.last?.durationSec == 272,
+          "\(String(describing: chart.songs.last?.platformID)) / \(String(describing: chart.songs.last?.durationSec))")
+    check("空歌手不报错", chart.songs.last?.singer == "", chart.songs.last?.singer ?? "nil")
+} else {
+    check("榜单解析", false, "parsePage 返回 nil")
+}
+
+check("空 musiclist 判失败（不显示一个 0 首的“正常”页）",
+      KuwoChart.parsePage(["name": "空榜", "musiclist": []]) == nil)
+check("两级 id 都留着：web 489927 / mobile 16",
+      KuwoChart.hot.webId == "489927" && KuwoChart.hot.mobileId == "16",
+      "\(KuwoChart.hot.webId)/\(KuwoChart.hot.mobileId)")
+
+section("酷我封面（rid_pic 同平台兜底）")
+
+check("http 升 https，且 kwcdn 换成 kuwo.cn",
+      CoverResolver.ridPicURL(fromBody: "http://img1.kwcdn.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg")
+        == "https://img1.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg",
+      CoverResolver.ridPicURL(fromBody: "http://img1.kwcdn.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg") ?? "nil")
+check("已经是 https 的原样保留",
+      CoverResolver.ridPicURL(fromBody: "https://img4.kuwo.cn/star/albumcover/320/a/b/1.jpg")
+        == "https://img4.kuwo.cn/star/albumcover/320/a/b/1.jpg")
+check("歌手头像不算专辑封面（宁可没图也别贴错）",
+      CoverResolver.ridPicURL(fromBody: "http://img1.kuwo.cn/star/starheads/320/s4s56/58/291211030.jpg") == nil)
+check("不是 URL 就不猜",
+      CoverResolver.ridPicURL(fromBody: "") == nil
+        && CoverResolver.ridPicURL(fromBody: "{\"code\":500}") == nil)
+check("前后空行只取第一行",
+      CoverResolver.ridPicURL(fromBody: "\n\nhttps://img1.kuwo.cn/a.jpg\n\n") == "https://img1.kuwo.cn/a.jpg")
+
+let kuwoRidSong = song(.kuwo, "晴天", "周杰伦", id: "228908")
+check("酷我数字 rid 才走 rid_pic", CoverResolver.kuwoRid(kuwoRidSong) == "228908")
+check("非数字 platformID 不当 rid",
+      CoverResolver.kuwoRid(song(.kuwo, "晴天", "周杰伦", id: "abc")) == nil)
+check("别的平台不走 rid_pic",
+      CoverResolver.kuwoRid(song(.qq, "晴天", "周杰伦", id: "228908")) == nil)
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
