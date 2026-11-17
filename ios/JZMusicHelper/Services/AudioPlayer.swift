@@ -83,6 +83,14 @@ final class PlayerEngine {
     /// 每次 seek +1：完成回调回来时如果已经不是最新那次，直接丢掉
     private var seekToken: Int = 0
 
+    /// 点某一句歌词跳转后"还没唱到的那一行"。播放头走到这一行的时间之前，高亮与滚动都钉在它上面。
+    ///
+    /// 为什么需要：`AVPlayer.seek` 真机上常落到目标**之前**几百毫秒（关键帧对齐），
+    /// 而 `indexAt` 是「行时间 ≤ 位置」，早 1ms 就推成上一句 —— 于是"点下去是对的、
+    /// 下一拍又退回上一句"，正是老板反复提的"用歌词快进/后退之后就不准了"。
+    /// 规则见 `LyricsCleaning.lyricSeekHoldDecision`（纯函数，CI 有断言），与歌曲无关。
+    private var pendingLyricLine: Int?
+
     /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
     private(set) var deadSongKeys: Set<String> = []
     private(set) var isLoadingLyrics = false
@@ -252,6 +260,9 @@ final class PlayerEngine {
         let target = max(0, min(duration, safe))
         seekToken &+= 1
         let token = seekToken
+        // 任何一次绝对位置跳转（进度条拖动 / 无障碍调整）都取消"等它唱到"的钉子；
+        // 点歌词那条路径（`seek(toLyricLine:)`）会在下面重新钉住目标行。
+        pendingLyricLine = nil
         currentTime = target
         // r68：把"这次要跳到哪里"记下来，保护窗内不让 ticker 用旧位置改高亮
         seekTargetMs = Int(target * 1000)
@@ -306,6 +317,8 @@ final class PlayerEngine {
         seek(toSeconds: Double(targetMs) / 1000)
         lyricIndex = index
         lyricScrollIndex = index
+        // seek 落地常提前几百毫秒：在那之前把这一行钉住，否则下一拍 ticker 会退回上一句
+        pendingLyricLine = index
     }
 
     /// 播放列表里点某一首（队列不动，只换当前曲）
@@ -370,6 +383,8 @@ final class PlayerEngine {
         seekTargetMs = nil
         seekGuardUntil = .distantPast
         lastSeekTargetMs = -1
+        // 换曲：上一首"还没唱到的那一行"不能带到新曲上（行号会撞到别的歌词）
+        pendingLyricLine = nil
     }
 
     private func loadCurrent() async {
@@ -688,6 +703,8 @@ final class PlayerEngine {
         lyricsSource = result?.source ?? ""
         lyricsMatchNote = result?.matchNote ?? ""
         isLoadingLyrics = false
+        // 词被换掉了：旧的"还没唱到的那一行"行号已无意义，按当前位置重新推导
+        pendingLyricLine = nil
         updateLyricIndex()
     }
 
@@ -705,6 +722,7 @@ final class PlayerEngine {
         lyricsSource = ""
         lyricIndex = -1
         lyricScrollIndex = -1
+        pendingLyricLine = nil
         lyricsFailure = ""
         lyricsMatchNote = ""
         lyricsRefetched = false
@@ -765,6 +783,29 @@ final class PlayerEngine {
     private func updateLyricIndex() {
         let offset = lyricOffsetMs
         let position = lyricPositionMs
+
+        // ① 点歌词跳转的"等它唱到"窗口：
+        // seek 常落在目标之前几百毫秒，而 `indexAt` 早 1ms 就会推成上一句。
+        // 还没走到被点那一行之前，高亮与滚动都钉在那一行；走到了立刻交还给正常推导。
+        // 与歌曲无关，所以所有歌表现一致（老板要的"所有音乐保持一致"）。
+        if let pending = pendingLyricLine {
+            guard lyrics.indices.contains(pending) else {
+                pendingLyricLine = nil
+                // 歌词换了（重取/换歌），继续走正常推导
+                return finishLyricIndex(position: position)
+            }
+            let decision = LyricsCleaning.lyricSeekHoldDecision(
+                positionMs: position,
+                lineMs: lyrics[pending].timeMs,
+                toleranceMs: LyricsUXRules.lyricSeekHoldToleranceMs)
+            if decision == .hold {
+                if lyricIndex != pending { lyricIndex = pending }
+                if lyricScrollIndex != pending { lyricScrollIndex = pending }
+                return
+            }
+            pendingLyricLine = nil
+        }
+
         if let target = seekTargetMs {
             // 播放器还没跳到目标：这段时间的位置是旧的，别改高亮（否则会先弹回上一句）。
             // r77：判定收进 `LyricsUXRules.seekGuardDecision`（纯函数，CI 钉住），
@@ -777,6 +818,11 @@ final class PlayerEngine {
             }
             seekTargetMs = nil
         }
+        finishLyricIndex(position: position)
+    }
+
+    /// 正常推导：高亮与滚动走同一份位置，保证"亮的行"和"滚到中间的行"不打架
+    private func finishLyricIndex(position: Int) {
         let idx = LyricsCleaning.indexAt(lyrics, positionMs: position)
         if idx != lyricIndex { lyricIndex = idx }
         let anchor = LyricsCleaning.scrollAnchorIndex(lyrics, positionMs: position,

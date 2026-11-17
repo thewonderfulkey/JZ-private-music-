@@ -1,11 +1,17 @@
 import Foundation
 import UIKit
 
-// MARK: - 封面内存缓存
+// MARK: - 封面内存缓存 + 磁盘缓存
 //
-// 为什么要它：列表滚动时 `AsyncImage` 会把同一张封面反复下载/解码（离开屏幕再回来就重来一次），
-// 一屏 20 行滚起来流量和 CPU 都在抖。这里只做**内存缓存**（NSCache，系统管淘汰），
-// 不落盘——封面本来就小，落盘要处理清理策略，收益不抵复杂度。
+// 为什么要有内存缓存：列表滚动时 `AsyncImage` 会把同一张封面反复下载/解码（离开屏幕再回来就重来一次），
+// 一屏 20 行滚起来流量和 CPU 都在抖。NSCache 系统管淘汰，只留在内存里。
+//
+// 为什么后来又加了磁盘缓存（老板 r84："打开软件需要加载的东西都特别慢，能不能加载一次以后长时间不用再加载"）：
+// 内存缓存一杀进程就没了。实测一首歌的封面 20~50 KB，一屏 20 行、几十上百首常用歌也就几 MB ——
+// 落在 Caches 目录里，**下次冷启动直接读盘**（本地 IO，几十毫秒），不用等网络、也不用再求一次 rid_pic。
+// 目录用 `Caches`（系统在空间紧张时可以自己清），最多 600 张 / 约 40 MB，超出按最后访问时间淘汰。
+//
+// 取图顺序：内存 → 磁盘 → 网络（网络成功后同时写内存和磁盘）。
 final class CoverImageCache: @unchecked Sendable {
 
     static let shared = CoverImageCache()
@@ -14,9 +20,26 @@ final class CoverImageCache: @unchecked Sendable {
     private let lock = NSLock()
     private var inFlight: [URL: Task<UIImage?, Never>] = [:]
 
+    /// 磁盘缓存目录（Caches/cover-images）
+    private let diskDirectory: URL
+    /// 磁盘上限（张）。一套常用曲库的封面远小于这个数
+    private let diskLimit = 600
+
     private init() {
         cache.countLimit = 300
         cache.totalCostLimit = 60 * 1024 * 1024   // 60MB，够一屏几百张小图
+
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        diskDirectory = caches.appendingPathComponent("cover-images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+
+        // 淘汰放到后台，别拖慢启动
+        let dir = diskDirectory
+        let limit = diskLimit
+        Task.detached(priority: .utility) {
+            CoverImageCache.trimDisk(directory: dir, limit: limit)
+        }
     }
 
     /// 只读缓存（同步、不触发下载）
@@ -24,7 +47,7 @@ final class CoverImageCache: @unchecked Sendable {
         cache.object(forKey: url as NSURL)
     }
 
-    /// 取图：命中直接返回；否则下载一次（同一 URL 并发只下一次）
+    /// 取图：内存 → 磁盘 → 网络（同一 URL 并发只下一次）
     func image(for url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
 
@@ -35,6 +58,14 @@ final class CoverImageCache: @unchecked Sendable {
         }
         let task = Task<UIImage?, Never> { [weak self] in
             guard let self else { return nil }
+
+            // ① 磁盘：冷启动就能命中，不用等网络
+            if let onDisk = Self.loadFromDisk(url, directory: diskDirectory) {
+                self.store(onDisk, for: url)
+                return onDisk
+            }
+
+            // ② 网络
             var request = URLRequest(url: url)
             request.timeoutInterval = 15
             request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
@@ -46,6 +77,7 @@ final class CoverImageCache: @unchecked Sendable {
                 return nil
             }
             self.store(image, for: url)
+            Self.saveToDisk(data, url: url, directory: diskDirectory)
             return image
         }
         inFlight[url] = task
@@ -90,5 +122,45 @@ final class CoverImageCache: @unchecked Sendable {
 
     func clear() {
         cache.removeAllObjects()
+        try? FileManager.default.removeItem(at: diskDirectory)
+        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+    }
+
+    // MARK: 磁盘读写（全部在后台任务里调用）
+
+    private static func fileURL(for url: URL, directory: URL) -> URL {
+        let name = APIClient.md5Hex(url.absoluteString)
+        return directory.appendingPathComponent(name).appendingPathExtension("img")
+    }
+
+    private static func loadFromDisk(_ url: URL, directory: URL) -> UIImage? {
+        let file = fileURL(for: url, directory: directory)
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
+        // 顺手刷一下修改时间：淘汰按"最后访问"排序，常用的封面不会被清掉
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        return UIImage(data: data)
+    }
+
+    private static func saveToDisk(_ data: Data, url: URL, directory: URL) {
+        let file = fileURL(for: url, directory: directory)
+        try? data.write(to: file, options: .atomic)
+    }
+
+    /// 超出上限时删掉最久没被访问的那些（按修改时间升序）
+    private static func trimDisk(directory: URL, limit: Int) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]) else { return }
+        guard files.count > limit else { return }
+        let sorted = files.sorted { a, b in
+            let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return da < db
+        }
+        for file in sorted.prefix(files.count - limit) {
+            try? fm.removeItem(at: file)
+        }
     }
 }

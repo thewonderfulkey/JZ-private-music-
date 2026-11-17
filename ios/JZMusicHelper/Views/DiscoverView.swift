@@ -46,9 +46,13 @@ struct DiscoverView: View {
             await feed.refreshGuess(recent: library.recentSongs)
         }
         .task {
+            // 第二十一轮（老板 r84："一打开什么都在加载，能不能加载一次就别再加载"）：
+            // 热门/猜你喜欢都有**当天缓存**，`DiscoverFeed` 在 init 里已经同步读盘，
+            // 所以这里多数情况下第一帧就有内容；`refreshGuessIfStale` 只在"最近播放变了"时
+            // 才在后台换一批，界面先照旧显示，不阻塞首屏。
             await feed.loadHotIfNeeded()
-            if feed.guessState == .idle, !library.recentSongs.isEmpty {
-                await feed.refreshGuess(recent: library.recentSongs)
+            if !library.recentSongs.isEmpty {
+                await feed.refreshGuessIfStale(recent: library.recentSongs)
             }
             openSearchIfIntentAsked()
         }
@@ -410,8 +414,10 @@ struct DiscoverSongRow: View {
             if let rank {
                 Text(String(format: "%02d", rank))
                     .font(.caption.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(rank <= 3 ? Tokens.Palette.vermilion : Color.secondary)
-                    .frame(width: 20, alignment: .trailing)
+                    .frame(width: 26, alignment: .trailing)
             }
 
             SongArtwork(song: song, size: 46, radius: Tokens.Radius.artworkSmall)

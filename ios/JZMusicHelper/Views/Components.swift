@@ -86,10 +86,15 @@ struct SongRow: View {
     var body: some View {
         HStack(spacing: Tokens.Spacing.s) {
             if let leadingRank {
+                // 第二十轮（老板 r83：榜单最后一行"100"横向挤不下、被折成了两行）：
+                // 名次槽 20 → 26，并且 `lineLimit(1)` + `minimumScaleFactor` 双保险——
+                // 20pt 刚好够两位数，三位数（100）就会换行；大字号下再缩一点也比折行好看。
                 Text(String(format: "%02d", leadingRank))
                     .font(.caption.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(leadingRank <= 3 ? Tokens.Palette.vermilion : Color.secondary)
-                    .frame(width: 20, alignment: .trailing)
+                    .frame(width: 26, alignment: .trailing)
             }
 
             SongArtwork(song: song)

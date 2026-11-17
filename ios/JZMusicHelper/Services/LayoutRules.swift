@@ -151,6 +151,12 @@ enum LyricsUXRules {
     static let seekGuardToleranceMs: Int = 400
     static let seekGuardMaxSeconds: Double = 10
 
+    /// 点歌词跳转后允许"提前多少毫秒仍算落在这一行"。
+    ///
+    /// 真机上 seek 常落到目标前 200~600ms（关键帧对齐），2.5 秒足够覆盖这种情况；
+    /// 再远就不是"落点误差"而是用户改了意图（拖进度条 / 换歌），此时不该继续钉住旧行。
+    static let lyricSeekHoldToleranceMs: Int = 2500
+
     /// `.wait` = 这段时间的位置不可信，别动高亮；`.release` = 位置可信（追上目标了，或兜底超时）
     enum SeekGuardDecision: Equatable {
         case wait

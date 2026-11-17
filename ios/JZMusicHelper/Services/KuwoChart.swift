@@ -53,7 +53,10 @@ enum KuwoChart {
     }
 
     /// 拉一个榜的前 `rn` 首。失败抛错，由调用方显示失败态 + 重试（不放假数据糊页面）。
-    static func fetchPage(_ chart: Chart, rn: Int = 100) async throws -> Page {
+    ///
+    /// 成功时顺手把整页写进当天缓存：榜单一天只变一次，冷启动/再次进页面直接读缓存，
+    /// 一个请求都不发（老板 r84："热门音乐是一天中定死的，不用每次打开都加载"）。
+    static func fetchPage(_ chart: Chart, rn: Int = 100, day: Int = KuwoChart.today) async throws -> Page {
         let json = try await APIClient.shared.getJSON(
             songsURL(mobileId: chart.mobileId, rn: rn),
             headers: headers,
@@ -62,7 +65,39 @@ enum KuwoChart {
         guard let page = parsePage(json) else {
             throw APIError.parse("榜单解析失败（\(chart.name)）")
         }
+        save(page, for: chart, day: day)
         return page
+    }
+
+    // MARK: 当天缓存（UserDefaults，JSON）
+
+    static var today: Int { Int(Date().timeIntervalSince1970 / 86_400) }
+
+    private static func cacheKey(_ chart: Chart) -> String {
+        "kw_chart_page_v1_\(chart.mobileId)"
+    }
+
+    private struct CachedPage: Codable {
+        let day: Int
+        let name: String
+        let publishedDate: String
+        let songs: [Song]
+    }
+
+    /// 当天缓存。`day` 不匹配（跨天）就当没有——榜单每日更新，隔天的榜不该再显示。
+    static func cachedPage(_ chart: Chart, day: Int = KuwoChart.today) -> Page? {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey(chart)),
+              let cached = try? JSONDecoder().decode(CachedPage.self, from: data),
+              cached.day == day,
+              !cached.songs.isEmpty else { return nil }
+        return Page(name: cached.name, publishedDate: cached.publishedDate, songs: cached.songs)
+    }
+
+    static func save(_ page: Page, for chart: Chart, day: Int = KuwoChart.today) {
+        let cached = CachedPage(day: day, name: page.name,
+                                publishedDate: page.publishedDate, songs: page.songs)
+        guard let data = try? JSONEncoder().encode(cached) else { return }
+        UserDefaults.standard.set(data, forKey: cacheKey(chart))
     }
 
     // MARK: 解析（纯函数，CI 断言直接喂字典进来）

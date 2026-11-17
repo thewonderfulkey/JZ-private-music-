@@ -200,6 +200,32 @@ enum LyricsCleaning {
         max(0, lineMs - userOffsetMs)
     }
 
+    /// 点歌词跳转后："播放头还没唱到被点的那一行"时要不要继续钉住它。
+    ///
+    /// 为什么需要（老板反复提的那件事：用歌词快进/后退之后，高亮和滚动"闪一下又退回上一句，从此不对"）：
+    /// `AVPlayer.seek` 真机上常落到目标**之前**几百毫秒（关键帧对齐 / 远端流分段），
+    /// 而 `indexAt` 的口径是「行时间 ≤ 位置」——位置比这一行早 1ms，推出来就是**上一句**。
+    /// 于是"点下去高亮是对的（钉住），下一拍 ticker 又按位置算回上一句"，两者打架。
+    ///
+    /// 这条规则只做一件事：没走到被点那一行之前，继续钉住它；走到了就交还正常推导。
+    /// **与歌曲无关**（不看平台/时长/是否逐字），所以所有歌表现一致。
+    enum LyricSeekHold: Equatable {
+        case hold
+        case release
+    }
+
+    /// - Parameters:
+    ///   - positionMs: 当前歌词位置（毫秒，**含**用户偏移）
+    ///   - lineMs: 被点那一行的时间戳（毫秒）
+    ///   - toleranceMs: 允许"提前多少毫秒仍算落点正确"；超过这个距离就不信这次钉住
+    ///     （用户多半是拖了进度条/换歌，而不是落在目标前后）
+    static func lyricSeekHoldDecision(positionMs: Int,
+                                      lineMs: Int,
+                                      toleranceMs: Int) -> LyricSeekHold {
+        guard positionMs < lineMs else { return .release }   // 已经唱到这一行或更晚：交还推导
+        return (lineMs - positionMs) <= max(0, toleranceMs) ? .hold : .release
+    }
+
     /// 解析 LRC 文本为时间戳行。
     /// 注意 `[mm:ss.xxx]` 的 `xxx` 是**毫秒**（三位小数秒），不能乘 10 当"十进制小数"用——
     /// Android 那边曾经踩过，这里直接按毫秒处理。

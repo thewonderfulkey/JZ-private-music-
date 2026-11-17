@@ -2026,6 +2026,57 @@ check("不足 21 首时全量返回",
 check("空榜返回 nil → 调用方走种子词兜底（不显示空页）",
       DiscoverRules.hotModuleSongs([]) == nil)
 
+// MARK: - 第二十一轮：点歌词跳转的定位 / 打开即用的缓存口径
+
+section("歌词：点歌词跳转后的「等它唱到」窗口")
+
+// 真机现象（老板反复提）：点歌词跳过去，高亮和滚动闪一下又退回上一句，从此不对。
+// 根因：seek 常落到目标之前几百毫秒，而 indexAt 的口径是「行时间 ≤ 位置」——早 1ms 就推成上一句。
+let holdTolerance = LyricsUXRules.lyricSeekHoldToleranceMs
+check("落点比目标早 300ms：继续钉住被点的那一行",
+      LyricsCleaning.lyricSeekHoldDecision(positionMs: 9_700, lineMs: 10_000,
+                                           toleranceMs: holdTolerance) == .hold)
+check("正好唱到这一行：交还正常推导",
+      LyricsCleaning.lyricSeekHoldDecision(positionMs: 10_000, lineMs: 10_000,
+                                           toleranceMs: holdTolerance) == .release)
+check("已经唱过去了：交还正常推导",
+      LyricsCleaning.lyricSeekHoldDecision(positionMs: 10_400, lineMs: 10_000,
+                                           toleranceMs: holdTolerance) == .release)
+check("落点早 4 秒（超出容差，多半是拖了进度条）：不钉住，跟音频走",
+      LyricsCleaning.lyricSeekHoldDecision(positionMs: 6_000, lineMs: 10_000,
+                                           toleranceMs: holdTolerance) == .release)
+check("容差边界：刚好等于容差仍算 hold",
+      LyricsCleaning.lyricSeekHoldDecision(positionMs: 10_000 - holdTolerance, lineMs: 10_000,
+                                           toleranceMs: holdTolerance) == .hold)
+
+section("打开即用：缓存口径")
+
+check("猜你喜欢指纹只看最近播放前 3 首",
+      DiscoverRules.guessSignature([
+        song(.kuwo, "A", "x", id: "a"), song(.qq, "B", "y", id: "b"),
+        song(.netease, "C", "z", id: "c"), song(.kugou, "D", "w", id: "d")
+      ]) == "kuwo_a,qq_b,netease_c",
+      DiscoverRules.guessSignature([
+        song(.kuwo, "A", "x", id: "a"), song(.qq, "B", "y", id: "b"),
+        song(.netease, "C", "z", id: "c"), song(.kugou, "D", "w", id: "d")
+      ]))
+check("没有最近播放时指纹为空", DiscoverRules.guessSignature([]) == "")
+check("解析缓存键：歌名|歌手，小写去空白",
+      ResolvedSongCache.key(name: " 晴天 ", singer: " 周杰伦 ") == "晴天|周杰伦",
+      ResolvedSongCache.key(name: " 晴天 ", singer: " 周杰伦 "))
+check("解析缓存键：不同歌手不同键",
+      ResolvedSongCache.key(name: "晴天", singer: "周杰伦")
+        != ResolvedSongCache.key(name: "晴天", singer: "陈奕迅"))
+
+let cacheChart = KuwoChart.Chart(webId: "1", mobileId: "99999", name: "测试榜")
+let cachePage = KuwoChart.Page(name: "测试榜", publishedDate: "2026-11-18",
+                               songs: [song(.kuwo, "晴天", "周杰伦", id: "228908")])
+KuwoChart.save(cachePage, for: cacheChart, day: 20_000)
+check("榜单当天缓存能读回",
+      KuwoChart.cachedPage(cacheChart, day: 20_000)?.songs.count == 1)
+check("榜单缓存跨天失效（每日更新的榜不跨天复用）",
+      KuwoChart.cachedPage(cacheChart, day: 20_001) == nil)
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

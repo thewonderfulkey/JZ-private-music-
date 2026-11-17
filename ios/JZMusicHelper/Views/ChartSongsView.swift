@@ -143,6 +143,14 @@ struct ChartSongsView: View {
     private func load(force: Bool) async {
         if loading { return }
         if !force, page != nil { return }
+
+        // ① 当天缓存：进页面直接铺满，一个请求都不发（老板 r84："一天定死的东西别每次打开都加载"）
+        if !force, let cached = KuwoChart.cachedPage(chart) {
+            page = cached
+            failed = false
+            return
+        }
+
         loading = true
         failed = false
         do {

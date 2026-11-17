@@ -59,8 +59,20 @@ struct EditorPlaylistView: View {
             guard seeds.isEmpty else { return }
             seeds = feed.editorSeeds(for: playlist, rotation: rotation)
             feed.markShown(seeds, in: playlist)
-            // 这一页现在自己就需要把 20 首解析出来，不再借热门音乐的缓存预热
+            // 第二十一轮（老板 r84："连整个条目都要加载"）：先把磁盘里已经解析过的「歌名+歌手 → Song」
+            // 同步铺上去——这一页第二次以后进来，整页行（封面/歌手/收藏）都是立刻就有，
+            // 只有磁盘里没有的那几首才在后台去搜。
+            prefillFromCache()
             await resolveAll()
+        }
+    }
+
+    /// 用本地解析缓存把已知的行先填上（同步，几十 KB，毫秒级）
+    private func prefillFromCache() {
+        for (index, seed) in seeds.enumerated() where songs[index] == nil {
+            if let hit = ResolvedSongCache.shared.song(name: seed.name, singer: seed.singer) {
+                songs[index] = hit
+            }
         }
     }
 
@@ -208,6 +220,7 @@ struct EditorPlaylistView: View {
         if let resolved {
             songs[index] = resolved
             failedRows.remove(index)
+            ResolvedSongCache.shared.store(resolved)
         } else {
             failedRows.insert(index)
         }
@@ -215,26 +228,31 @@ struct EditorPlaylistView: View {
     }
 
     /// 进页面后台补全：并发 3（一首一次四平台搜索，20 首一起打出去会拖垮首屏）。
-    /// 每解析出一首就填一格，行自动从占位行换成正式行——页面不会"等 20 首齐了才出现"。
+    /// 缓存里已经有的**不再解析**（这是第二十一轮"打开就要快"的关键），只补缺的那些；
+    /// 每解析出一首就填一格，行自动从占位行换成正式行。
     @MainActor
     private func resolveAll() async {
         let list = seeds
         guard !list.isEmpty else { return }
-        // 已经全部解析过了（比如从播放页返回）就不用再搜一遍
-        if songs.count == list.count { return }
+
+        let pending = list.indices.filter { songs[$0] == nil }
+        guard !pending.isEmpty else {
+            status = "今日精选 \(list.count) 首 · 点任意一首播放"
+            return
+        }
 
         let concurrency = 3
-        var next = 0
-        var done = songs.count
         let total = list.count
+        var launched = 0
+        var done = total - pending.count
         // 捕获成局部常量再进 Task：`feed` 是 @Environment 属性，闭包里直接写它要靠隐式 self，
         // 在并发的子任务里既慢又容易触发隔离检查——先落到局部 let。
         let feedRef = feed
 
         await withTaskGroup(of: (Int, Song?).self) { group in
-            while next < min(concurrency, total) {
-                let index = next
-                next += 1
+            while launched < min(concurrency, pending.count) {
+                let index = pending[launched]
+                launched += 1
                 group.addTask { (index, await feedRef.resolve(seed: list[index])) }
             }
             while let (index, resolved) = await group.next() {
@@ -242,15 +260,17 @@ struct EditorPlaylistView: View {
                 if let resolved {
                     songs[index] = resolved
                     failedRows.remove(index)
+                    // 落盘：下次进这一页（甚至下次冷启动）直接渲染，不用再搜
+                    ResolvedSongCache.shared.store(resolved)
                 } else {
                     failedRows.insert(index)
                 }
                 if done < total {
                     status = "正在补全封面 \(done)/\(total)…"
                 }
-                if next < total {
-                    let index = next
-                    next += 1
+                if launched < pending.count {
+                    let index = pending[launched]
+                    launched += 1
                     group.addTask { (index, await feedRef.resolve(seed: list[index])) }
                 }
             }

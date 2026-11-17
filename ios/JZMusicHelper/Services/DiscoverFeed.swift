@@ -36,6 +36,8 @@ final class DiscoverFeed {
     private let defaults = UserDefaults.standard
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
     private static let hotCacheKey = "discover_hot_cache_v2"
+    /// 猜你喜欢的当天缓存（同一天 + 同一批"最近播放"才复用）
+    private static let guessCacheKey = "discover_guess_cache_v1"
     /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
     private(set) var guessRound = 0
 
@@ -48,12 +50,38 @@ final class DiscoverFeed {
         let fromChart: Bool
     }
 
+    private struct GuessCache: Codable {
+        let day: Int
+        let signature: String
+        let songs: [Song]
+    }
+
     /// 编辑精选的「上次展示日」：key = 类别|歌名|歌手 → 天序号（没有 = 从没展示过）
     private static let shownKey = "discover_shown_days_v1"
     private var shownDays: [String: Int] = [:]
 
     init() {
         shownDays = defaults.dictionary(forKey: Self.shownKey) as? [String: Int] ?? [:]
+        // 第二十一轮（老板 r84："一打开就到处在转圈，能不能加载一次就别再加载"）：
+        // 缓存**在 init 里同步读进来**，这样发现页第一帧就有内容，不再先闪一屏骨架屏。
+        // 热门/猜你喜欢都是一天定死的数据，同一天再打开直接复用，一个请求都不发。
+        primeFromCaches()
+    }
+
+    /// 同步预载当天缓存（只读本地，不发请求）
+    private func primeFromCaches() {
+        if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
+            hotSongs = cached.songs
+            hotFromChart = cached.fromChart
+            hotState = .loaded
+        }
+        if let cached = cachedGuess(),
+           cached.day == day,
+           cached.signature == DiscoverRules.guessSignature(LibraryStore.shared.recentSongs),
+           !cached.songs.isEmpty {
+            guessSongs = cached.songs
+            guessState = .loaded
+        }
     }
 
     // MARK: 热门音乐
@@ -154,6 +182,20 @@ final class DiscoverFeed {
         }
         guessSongs = picked
         guessState = picked.isEmpty ? .failed : .loaded
+        if !picked.isEmpty {
+            saveGuess(picked, signature: DiscoverRules.guessSignature(recent))
+        }
+    }
+
+    /// 打开发现页时调用：缓存已经有内容就**一个请求都不发**；
+    /// 只有"最近播放"变了（指纹不同）才在后台悄悄换一批，界面先照旧显示旧的。
+    func refreshGuessIfStale(recent: [Song]) async {
+        guard !recent.isEmpty else { return }
+        if guessState == .loaded, !guessSongs.isEmpty,
+           cachedGuess()?.signature == DiscoverRules.guessSignature(recent) {
+            return
+        }
+        await refreshGuess(recent: recent)
     }
 
     func nextGuessRound(recent: [Song]) async {
@@ -222,5 +264,16 @@ final class DiscoverFeed {
         let cache = HotCache(day: day, songs: songs, fromChart: fromChart)
         guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.hotCacheKey)
+    }
+
+    private func cachedGuess() -> GuessCache? {
+        guard let data = defaults.data(forKey: Self.guessCacheKey) else { return nil }
+        return try? JSONDecoder().decode(GuessCache.self, from: data)
+    }
+
+    private func saveGuess(_ songs: [Song], signature: String) {
+        let cache = GuessCache(day: day, signature: signature, songs: songs)
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        defaults.set(data, forKey: Self.guessCacheKey)
     }
 }
