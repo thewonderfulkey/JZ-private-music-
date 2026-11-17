@@ -42,9 +42,17 @@ struct SongArtwork: View {
     /// r65：取图逻辑收进 `CoverImageCache.image(for:)`，播放页也走同一条链
     /// ——老板反馈"列表里有封面、点进播放页却没有封面"，根因就是播放页只读 `song.picURL`，
     /// 没有走这条路（网易/酷我的歌常常 picURL 为空，靠 CoverResolver 兜底才有图）。
+    ///
+    /// 第二十轮（老板：半壶纱播完、切到奢香夫人时**悬浮栏封面不换**）：这里原来第一行是
+    /// `if image != nil { return }`。`.task(id: song.id)` 虽然会随换歌重跑，但函数一进门就返回，
+    /// 于是 `@State image` 一直留着上一首那张图 —— 列表行因为随列表重建看不出问题，
+    /// 悬浮栏是常驻视图，一眼就能看出"封面没换"。
+    /// 现在**每次 id 变都取一次**：取图期间旧图先留着（不闪占位），取到再替换；
+    /// 中途又被换歌时 `.task` 会取消旧任务，这里用 `Task.isCancelled` 挡住过期结果覆盖新图。
     private func load() async {
-        if image != nil { return }
-        image = await CoverImageCache.shared.image(for: song)
+        let loaded = await CoverImageCache.shared.image(for: song)
+        guard !Task.isCancelled else { return }
+        image = loaded
     }
 
     private var placeholder: some View {
@@ -70,9 +78,20 @@ struct SongRow: View {
     var isFavorite = false
     var onFavorite: (() -> Void)?
     var subtitle: String?
+    /// 榜单/歌单页要的名次位（1 开始）。传 nil 就不占位。
+    /// 第二十轮（老板："榜单页太丑、太细了"）：榜单页改回用这个统一行样式，
+    /// 名次作为行首的小字——不再另写一套更瘦的榜单行。
+    var leadingRank: Int?
 
     var body: some View {
         HStack(spacing: Tokens.Spacing.s) {
+            if let leadingRank {
+                Text(String(format: "%02d", leadingRank))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(leadingRank <= 3 ? Tokens.Palette.vermilion : Color.secondary)
+                    .frame(width: 20, alignment: .trailing)
+            }
+
             SongArtwork(song: song)
 
             VStack(alignment: .leading, spacing: 3) {

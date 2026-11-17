@@ -12,6 +12,21 @@ enum DiscoverRules {
     /// 同一歌手在榜单里最多出现几次（Android 口径：2）
     static let maxPerSinger = 2
 
+    /// 热门音乐模块只放 21 首（3 行 × 7 页，与这一轮之前的口径一致——老板要求"保持那个页数"）
+    static let hotModuleLimit = 21
+
+    // MARK: 热门音乐（榜单优先，纯函数便于断言）
+
+    /// 官方榜 100 首里取模块用的 21 首：**保持官方名次顺序**，不重排、不再做原版筛选。
+    /// 返回 nil 表示这一批为空（调用方要回落到种子词搜索，而不是显示空页）。
+    ///
+    /// 为什么单独抽出来：这是"榜单优先 / 搜索兜底"两个数据源的接缝，
+    /// 一旦有人在这里顺手调 `pick`（那会重排、会把第 1 名挤下去），断言会立刻红。
+    static func hotModuleSongs(_ songs: [Song], limit: Int = hotModuleLimit) -> [Song]? {
+        let head = Array(songs.prefix(limit))
+        return head.isEmpty ? nil : head
+    }
+
     // MARK: 每日轮换
 
     /// 从池子里按「天」滑窗取 `take` 首：同一天多次调用结果稳定，跨天自动换一批

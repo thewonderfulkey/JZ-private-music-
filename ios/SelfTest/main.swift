@@ -2009,6 +2009,23 @@ check("非数字 platformID 不当 rid",
 check("别的平台不走 rid_pic",
       CoverResolver.kuwoRid(song(.qq, "晴天", "周杰伦", id: "228908")) == nil)
 
+// MARK: - 第二十轮：热门音乐改成「榜单优先、搜索兜底」
+
+section("热门音乐：榜单优先 / 搜索兜底")
+
+// 25 首假榜（名次就是数组顺序），验证模块只取前 21 且**不重排**
+let chartPool25 = (0..<25).map { song(.kuwo, "曲\($0)", "歌手", id: "\($0)") }
+let hotModule = DiscoverRules.hotModuleSongs(chartPool25)
+check("热门模块页数不变：只取前 21 首", hotModule?.count == DiscoverRules.hotModuleLimit,
+      "\(hotModule?.count ?? -1) / \(DiscoverRules.hotModuleLimit)")
+check("热门模块保持官方名次顺序（不重排、不筛原版）",
+      hotModule?.first?.platformID == "0" && hotModule?.last?.platformID == "20",
+      "\(hotModule?.first?.platformID ?? "nil")…\(hotModule?.last?.platformID ?? "nil")")
+check("不足 21 首时全量返回",
+      DiscoverRules.hotModuleSongs(Array(chartPool25.prefix(5)))?.count == 5)
+check("空榜返回 nil → 调用方走种子词兜底（不显示空页）",
+      DiscoverRules.hotModuleSongs([]) == nil)
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

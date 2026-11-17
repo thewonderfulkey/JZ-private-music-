@@ -3,14 +3,17 @@ import Observation
 
 // MARK: - 发现页数据源
 //
-// 四家平台里酷狗/QQ/网易没有「歌单/榜单」接口，酷我**有**（2026-11-17 实测，匿名可用）——
-// 酷我的那个真榜单独走 `KuwoChart`（编辑精选一排末尾的「榜单歌曲」卡），不混进下面这三条链路。
 // 发现页的内容由三条真链路拼出来（与 Android 同口径）：
 //   ① 编辑精选：本地预置池（DiscoverCatalog）按日期轮换 20 首，点开才去搜真实音源
-//   ② 热门音乐：每天取 6 个种子词 → 四平台并发搜索 → `DiscoverRules.pick` 选 21 首 → 当天缓存
+//   ② 热门音乐：**首选酷我官方热歌榜**（`KuwoChart`，真榜、每日更新），拿不到才回落到
+//      原来的「6 个种子词 → 四平台并发搜索 → `DiscoverRules.pick` 选 21 首」
 //   ③ 猜你喜欢：从最近播放里抽 3 个歌手 → 搜他们的歌 → 剔掉听过的 → 取 6 首
 //
-// 这里不造假数据：搜不到就显示失败态 + 重试，绝不写死几首假歌糊住页面。
+// 第二十轮（老板："把酷我热歌榜换到热门音乐里，原来的热门音乐逻辑作为兜底，优先用热歌榜，
+// 保持热门音乐的样式和页数"）：榜单不再单独占编辑精选的一个卡位，而是成为热门音乐的数据源；
+// 「查看全部」进榜单页。兜底链路原样保留——榜单接口挂了，热门音乐还是会有内容。
+//
+// 这里不造假数据：榜单和搜索都拿不到才显示失败态 + 重试，绝不写死几首假歌糊住页面。
 @MainActor
 @Observable
 final class DiscoverFeed {
@@ -24,12 +27,15 @@ final class DiscoverFeed {
 
     private(set) var hotSongs: [Song] = []
     private(set) var hotState: LoadState = .idle
+    /// 这批热门是"酷我官方榜"还是"四平台合并兜底"——只用来写副标题，不参与排序
+    private(set) var hotFromChart = false
 
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
 
     private let defaults = UserDefaults.standard
-    private static let hotCacheKey = "discover_hot_cache_v1"
+    /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
+    private static let hotCacheKey = "discover_hot_cache_v2"
     /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
     private(set) var guessRound = 0
 
@@ -39,6 +45,7 @@ final class DiscoverFeed {
     private struct HotCache: Codable {
         let day: Int
         let songs: [Song]
+        let fromChart: Bool
     }
 
     /// 编辑精选的「上次展示日」：key = 类别|歌名|歌手 → 天序号（没有 = 从没展示过）
@@ -56,6 +63,7 @@ final class DiscoverFeed {
         if !hotSongs.isEmpty { return }
         if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
             hotSongs = cached.songs
+            hotFromChart = cached.fromChart
             hotState = .loaded
             return
         }
@@ -64,6 +72,18 @@ final class DiscoverFeed {
 
     func refreshHot() async {
         hotState = .loading
+
+        // ① 首选：酷我官方热歌榜（真榜，100 首/日更，模块只取前 21）
+        if let page = try? await KuwoChart.fetchPage(.hot),
+           let songs = DiscoverRules.hotModuleSongs(page.songs) {
+            hotSongs = songs
+            hotFromChart = true
+            hotState = .loaded
+            saveHot(songs, fromChart: true)
+            return
+        }
+
+        // ② 兜底：原来的种子词四平台合并（榜单接口不通时热门音乐也不会空着）
         let words = DiscoverRules.rotate(DiscoverCatalog.hotSeedWords, day: day, take: 6)
 
         var pool: [Song] = []
@@ -79,14 +99,15 @@ final class DiscoverFeed {
             }
         }
 
-        let picked = DiscoverRules.pick(pool, limit: 21)
+        let picked = DiscoverRules.pick(pool, limit: DiscoverRules.hotModuleLimit)
         if picked.isEmpty {
             hotState = .failed
             return
         }
         hotSongs = picked
+        hotFromChart = false
         hotState = .loaded
-        saveHot(picked)
+        saveHot(picked, fromChart: false)
     }
 
     // MARK: 猜你喜欢
@@ -197,8 +218,9 @@ final class DiscoverFeed {
         return try? JSONDecoder().decode(HotCache.self, from: data)
     }
 
-    private func saveHot(_ songs: [Song]) {
-        guard let data = try? JSONEncoder().encode(HotCache(day: day, songs: songs)) else { return }
+    private func saveHot(_ songs: [Song], fromChart: Bool) {
+        let cache = HotCache(day: day, songs: songs, fromChart: fromChart)
+        guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.hotCacheKey)
     }
 }

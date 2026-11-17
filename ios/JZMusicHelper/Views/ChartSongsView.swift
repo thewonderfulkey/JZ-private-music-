@@ -27,13 +27,23 @@ struct ChartSongsView: View {
                 if let page {
                     header(page)
                     ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
+                        // 第二十轮（老板："榜单页太丑、太细了"）：不再用 `DiscoverSongRow`（那是发现页
+                        // 的紧凑行，副行只有歌手、没有专辑/平台/时长），改回**全 App 统一行样式** `SongRow`：
+                        // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
+                        // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
                         Button {
                             play(page.songs, at: index)
                         } label: {
-                            DiscoverSongRow(song: song,
-                                            reason: song.singer,
-                                            showReason: false,
-                                            rank: index + 1)
+                            SongRow(song: song,
+                                    showsFavorite: true,
+                                    isFavorite: library.isFavorite(song),
+                                    onFavorite: {
+                                        Haptics.favorite()
+                                        withAnimation(Tokens.Motion.favorite) {
+                                            library.toggleFavorite(song)
+                                        }
+                                    },
+                                    leadingRank: index + 1)
                                 .padding(.horizontal, Tokens.Spacing.pageMargin)
                         }
                         .buttonStyle(.rowPress)

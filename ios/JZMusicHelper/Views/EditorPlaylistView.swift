@@ -2,8 +2,14 @@ import SwiftUI
 
 // MARK: - 编辑精选歌单页（设计稿 §3.2）
 //
-// 歌单里只有「歌名 + 歌手」（内置池），平台 ID 要等用户点开某首时才去搜——与 Android
-// 「点单曲才搜索播放」同口径。所以这一页每一行都能失败，失败必须在行尾看得见。
+// 第二十轮（老板："编辑精选里剩下 4 个页面，里面都是纯文字，没有封面、没有歌手、没有收藏"）：
+// 这一页原来只有「歌名 + 歌手」两行纯文字——因为池子里存的就只有名字，平台 id 要等点开才去搜。
+// 现在**进页面就在后台把 20 首逐首解析成真实 Song**（并发 3，解析出一首填一格）：
+// 填到哪一行，哪一行就从占位行换成**全 App 统一行样式** `SongRow`——
+// 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏心。
+//
+// 还没解析到、或者确实搜不到的行，留一行带占位封面的行（不空、不跳），
+// 搜不到的行尾会显示警告图标——与原来"失败必须在行尾看得见"的口径一致。
 struct EditorPlaylistView: View {
 
     @Environment(PlayerEngine.self) private var player
@@ -22,6 +28,8 @@ struct EditorPlaylistView: View {
 
     /// 当天这批 20 首：进页面时算一次（内部会记「今天展示过」，所以不能放在 body 里算）
     @State private var seeds: [DiscoverCatalog.Seed] = []
+    /// index → 解析出来的真实歌曲（进页面就后台补；补到就整行换成 SongRow）
+    @State private var songs: [Int: Song] = [:]
 
     private var accent: Color { Color(hex: playlist.accentHex) }
 
@@ -48,11 +56,11 @@ struct EditorPlaylistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             Haptics.prepare()
-            if seeds.isEmpty {
-                seeds = feed.editorSeeds(for: playlist, rotation: rotation)
-                feed.markShown(seeds, in: playlist)
-            }
-            await feed.loadHotIfNeeded()
+            guard seeds.isEmpty else { return }
+            seeds = feed.editorSeeds(for: playlist, rotation: rotation)
+            feed.markShown(seeds, in: playlist)
+            // 这一页现在自己就需要把 20 首解析出来，不再借热门音乐的缓存预热
+            await resolveAll()
         }
     }
 
@@ -108,17 +116,55 @@ struct EditorPlaylistView: View {
 
     // MARK: 行
 
+    /// 解析到的行用统一 `SongRow`（封面/歌手·专辑/平台/时长/收藏）；
+    /// 没解析到的行先用占位行，解析完成会自己换过来（两行的封面槽都是 52pt，换行不跳）。
+    @ViewBuilder
     private func row(index: Int, seed: DiscoverCatalog.Seed) -> some View {
+        if let song = songs[index] {
+            Button {
+                Task { await play(index: index) }
+            } label: {
+                SongRow(song: song,
+                        showsFavorite: true,
+                        isFavorite: library.isFavorite(song),
+                        onFavorite: {
+                            Haptics.favorite()
+                            withAnimation(Tokens.Motion.favorite) {
+                                library.toggleFavorite(song)
+                            }
+                        },
+                        leadingRank: index + 1)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+            .buttonStyle(.rowPress)
+            .disabled(resolvingIndex != nil || preparing)
+            .accessibilityLabel("第 \(index + 1) 首，\(song.name)，\(song.singer)")
+            .accessibilityHint("点一下播放")
+        } else {
+            placeholderRow(index: index, seed: seed)
+        }
+    }
+
+    private func placeholderRow(index: Int, seed: DiscoverCatalog.Seed) -> some View {
         Button {
             Task { await play(index: index) }
         } label: {
             HStack(spacing: Tokens.Spacing.s) {
                 Text(String(format: "%02d", index + 1))
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 24, alignment: .trailing)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(index < 3 ? Tokens.Palette.vermilion : Color.secondary)
+                    .frame(width: 20, alignment: .trailing)
 
-                VStack(alignment: .leading, spacing: 1) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Tokens.Radius.artworkSmall, style: .continuous)
+                        .fill(Tokens.Palette.paperElevated)
+                    Image(systemName: "music.note")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(width: Tokens.Size.songRowArtwork, height: Tokens.Size.songRowArtwork)
+
+                VStack(alignment: .leading, spacing: 3) {
                     Text(seed.name)
                         .font(FontRole.songTitle)
                         .lineLimit(1)
@@ -136,10 +182,7 @@ struct EditorPlaylistView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                } else {
-                    Image(systemName: "play.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .accessibilityLabel("没找到可播放的版本")
                 }
             }
             .frame(minHeight: Tokens.Size.songRowHeight)
@@ -154,6 +197,70 @@ struct EditorPlaylistView: View {
         .accessibilityHint("点一下解析并播放")
     }
 
+    // MARK: 取歌
+
+    /// 第 index 首的 Song：进页面时的后台补全、或之前点过，就直接复用；
+    /// 否则现搜一次并记下来（同一首不会被搜两遍：后台补全 / 点播放 / 补队列共用这一处）。
+    private func resolvedSong(at index: Int) async -> Song? {
+        guard seeds.indices.contains(index) else { return nil }
+        if let hit = songs[index] { return hit }
+        let resolved = await feed.resolve(seed: seeds[index])
+        if let resolved {
+            songs[index] = resolved
+            failedRows.remove(index)
+        } else {
+            failedRows.insert(index)
+        }
+        return resolved
+    }
+
+    /// 进页面后台补全：并发 3（一首一次四平台搜索，20 首一起打出去会拖垮首屏）。
+    /// 每解析出一首就填一格，行自动从占位行换成正式行——页面不会"等 20 首齐了才出现"。
+    @MainActor
+    private func resolveAll() async {
+        let list = seeds
+        guard !list.isEmpty else { return }
+        // 已经全部解析过了（比如从播放页返回）就不用再搜一遍
+        if songs.count == list.count { return }
+
+        let concurrency = 3
+        var next = 0
+        var done = songs.count
+        let total = list.count
+        // 捕获成局部常量再进 Task：`feed` 是 @Environment 属性，闭包里直接写它要靠隐式 self，
+        // 在并发的子任务里既慢又容易触发隔离检查——先落到局部 let。
+        let feedRef = feed
+
+        await withTaskGroup(of: (Int, Song?).self) { group in
+            while next < min(concurrency, total) {
+                let index = next
+                next += 1
+                group.addTask { (index, await feedRef.resolve(seed: list[index])) }
+            }
+            while let (index, resolved) = await group.next() {
+                done += 1
+                if let resolved {
+                    songs[index] = resolved
+                    failedRows.remove(index)
+                } else {
+                    failedRows.insert(index)
+                }
+                if done < total {
+                    status = "正在补全封面 \(done)/\(total)…"
+                }
+                if next < total {
+                    let index = next
+                    next += 1
+                    group.addTask { (index, await feedRef.resolve(seed: list[index])) }
+                }
+            }
+        }
+
+        status = songs.count == total
+            ? "今日精选 \(total) 首 · 点任意一首播放"
+            : "今日精选 \(total) 首，其中 \(total - songs.count) 首没找到可播放版本"
+    }
+
     // MARK: 播放
 
     private func play(index: Int) async {
@@ -164,7 +271,7 @@ struct EditorPlaylistView: View {
         failedRows.remove(index)
         status = nil
 
-        if let song = await feed.resolve(seed: list[index]) {
+        if let song = await resolvedSong(at: index) {
             // 第五轮（老板反馈 ②）：点单曲时队列里只有这一首，列表循环就退化成单曲循环。
             // 先播点中的这首（1~3 秒有声音），再把这张歌单其余曲目后台补进队列。
             player.play(queue: [song], startAt: 0)
@@ -189,15 +296,9 @@ struct EditorPlaylistView: View {
         let order = (1..<seeds.count).map { (tapped + $0) % seeds.count }
         var added = 0
         for index in order {
-            if let song = await feed.resolve(seed: seeds[index]) {
+            if let song = await resolvedSong(at: index) {
                 player.appendToQueue([song])
                 added += 1
-                failedRows.remove(index)
-            } else {
-                failedRows.insert(index)
-            }
-            if added > 0, added % 3 == 0 {
-                status = "队列已补到 \(added + 1) 首…"
             }
         }
         status = added > 0
@@ -216,16 +317,13 @@ struct EditorPlaylistView: View {
         var resolved: [Song] = []
         let target = 5
         var nextIndex = 0
-        for (index, seed) in seeds.enumerated() {
+        for (index, _) in seeds.enumerated() {
             nextIndex = index + 1
             if resolved.count >= target { break }
             status = "正在准备队列 \(resolved.count)/\(target)…"
             resolvingIndex = index
-            if let song = await feed.resolve(seed: seed) {
+            if let song = await resolvedSong(at: index) {
                 resolved.append(song)
-                failedRows.remove(index)
-            } else {
-                failedRows.insert(index)
             }
         }
         resolvingIndex = nil
@@ -249,13 +347,9 @@ struct EditorPlaylistView: View {
         guard start < seeds.count else { return }
         var added = 0
         for index in start..<seeds.count {
-            let seed = seeds[index]
-            if let song = await feed.resolve(seed: seed) {
+            if let song = await resolvedSong(at: index) {
                 player.appendToQueue([song])
                 added += 1
-                failedRows.remove(index)
-            } else {
-                failedRows.insert(index)
             }
             if added % 5 == 0, added > 0 {
                 status = "队列已就绪 \(already + added) 首…"

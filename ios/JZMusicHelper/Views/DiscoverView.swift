@@ -120,16 +120,6 @@ struct DiscoverView: View {
                         .buttonStyle(.press)
                         .accessibilityLabel("\(playlist.title)，20 首，每日换一批")
                     }
-
-                    // 榜单模块：本地池是"每天换一批"，榜单是**平台真榜**（酷我官方，每日更新）。
-                    // 排在编辑池之后——换一批只作用于前四张池卡，榜单不参与轮换。
-                    NavigationLink {
-                        ChartSongsView(chart: .hot)
-                    } label: {
-                        ChartModuleCard(chart: .hot)
-                    }
-                    .buttonStyle(.press)
-                    .accessibilityLabel("\(KuwoChart.Chart.hot.name)，酷我官方榜，每日更新")
                 }
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
                 .padding(.vertical, 2)
@@ -221,19 +211,24 @@ struct DiscoverView: View {
         return "根据你的播放记录"
     }
 
-    // MARK: 热门音乐（反馈 ②：与猜你喜欢同一套分页）
+    // MARK: 热门音乐（榜单优先，种子词兜底；与猜你喜欢同一套分页）
 
+    /// 第二十轮（老板）：数据源改成「酷我热歌榜优先」，原种子词逻辑做兜底；
+    /// **样式和页数一律不动**（3 行一页、共 7 页、行样式 `DiscoverSongRow`），
+    /// 只有「查看全部」进榜单页看完整 100 首。
     private var hotSection: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
                 Text("热门音乐")
                     .font(FontRole.sectionTitle)
-                Text("每日更新")
+                // 副标题说实话：真榜就写「酷我热歌榜」，回落时就写「四平台合并」，
+                // 不把兜底结果也标成官方榜；还没加载完只写"每日更新"，别抢着报来源。
+                Text(hotMeta)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
                 if !feed.hotSongs.isEmpty {
-                    NavigationLink("查看全部") { HotChartView() }
+                    NavigationLink("查看全部") { ChartSongsView(chart: .hot) }
                         .font(.footnote)
                         .foregroundStyle(Tokens.Palette.vermilion)
                 }
@@ -264,6 +259,12 @@ struct DiscoverView: View {
                 }
             }
         }
+    }
+
+    /// 热门音乐的副标题：加载中只说"每日更新"，加载完再报来源（真榜 / 四平台兜底）
+    private var hotMeta: String {
+        guard feed.hotState == .loaded else { return "每日更新" }
+        return feed.hotFromChart ? "酷我热歌榜 · 每日更新" : "四平台合并 · 每日更新"
     }
 
     // MARK: 卡片外壳
@@ -343,17 +344,16 @@ struct DiscoverSectionHeader: View {
 
 // MARK: - 编辑精选卡（长方形，对齐 Android `EditorCard`）
 
-/// 编辑精选那一排卡片的外壳：3pt 类别色条 + 标题 + 副行 + 右箭头，170×64。
+/// Android 是 150×66dp 的白卡：左边色条 + 歌单名 + 首数 + 右箭头。
+/// iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
 ///
-/// 为什么抽成外壳：这一排现在有两种内容（本地编辑池 / 平台真榜），
-/// 两处各写一遍的话，下次调宽度或去内缩必然只改一处，看着就是"同一排两种尺寸"。
-///
-/// Android 是 150×66dp 的白卡；iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
-struct EditorCardShell: View {
+/// 第二十轮：榜单卡从这里撤掉（老板："把酷我热歌榜换到热门音乐里"），这一排回到 4 张池卡，
+/// 之前为两种内容抽的 `EditorCardShell` 也一并收回来——只有一个使用者就别留中间层。
+struct EditorPlaylistCard: View {
 
-    let title: String
-    let meta: String
-    let accent: Color
+    let playlist: DiscoverCatalog.Playlist
+
+    private var accent: Color { Color(hex: playlist.accentHex) }
 
     var body: some View {
         HStack(spacing: Tokens.Spacing.xs) {
@@ -363,10 +363,10 @@ struct EditorCardShell: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(playlist.title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(meta)
+                Text("20 首 · 每日换一批")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -385,30 +385,6 @@ struct EditorCardShell: View {
         // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
         // 间距改由外层 HStack 统一给（见 `editorSection`）。
         .contentShape(Rectangle())
-    }
-}
-
-struct EditorPlaylistCard: View {
-
-    let playlist: DiscoverCatalog.Playlist
-
-    var body: some View {
-        EditorCardShell(title: playlist.title,
-                        meta: "20 首 · 每日换一批",
-                        accent: Color(hex: playlist.accentHex))
-    }
-}
-
-/// 编辑精选里的「榜单歌曲」入口卡：色条用朱砂（全页唯一强调色），
-/// 副行写「官方榜 · 每日更新」——与编辑池的「每日换一批」区分开，不混成同一个口径。
-struct ChartModuleCard: View {
-
-    let chart: KuwoChart.Chart
-
-    var body: some View {
-        EditorCardShell(title: chart.name,
-                        meta: "官方榜 · 每日更新",
-                        accent: Tokens.Palette.vermilion)
     }
 }
 
