@@ -1281,3 +1281,131 @@ android/app/build.gradle.kts      versionCode 162 / versionName 2.2.4
   出现"兜底"就说明正常档没词，那是词源问题，不是渲染问题。
 - 单曲偏移存在 `lyric_offset_by_song`（`Song.id` → 毫秒）；全局默认值仍是 `lyric_offset_ms`。
   要动上限就改 `LyricOffsetRules.limitMs`（CI 有断言）。
+
+# 第十三轮整改（2026-11-17 15:3x，老板：发如雪依旧没词 / 七里香词取错 / 直接用 LDDC 那套）
+
+> 老板原话：*"《发如雪》依旧没有词，到底是什么原因，LDDC 可以直接找到词，为什么这里打分怎么都找不到，
+> 《七里香》的词还取错了。找到的歌词优先和歌曲名称以及歌手匹配，歌曲里面带 live，那么歌词里面优先选
+> live 的，直接走 LDDC。`services/lddc/LDDC/LDDC.exe` 这个应用程序只不过是手动的 GUI 取词，
+> 你可以拆开直接取词返回最适配的那个就可以了啊，为什么这么麻烦，代码修改越来越多，文件越来越大，
+> 还没有解决问题。"*
+>
+> 截图证据：15:22《发如雪》空态
+> **`候选 20 条（酷狗 20 / QQ 0），取词成功 0/4 份（两轮），酷狗取词两条通道都没成（lyrics.v1 + krcs）`**；
+> 15:24《七里香》歌词页 `43 行 · 酷我兜底`，正文第一行写着
+> **「七里香 (2024 嘉年华世界巡回演唱会台北站) - 周杰伦」**。
+
+## 一、先把两件事分开：《发如雪》不是打分问题，《七里香》才是
+
+### 1）《发如雪》断在**取词接口**，不在打分
+
+15:22 那行诊断已经把话说死了：**候选 20 条，取词 0/4 份，酷狗两条通道（lyrics.v1 + krcs）都没成**。
+也就是说：搜索通了、打分也进了池（4 个候选都被尝试过），断在**下载歌词这一步**——
+两个域名的请求在手机上都没回来（PC 上 LDDC.exe 能回来，所以这个差别只有真机才看得到）。
+
+> 现场复核：本机复刻 App 的那条链（`.build/r71_probe_faruxue_fetch.py`），《发如雪》原版
+> → `krc(contenttype=0)`、79 行、`[ti:发如雪][ar:周杰伦]`，完全正常；同一台机器上 LDDC 的
+> `krcs.kugou.com` 老接口也正常（20 条候选、79 行）。**PC 通、手机不通**，所以不是"规则"问题。
+
+**改法：加一条完全独立的源 —— LRCLIB。**
+
+- `services/lddc/code/LDDC/LDDC/core/api/lyrics/lrclib.py` 里就是这么用的：公开接口、不要签名、不共享酷狗的限流。
+- 新增 `Services/LrclibLyrics.swift`：`/api/get?track_name&artist_name&duration` 精确命中，
+  不中再 `/api/search?q=歌名 歌手` 拿一批按 LDDC 口径挑；**只要带时间轴的**（`syncedLyrics`）。
+- 实测 2026-11-17：《发如雪》299.28s、《七里香》297s、《晴天》270s 都有同步歌词（繁体，`cleanLine` 会转简）。
+- 位置：酷我官方 → **LDDC（酷狗）→ 酷我兜底 → LRCLIB → 网易云**。
+  也就是说**酷狗一条都不回也有词**，这正是《发如雪》这一轮要的结果。
+
+### 2）《七里香》错在"酷我兜底不看歌词正文"
+
+以前这条链只按「歌名像 + 歌手像 + 时长最近」挑一条酷我的歌，**从不看拿到的词是什么版本**。
+《七里香》那条恰好挂在了一张演唱会的专辑上，于是把「2024 嘉年华世界巡回演唱会台北站」的词贴了上来。
+
+**改法**：酷我兜底 / 网易云 / LRCLIB 三条都加同一道闸——
+`LyricsCleaning.contentVersionRejection` 看**歌词前两行**，自己写着演唱会/live/伴奏/纯音乐的**一律拒收**，
+换下一个候选（酷我兜底现在会逐条试前 3 个）。
+
+## 二、按老板的要求：取词只剩 LDDC 那一套
+
+老板说得很直接：*"直接走 LDDC，按歌名+歌手匹配，歌名带 live 就优先 live 词。"*
+所以这一轮**把前几轮自己加的规则全删了**：
+
+| 删掉的东西 | 为什么删 |
+|---|---|
+| 版本标记 −35 分（r69） | LDDC 里没有。它的副作用是把《发如雪》这类正常候选压到 55 线下 → 整首没词 |
+| 时长差扣分 −10/−25/−40（r69） | 同上；LDDC 只用"差 >4 秒直接丢"这条**硬门槛**，不参与打分 |
+| 三档 / 四档兜底池（r69/r70） | "有候选就硬取"会把别的版本的词贴上来；真正的兜底应该是**换源**（LRCLIB/酷我/网易云），不是降标准 |
+| 歌词文件头验收（r63） | LDDC 不验；它带来的误杀（缺 `[total:]` 的真词被丢）比重更大 |
+| 两轮并发取词 4 个候选（r71） | 请求翻倍、还容易把同 IP 打到限流；现在**按分数逐个试，最多 3 个** |
+
+现在 `LddcLyrics.pickBest` 就是 LDDC `auto_fetch` 的形状：
+
+```
+搜「歌名 歌手」→ 时长差 >4s 丢掉 → 分数 = 标题×0.5 + 歌手×0.5（标题 <30 再 −35）→ 只要 >55
+→ 分数降序 → 逐个取词（最多 3 个），第一个拿到就是答案
+```
+
+**版本偏好不用另写规则**：`LddcMatch.titleScore` 是 LDDC 的原算法，tag 相同有 +30 的匹配加成，
+所以「歌名带 (Live)」时带 Live 的候选天然排第一；歌名不带 Live 时，带 Live 的候选只有 70 分、排到原版（100 分）后面。
+
+代码量（老板嫌文件越来越大）：
+
+| 文件 | 变化 |
+|---|---|
+| `Services/LddcLyrics.swift` | 778 → 568 行（删掉 FetchedOutcome / chooseOutcome / 三档四档池 / 文件头验收 / 第二轮并发） |
+| `Services/LddcMatch.swift` | 440 → 358 行（删掉 CandidateScore / durationPenalty / passesFallback / isLastResort / isAnyTier） |
+| `Services/LrclibLyrics.swift` | **新增 121 行**（一条独立源，换掉上面那堆"打分兜底"） |
+| `Services/LyricsService.swift` | 取词主链重写，184 → 186 行（四步，每条都是"整首同一版"） |
+
+## 三、改动的文件（第十三轮）
+
+```
+Services/LddcMatch.swift        删掉自造的版本/时长扣分与三档池，只剩 LDDC 公式 + durationOK
+Services/LddcLyrics.swift       pickBest 改成 LDDC auto_fetch 形状（逐个取词，最多 3 个）；默认不打 QQ
+Services/LrclibLyrics.swift     ← 新增：LRCLIB 独立源（/api/get + /api/search，只要带时间轴的）
+Services/LyricsService.swift    四步主链；酷我兜底逐条试 3 个 + 正文版本校验；公开 alignedResult
+Services/LyricsModel.swift      去掉 isFallback（不再有"兜底档"概念）
+Services/NeteaseLyrics.swift    + 正文版本校验
+ios/SelfTest/main.swift         按新口径重写（LDDC 公式 / 时长门槛 / 排名 / LRCLIB 选源 / 正文版本）
+ios/JZMusicHelper.xcodeproj     + LrclibLyrics.swift；MARKETING_VERSION 2.2.5 / 163
+android/app/build.gradle.kts    versionCode 163 / versionName 2.2.5
+.github/workflows/ios-ipa.yml   swiftc 清单加 LrclibLyrics.swift
+```
+
+## 四、验证
+
+| 项 | 手段 | 结论 |
+|---|---|---|
+| 取词口径（LDDC 公式 / 时长门槛 / 排名 / LRCLIB 选源 / 正文版本） | 本机 WSL Swift 小 runner（`.build/r72_small_run.sh`） | **22 / 0 通过** |
+| 全仓 typecheck（含 SelfTest、网络层） | 本机 `r65_swiftcheck.sh`（CryptoKit/Compression 桩） | `BUILD_EXIT=0` |
+| 语法 / 界面卫生 / 工程文件 | `syntax_swift.py` / `check_ui_hygiene.py` / `check_pbxproj.py` | 67 文件（28 条为 SelfTest 多行字符串的老误报）/ 通过 / 通过（175 对象） |
+| LRCLIB 真实数据 | 本机直连 `/api/get` 与 `/api/search` | 《发如雪》299s、《七里香》297s、《晴天》270s 均有 syncedLyrics |
+| 全量逻辑断言 | CI `logic-tests` | 见出包记录 |
+
+## 五、装机按这个顺序试
+
+1. **《发如雪》**：进歌词页——应当有词。看顶部来源标签：
+   `LDDC`（酷狗通了）/ `LRCLIB`（酷狗没通，走的新源）/ `酷我`。都有词就说明目标达成。
+2. **《七里香》**：歌词页顶部应当是 `LDDC` 或 `LRCLIB`，**正文第一行不该再是「2024 嘉年华…演唱会」**。
+3. **带 Live 的歌**：找一首歌名里带 `(Live)` 的——歌词应当是现场版那版（歌名带 live 就优先 live 词）。
+4. 万一还有某首没词：把空态括号里的诊断截图给我，它会写清是「酷狗 0 条候选」「酷狗 0/N 个取到词」
+   还是「四个源都没有」。
+
+## 六、本轮出的包（**装这个**）
+
+| 项 | 值 |
+|---|---|
+| 文件 | `releases/JZ-Music-v2.2.5-203bcfe-r72-ios-unsigned.ipa`（已发群） |
+| 大小 | 1,751,941 字节（≈1.67 MB） |
+| SHA-256 | `3be7820b5a8871502a14f3e2f0ce5a697d3d283ff6dcba6bef6a34810a733494` |
+| CI | [run #72](https://github.com/thewonderfulkey/JZ-private-music-/actions/runs/44021794954)（逻辑断言 **512 / 0 失败** / `BUILD SUCCEEDED` / 已发飞书群） |
+| 提交 | `203bcfe` |
+| 包内自证 | `CFBundleShortVersionString = 2.2.5` / `CFBundleVersion = 163`；二进制里能找到 `LRCLIB` / `LrclibLyrics` |
+
+## 七、这一轮给下一轮的提醒
+
+- **《发如雪》这类"候选有、取词 0"再出现**：说明是**取词接口**在真机上不回（PC 能回不代表手机能回）。
+  这种时候不要再动打分，直接看空态诊断里的「酷狗取词两条通道都没成」——那是网络层，不是规则层。
+- **判定一份词对不对**只看两样：顶部来源标签 + 正文第一行。正文第一行写着另一个版本的，一律按错版处理。
+- 想调口径就改 `LddcMatch`（公式）、`LddcMatch.durationToleranceSec`（4 秒门槛）、
+  `LddcLyrics.rank`（排序）；**不要再往"打分"里加新扣分档**——那是 r69/r70 走过、已经证明会把歌打成没词的路。
