@@ -66,6 +66,9 @@ final class SettingsStore {
         static let wifiOnlyDownload = "wifi_only"
         static let backgroundDownload = "bg_download"
         static let lyricOffset = "lyric_offset_ms"
+        static let lyricOffsetPerSong = "lyric_offset_by_song"
+        /// r71 的一次性迁移标记：旧版那个全局偏移升级时归零（否则它会把每首歌都推歪）
+        static let lyricOffsetMigrated = "lyric_offset_migrated_v71"
     }
 
     private let defaults = UserDefaults.standard
@@ -104,10 +107,13 @@ final class SettingsStore {
     var backgroundDownload: Bool {
         didSet { defaults.set(backgroundDownload, forKey: Key.backgroundDownload) }
     }
-    /// 歌词时间偏移（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±2000，步进 100
+    /// 歌词时间偏移的**默认值**（毫秒）：正数 = 歌词提前，负数 = 歌词延后；范围 ±2000，步进 200
     ///
     /// 为什么放到 ±2000：第四轮老板说"歌词还是没对上"。同一个歌名不同版本（Live / 重制 / 电视剧版）
     /// 的前奏能差好几秒，±600 根本调不动；真机上现场按「快一点 / 慢一点」最多 20 下就能对齐。
+    ///
+    /// r71 起这只是**默认值**：播放页的微调写进 `lyricOffsetBySong`（按单曲），
+    /// 否则调一首歌会顺手把别的歌全推走（老板原话："其他歌曲原来还是准的、现在又不准了"）。
     var lyricOffsetMs: Int {
         didSet {
             let clamped = Self.clampOffset(lyricOffsetMs)
@@ -116,8 +122,54 @@ final class SettingsStore {
         }
     }
 
+    /// 单曲偏移（`Song.id` → 毫秒绝对值，**0 也会存**：表示"这首就是要对齐"）。
+    /// 没被单独调过的歌不在这里，直接吃默认值。
+    private(set) var lyricOffsetBySong: [String: Int] {
+        didSet {
+            defaults.set(lyricOffsetBySong, forKey: Key.lyricOffsetPerSong)
+        }
+    }
+
     /// 偏移的唯一边界口径（设置页 Stepper、播放页微调、引擎消费都走它）
-    static func clampOffset(_ value: Int) -> Int { min(max(value, -2000), 2000) }
+    static func clampOffset(_ value: Int) -> Int { LyricOffsetRules.clamp(value) }
+
+    // MARK: 单曲偏移
+
+    /// 这一首实际生效的偏移（没有单曲值时就用默认值）
+    func offsetMs(forSong songID: String?) -> Int {
+        LyricOffsetRules.effective(global: lyricOffsetMs,
+                                   perSong: lyricOffsetBySong,
+                                   songID: songID)
+    }
+
+    /// 播放页「慢一点 / 快一点」：只动这一首
+    func adjustOffset(byMs delta: Int, forSong songID: String?) {
+        let next = LyricOffsetRules.adjusted(global: lyricOffsetMs,
+                                             perSong: lyricOffsetBySong,
+                                             songID: songID,
+                                             byMs: delta)
+        setOffset(next, forSong: songID)
+    }
+
+    /// 「归零」：这一首回到 0（写成单曲值 0，**不动**设置页的默认值）
+    func resetOffset(forSong songID: String?) {
+        setOffset(0, forSong: songID)
+    }
+
+    /// 直接写这一首的偏移
+    func setOffset(_ value: Int, forSong songID: String?) {
+        guard let songID else { return }
+        lyricOffsetBySong[songID] = Self.clampOffset(value)
+    }
+
+    /// 「清空所有单曲偏移」：把所有按单曲记的值一次性去掉（设置页的默认值保留）
+    func clearAllSongOffsets() {
+        guard !lyricOffsetBySong.isEmpty else { return }
+        lyricOffsetBySong = [:]
+    }
+
+    /// 被单独调过的歌数（设置页显示"已单独调过 N 首"）
+    var songOffsetCount: Int { lyricOffsetBySong.count }
 
     init() {
         let d = UserDefaults.standard
@@ -134,8 +186,19 @@ final class SettingsStore {
         pauseBeforeRecognize = d.object(forKey: Key.pauseBeforeRecognize) as? Bool ?? true
         wifiOnlyDownload = d.object(forKey: Key.wifiOnlyDownload) as? Bool ?? true
         backgroundDownload = d.object(forKey: Key.backgroundDownload) as? Bool ?? true
-        let offset = d.integer(forKey: Key.lyricOffset)
-        lyricOffsetMs = Self.clampOffset(offset)
+        // r71 迁移：以前偏移是**全局一个数**，为了对齐某一首调出来的值会把其它歌一起推走
+        // （老板："其他歌曲原来还是准的、现在又不准了"）。升级到这一版时一次性归零，
+        // 让所有歌先回到"对齐"状态；之后微调只写单曲，默认值仍可在设置页重设。
+        let offsetMigrated = d.bool(forKey: Key.lyricOffsetMigrated)
+        if offsetMigrated {
+            lyricOffsetMs = Self.clampOffset(d.integer(forKey: Key.lyricOffset))
+        } else {
+            lyricOffsetMs = 0
+            d.set(0, forKey: Key.lyricOffset)
+            d.set(true, forKey: Key.lyricOffsetMigrated)
+        }
+        let perSong = d.dictionary(forKey: Key.lyricOffsetPerSong) as? [String: Int] ?? [:]
+        lyricOffsetBySong = perSong.mapValues { Self.clampOffset($0) }
     }
 }
 

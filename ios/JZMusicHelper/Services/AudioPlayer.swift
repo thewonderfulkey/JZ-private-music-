@@ -49,12 +49,20 @@ final class PlayerEngine {
     /// 播放页用 `lyricIndex` 决定哪一行白字，用这个决定 `scrollTo` 滚到哪一行。
     private(set) var lyricScrollIndex: Int = -1
 
-    /// 歌词判定用的位置（毫秒）= 精确播放位置 + 用户设置的偏移。
+    /// 歌词判定用的位置（毫秒）= 精确播放位置 + **这首自己的**偏移。
     ///
     /// 为什么要 `preciseTime` 而不是 0.5 秒才更新一次的 `currentTime`：
-    /// 之前高亮用的是时间观察者里的 currentTime，最坏情况整整晚半秒——
-    /// 表现出来就是"唱到下一句了，上一句还亮着"。25Hz 的专用 ticker 把这个误差压到 40ms 内。
-    var lyricPositionMs: Int { Int(preciseTime * 1000) + SettingsStore.shared.lyricOffsetMs }
+    /// 之前高亮用的是时间观察者里的 currentTime，最坏情况整整晚半秒——表现出来就是"唱到下一句了，上一句还亮着"。
+    /// 25Hz 的专用 ticker 把这个误差压到 40ms 内。
+    ///
+    /// r71：偏移改成**按单曲**取（`SettingsStore.offsetMs(forSong:)`）。以前读的是全局一个数，
+    /// 为了对齐某一首调出来的偏移会把其它所有歌一起推走。
+    var lyricPositionMs: Int { Int(preciseTime * 1000) + lyricOffsetMs }
+
+    /// 当前这首实际生效的歌词偏移（毫秒）
+    var lyricOffsetMs: Int {
+        SettingsStore.shared.offsetMs(forSong: currentSong?.id)
+    }
 
     /// 每次跳转 +1。歌词面板监听它，跳完强制重排一次（r68：快进/快退后滚动不准）
     private(set) var seekNonce: Int = 0
@@ -156,6 +164,7 @@ final class PlayerEngine {
             adoptQueue(songs, at: target)
             return
         }
+        stopCurrentForSwitch()
         queue = songs
         index = target
         currentSong = songs[target]
@@ -177,6 +186,8 @@ final class PlayerEngine {
     func toggle() {
         guard currentSong != nil else { return }
         attachSystemIfNeeded()
+        // r71：正在换曲解析时不要把上一首又播起来（那时 currentItem 还是旧的）
+        if isResolving { return }
         if isPlaying {
             player.pause()
             isPlaying = false
@@ -237,7 +248,7 @@ final class PlayerEngine {
         // 暂停状态下如果照旧用 preciseTime 算，就会出现"跳过去了，高亮还停在上上句"。
         lyricIndex = LyricsCleaning.indexAt(
             lyrics,
-            positionMs: Int(target * 1000) + SettingsStore.shared.lyricOffsetMs)
+            positionMs: Int(target * 1000) + lyricOffsetMs)
         lyricScrollIndex = lyricIndex
         updateNowPlaying()
     }
@@ -254,7 +265,7 @@ final class PlayerEngine {
     /// 老板说的"点歌词跳转的位置不对"，一半是这个偏移没算进去，一半是按 fraction 乘出来的误差。
     func seek(toLyricLine index: Int) {
         guard lyrics.indices.contains(index) else { return }
-        let offset = SettingsStore.shared.lyricOffsetMs
+        let offset = lyricOffsetMs
         let targetMs = LyricsCleaning.seekTargetMs(lineMs: lyrics[index].timeMs, userOffsetMs: offset)
         seek(toSeconds: Double(targetMs) / 1000)
         lyricIndex = index
@@ -290,12 +301,27 @@ final class PlayerEngine {
 
     private func goTo(_ newIndex: Int) {
         guard queue.indices.contains(newIndex) else { return }
+        stopCurrentForSwitch()
         index = newIndex
         currentSong = queue[newIndex]
         rejectedSourceURLs.removeAll()
         resetProgress()
         prepareLyrics(for: queue[newIndex])
         Task { await loadCurrent() }
+    }
+
+    /// 换曲前**先把当前这首停下来**（r71，老板："换曲的时候先暂停当前的歌曲，之前好好的，现在又没了"）。
+    ///
+    /// 为什么必须有：新曲要先解析音源（同平台解析 1~3 秒，跨平台补位最长 12 秒），
+    /// 这段时间旧音频还在播——听起来像"点了下一首，上一首又唱了半句"。
+    /// 现在点下去立刻静音（`player.pause()` + `isPlaying = false`），解析完 `start(item:)` 再起播。
+    ///
+    /// 只暂停、不 `replaceCurrentItem`：保留当前 item 和进度，用户在解析期间点播放键还能继续听这首。
+    private func stopCurrentForSwitch() {
+        guard PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: player.currentItem != nil) else { return }
+        player.pause()
+        isPlaying = false
+        updateNowPlaying()
     }
 
     private func resetProgress() {
@@ -640,7 +666,7 @@ final class PlayerEngine {
     }
 
     private func updateLyricIndex() {
-        let offset = SettingsStore.shared.lyricOffsetMs
+        let offset = lyricOffsetMs
         let position = lyricPositionMs
         if let target = seekTargetMs {
             if Date() < seekGuardUntil {

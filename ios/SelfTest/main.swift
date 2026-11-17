@@ -1636,6 +1636,63 @@ do {
     try? FileManager.default.removeItem(at: dir)
 }
 
+// MARK: - 第十二轮：单曲偏移 / 换曲先暂停 / 取词第二轮 / 酷狗第二条通道
+
+section("单曲歌词偏移（r71：调一首不该推走别的歌）")
+do {
+    // 没有单曲覆盖值 → 用默认值
+    check("默认值生效", LyricOffsetRules.effective(global: 220, perSong: [:], songID: "kugou_a") == 220)
+    // 有覆盖值 → 覆盖值优先
+    check("单曲覆盖值优先", LyricOffsetRules.effective(global: 0, perSong: ["kugou_a": -400],
+                                                    songID: "kugou_a") == -400)
+    // 别的歌不受影响（这就是老板说的"调一首，别的歌也被推走"）
+    check("别的歌仍是默认值",
+          LyricOffsetRules.effective(global: 0, perSong: ["kugou_a": -400], songID: "kugou_b") == 0)
+    // 微调从"当前生效值"往上加，不是在默认值上加
+    check("微调基于当前生效值",
+          LyricOffsetRules.adjusted(global: 0, perSong: ["kugou_a": -400],
+                                    songID: "kugou_a", byMs: 200) == -200)
+    check("微调步进 200ms", LyricOffsetRules.stepMs == 200)
+    // 夹在 ±2000
+    check("上下限 ±2000",
+          LyricOffsetRules.clamp(9999) == 2000 && LyricOffsetRules.clamp(-9999) == -2000
+          && LyricOffsetRules.effective(global: 0, perSong: ["x": 5000], songID: "x") == 2000)
+    // 单曲值 0 = "这首就是要对齐"（默认值非 0 时也照样生效）
+    check("0 也是单曲值（归零要用它）",
+          LyricOffsetRules.effective(global: 200, perSong: ["k": 0], songID: "k") == 0)
+    check("没有单曲值时吃默认",
+          LyricOffsetRules.effective(global: 200, perSong: ["k": 0], songID: "other") == 200)
+}
+
+section("换曲先暂停（r71）")
+do {
+    check("已装上播放项 → 换曲前暂停", PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: true))
+    check("没有播放项 → 不用暂停", !PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: false))
+}
+
+section("歌词候选第二轮 + 同曲门槛（r71）")
+do {
+    func score(_ title: String, _ artist: String) -> LddcMatch.CandidateScore {
+        LddcMatch.scoreCandidate(queryTitle: "发如雪", candidateTitle: title,
+                                 queryArtist: "周杰伦", candidateArtist: artist,
+                                 targetSec: 299, candidateSec: 299)
+    }
+    // 第 2 轮只补"歌名像 + 歌手像"的候选：现场版可以，别的歌不行
+    check("现场版算同一首（可进第 2 轮）",
+          LddcLyrics.plausibleSameSong(score("发如雪 (Live)", "周杰伦")))
+    check("别的歌不算（第 2 轮不碰）",
+          !LddcLyrics.plausibleSameSong(score("以父之名", "周杰伦")))
+    check("别的歌手不算（第 2 轮不碰）",
+          !LddcLyrics.plausibleSameSong(score("发如雪", "张三")))
+    // 兜底档标记：只有第 0 档算"正常"，其余都要让酷我官方词先试
+    check("第 0 档不算兜底", !LyricsResult(lines: [], source: "LDDC", isFallback: false).isFallback)
+    check("兜底档会被标记出来", LyricsResult(lines: [], source: "LDDC·兜底", isFallback: true).isFallback)
+    // krcs 老接口的查询串（不带签名）：只是普通参数拼接 + 百分号编码
+    let q = LddcLyrics.plainQuery([("ver", "1"), ("keyword", "发如雪 - 周杰伦")])
+    check("krcs 查询串带百分号编码", q.hasPrefix("ver=1&keyword=") && !q.contains("发如雪")
+          && !q.contains("signature"), q)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

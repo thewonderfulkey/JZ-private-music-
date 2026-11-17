@@ -47,8 +47,13 @@ enum LddcLyrics {
     }
     private static let diagBox = DiagBox()
 
+    /// 酷狗取词**通道**层的最后一次结果（r71：lyrics.v1 失败 → krcs 老接口兜底，两跳都失败才写进诊断）
+    private static let kgChannelBox = DiagBox()
+
     static func noteDiag(_ text: String) { diagBox.set(text) }
     static func lastDiagnostics() -> String { diagBox.get() }
+    static func noteKgChannel(_ text: String) { kgChannelBox.set(text) }
+    static func lastKgChannel() -> String { kgChannelBox.get() }
     private static let netTimeout: TimeInterval = 8
     private static let minScore = LddcMatch.minScore
 
@@ -112,10 +117,12 @@ enum LddcLyrics {
         // 时间轴按音源实际时长对齐（r63：宁可给最接近的一份词，也别整首空着）
         let aligned = LyricsCleaning.alignedToAudio(picked.lines, declaredMs: picked.declaredMs,
                                                     audioSec: song.durationSec)
+        let base = picked.tier > 0 ? "LDDC·兜底" : "LDDC"
         let source = aligned.ratio > 1.0001
-            ? "LDDC·已对齐 ×" + String(format: "%.2f", aligned.ratio)
-            : "LDDC"
-        return LyricsResult(lines: aligned.lines, source: source, matchNote: picked.note)
+            ? base + "·已对齐 ×" + String(format: "%.2f", aligned.ratio)
+            : base
+        return LyricsResult(lines: aligned.lines, source: source, matchNote: picked.note,
+                            isFallback: picked.tier > 0)
     }
 
     /// 一次取词的结果（连同歌词文件自己声明的总时长，供时间轴对齐用）
@@ -124,6 +131,8 @@ enum LddcLyrics {
         let declaredMs: Int
         /// 这个人话说明写的是"为什么选了这份词"（播放页「音源详情 → 歌词」会显示）
         var note: String = ""
+        /// 走的哪一档（0 正常 >55 / 1 兜底 / 2 最后兜底 / 3 第 4 档硬取）——决定它够不够可信
+        var tier: Int = 0
     }
 
     /// 评分 + 版本标签惩罚 + 排序（**不设时长硬门槛**）+ 取前 3 个候选取词 + 文件头软验收
@@ -139,43 +148,33 @@ enum LddcLyrics {
     static func pickBest(candidates: [Candidate], song: Song,
                          title: String, artist: String, targetSec: Int) async -> Picked? {
         let targetDur = targetSec > 0 ? targetSec : song.durationSec
-        var scored: [(rank: LddcMatch.CandidateScore, source: String, candidate: Candidate)] = []
+        var allScored: [(rank: LddcMatch.CandidateScore, source: String, candidate: Candidate)] = []
         for cand in candidates {
             let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
-            if one.total > minScore {
-                scored.append((one, cand.source, cand))
-            }
+            allScored.append((one, cand.source, cand))
         }
+        // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）
+        allScored.sort {
+            precedes((score: $0.rank.total, durationDelta: $0.rank.durationDelta, source: $0.source),
+                     (score: $1.rank.total, durationDelta: $1.rank.durationDelta, source: $1.source))
+        }
+
         // 一个都没过及格线：先退到"至少歌手对得上"的兜底池；
         // 连兜底池都空（整页只有一份带版本标记的词）→ 最后兜底，宁可词差一点也别整首空着。
-        var fallbackTier = 0        // 0 = 正常过线，1 = 兜底，2 = 最后兜底
+        var scored = allScored.filter { $0.rank.total > minScore }
+        var fallbackTier = 0        // 0 = 正常过线，1 = 兜底，2 = 最后兜底，3 = 第 4 档
         if scored.isEmpty {
-            for cand in candidates {
-                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
-                if LddcMatch.passesFallback(one) {
-                    scored.append((one, cand.source, cand))
-                }
-            }
+            scored = allScored.filter { LddcMatch.passesFallback($0.rank) }
             fallbackTier = 1
         }
         if scored.isEmpty {
-            for cand in candidates {
-                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
-                if LddcMatch.isLastResort(one) {
-                    scored.append((one, cand.source, cand))
-                }
-            }
+            scored = allScored.filter { LddcMatch.isLastResort($0.rank) }
             fallbackTier = 2
         }
         // 第 4 档（r70 保险）：前三档全空但确实有候选 → 按基础分取前几名去取词。
         // 屏幕上写"没取到歌词"是最后手段，不该是"打分把它们都压没了"的结果。
         if scored.isEmpty {
-            for cand in candidates {
-                let one = scoredCandidate(cand, title: title, artist: artist, targetDur: targetDur)
-                if LddcMatch.isAnyTier(one) {
-                    scored.append((one, cand.source, cand))
-                }
-            }
+            scored = allScored.filter { LddcMatch.isAnyTier($0.rank) }
             fallbackTier = 3
         }
         guard !scored.isEmpty else {
@@ -183,17 +182,62 @@ enum LddcLyrics {
             return nil
         }
 
-        // 排序：分数降序 → 时长差升序 → QQ 优先（对齐 sources=(QM, KG)）
-        scored.sort {
-            precedes((score: $0.rank.total, durationDelta: $0.rank.durationDelta, source: $0.source),
-                     (score: $1.rank.total, durationDelta: $1.rank.durationDelta, source: $1.source))
+        // 第 1 轮：这一档里排名前 3 的候选并行取词
+        var top = Array(scored.prefix(3))
+        var outcomes = await fetchOutcomes(top, startIdx: 0, tier: fallbackTier,
+                                           song: song, title: title, artist: artist,
+                                           targetDur: targetDur)
+        var rounds = 1
+
+        // 第 2 轮（r71）：前 3 个**一份词都没拿到** → 把排名靠后、但确实是同一首的候选再取 3 个。
+        //
+        // 为什么必须有这一轮：老板《发如雪》那次空的诊断是"候选 20 条（酷狗 20 / QQ 0），取词成功 0/1 份"——
+        // 20 条候选里只有原版过了 55 分，第 1 轮就只发了 1 个请求；那一个请求被限流/超时，
+        // 整首就空了。而现场版/醇享版其实都取得到词，只是分数低被排在候选池外。
+        // 现在：第 1 轮全空就把后面"歌名像 + 歌手像"的再取 3 个，宁可词差一点也别整首空着。
+        if !outcomes.contains(where: { $0.hasLines }) {
+            let tried = Set(top.map { candidateKey($0.candidate) })
+            let extra = Array(allScored
+                .filter { !tried.contains(candidateKey($0.candidate)) }
+                .filter { plausibleSameSong($0.rank) }
+                .prefix(3))
+            if !extra.isEmpty {
+                rounds = 2
+                outcomes += await fetchOutcomes(extra, startIdx: top.count, tier: max(fallbackTier, 1),
+                                                song: song, title: title, artist: artist,
+                                                targetDur: targetDur)
+                top += extra
+            }
         }
 
-        // 前 3 个候选并行取词：谁先成不重要，最后按"候选排名"取——
-        // 排在前面且通过版本验收的先赢，全都没通过就退回排名最高的那份。
-        let top = Array(scored.prefix(3))
-        let outcomes: [FetchedOutcome] = await withTaskGroup(of: FetchedOutcome.self) { group in
-            for (idx, item) in top.enumerated() {
+        let withLines = outcomes.filter { $0.hasLines }.count
+        var diag = lastDiagnostics() + "，取词成功 \(withLines)/\(top.count) 份"
+        if rounds > 1 { diag += "（两轮）" }
+        if withLines == 0, !lastKgChannel().isEmpty { diag += "，" + lastKgChannel() }
+        noteDiag(diag)
+        guard let winner = chooseOutcome(outcomes, topCount: top.count) else { return nil }
+        return outcomes.first(where: { $0.idx == winner })?.lines
+    }
+
+    /// 一个候选的身份（去重用：同一个候选在第 2 轮不要重复取）
+    private static func candidateKey(_ c: Candidate) -> String {
+        "\(c.source)|\(c.kgId ?? c.qqId ?? "")|\(c.durationSec)|\(c.title)"
+    }
+
+    /// 第 2 轮只补"确实是同一首"的候选：歌名像、歌手像。
+    /// 防止把**别的歌**的词（同歌手不同曲目）当兜底贴上来——那比没词更糟。
+    static func plausibleSameSong(_ s: LddcMatch.CandidateScore) -> Bool {
+        s.titleScore >= 40 && s.artistScore >= 40
+    }
+
+    /// 给一批候选取词（并行），返回按"候选排名位次"编号的结果。
+    /// 抽出来是因为 r71 需要取两轮（前 3 个全空再补 3 个），两轮必须用同一套验收口径。
+    private static func fetchOutcomes(_ items: [(rank: LddcMatch.CandidateScore, source: String, candidate: Candidate)],
+                                      startIdx: Int, tier: Int, song: Song,
+                                      title: String, artist: String, targetDur: Int) async -> [FetchedOutcome] {
+        await withTaskGroup(of: FetchedOutcome.self) { group in
+            for (offset, item) in items.enumerated() {
+                let idx = startIdx + offset
                 group.addTask {
                     guard let one = await fetchOne(item.candidate) else {
                         return FetchedOutcome(idx: idx, lines: nil, headerOK: false)
@@ -210,12 +254,13 @@ enum LddcLyrics {
                               + "未通过版本验收（仍可兜底）：\(rejection)")
                     }
                     let note = matchNote(candidate: item.candidate, score: item.rank,
-                                         targetSec: targetDur, tier: fallbackTier,
+                                         targetSec: targetDur, tier: tier,
                                          rejected: rejection != nil)
                     return FetchedOutcome(idx: idx,
                                           lines: Picked(lines: one.lines,
                                                         declaredMs: one.meta.durationMs,
-                                                        note: note),
+                                                        note: note,
+                                                        tier: tier),
                                           headerOK: rejection == nil)
                 }
             }
@@ -223,10 +268,6 @@ enum LddcLyrics {
             for await r in group { out.append(r) }
             return out
         }
-        let withLines = outcomes.filter { $0.hasLines }.count
-        noteDiag(lastDiagnostics() + "，取词成功 \(withLines)/\(top.count) 份")
-        guard let winner = chooseOutcome(outcomes, topCount: top.count) else { return nil }
-        return outcomes.first(where: { $0.idx == winner })?.lines
     }
 
     /// 一句人话说明"为什么选了这份词"（详情页 + 日志）
@@ -311,7 +352,17 @@ enum LddcLyrics {
 
     /// 单个候选取词 + 乱码校验；要求 ≥6 行。
     /// 「版本对不对」不在这里判：交给调用方在**全部候选之间**比较后再决定（r63 改成软验收）。
+    ///
+    /// r71：**失败再来一次**。老板《发如雪》那次的诊断是"候选 20 条…取词成功 0/1 份"——
+    /// 只有一个候选进了池，而它那一次请求刚好被限流/超时，整首就空了。
+    /// 隔 300ms 用新的 mid 重发一次，成本很低，能吃掉绝大多数"一次抖动"。
     private static func fetchOne(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
+        if let one = await fetchOneOnce(cand) { return one }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        return await fetchOneOnce(cand)
+    }
+
+    private static func fetchOneOnce(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
         let fetched: (lines: [LyricLine], meta: LyricsMeta)?
         switch cand.source {
         case "kg": fetched = await fetchKgLines(cand)
@@ -425,6 +476,24 @@ enum LddcLyrics {
     }
 
     private static func fetchKgLines(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
+        // 通道 1：lyrics.kugou.com/v1（LDDC 原来那条）
+        if let one = await fetchKgViaLyricsV1(cand) {
+            noteKgChannel("")
+            return one
+        }
+        // 通道 2（r71）：krcs.kugou.com 老接口——**不同主机、不同限流池**。
+        // 老板《发如雪》那次通道 1 在真机上失败（"取词成功 0/1 份"），而这条老接口
+        // 现在仍然能返回同一批候选并下到 KRC（实测 2026-11-17）。
+        if let one = await fetchKgViaKrcs(cand) {
+            noteKgChannel("lyrics.v1 没取到，krcs 兜住了")
+            return one
+        }
+        noteKgChannel("酷狗取词两条通道都没成（lyrics.v1 + krcs）")
+        return nil
+    }
+
+    /// 通道 1：`lyrics.kugou.com/v1/search` → `accesskey` → `/download`（带签名）
+    private static func fetchKgViaLyricsV1(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
         guard let id = cand.kgId, let hash = cand.kgHash else { return nil }
         let mid = Digest.md5Hex(String(Int(Date().timeIntervalSince1970 * 1000)))
         let durMs = cand.durationSec * 1000
@@ -449,8 +518,58 @@ enum LddcLyrics {
         let dlURL = "https://lyrics.kugou.com/download?"
             + kgQuery(params: dlParams, module: "Lyric", mid: mid)
         guard let dlJson = try? await APIClient.shared.getJSON(
-            dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout),
-              let content = dlJson["content"] as? String, !content.isEmpty,
+            dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout) else {
+            return nil
+        }
+        return decodeKrcDownload(dlJson)
+    }
+
+    /// 通道 2（r71）：`krcs.kugou.com/search`（**不需要签名**，按关键词返回一批候选）
+    /// → 自己在候选里按「歌名像 + 歌手像」挑一条 → `/download` 拿 KRC。
+    ///
+    /// 为什么要它：`lyrics.kugou.com` 对同一出口 IP 的限流比 `krcs.kugou.com` 敏感得多，
+    /// 而两条通道返回的是同一批歌词。取词链上多一条独立主机，就少一次"整首没词"。
+    private static func fetchKgViaKrcs(_ cand: Candidate) async -> (lines: [LyricLine], meta: LyricsMeta)? {
+        guard let hash = cand.kgHash, !hash.isEmpty else { return nil }
+        let mid = Digest.md5Hex(String(Int(Date().timeIntervalSince1970 * 1000)))
+        let searchParams: [(String, String)] = [
+            ("ver", "1"), ("man", "yes"), ("client", "mobi"),
+            ("keyword", "\(cand.title) - \(cand.artist)"),
+            ("duration", String(cand.durationSec * 1000)), ("hash", hash),
+        ]
+        let searchURL = "https://krcs.kugou.com/search?" + plainQuery(searchParams)
+        guard let json = try? await APIClient.shared.getJSON(
+            searchURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout),
+              let list = json["candidates"] as? [[String: Any]], !list.isEmpty else {
+            return nil
+        }
+        var best: (id: String, accesskey: String, score: Double)?
+        for item in list {
+            let songName = item["song"] as? String ?? ""
+            let singer = item["singer"] as? String ?? ""
+            guard let cid = item["id"] as? String, !cid.isEmpty,
+                  let accesskey = item["accesskey"] as? String, !accesskey.isEmpty else { continue }
+            let score = LddcMatch.titleScore(cand.title, songName) * 0.5
+                + LddcMatch.artistScore(cand.artist, singer) * 0.5
+            if best == nil || score > (best?.score ?? 0) { best = (cid, accesskey, score) }
+        }
+        // 挑不到"歌名/歌手都对得上"的就别下——避免把别人的词贴上来
+        guard let best, best.score >= 50 else { return nil }
+        let dlParams: [(String, String)] = [
+            ("ver", "1"), ("client", "mobi"), ("id", best.id),
+            ("accesskey", best.accesskey), ("fmt", "krc"), ("charset", "utf8"),
+        ]
+        let dlURL = "https://krcs.kugou.com/download?" + plainQuery(dlParams)
+        guard let dlJson = try? await APIClient.shared.getJSON(
+            dlURL, headers: kgHeaders(module: "Lyric", mid: mid), timeout: netTimeout) else {
+            return nil
+        }
+        return decodeKrcDownload(dlJson)
+    }
+
+    /// 两条通道共用的"下载响应 → 歌词行"：contenttype==2 是纯 LRC，否则是 XOR+zlib 的 KRC。
+    private static func decodeKrcDownload(_ dlJson: [String: Any]) -> (lines: [LyricLine], meta: LyricsMeta)? {
+        guard let content = dlJson["content"] as? String, !content.isEmpty,
               let decoded = Data(base64Encoded: content) else {
             return nil
         }
@@ -470,6 +589,11 @@ enum LddcLyrics {
         // 兜底：逐字解析失败但明文能压成整行 LRC
         let fallback = LyricsCleaning.parseLrc(LddcCrypto.krcToLrc(plain))
         return fallback.isEmpty ? nil : (lines: fallback, meta: meta)
+    }
+
+    /// 不带签名的查询串（krcs.kugou.com 的老接口只要普通参数）
+    static func plainQuery(_ params: [(String, String)]) -> String {
+        params.map { "\($0.0)=\(APIClient.encode($0.1))" }.joined(separator: "&")
     }
 
     /// 设备 dfid 注册（酷狗搜索要求带 dfid；缓存 30 分钟）

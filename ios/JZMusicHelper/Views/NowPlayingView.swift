@@ -789,24 +789,29 @@ struct NowPlayingView: View {
     }
 
     /// 歌词快慢：三个胶囊横向排死，永远不会被挤掉（上一版被 Spacer 顶出屏幕，老板调不了）
+    ///
+    /// r71：这三个键只调**当前这一首**（`SettingsStore.adjustOffset(byMs:forSong:)`）。
+    /// 以前改的是全局一个数，为了对齐某首歌调出来的偏移会把其它所有歌一起推走——
+    /// 老板报的"其他歌曲的歌词滚动原来还是准的、现在又不准了"就是这条。
     private func offsetRow(width: CGFloat) -> some View {
-        HStack(spacing: Tokens.Spacing.xs) {
+        let songID = player.currentSong?.id
+        return HStack(spacing: Tokens.Spacing.xs) {
             offsetPill(title: "慢一点") {
-                settings.lyricOffsetMs = SettingsStore.clampOffset(settings.lyricOffsetMs - 200)
+                settings.adjustOffset(byMs: -LyricOffsetRules.stepMs, forSong: songID)
                 Haptics.tap()
             }
             offsetPill(title: "归零") {
-                settings.lyricOffsetMs = 0
+                settings.resetOffset(forSong: songID)
                 Haptics.tap()
             }
             offsetPill(title: "快一点") {
-                settings.lyricOffsetMs = SettingsStore.clampOffset(settings.lyricOffsetMs + 200)
+                settings.adjustOffset(byMs: LyricOffsetRules.stepMs, forSong: songID)
                 Haptics.tap()
             }
         }
         .frame(width: max(80, width - Tokens.Spacing.m * 2))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("歌词时间微调")
+        .accessibilityLabel("歌词时间微调（只作用当前这首歌）")
     }
 
     private func offsetPill(title: String, action: @escaping () -> Void) -> some View {
@@ -822,7 +827,7 @@ struct NowPlayingView: View {
     }
 
     private var offsetLabel: String {
-        let v = settings.lyricOffsetMs
+        let v = player.lyricOffsetMs
         if v == 0 { return "对齐" }
         let seconds = Double(abs(v)) / 1000
         return (v > 0 ? "+" : "−") + String(format: "%.1fs", seconds)

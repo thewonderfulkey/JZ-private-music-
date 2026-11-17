@@ -53,10 +53,15 @@ struct SettingsView: View {
                         Text(item.displayName).tag(item)
                     }
                 }
-                Stepper("时间偏移：\(lyricOffsetText)",
+                Stepper("默认偏移：\(lyricOffsetText)",
                         value: $settings.lyricOffsetMs, in: -2000...2000, step: 100)
-                Button("把偏移归零") { settings.lyricOffsetMs = 0 }
-                Text("歌词比声音慢（唱到下一句了字还没亮）就往上调正数（让歌词提前）；反之调负数。播放页歌词区也有「快一点 / 慢一点」现场微调，最多 ±2 秒——同一个歌名不同版本（Live / 重制）前奏差几秒，靠这个手动对齐。")
+                Button("把默认偏移归零") { settings.lyricOffsetMs = 0 }
+                if settings.songOffsetCount > 0 {
+                    Button("清空所有单曲偏移（\(settings.songOffsetCount) 首）", role: .destructive) {
+                        settings.clearAllSongOffsets()
+                    }
+                }
+                Text("时间偏移的默认值：歌词比声音慢（唱到下一句了字还没亮）就往上调正数（让歌词提前），反之调负数。播放页歌词区的「快一点 / 慢一点」只调当前这一首（按单曲记住，±2 秒），不会影响其它歌——同一个歌名不同版本（Live / 重制）前奏常差几秒，靠它手动对齐。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 LabeledContent("已缓存", value: "\(lyricsCacheCount) 首")

@@ -167,3 +167,41 @@ enum PlayerDismissRules {
         return translation >= dismissDistance || predicted >= dismissPredictedDistance
     }
 }
+
+// MARK: - 歌词偏移：**按单曲**记（纯函数）
+//
+// r71 老板："其他歌曲的歌词滚动原来还是准的、现在又不准了。"
+//
+// 根因不是渲染，是**偏移是全局的**：播放页那三个「慢一点 / 归零 / 快一点」以前直接改
+// `SettingsStore.lyricOffsetMs`（UserDefaults 里一个数），于是为了对齐某一首（尤其《发如雪》
+// 这种取不到词、只能反复按按钮的歌）调出来的偏移，会同时把**其它所有歌**一起推走。
+// 老板看到的"别的歌本来准、现在不准"，就是这条全局量被改过之后的样子。
+//
+// 现在的口径：
+//   · 播放页的微调只作用于**当前这首**（按 `Song.id` = 平台_ID 存一条绝对值，0 也存）；
+//   · 设置页那个滑杆是**默认值**（没被单独调过的歌都用它）；
+//   · 「归零」把这一首写成 0，设置页另有一个"清空所有单曲偏移"。
+enum LyricOffsetRules {
+
+    /// 偏移上下限（毫秒）：±2000 是第四轮定的，真机上前奏差几秒也调得动
+    static let limitMs: Int = 2000
+
+    /// 一次微调的步进（播放页三个胶囊每点一下）
+    static let stepMs: Int = 200
+
+    static func clamp(_ value: Int) -> Int {
+        min(max(value, -limitMs), limitMs)
+    }
+
+    /// 这首实际生效的偏移：单曲绝对值优先（含 0），没有就用默认值
+    static func effective(global: Int, perSong: [String: Int], songID: String?) -> Int {
+        if let songID, let own = perSong[songID] { return clamp(own) }
+        return clamp(global)
+    }
+
+    /// 微调之后这首的值（`byMs` 可正可负；结果照样夹在 ±2000）。
+    /// 起点是**当前生效值**，不是默认值——否则在"默认值非 0 + 已单独调过"时会跳一下。
+    static func adjusted(global: Int, perSong: [String: Int], songID: String?, byMs: Int) -> Int {
+        clamp(effective(global: global, perSong: perSong, songID: songID) + byMs)
+    }
+}

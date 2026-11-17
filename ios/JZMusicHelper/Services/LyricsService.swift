@@ -98,6 +98,12 @@ extension LyricsService {
     /// r68：酷我官方词**只有行级时间**，所以「逐字染色」永远出不来（老板拿《枫》做对照：
     /// 那首走 LDDC 的 KRC 就有逐字）。现在官方词拿到之后再试一次 LDDC：
     /// 只有行数对得上（±25%）才升级成逐字那份，对不上仍用官方词。
+    ///
+    /// r71：**兜底档的 LDDC 词不再抢在酷我官方词前面**。老板"其他歌曲的歌词滚动原来还是准的、
+    /// 现在又不准了"的根因之一就在这里：r70 的第 4 档让"只要搜到候选就取一份词"生效，
+    /// 于是那些本来没有合格 LDDC 词、一直吃**酷我官方行级词**的歌，突然被换成了一份
+    /// Live/醇享版的词——词是有的，时间轴是另一条剪辑的，看起来就是"滚动又不准了"。
+    /// 现在的优先级：正常过线的 LDDC → 酷我兜底 → 网易云 → 兜底档 LDDC（最后才用）。
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
         // 酷我歌曲：官方词（行级）→ 尝试用 KRC 升级成逐字 → 官方词 → LDDC 词
         // r70：LDDC 只取**一次**（以前"升级失败"和"兜底"各取一次，等于把请求打了两遍）
@@ -107,8 +113,10 @@ extension LyricsService {
             if let upgraded = upgrade(lddc, baseline: official) { return upgraded }
             if let official { return official }
             if let lddc { return lddc }
-        } else if let result = await LddcLyrics.fetch(song: song, audioSec: audioSec) {
-            return result
+        } else if let lddc = await LddcLyrics.fetch(song: song, audioSec: audioSec) {
+            if !lddc.isFallback { return lddc }
+            if let better = await betterThanFallback(song, audioSec: audioSec) { return better }
+            return lddc
         }
 
         if song.platform != .kuwo, let result = await kuwoFallback(song) { return result }
@@ -122,9 +130,19 @@ extension LyricsService {
         return nil
     }
 
+    /// 兜底档 LDDC 词之外，还有没有更可信的词（酷我官方 → 网易云）。
+    /// r71：这两条给的是**同一版**的行级词，时间轴比"另一个剪辑的 KRC"准得多。
+    private static func betterThanFallback(_ song: Song, audioSec: Int) async -> LyricsResult? {
+        if let result = await kuwoFallback(song) { return result }
+        if let result = await NeteaseLyrics.fallback(song, audioSec: audioSec) { return result }
+        return nil
+    }
+
     /// 把 LDDC 那份词"升级"成逐字版本：必须真的有逐字时间、且行数与官方词兼容。
+    ///
+    /// r71：兜底档的词不许升级——它本来就是"另一版"的候选，逐字贴上来只会更歪。
     private static func upgrade(_ lddc: LyricsResult?, baseline: LyricsResult?) -> LyricsResult? {
-        guard let lddc, lddc.hasWordTiming else { return nil }
+        guard let lddc, lddc.hasWordTiming, !lddc.isFallback else { return nil }
         if let baseline, !baseline.isEmpty {
             guard LyricsCleaning.lineCountsCompatible(baseline.lines.count, lddc.lines.count) else {
                 return nil

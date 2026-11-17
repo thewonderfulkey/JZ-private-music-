@@ -35,6 +35,10 @@ struct LyricsResult: Sendable {
     let source: String
     /// 「为什么选了这份词」——候选标题 / 时长 / 各档分数（r69 起给详情页和日志看）
     var matchNote: String = ""
+    /// 这份词是不是**兜底档**拿到的（r71）：分数没过线、只是"有候选就取"。
+    /// 兜底档的词常常是另一个剪辑（Live / 醇享版），时间轴对不上——
+    /// 所以它只应该在**酷我官方词 / 网易云**都没有的时候才上场（见 `LyricsService.resolve`）。
+    var isFallback: Bool = false
 
     var isEmpty: Bool { lines.isEmpty }
 

@@ -126,6 +126,16 @@ enum PlaybackRules {
         consecutiveSkips >= max(1, limit)
     }
 
+    /// 换曲前要不要先暂停当前这首（r71）。
+    ///
+    /// 老板："换曲的时候先暂停当前的歌曲，之前好好的，现在又没了这个功能。"
+    /// 口径：**已经装上播放项就暂停**（不管是暂停中还是播放中，暂停是幂等的），
+    /// 没有 item（第一次起播、刚被换源清空）则什么都不用做。
+    /// 这一条以前是"解析完直接 replaceCurrentItem"，于是点下一首之后旧音频还会再唱 1~12 秒。
+    static func shouldPauseBeforeSwitch(hasLoadedItem: Bool) -> Bool {
+        hasLoadedItem
+    }
+
     /// 连续失败后的提示文案（口语、可执行，不甩代码）
     static func skipMessage(_ consecutiveSkips: Int) -> String {
         skipMessage(consecutiveSkips, limit: autoSkipLimit)
