@@ -69,6 +69,8 @@ def fetch(kw: str) -> list[dict]:
 def pick(cands: list[dict], name: str, singer: str) -> dict | None:
     tn = norm(name)
     singers = [norm(s) for s in re.split(r"[/、,& ]+", decode(singer)) if norm(s)]
+    if not singers:
+        return None
     best, best_score = None, -1
     for c in cands:
         raw_name = decode(str(c.get("SONGNAME") or ""))
@@ -78,11 +80,15 @@ def pick(cands: list[dict], name: str, singer: str) -> dict | None:
         if any(m in low for m in VARIANT_MARKERS):
             continue
         ca = norm(str(c.get("ARTIST") or ""))
-        score = 100
-        if singers and all(s in ca for s in singers):
-            score += 40
-        elif any(s in ca for s in singers):
-            score += 25
+        # ⚠️ 歌手**必须**对得上：只按歌名匹配会配到别人的翻唱
+        # （首版就这样把"晴天|周杰伦"配成了"金布袋"、"隐形的翅膀|张韶涵"配成了"小刚"）。
+        if not all(s in ca for s in singers):
+            continue
+        # 时长下限：搜索里混着 25~60 秒的片段/铃声（"安静"曾配到 25 秒），
+        # 写死进去会让播放侧 ±25s 闸门直接判坏源。
+        if seconds(c.get("DURATION")) < 120:
+            continue
+        score = 140 if len(singers) > 1 else 100
         if score > best_score:
             best, best_score = c, score
     return best
@@ -116,7 +122,10 @@ def main() -> int:
         if key in seen:
             continue
         seen.add(key)
+        # 先「歌名 + 歌手」，没命中再只查歌名——第二轮是为了补上"带歌手查会被版本/翻唱挤掉"的那几首
         chosen = pick(fetch(f"{name} {singer}"), name, singer)
+        if not chosen:
+            chosen = pick(fetch(name), name, singer)
         if not chosen:
             misses.append(key)
             print(f"  [{i}/{len(seeds)}] miss  {key}")
@@ -167,7 +176,10 @@ def main() -> int:
     ]
     for key, (rid, nm, sg, alb, dur, pic) in items.items():
         n, s = key.split("|", 1)
-        lines.append(f'        "{esc(n)}|{esc(s)}": Item(platformID: "{rid}", name: "{esc(nm)}", '
+        # ⚠️ 键必须**小写**：运行时查表用的是 `ResolvedSongCache.key`（小写去空白）。
+        # 之前这里原样写出去，中文歌看不出来，英文歌（欧美热单 30 首）全部 miss，
+        # 表现就是"只有欧美热单还在一行一行加载"。
+        lines.append(f'"{esc(n.lower())}|{esc(s.lower())}": Item(platformID: "{rid}", name: "{esc(nm)}", '
                      f'singer: "{esc(sg)}", album: "{esc(alb)}", duration: {dur}, pic: "{esc(pic)}"),')
     lines += [
         "    ]",

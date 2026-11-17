@@ -1880,8 +1880,8 @@ do {
           LyricsUXRules.seekClockSource(positionMs: 120_000 - LyricsUXRules.seekLandToleranceMs,
                                         targetMs: 120_000,
                                         optimisticExpired: false) == .usePosition)
-    check("乐观窗口是 1.5 秒（旧实现兜底 10 秒 = 冻 10 秒）",
-          LyricsUXRules.seekOptimisticMaxSeconds == 1.5)
+    check("乐观窗口 8 秒：真机 seek 落地常要 2~4 秒，窗口太短会先跳到错误一行再弹回来",
+          LyricsUXRules.seekOptimisticMaxSeconds == 8.0)
     check("落地容差 1.2 秒", LyricsUXRules.seekLandToleranceMs == 1200)
 
     // ② 取词链预算：单条酷狗通道 3 秒、酷狗整段 4.5 秒——必须给 ③④ 留出时间，
@@ -2083,7 +2083,7 @@ check("榜单缓存跨天失效（每日更新的榜不跨天复用）",
 
 section("编辑精选：预置歌写死进包（一步到位，不再文字转歌曲）")
 
-check("预生成覆盖 ≥ 100 首", BakedSeedSongs.byKey.count >= 100,
+check("预生成覆盖 ≥ 90 首", BakedSeedSongs.byKey.count >= 90,
       "\(BakedSeedSongs.byKey.count)")
 let bakedQingtian = BakedSeedSongs.song(name: "晴天", singer: "周杰伦")
 check("晴天 → 酷我 228908", bakedQingtian?.platformID == "228908",
@@ -2100,6 +2100,9 @@ check("写死的 rid 全是数字",
       })
 check("写死的封面一律 https（ATS 严格，http 图加载不出来）",
       BakedSeedSongs.byKey.values.allSatisfy { $0.pic.isEmpty || $0.pic.hasPrefix("https://") })
+check("英文歌也命中写死数据（键必须大小写不敏感——否则欧美热单整张都 miss）",
+      BakedSeedSongs.song(name: "Shape of You", singer: "Ed Sheeran") != nil,
+      BakedSeedSongs.song(name: "shape of you", singer: "ed sheeran")?.platformID ?? "nil")
 check("没有 Live/伴奏/钢琴 这类非原版专辑混进来",
       BakedSeedSongs.byKey.values.allSatisfy { v in
           let a = v.album.lowercased()

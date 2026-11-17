@@ -18,6 +18,8 @@ struct ChartSongsView: View {
     var chart: KuwoChart.Chart = .hot
 
     @State private var page: KuwoChart.Page?
+    /// 当前页面数据是哪一天的：App 挂着跨过 0 点再进榜单页时，必须按新的一天重取
+    @State private var pageDay: Int = -1
     @State private var loading = false
     @State private var failed = false
 
@@ -142,11 +144,14 @@ struct ChartSongsView: View {
 
     private func load(force: Bool) async {
         if loading { return }
-        if !force, page != nil { return }
+        // 同一天且有数据就直接用（老板："加载一次，当天不用再发请求"）；
+        // 跨天（App 挂着过 0 点）要重取，否则第二天还显示昨天的榜。
+        if !force, page != nil, pageDay == KuwoChart.today { return }
 
-        // ① 当天缓存：进页面直接铺满，一个请求都不发（老板 r84："一天定死的东西别每次打开都加载"）
+        // ① 当天缓存：进页面直接铺满，一个请求都不发
         if !force, let cached = KuwoChart.cachedPage(chart) {
             page = cached
+            pageDay = KuwoChart.today
             failed = false
             return
         }
@@ -155,6 +160,7 @@ struct ChartSongsView: View {
         failed = false
         do {
             page = try await KuwoChart.fetchPage(chart)
+            pageDay = KuwoChart.today
         } catch {
             // 已经有内容时不清空：刷新失败不把用户正在看的榜单抽走
             failed = page == nil

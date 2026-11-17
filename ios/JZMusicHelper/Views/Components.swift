@@ -377,6 +377,30 @@ struct SkeletonRows: View {
     }
 }
 
+// MARK: 轻提示（Toast）
+
+/// 一句话、1.4 秒自动消失、不吃点击的轻提示。
+///
+/// 老板 r86："所有模块点击「换一批」之后需要有个小弹窗提醒，否则用户根本不知道有没有更新。"
+/// 不做系统 Alert（会打断操作、要点确定），也不做卡片（太重），就是迷你条上方浮一条胶囊。
+struct ToastView: View {
+
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(Tokens.Palette.paper)
+            .padding(.horizontal, Tokens.Spacing.m)
+            .padding(.vertical, Tokens.Spacing.xs)
+            .background(Capsule().fill(Color.primary.opacity(0.86)))
+            .padding(.bottom, Tokens.Size.miniPlayerHeight + Tokens.Spacing.m)
+            .allowsHitTesting(false)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .accessibilityAddTraits(.isStaticText)
+    }
+}
+
 // MARK: 小工具
 
 /// 区块标题（发现/资料库用）：标题 + 右侧可点动作

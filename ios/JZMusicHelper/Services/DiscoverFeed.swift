@@ -29,6 +29,8 @@ final class DiscoverFeed {
     private(set) var hotState: LoadState = .idle
     /// 这批热门是"酷我官方榜"还是"四平台合并兜底"——只用来写副标题，不参与排序
     private(set) var hotFromChart = false
+    /// 这批热门是哪一天的（用来处理"App 挂着跨过 0 点"：内存里有旧数据也必须重取）
+    private var hotDay: Int = -1
 
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
@@ -73,6 +75,7 @@ final class DiscoverFeed {
         if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
             hotSongs = cached.songs
             hotFromChart = cached.fromChart
+            hotDay = cached.day
             hotState = .loaded
         }
         if let cached = cachedGuess(),
@@ -88,10 +91,12 @@ final class DiscoverFeed {
 
     func loadHotIfNeeded() async {
         if hotState == .loading { return }
-        if !hotSongs.isEmpty { return }
+        // 当天已有一批（内存里）就直接用；但**跨天必须重取**——App 挂着过 0 点也算新的一天
+        if !hotSongs.isEmpty, hotDay == day { return }
         if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
             hotSongs = cached.songs
             hotFromChart = cached.fromChart
+            hotDay = cached.day
             hotState = .loaded
             return
         }
@@ -106,6 +111,7 @@ final class DiscoverFeed {
            let songs = DiscoverRules.hotModuleSongs(page.songs) {
             hotSongs = songs
             hotFromChart = true
+            hotDay = day
             hotState = .loaded
             saveHot(songs, fromChart: true)
             return
@@ -134,8 +140,34 @@ final class DiscoverFeed {
         }
         hotSongs = picked
         hotFromChart = false
+        hotDay = day
         hotState = .loaded
         saveHot(picked, fromChart: false)
+    }
+
+    // MARK: 编辑精选：把当天没写死的那几首后台补齐
+    //
+    // 包内写死了 102/120 首；剩下十几首（多为 Live/KTV/纯音乐 版被过滤掉的、或搜索里确实没有原版的）
+    // 如果等用户点进歌单页再解析，那几行还是会"先文字后变歌"。这里在**发现页加载完之后**
+    // 后台把它们补齐并写进 `ResolvedSongCache`，用户真正进歌单时基本都是现成的。
+    private(set) var prefetchingEditor = false
+
+    func prefetchEditorSeeds() async {
+        guard !prefetchingEditor else { return }
+        prefetchingEditor = true
+        defer { prefetchingEditor = false }
+
+        for playlist in DiscoverCatalog.playlists {
+            if Task.isCancelled { return }
+            for seed in editorSeeds(for: playlist, rotation: 0) {
+                if Task.isCancelled { return }
+                if BakedSeedSongs.song(name: seed.name, singer: seed.singer) != nil { continue }
+                if ResolvedSongCache.shared.song(name: seed.name, singer: seed.singer) != nil { continue }
+                if let song = await resolve(seed: seed) {
+                    ResolvedSongCache.shared.store(song)
+                }
+            }
+        }
     }
 
     // MARK: 猜你喜欢
@@ -192,8 +224,10 @@ final class DiscoverFeed {
     /// 只有"最近播放"变了（指纹不同）才在后台悄悄换一批，界面先照旧显示旧的。
     func refreshGuessIfStale(recent: [Song]) async {
         guard !recent.isEmpty else { return }
+        // 同一批输入 + **同一天**才算新鲜；跨天必须重算（老板："除非第二天或者点换一批"）
         if guessState == .loaded, !guessSongs.isEmpty,
-           cachedGuess()?.signature == DiscoverRules.guessSignature(recent) {
+           let cached = cachedGuess(), cached.day == day,
+           cached.signature == DiscoverRules.guessSignature(recent) {
             return
         }
         await refreshGuess(recent: recent)

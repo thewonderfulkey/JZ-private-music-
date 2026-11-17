@@ -21,6 +21,9 @@ struct DiscoverView: View {
     /// 编辑精选「换一批」的轮次：只在本次会话内叠加，不写盘（跨天本来就会换）
     @State private var rotation = 0
     @State private var showSearch = false
+    /// 轻提示（换一批之后的确认）
+    @State private var toast: String?
+    @State private var toastTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -37,6 +40,11 @@ struct DiscoverView: View {
             .readableWidth()
         }
         .scrollIndicators(.hidden)
+        .overlay(alignment: .bottom) {
+            if let toast {
+                ToastView(text: toast)
+            }
+        }
         .navigationTitle("发现")
         .navigationDestination(isPresented: $showSearch) {
             SearchView()
@@ -54,6 +62,9 @@ struct DiscoverView: View {
             if !library.recentSongs.isEmpty {
                 await feed.refreshGuessIfStale(recent: library.recentSongs)
             }
+            // 编辑精选里没被"写死"进包的那十几首，在后台补进本地缓存——
+            // 用户真正点进歌单页时就不用再现搜（老板："不希望进去还看到一行行加载"）。
+            Task { await feed.prefetchEditorSeeds() }
             openSearchIfIntentAsked()
         }
         .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
@@ -63,6 +74,18 @@ struct DiscoverView: View {
     private func openSearchIfIntentAsked() {
         guard router.pendingSearch != nil else { return }
         showSearch = true
+    }
+
+    /// 轻提示：1.4 秒后自动消失（连点会重置计时，不会提前消失）
+    private func flash(_ text: String) {
+        Haptics.success()
+        withAnimation(Tokens.Motion.stateChange) { toast = text }
+        toastTask?.cancel()
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { toast = nil }
+        }
     }
 
     // MARK: 顶部搜索入口（反馈 ⑥）
@@ -110,6 +133,8 @@ struct DiscoverView: View {
                                   action: {
                                       Haptics.refresh()
                                       withAnimation(Tokens.Motion.stateChange) { rotation += 1 }
+                                      // r86：点完要有反馈，否则用户不知道换没换
+                                      flash("编辑精选已换一批")
                                   })
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -171,7 +196,10 @@ struct DiscoverView: View {
                 actionTitle: (library.recentSongs.isEmpty || feed.guessState == .loading) ? nil : "换一批",
                 action: {
                     Haptics.refresh()
-                    Task { await feed.nextGuessRound(recent: library.recentSongs) }
+                    Task {
+                        await feed.nextGuessRound(recent: library.recentSongs)
+                        flash("猜你喜欢已换一批")
+                    }
                 })
 
             Group {
@@ -348,8 +376,13 @@ struct DiscoverSectionHeader: View {
 
 // MARK: - 编辑精选卡（长方形，对齐 Android `EditorCard`）
 
-/// Android 是 150×66dp 的白卡：左边色条 + 歌单名 + 首数 + 右箭头。
-/// iOS 这边按 170×64 走（iPhone 上 150 会显得太窄，字号又得跟着缩）。
+/// 长方形入口卡：左边一条细色条 + 歌单名 + 首数 + 右箭头。
+///
+/// r86（老板："编辑精选每个模块的 UI 太花里胡哨，不用带那么多颜色；高度略高一点，显得太窄了，
+/// 但保持长方形"）：
+///   · 色条**不再用四个类别色**（0xF0B45A / 0x5A7DF0 / 0xE0608E / 0x3EC6A8），统一成墨色 28%
+///     —— 一整排看起来就是"一个模块的几张卡"，不再是四块彩色；
+///   · 尺寸 170×64 → 186×78：还是长方形，但不再是细长条。
 ///
 /// 第二十轮：榜单卡从这里撤掉（老板："把酷我热歌榜换到热门音乐里"），这一排回到 4 张池卡，
 /// 之前为两种内容抽的 `EditorCardShell` 也一并收回来——只有一个使用者就别留中间层。
@@ -357,16 +390,14 @@ struct EditorPlaylistCard: View {
 
     let playlist: DiscoverCatalog.Playlist
 
-    private var accent: Color { Color(hex: playlist.accentHex) }
-
     var body: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
+        HStack(spacing: Tokens.Spacing.s) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(accent)
-                .frame(width: 3, height: 26)
+                .fill(Color.primary.opacity(0.28))
+                .frame(width: 3, height: 30)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(playlist.title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -382,10 +413,10 @@ struct EditorPlaylistCard: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, Tokens.Spacing.xs)
-        .frame(width: 170, alignment: .leading)
-        .frame(minHeight: 64)
-        // r78 去描边；r79 连纸卡底也去掉（老板："就是纯色的背景"）——只留左边那条类别色块。
+        .padding(.vertical, Tokens.Spacing.s)
+        .frame(width: 186, alignment: .leading)
+        .frame(minHeight: 78)
+        // r78 去描边；r79 连纸卡底也去掉（老板："就是纯色的背景"）——只留左边那条色块。
         // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
         // 间距改由外层 HStack 统一给（见 `editorSection`）。
         .contentShape(Rectangle())
