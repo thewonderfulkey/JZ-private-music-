@@ -25,6 +25,13 @@
   多一个已删除的 `PlaybackActivityModel`，此前跑不出可信结果）。
 - CI 断言新增 18 条（榜单解析 10 + `rid_pic` 规则 8），口径见 `docs/ios/IOS-DISCOVER.md` §2.1。
 - 版本 2.3.1（169）。Android / 桌面端未同步（这两端的 `CoverResolver` 仍是旧的三步链，榜单模块未加）。
+- **出包**：CI run #82 / `40a7b87` / **591 条断言全绿**（本轮新增 18 条）/ `build-ipa` 成功、
+  插件已嵌入；IPA `JZ-Music-v2.3.1-40a7b87-r82-ios-unsigned.ipa`（1,827,376 B），已发飞书群。
+  过程记录：run #80 是 `xcodebuild` 真编译错误（`hot` 声明在 `KuwoChart` 枚举上，视图里写 `.hot`
+  是在 `KuwoChart.Chart` 上找隐式成员——本地 typecheck 不含视图文件，只有 CI 能报，已挪进 `Chart` 并补注释）；
+  run #81 首次跑到 `build-ipa` 时 macOS runner 排队 15 分钟被 GitHub 侧 cancel（不是编译失败），重跑后绿。
+  另外把 Android `versionName`/`versionCode` 对齐到 2.3.1(169)——iOS 的 artifact 名取自 Android 那个字段，
+  不同步就会出现「安装是 2.3.1、文件名是 2.3.0」。
 
 ## iOS 第十八轮整改 · 2026-11-17 21:3x（模块去阴影=纯色背景 / 识曲历史可点播放）
 **发现页与迷你条一起走"无阴影、无描边、纯色底"；识曲历史那几行终于能点了**
