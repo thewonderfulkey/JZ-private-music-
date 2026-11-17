@@ -67,11 +67,18 @@ struct EditorPlaylistView: View {
         }
     }
 
-    /// 用本地解析缓存把已知的行先填上（同步，几十 KB，毫秒级）
+    /// 用本地解析缓存 + 包内写死的数据把整页行先填上（同步，毫秒级）。
+    ///
+    /// 老板 r85："我不希望用户每次点编辑精选都要等文字加载为歌曲，直接就是歌曲。"
+    /// 顺序：① `ResolvedSongCache`（用户实际解析过、最新）→ ② `BakedSeedSongs`（预生成进包的那份）。
+    /// 两条覆盖之后，正常用户进来看到的就是**整页 SongRow**（封面/歌手·专辑/时长/收藏），
+    /// 只有极少数没命中运行时的歌才显示占位行。
     private func prefillFromCache() {
         for (index, seed) in seeds.enumerated() where songs[index] == nil {
             if let hit = ResolvedSongCache.shared.song(name: seed.name, singer: seed.singer) {
                 songs[index] = hit
+            } else if let baked = BakedSeedSongs.song(name: seed.name, singer: seed.singer) {
+                songs[index] = baked
             }
         }
     }

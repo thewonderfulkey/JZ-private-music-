@@ -1860,25 +1860,29 @@ do {
 section("第十六轮：seek 撞上旧位置不许改高亮 / 取词链各档预算")
 
 do {
-    // ① 老板 r76："一旦通过歌词快进或者后退就变得不准了"
+    // ① 老板 r85（9 分钟录屏）：位置 0:49 时歌词高亮显示的是 1:36 那一行（《黄昏》51 行 · 酷我）。
+    //    实锤了旧口径的问题：`seek` 的完成回调**提前返回**（回调说完成了，但 `currentTime()` 还是旧值），
+    //    旧实现一看到回调就解保护，40ms 的 ticker 立刻拿**旧位置**重算高亮 → 直接跳到几十秒外那一行，
+    //    而且会一直错到播放头追上那一行为止。
     //
-    // 旧口径是**写死 0.7 秒**：只要窗过了就无条件解保护。真机上远端流 seek 常要 1~2 秒，
-    // 于是 40ms 的 ticker 拿"旧位置"把刚设好的高亮拽回上一句，落地后再弹回来；那一下还会把
-    // `lastCenteredIndex` 记错，后面每句单行滚动都按这个错位走（"不会自己好"）。
-    check("窗内、位置还是旧的（45s → 120s）→ 等，不许改高亮",
-          LyricsUXRules.seekGuardDecision(positionMs: 45_000, targetMs: 120_000,
-                                          guardExpired: false) == .wait)
-    check("窗内、已经跳到目标附近（差 200ms）→ 提前解保护",
-          LyricsUXRules.seekGuardDecision(positionMs: 119_800, targetMs: 120_000,
-                                          guardExpired: false) == .release)
-    check("窗过了、位置还是旧的 → 也必须解（不能永远不动）",
-          LyricsUXRules.seekGuardDecision(positionMs: 45_000, targetMs: 120_000,
-                                          guardExpired: true) == .release)
-    check("正好 400ms 边界 → 解",
-          LyricsUXRules.seekGuardDecision(positionMs: 119_600, targetMs: 120_000,
-                                          guardExpired: false) == .release)
-    check("兜底上限 10 秒（以前是 0.7 秒）", LyricsUXRules.seekGuardMaxSeconds == 10)
-    check("容差 400ms", LyricsUXRules.seekGuardToleranceMs == 400)
+    //    新口径：seek 之后有 1.5 秒"乐观窗口"，窗口内用**目标位置**推歌词；播放头落在目标
+    //    ±1.2 秒内（真落地）或窗口到期，才切回真实位置。**任何时刻都给出一个位置，绝不 return 冻住。**
+    check("播放头还报旧位置（45s）且窗口未到期 → 用目标位置（不再拿旧位置算）",
+          LyricsUXRules.seekClockSource(positionMs: 45_000, targetMs: 120_000,
+                                        optimisticExpired: false) == .useTarget)
+    check("播放头已落到目标附近（差 200ms）→ 用真实位置",
+          LyricsUXRules.seekClockSource(positionMs: 119_800, targetMs: 120_000,
+                                        optimisticExpired: false) == .usePosition)
+    check("窗口到期、位置还是旧的 → 也必须切回真实位置（宁可跳一下，绝不冻住 10 秒）",
+          LyricsUXRules.seekClockSource(positionMs: 45_000, targetMs: 120_000,
+                                        optimisticExpired: true) == .usePosition)
+    check("落地容差边界（1.2 秒整）→ 用真实位置",
+          LyricsUXRules.seekClockSource(positionMs: 120_000 - LyricsUXRules.seekLandToleranceMs,
+                                        targetMs: 120_000,
+                                        optimisticExpired: false) == .usePosition)
+    check("乐观窗口是 1.5 秒（旧实现兜底 10 秒 = 冻 10 秒）",
+          LyricsUXRules.seekOptimisticMaxSeconds == 1.5)
+    check("落地容差 1.2 秒", LyricsUXRules.seekLandToleranceMs == 1200)
 
     // ② 取词链预算：单条酷狗通道 3 秒、酷狗整段 4.5 秒——必须给 ③④ 留出时间，
     //    否则"网易云明明有词却显示没词"（老板截图里那首《你好，再见》就是这条）。
@@ -2076,6 +2080,31 @@ check("榜单当天缓存能读回",
       KuwoChart.cachedPage(cacheChart, day: 20_000)?.songs.count == 1)
 check("榜单缓存跨天失效（每日更新的榜不跨天复用）",
       KuwoChart.cachedPage(cacheChart, day: 20_001) == nil)
+
+section("编辑精选：预置歌写死进包（一步到位，不再文字转歌曲）")
+
+check("预生成覆盖 ≥ 100 首", BakedSeedSongs.byKey.count >= 100,
+      "\(BakedSeedSongs.byKey.count)")
+let bakedQingtian = BakedSeedSongs.song(name: "晴天", singer: "周杰伦")
+check("晴天 → 酷我 228908", bakedQingtian?.platformID == "228908",
+      bakedQingtian?.platformID ?? "nil")
+check("晴天的时长是原版（>200s，防 Live/钢琴版混进来）",
+      (bakedQingtian?.durationSec ?? 0) > 200, "\(bakedQingtian?.durationSec ?? -1)")
+check("键与缓存同口径：大小写/空白不敏感",
+      BakedSeedSongs.song(name: " 晴天 ", singer: "周杰伦")?.platformID == "228908")
+check("写死的条目都有正时长（0 会让 ±25s 闸门失效）",
+      BakedSeedSongs.byKey.values.allSatisfy { $0.duration > 0 })
+check("写死的 rid 全是数字",
+      BakedSeedSongs.byKey.values.allSatisfy { v in
+          !v.platformID.isEmpty && v.platformID.allSatisfy { $0.isNumber }
+      })
+check("写死的封面一律 https（ATS 严格，http 图加载不出来）",
+      BakedSeedSongs.byKey.values.allSatisfy { $0.pic.isEmpty || $0.pic.hasPrefix("https://") })
+check("没有 Live/伴奏/钢琴 这类非原版专辑混进来",
+      BakedSeedSongs.byKey.values.allSatisfy { v in
+          let a = v.album.lowercased()
+          return !["live", "演唱会", "现场", "伴奏", "纯音乐", "ktv", "dj", "翻唱"].contains { a.contains($0) }
+      })
 
 // MARK: - 汇总
 

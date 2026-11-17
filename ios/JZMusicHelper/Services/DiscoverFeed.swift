@@ -149,20 +149,21 @@ final class DiscoverFeed {
         guessState = .loading
 
         // 换一批：每点一次整体跳过一组歌手
-        let base = DiscoverRules.guessKeywords(from: recent, limit: 9)
+        let base = DiscoverRules.guessKeywords(from: recent, limit: 12)
         let singers: [String]
         if base.isEmpty {
             singers = []
         } else {
-            let shift = (guessRound * 3) % base.count
-            singers = Array(base.dropFirst(shift)).prefix(3).map { $0 }
+            let count = DiscoverRules.guessSingerCount
+            let shift = (guessRound * count) % base.count
+            singers = Array(base.dropFirst(shift)).prefix(count).map { $0 }
         }
 
         var pool: [Song] = []
         await withTaskGroup(of: [Song].self) { group in
             for singer in singers {
                 group.addTask {
-                    let result = await SearchService.shared.searchRanked(keyword: singer, limit: 12)
+                    let result = await SearchService.shared.searchRanked(keyword: singer, limit: 15)
                     return result.songs
                 }
             }
@@ -172,11 +173,11 @@ final class DiscoverFeed {
         }
 
         let played = Set(recent.map { DiscoverRules.coreName($0.name) })
-        var picked = DiscoverRules.pick(pool, limit: 6, excluding: played)
+        var picked = DiscoverRules.pick(pool, limit: DiscoverRules.guessLimit, excluding: played)
         // 搜索失败的兜底：拿今天的热门里没听过的补位（仍然是真数据，不编造）
-        if picked.count < 3 {
-            let fromHot = DiscoverRules.pick(hotSongs, limit: 6, excluding: played)
-            for song in fromHot where picked.count < 6 {
+        if picked.count < DiscoverRules.guessLimit {
+            let fromHot = DiscoverRules.pick(hotSongs, limit: DiscoverRules.guessLimit, excluding: played)
+            for song in fromHot where picked.count < DiscoverRules.guessLimit {
                 if !picked.contains(where: { $0.id == song.id }) { picked.append(song) }
             }
         }
@@ -238,6 +239,11 @@ final class DiscoverFeed {
     /// 点歌单里的某一首时调用：先按「歌名 + 歌手」搜，再按身份校验挑最像的那条。
     /// 与播放层一致：叫不出名字的宁可返回 nil（行尾显示失败），也不放错歌。
     func resolve(seed: DiscoverCatalog.Seed) async -> Song? {
+        // 预置池里的歌**写死**在包里（`BakedSeedSongs`）：命中就不用搜索，点下去立刻是歌。
+        // 这是老板 r85 要的"一步到位"——没有这一层，每次点进去都要先等四平台搜索。
+        if let baked = BakedSeedSongs.song(name: seed.name, singer: seed.singer) {
+            return baked
+        }
         let keyword = "\(seed.name) \(seed.singer)".trimmingCharacters(in: .whitespaces)
         let ranked = await SearchService.shared.searchRanked(keyword: keyword, limit: 12)
         let songs = ranked.songs

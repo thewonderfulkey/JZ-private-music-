@@ -135,7 +135,7 @@
 | 热门音乐（当日 21 首） | 每次冷启动先闪骨架屏，再拉榜单 | `DiscoverFeed.init` **同步**读当天缓存 → 第一帧就有内容 | 跨天 |
 | 猜你喜欢（6 首） | 每次打开都四平台搜一遍 | 当天 + 「最近播放指纹」缓存（`DiscoverRules.guessSignature`，前 3 首 id）；指纹没变**一个请求都不发** | 跨天 / 指纹变 |
 | 榜单页（100 首） | 每次进页面都请求 `ksong.s` | `KuwoChart` 整页写进当天缓存，进页面直接铺；`fetchPage` 成功时自动写 | 跨天 / 点「重试」强制刷 |
-| 编辑精选歌单页（20 首） | 每次进页面都按「歌名+歌手」重搜，整行都是占位 | `ResolvedSongCache`（`Documents/resolved_songs.json`，800 条）**同步铺**已知映射，只补缺的几首；解析成功即落盘 | 不失效（映射基本不随时间变） |
+| 编辑精选歌单页（20 首） | 每次进页面都按「歌名+歌手」重搜，整行都是占位 | **两层**：`BakedSeedSongs`（预生成进包的 108/120 首映射）+ `ResolvedSongCache`（`Documents/resolved_songs.json`，用户实际解析过的）；进页面**同步铺满整页 SongRow**，只剩没命中的几首去搜 | 包内数据不失效；缓存 800 条上限 |
 | 封面图 | 只有内存缓存，杀进程即没 | `CoverImageCache` 三层：内存 → **磁盘**（`Caches/cover-images`，600 张，按最后访问淘汰）→ 网络 | 最多 600 张 / 系统清 Caches |
 
 要点两条：
