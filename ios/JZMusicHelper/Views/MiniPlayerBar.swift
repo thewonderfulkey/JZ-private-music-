@@ -59,13 +59,11 @@ struct MiniPlayerBar: View {
             .padding(.leading, Tokens.Spacing.xs)
             .padding(.trailing, Tokens.Spacing.xxs)
             .frame(minHeight: Tokens.Size.miniPlayerHeight)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            // r79（老板：「不要有阴影，就是纯色的背景」）：材质换成**纯色不透明**底，描边也去掉。
+            // 之前 `.regularMaterial` 是半透明的，底下滚过的封面会隐约透上来，看着"不纯粹"。
+            .background(Tokens.Palette.paperElevated,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(alignment: .bottom) { progressLine }
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.10), radius: 8, y: 2)
         }
     }
 

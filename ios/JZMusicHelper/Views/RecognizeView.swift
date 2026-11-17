@@ -244,10 +244,7 @@ struct RecognizeView: View {
                             ProgressView().controlSize(.small)
                         } else if let resolved {
                             Button {
-                                player.playSingle(resolved)
-                                library.recordPlayed(resolved)
-                                Haptics.playbackToggle()
-                                router.showPlayer = true
+                                play(resolved)
                             } label: {
                                 Image(systemName: "play.circle.fill")
                                     .font(.system(size: 32))
@@ -285,10 +282,7 @@ struct RecognizeView: View {
                     VStack(spacing: 0) {
                         ForEach(versions) { song in
                             Button {
-                                player.playSingle(song)
-                                library.recordPlayed(song)
-                                Haptics.playbackToggle()
-                                router.showPlayer = true
+                                play(song)
                             } label: {
                                 versionRow(song)
                             }
@@ -355,6 +349,14 @@ struct RecognizeView: View {
         .accessibilityLabel("\(song.name)，\(song.singer)\(isStudio ? "，原唱" : "")")
     }
 
+    /// 所有"点一行就播"的地方走这一个口（其他版本 / 最近识过）
+    private func play(_ song: Song) {
+        player.playSingle(song)
+        library.recordPlayed(song)
+        Haptics.playbackToggle()
+        router.showPlayer = true
+    }
+
     // MARK: 最近识过
 
     private var recentSection: some View {
@@ -376,8 +378,17 @@ struct RecognizeView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(library.recognizeHistory.prefix(10)) { song in
-                        SongRow(song: song)
-                            .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        // r79（老板："识曲的历史现在无法点击播放"）：以前这里只是一行 `SongRow`，
+                        // 没有任何手势——点上去什么都不发生。现在整行可点，行为与「其他版本」
+                        // 那一段完全一致：起播这首 + 记一次播放 + 打开播放页。
+                        Button {
+                            play(song)
+                        } label: {
+                            SongRow(song: song)
+                        }
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        .buttonStyle(.rowPress)
+                        .accessibilityHint("轻点播放这首歌")
                     }
                 }
             }

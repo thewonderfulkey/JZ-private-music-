@@ -109,7 +109,8 @@ struct DiscoverView: View {
                                   })
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Tokens.Spacing.xs) {
+                // r79：卡片底撤掉之后，卡与卡之间要靠间距分开（以前是两块圆角板）。
+                HStack(spacing: Tokens.Spacing.l) {
                     ForEach(DiscoverCatalog.playlists) { playlist in
                         NavigationLink {
                             EditorPlaylistView(playlist: playlist, rotation: rotation)
@@ -257,18 +258,16 @@ struct DiscoverView: View {
 
     // MARK: 卡片外壳
 
-    /// 三行一页的列表卡：分页控件 + 纸卡底
+    /// 三行一页的列表：分页控件 + 行
     ///
-    /// r78（老板："每一个模块的边框太重，深色主题特别丑"）：**去掉 0.5pt 描边**，
-    /// 只留 `paperElevated` 纸卡底——分页器、行、点击行为一律不动。
+    /// r78：去掉 0.5pt 描边。
+    /// r79（老板："我们每个模块后面还带着阴影，不够纯粹，就是纯色的背景"）：
+    /// 连**纸卡底也去掉**——模块直接落在页面纯色背景上，和网易云那种"标题 + 行"的版式一致。
+    /// 分页器、行、点击行为一律不动，行本身仍靠行距和封面来分区。
     private func songListCard<Row: View>(count: Int,
                                          @ViewBuilder row: @escaping (Int) -> Row) -> some View {
         PagedRows(count: count, perPage: 3, content: row)
             .padding(.vertical, Tokens.Spacing.xxs)
-            .background(
-                RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                    .fill(Tokens.Palette.paperElevated)
-            )
             .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
 
@@ -365,15 +364,12 @@ struct EditorPlaylistCard: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, Tokens.Spacing.s)
         .padding(.vertical, Tokens.Spacing.xs)
         .frame(width: 170, alignment: .leading)
         .frame(minHeight: 64)
-        // r78：去掉描边（同"卡片只留纸卡底"），尺寸/命中区不变
-        .background(
-            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                .fill(Tokens.Palette.paperElevated)
-        )
+        // r78 去描边；r79 连纸卡底也去掉（老板："就是纯色的背景"）——只留左边那条类别色块。
+        // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
+        // 间距改由外层 HStack 统一给（见 `editorSection`）。
         .contentShape(Rectangle())
     }
 }
@@ -430,8 +426,9 @@ struct DiscoverSongRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, Tokens.Spacing.s)
         .frame(minHeight: 56)
+        // r79：卡片底撤掉之后，行里那 8pt 内缩会让文字比区块标题多缩 8pt（看着歪），
+        // 所以内缩交给外层统一给 `pageMargin`——发现页和热门榜单两处都对齐标题。
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
@@ -528,10 +525,7 @@ struct GuessEmptyGuide: View {
         }
         .frame(maxWidth: .infinity)
         .padding(Tokens.Spacing.m)
-        .background(
-            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                .fill(Tokens.Palette.paperElevated.opacity(0.6))
-        )
+        // r79：空态也不再套纸卡底（同"模块就是纯色背景"）
         .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
 }

@@ -1832,3 +1832,51 @@ iOS 本轮已对齐 8 秒上限与"酷我官方 1 请求"，但酷狗仍是串�
 
 
 
+
+# 第十八轮整改（2026-11-17 21:3x，老板 r78：模块阴影 / 识曲历史不可点）
+
+> 老板口径：
+> - 「你对比开发群网易云的模块和我们的模块，我们的模块每个后面还带有阴影，不够纯粹，显得很 low，
+>   我希望不要有阴影，就是纯色的背景」；
+> - 「识曲的历史现在无法点击播放，要加上」。
+
+## 一、"阴影"到底是什么
+
+先排除误判：全工程 `shadow` 只有两处——播放页封面（半径 26）和迷你条（半径 8），
+**模块上没有投影**；截图取色也确认卡片下沿是硬边（卡片 25 / 背景 13，没有过渡带）。
+
+所以老板说的"阴影"是**模块后面那块 `paperElevated` 圆角板**——网易云是"区块标题 + 行"
+直接铺在纯色背景上，我们每个模块还套了一层浅灰圆角板，视觉上就是"浮起/有阴影"。
+
+## 二、改了什么（只动视觉，不动逻辑）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| 猜你喜欢 / 热门音乐（`songListCard`） | `paperElevated` 圆角底 | 无底，直接铺在页面纯色上 |
+| 编辑精选横滑卡（`EditorPlaylistCard`） | 圆角底 + 左色条 | 只留左色条 |
+| 猜你喜欢空态（`GuessEmptyGuide`） | `paperElevated.opacity(0.6)` | 无底 |
+| 列表行（`DiscoverSongRow`） | 行内 8pt 横向内缩 | 撤掉，统一吃外层 `pageMargin`（与标题对齐） |
+| 迷你条（`MiniPlayerBar`） | `.regularMaterial` + 0.5pt 描边 + 投影 | 纯色不透明 `paperElevated`，无描边、无投影 |
+
+`PagedRows` 分页器、点击命中区、播放行为、r78 的"同色纸底填缝"全部保持。
+
+## 三、识曲历史可点播放
+
+`RecognizeView` 的「最近识过」原来只是一行 `SongRow`（没有任何手势），点上去什么都不发生。
+现在整行是 `Button` + `.rowPress`，并新增统一入口 `play(_:)`：
+
+```swift
+private func play(_ song: Song) {
+    player.playSingle(song)
+    library.recordPlayed(song)
+    Haptics.playbackToggle()
+    router.showPlayer = true
+}
+```
+
+「其他版本」和识别结果卡也改走这个入口（起播 + 记播放 + 打开播放页）。
+
+## 四、验收
+
+- `swiftc -parse` 全绿；Views 由 CI 的 xcodebuild 保证。
+- 全量断言与 IPA 走 CI。
