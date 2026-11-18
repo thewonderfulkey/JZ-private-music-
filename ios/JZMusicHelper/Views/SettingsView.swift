@@ -85,6 +85,7 @@ struct SettingsView: View {
                 } label: {
                     HStack(spacing: Tokens.Spacing.xs) {
                         Text("保存位置")
+                            .foregroundStyle(.primary)
                         Spacer(minLength: Tokens.Spacing.xs)
                         Text(DownloadLocation.currentPathText)
                             .foregroundStyle(.secondary)
@@ -98,6 +99,8 @@ struct SettingsView: View {
                 Text(DownloadLocation.currentAbsolutePathText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
             Section("数据") {
