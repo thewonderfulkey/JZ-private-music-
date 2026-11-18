@@ -29,7 +29,9 @@
 - 设计口径同步到 `docs/ios/IOS-UI-DESIGN.md` §6.1 / §6.2。
 
 **验证**：本机解析 26 个 Views 文件通过、typecheck 0、新断言 11/11（本地全量仍在 KRC zlib 段停）；
-CI #（待补）/ 703 条断言全绿；IPA `JZ-Music-v2.4.5-（待补）-r101-ios-unsigned.ipa` 已发群。
+CI **#101 / `4e412f4` / 703 条断言全绿** / `build-ipa` 成功、飞书已收到包；
+IPA `JZ-Music-v2.4.5-4e412f4-r101-ios-unsigned.ipa`（2,203,096 B，sha256 `ea471015…3807`，
+版本 2.4.5 / 183，插件已嵌入）。
 
 版本 2.4.5（183）。
 
