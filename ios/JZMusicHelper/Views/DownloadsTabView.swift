@@ -1,17 +1,18 @@
 import SwiftUI
 
-// MARK: - 下载（第四十轮补丁 3：与「我的收藏」保持同一种列表）
+// MARK: - 下载（第四十轮补丁 4）
 //
-// 老板真机反馈（第二张截图，下载后的文件夹里 3 个文件挤在一起）：
-//   · "歌曲 / 歌词 / 封面" 要分到三个文件夹——见 DownloadLocation 的
-//     `Download › Music / Lyrics / Cover`；
-//   · "下载界面和我的收藏保持一致吧，别弄什么每一首歌的背景什么的"——
-//     原来这里是 `List(.insetGrouped)`，每一行都被分组背景包成一张小卡。
-//     现在换成和收藏页**同一套**：ScrollView + LazyVStack + `SongRow`，
-//     行本身没有底色，只有分隔留白；已下载的行就是一行歌（封面 / 歌名 / 歌手 / 平台 / 时长 / ❤）。
+// 老板三条真机反馈（r115）：
+//   ① 下载完了进度条还挂着、不消失；
+//   ② 下载页里删不掉歌（改成 ScrollView 之后左滑删除没了，长按菜单他又碰不到）；
+//   ③ 点播没了 / "直接变成了照片"——本地文件找不到时只剩封面。
 //
-// 正在下载和失败的行仍然需要进度与原因，所以保留"封面 + 标题 + 状态/进度"的同款无底色行，
-// 删除 / 重试 / 取消都收进长按菜单（和收藏页的操作方式一致）。
+// 这一版的做法：
+//   · 回到 `List`（`.plain`）但**行背景全透明、分隔线全隐藏**——观感仍是收藏页那种"干净的一行行歌"，
+//     同时把左滑删除/重试/取消**恢复**（和以前一样的用法）；
+//   · 已下载的行只有 `SongRow`（封面/歌名/歌手/平台/时长/❤），**任何情况下都不画进度条**；
+//     只有"正在下载"的行才画进度，而且完成度 ≥99.9% 时也不画（那一瞬间已经在收尾）；
+//   · 长按菜单保留（删除下载），左滑是第二条路——两种都能删。
 struct DownloadsTabView: View {
 
     @EnvironmentObject private var downloads: DownloadManager
@@ -40,36 +41,102 @@ struct DownloadsTabView: View {
                                systemImage: "arrow.down.circle",
                                description: "在播放页点「下载」，选一个音质")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        header
-                        if !ongoing.isEmpty {
-                            sectionLabel("正在下载（\(ongoing.count)）")
-                            ForEach(ongoing) { item in
-                                activeRow(item)
-                            }
-                        }
-                        if !failed.isEmpty {
-                            sectionLabel("失败（\(failed.count)）")
-                            ForEach(failed) { item in
-                                failedRow(item)
-                            }
-                        }
-                        if !finished.isEmpty {
-                            sectionLabel("已下载（\(finished.count)）")
-                            ForEach(finished) { item in
-                                completedRow(item)
-                            }
-                        }
-                        // 迷你条是浮层：末尾让出它的高度
-                        MiniPlayerSpacer()
-                    }
-                    .readableWidth()
-                }
-                .scrollIndicators(.hidden)
-                .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+                list
             }
         }
+    }
+
+    private var list: some View {
+        List {
+            header
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+
+            if !ongoing.isEmpty {
+                Section {
+                    ForEach(ongoing) { item in
+                        activeRow(item)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    downloads.cancel(itemID: item.id)
+                                } label: {
+                                    Label("取消", systemImage: "xmark.circle")
+                                }
+                            }
+                    }
+                } header: {
+                    sectionHeader("正在下载（\(ongoing.count)）")
+                }
+            }
+
+            if !failed.isEmpty {
+                Section {
+                    ForEach(failed) { item in
+                        failedRow(item)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    downloads.remove(itemID: item.id, deleteFile: true)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                                Button {
+                                    downloads.retry(itemID: item.id, useBackground: true)
+                                } label: {
+                                    Label("重试", systemImage: "arrow.clockwise")
+                                }
+                                .tint(Tokens.Palette.vermilion)
+                            }
+                    }
+                } header: {
+                    sectionHeader("失败（\(failed.count)）")
+                }
+            }
+
+            if !finished.isEmpty {
+                Section {
+                    ForEach(finished) { item in
+                        completedRow(item)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    downloads.remove(itemID: item.id, deleteFile: true)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
+                    }
+                } header: {
+                    sectionHeader("已下载（\(finished.count)）")
+                }
+            }
+
+            Color.clear
+                .frame(height: MiniPlayerMetrics.barHeight)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+    }
+
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(nil)
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .padding(.top, Tokens.Spacing.s)
     }
 
     // MARK: 头部（版式与「我的收藏」一致）
@@ -129,7 +196,6 @@ struct DownloadsTabView: View {
                 Spacer(minLength: 0)
             }
 
-            // 保存位置：只写一行小字（不再是一张卡），和收藏页那种"只有内容"的观感一致
             HStack(spacing: Tokens.Spacing.xxs) {
                 Image(systemName: "folder")
                     .font(.caption2)
@@ -148,17 +214,7 @@ struct DownloadsTabView: View {
         .padding(.vertical, Tokens.Spacing.m)
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Tokens.Spacing.pageMargin)
-            .padding(.top, Tokens.Spacing.m)
-            .padding(.bottom, Tokens.Spacing.xxs)
-    }
-
-    // MARK: 已下载（就是一行歌，和收藏页同款）
+    // MARK: 已下载（一行歌，和收藏页同款；没有进度条）
 
     private func completedRow(_ item: DownloadItem) -> some View {
         Button {
@@ -181,7 +237,7 @@ struct DownloadsTabView: View {
                             library.toggleFavorite(item.song)
                         }
                     },
-                    subtitle: completedSubtitle(item))
+                    subtitle: "\(item.quality.displayName) · \(item.sizeText)")
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)
@@ -194,22 +250,25 @@ struct DownloadsTabView: View {
         }
     }
 
-    /// 已下载行的副标题：音质 · 体积（"有没有词和图"不再写成一行字，文件夹里一眼能看到）
-    private func completedSubtitle(_ item: DownloadItem) -> String {
-        "\(item.quality.displayName) · \(item.sizeText)"
-    }
-
-    // MARK: 正在下载 / 失败（同款无底色行，多一条进度或原因）
+    // MARK: 正在下载（唯一会画进度条的行）
 
     private func activeRow(_ item: DownloadItem) -> some View {
-        plainRow(item: item,
-                 subtitle: item.status == .pending
-                    ? "\(item.quality.displayName) · 等待中"
-                    : "\(item.quality.displayName) · \(item.progressText)",
-                 tint: .secondary) {
-            ProgressView(value: item.progress)
-                .tint(Tokens.Palette.vermilion)
-        } menu: {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            rowHeadline(item: item,
+                        subtitle: item.status == .pending
+                            ? "\(item.quality.displayName) · 等待中"
+                            : "\(item.quality.displayName) · \(item.progressText)",
+                        tint: .secondary)
+            // 收尾（≥99.9%）不再画进度条：老板说的"下载完还挂着进度条"就是这一帧
+            if item.status == .downloading, item.progress < 0.999 {
+                ProgressView(value: item.progress)
+                    .tint(Tokens.Palette.vermilion)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+        }
+        .padding(.vertical, Tokens.Spacing.xs)
+        .contentShape(Rectangle())
+        .contextMenu {
             Button(role: .destructive) {
                 downloads.cancel(itemID: item.id)
             } label: {
@@ -218,13 +277,24 @@ struct DownloadsTabView: View {
         }
     }
 
+    // MARK: 失败
+
     private func failedRow(_ item: DownloadItem) -> some View {
-        plainRow(item: item,
-                 subtitle: "\(item.quality.displayName) · 失败",
-                 tint: .orange,
-                 note: item.errorMessage) {
-            EmptyView()
-        } menu: {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            rowHeadline(item: item,
+                        subtitle: "\(item.quality.displayName) · 失败",
+                        tint: .orange)
+            if let note = item.errorMessage, !note.isEmpty {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+        }
+        .padding(.vertical, Tokens.Spacing.xs)
+        .contentShape(Rectangle())
+        .contextMenu {
             Button {
                 downloads.retry(itemID: item.id, useBackground: true)
             } label: {
@@ -238,45 +308,26 @@ struct DownloadsTabView: View {
         }
     }
 
-    /// 无底色的一行：封面 + 歌名 + 状态（可选进度条 / 黄字原因）
-    private func plainRow<Extra: View, Menu: View>(
-        item: DownloadItem,
-        subtitle: String,
-        tint: Color,
-        note: String? = nil,
-        @ViewBuilder extra: () -> Extra,
-        @ViewBuilder menu: () -> Menu
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
-            HStack(spacing: Tokens.Spacing.s) {
-                SongArtwork(song: item.song)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.song.name)
-                        .font(FontRole.songTitle)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(FontRole.songSubtitle)
-                        .foregroundStyle(tint)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: Tokens.Spacing.xs)
-                Text(item.song.singer)
-                    .font(FontRole.metadata)
-                    .foregroundStyle(.tertiary)
+    /// 封面 + 歌名 + 状态 + 歌手（无底色）
+    private func rowHeadline(item: DownloadItem, subtitle: String, tint: Color) -> some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            SongArtwork(song: item.song)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.song.name)
+                    .font(FontRole.songTitle)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(FontRole.songSubtitle)
+                    .foregroundStyle(tint)
                     .lineLimit(1)
             }
-            extra()
-            if let note, !note.isEmpty {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .lineLimit(3)
-            }
+            Spacer(minLength: Tokens.Spacing.xs)
+            Text(item.song.singer)
+                .font(FontRole.metadata)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
-        .padding(.vertical, Tokens.Spacing.xs)
-        .contentShape(Rectangle())
-        .contextMenu(menuItems: menu)
     }
 
     // MARK: 工具

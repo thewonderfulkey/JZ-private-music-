@@ -60,6 +60,69 @@ final class DownloadManager: NSObject, ObservableObject {
         backgroundSession = URLSession(configuration: bgConfig, delegate: self, delegateQueue: nil)
 
         loadPersisted()
+        // 第四十轮补丁 4：把旧版 `Documents/Music` 里的文件搬进新的三个子目录，搬空后删掉这个文件夹
+        // （老板："后台文件既然全都存在 Downloads 中了，为什么还留着 Music 文件夹，可以删了"）
+        migrateLegacyMusicFolderIfNeeded()
+    }
+
+    // MARK: - 旧版目录迁移
+
+    /// 旧版把音频和旁车都放在 `Documents/Music`。新版是根目录下的 `Music / Lyrics / Cover`，
+    /// 根目录默认 `Documents/Download`。
+    ///
+    /// 这里做一次**搬家**（不是删除）：按扩展名分到对应子目录、把 `downloads.json` 里的
+    /// 绝对路径同步改掉，最后把搬空的旧 `Music` 删掉。
+    /// 顺序很重要：先搬文件、再改记录，否则"点播"会去找一个已经不存在的旧路径
+    /// （老板 r115 的"点播没了、只剩照片"就是这个现象）。
+    private func migrateLegacyMusicFolderIfNeeded() {
+        let docs = DownloadLocation.documentsDirectory()
+        let legacy = docs.appendingPathComponent("Music", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+
+        let music = DownloadLocation.musicDirectory()
+        let lyrics = DownloadLocation.lyricsDirectory()
+        let covers = DownloadLocation.coverDirectory()
+
+        var moved: [String: String] = [:]
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: legacy, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for url in files {
+                let ext = url.pathExtension.lowercased()
+                let destinationDir: URL
+                if ext == "lrc" {
+                    destinationDir = lyrics
+                } else if ["jpg", "jpeg", "png", "webp"].contains(ext) {
+                    destinationDir = covers
+                } else {
+                    destinationDir = music
+                }
+                let target = destinationDir.appendingPathComponent(url.lastPathComponent)
+                if FileManager.default.fileExists(atPath: target.path) {
+                    try? FileManager.default.removeItem(at: target)
+                }
+                if (try? FileManager.default.moveItem(at: url, to: target)) != nil {
+                    moved[url.lastPathComponent] = target.path
+                }
+            }
+        }
+
+        // 记录里的绝对路径跟着改：老的 localPath 指向 Documents/Music/xxx
+        var changed = false
+        for idx in items.indices {
+            guard let old = items[idx].localPath, old.hasPrefix(legacy.path) else { continue }
+            let name = URL(fileURLWithPath: old).lastPathComponent
+            if let newPath = moved[name] {
+                items[idx].localPath = newPath
+                changed = true
+            }
+        }
+        if changed { persist() }
+
+        // 搬空了就删掉旧文件夹（里面还有搬不动的东西就留着，别误删）
+        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: legacy.path)) ?? []
+        if remaining.isEmpty {
+            try? FileManager.default.removeItem(at: legacy)
+        }
     }
 
     // MARK: - 目录
@@ -184,14 +247,42 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     /// 已下好的本地文件路径（播放引擎优先播它：离线可用、省一次解析）
+    ///
+    /// 第四十轮补丁 4：记录里的绝对路径可能失效（旧版 `Music` 目录被搬走/被用户删掉、
+    /// 文件夹被移动过）。这时按"文件名 → 同基名"在 `Download/Music` 里找一次，
+    /// 找到就把记录改过来——否则会出现"列表里显示已下载，点播放却只有封面"的现象。
     func localFileURL(for song: Song) -> URL? {
-        guard let item = items.first(where: { $0.song.id == song.id && $0.status == .completed }),
-              let path = item.localPath,
-              FileManager.default.fileExists(atPath: path) else { return nil }
-        let url = URL(fileURLWithPath: path)
-        // 文件可能在用户自选的外部目录里：每次取用前确认作用域开着（同目录只开一次）
-        DownloadLocation.openScope(forFile: url)
-        return url
+        guard let idx = items.firstIndex(where: { $0.song.id == song.id && $0.status == .completed }) else {
+            return nil
+        }
+        if let path = items[idx].localPath, FileManager.default.fileExists(atPath: path) {
+            let url = URL(fileURLWithPath: path)
+            // 文件可能在用户自选的外部目录里：每次取用前确认作用域开着（同目录只开一次）
+            DownloadLocation.openScope(forFile: url)
+            return url
+        }
+        guard let found = findExistingAudioFile(for: items[idx]) else { return nil }
+        DownloadLocation.openScope(forFile: found)
+        items[idx].localPath = found.path
+        persist()
+        return found
+    }
+
+    /// 按记录在 `Download/Music`（以及旧版 `Music`）里找回音频文件
+    private func findExistingAudioFile(for item: DownloadItem) -> URL? {
+        let candidates = [DownloadLocation.musicDirectory(),
+                          DownloadLocation.documentsDirectory().appendingPathComponent("Music", isDirectory: true)]
+        let base = (item.fileName as NSString).deletingPathExtension
+        for dir in candidates {
+            let exact = dir.appendingPathComponent(item.fileName)
+            if FileManager.default.fileExists(atPath: exact.path) { return exact }
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
+            if let hit = files.first(where: { $0.deletingPathExtension().lastPathComponent == base }) {
+                return hit
+            }
+        }
+        return nil
     }
 
     /// 离线歌词（播放页在无网络时调用）：已下载完成 + 旁车 .lrc 存在才返回。
