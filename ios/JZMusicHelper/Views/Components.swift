@@ -584,7 +584,11 @@ struct RipplePressModifier: ViewModifier {
     @State private var pressID = 0
     @State private var glow: Double = 0
     @State private var pressedAt = Date()
-    /// 松手后的延迟淡出；下一次按下要能取消它，否则快速连点会被上一次的淡出拖暗
+    /// 短按松手时换一块"快速铺满"的 RippleFill，从当前进度接着长，不再从 0 重来
+    @State private var fastRestart = false
+    @State private var restartProgress: Double = 0
+    @State private var restartDuration: Double = PressTiming.fastRipple
+    /// 铺满后的延迟淡出；下一次按下要能取消它，否则快速连点会被上一次的淡出拖暗
     @State private var releaseTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
@@ -594,7 +598,9 @@ struct RipplePressModifier: ViewModifier {
                     if pressID > 0 {
                         RippleFill(origin: activeOrigin,
                                    size: geo.size,
-                                   color: Color.primary.opacity(highlight))
+                                   color: Color.primary.opacity(highlight),
+                                   startProgress: fastRestart ? restartProgress : 0,
+                                   duration: fastRestart ? restartDuration : PressTiming.slowRipple)
                             .id(pressID)
                             .opacity(glow)
                     }
@@ -624,16 +630,25 @@ struct RipplePressModifier: ViewModifier {
                 releaseTask?.cancel()
                 if pressed {
                     pressedAt = Date()
+                    fastRestart = false
+                    restartProgress = 0
                     activeOrigin = hasOrigin ? origin : nil
                     pressID += 1
                     glow = 1
                 } else {
-                    // 短按也要亮够 0.22s 再退；长按已经超过这个时长就只留 0.08s 的尾巴。
-                    let hold = max(0.08, PressTiming.holdAfterRelease(
-                        elapsed: Date().timeIntervalSince(pressedAt),
-                        minVisible: PressTiming.minVisibleRow))
+                    // 关键：短按也要**铺满整条**，只是比长按快——不是停在半截再淡出。
+                    // 短按：从当前进度换一块 0.16s 的快速高亮接着长满；
+                    // 长按：让 0.55s 的慢速高亮自己走完。
+                    let plan = PressTiming.ripplePlan(
+                        elapsed: Date().timeIntervalSince(pressedAt))
+                    if plan.restart {
+                        fastRestart = true
+                        restartProgress = plan.startProgress
+                        restartDuration = plan.duration
+                        pressID += 1
+                    }
                     releaseTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
+                        try? await Task.sleep(nanoseconds: UInt64(plan.waitBeforeFade * 1_000_000_000))
                         guard !Task.isCancelled else { return }
                         withAnimation(.easeOut(duration: 0.40)) { glow = 0 }
                     }
@@ -648,6 +663,9 @@ private struct RippleFill: View {
     let origin: CGPoint?
     let size: CGSize
     let color: Color
+    /// 从当前进度接着长（短按松手后快速铺满用）
+    let startProgress: Double
+    let duration: Double
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
@@ -657,17 +675,20 @@ private struct RippleFill: View {
         let dx = max(point.x, size.width - point.x)
         let dy = max(point.y, size.height - point.y)
         let radius = max(24, (dx * dx + dy * dy).squareRoot() * 1.02)
+        let p0 = min(max(startProgress, 0), 1)
+        let scale0 = 0.06 + 0.94 * p0
+        let opacity0 = 0.40 + 0.60 * p0
         return Circle()
             .fill(color)
             .frame(width: radius * 2, height: radius * 2)
             .position(point)
-            // 起点不是"全亮突然出现"：先是一颗 6% 大小、40% 亮度的亮斑，
-            // 0.50s 里一边长大一边变亮，看起来才是"按住之后慢慢亮、开始扩散"。
-            // 减弱动效：不做缩放/扩散，整块 0.20s 淡入，仍有可见反馈。
-            .scaleEffect(reduceMotion ? 1 : (expanded ? 1 : 0.06))
-            .opacity(reduceMotion ? (expanded ? 1 : 0) : (expanded ? 1 : 0.40))
+            // 起点不是"全亮突然出现"：先是一颗小亮斑，慢慢长大变亮。
+            // 短按松手时 startProgress 接上当前进度，用 0.16s 快速铺满；
+            // 长按用 0.55s 慢慢铺满。减弱动效：不缩放/扩散，整块 0.20s 淡入。
+            .scaleEffect(reduceMotion ? 1 : (expanded ? 1 : scale0))
+            .opacity(reduceMotion ? (expanded ? 1 : 0) : (expanded ? 1 : opacity0))
             .onAppear {
-                withAnimation(.easeInOut(duration: reduceMotion ? 0.20 : 0.50)) {
+                withAnimation(.easeInOut(duration: reduceMotion ? 0.20 : duration)) {
                     expanded = true
                 }
             }

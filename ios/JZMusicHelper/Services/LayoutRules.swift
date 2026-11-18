@@ -265,12 +265,56 @@ enum PressTiming {
     /// 普通按钮（播放/暂停、工具按钮）：最短可见 160ms
     static let minVisible: Double = 0.16
 
-    /// 列表行（高亮扩散）：最短可见 220ms，短按也看得到"亮斑铺开一点"
-    static let minVisibleRow: Double = 0.22
+    /// 列表行（高亮扩散）：按多久算"短按"——短于它就在松手时切到快速铺满
+    static let quickTapThreshold: Double = 0.22
 
-    /// 松手后还要补多久（秒），用于延迟回落；已经按够就返回 0
+    /// 短按：松手后 0.16s 把高亮快速铺满整条
+    static let fastRipple: Double = 0.16
+
+    /// 长按：按住时 0.55s 慢慢铺满
+    static let slowRipple: Double = 0.55
+
+    /// 高亮铺满后再停 0.10s 才开始退
+    static let holdBeforeFade: Double = 0.10
+
+    /// 松手后还要补多久（秒），用于普通按钮的延迟回落；已经按够就返回 0
     static func holdAfterRelease(elapsed: Double, minVisible: Double) -> Double {
         guard elapsed.isFinite, minVisible.isFinite, minVisible > 0 else { return 0 }
         return max(0, minVisible - max(0, elapsed))
+    }
+
+    /// 列表行高亮的"收尾计划"。
+    ///
+    /// 老板 2026-11-18 明确：**短按也要完整铺满整条**，只是比长按快。
+    /// - 短按（elapsed < 0.22）：松手瞬间从当前进度切到 0.16s 快速铺满；
+    /// - 长按：让 0.55s 的慢速扩散自己走完，再停 0.10s 退。
+    struct RipplePlan: Equatable {
+        /// 是否要换一块新的 RippleFill（从 startProgress 开始，用 duration 铺满）
+        let restart: Bool
+        let duration: Double
+        let startProgress: Double
+        /// 从松手到开始淡出要等多久
+        let waitBeforeFade: Double
+    }
+
+    static func smoothstep(_ x: Double) -> Double {
+        let v = min(max(x, 0), 1)
+        return v * v * (3 - 2 * v)
+    }
+
+    static func ripplePlan(elapsed: Double) -> RipplePlan {
+        let e = elapsed.isFinite ? max(0, elapsed) : 0
+        if e < quickTapThreshold {
+            let progress = smoothstep(e / slowRipple)
+            return RipplePlan(restart: true,
+                              duration: fastRipple,
+                              startProgress: progress,
+                              waitBeforeFade: fastRipple + holdBeforeFade)
+        }
+        let remaining = max(0, slowRipple - e)
+        return RipplePlan(restart: false,
+                          duration: remaining,
+                          startProgress: 0,
+                          waitBeforeFade: remaining + holdBeforeFade)
     }
 }

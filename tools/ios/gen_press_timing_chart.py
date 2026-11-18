@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""画一张"短按 60ms 时按压态可见窗口"的时序示意图（非真机录屏）。
+"""画"短按 / 长按都会完整铺满整条高亮"的时序示意图（非真机录屏）。
 
-用途：给老板解释第三十七轮的最短可见时长修复；不是 App 截图。
+用途：给老板解释第三十八轮：短按不是只亮一半，而是在松手后用 0.16s 快速铺满；
+长按用 0.55s 慢慢铺满。
 """
 from pathlib import Path
 
@@ -10,14 +11,13 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs/ios/mockups/press-timing.png"
 
-W, H = 1200, 680
+W, H = 1200, 760
 BG = (17, 17, 17)
 FG = (235, 232, 226)
 SUB = (150, 146, 138)
-RED = (214, 90, 80)
 GREEN = (120, 196, 140)
+AMBER = (214, 168, 90)
 GRID = (52, 52, 52)
-
 FONT = "C:/Windows/Fonts/msyh.ttc"
 
 
@@ -29,56 +29,66 @@ def font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def lerp(c1, c2, t):
+    t = min(max(t, 0), 1)
     return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
 
 
 img = Image.new("RGB", (W, H), BG)
 d = ImageDraw.Draw(img)
 
-d.text((40, 28), "短按 60ms：按压态在屏幕上的可见窗口", font=font(28), fill=FG)
-d.text((40, 70), "时序示意（按 pressDown/pressUp 与最短可见时长计算），不是真机录屏",
+d.text((40, 26), "短按 / 长按：高亮都会完整铺满整条", font=font(28), fill=FG)
+d.text((40, 68), "时序示意（按 0.16s 快速铺满 / 0.55s 慢速铺满计算），不是真机录屏",
        font=font(15), fill=SUB)
 
-x0, x1 = 200, 1120
-ms_to_x = lambda ms: x0 + (x1 - x0) * (ms / 800.0)
+x0, x1 = 210, 1140
+TOTAL = 1200
+ms_to_x = lambda ms: x0 + (x1 - x0) * (ms / TOTAL)
 
-# 时间轴
-for ms in range(0, 801, 100):
+for ms in range(0, TOTAL + 1, 100):
     x = ms_to_x(ms)
-    d.line((x, 120, x, 610), fill=GRID, width=1)
-    d.text((x - 16, 618), f"{ms}ms", font=font(12), fill=SUB)
+    d.line((x, 110, x, 690), fill=GRID, width=1)
+    d.text((x - 18, 700), f"{ms}ms", font=font(12), fill=SUB)
 
-# 改前
-y = 180
-d.text((40, y), "改前", font=font(20), fill=FG)
-d.text((40, y + 26), "isPressed 60ms", font=font(13), fill=SUB)
-d.text((40, y + 46), "没撑到渲染", font=font(13), fill=SUB)
-d.rectangle((ms_to_x(0), y + 10, ms_to_x(60), y + 50), fill=(70, 34, 32),
-            outline=RED, width=1)
-d.text((ms_to_x(70), y + 18), "屏幕上：0 帧（0ms）", font=font(15), fill=RED)
 
-# 改后：列表行 220ms 可见 + 400ms 渐隐
-y = 330
-d.text((40, y), "改后", font=font(20), fill=FG)
-d.text((40, y + 26), "最短可见 220ms", font=font(13), fill=SUB)
-d.text((40, y + 46), "+ 0.40s 渐隐", font=font(13), fill=SUB)
-d.rectangle((ms_to_x(0), y + 10, ms_to_x(220), y + 50), fill=lerp(GREEN, (35, 60, 42), 0.25))
-fade_end = 220 + 400
-steps = 80
-for i in range(steps):
-    a = 220 + (fade_end - 220) * i / steps
-    b = 220 + (fade_end - 220) * (i + 1) / steps
-    t = i / steps
-    col = lerp(GREEN, BG, t)
-    d.rectangle((ms_to_x(a), y + 10, ms_to_x(b), y + 50), fill=col)
-d.text((ms_to_x(232), y + 18), "先亮满 0.22s，再 0.40s 退干净", font=font(15), fill=FG)
+def band(y, segments, label, note):
+    d.text((40, y), label, font=font(20), fill=FG)
+    d.text((40, y + 26), note, font=font(13), fill=SUB)
+    for start, end, color_from, color_to in segments:
+        steps = 60
+        for i in range(steps):
+            a = start + (end - start) * i / steps
+            b = start + (end - start) * (i + 1) / steps
+            d.rectangle((ms_to_x(a), y + 10, ms_to_x(b), y + 52),
+                        fill=lerp(color_from, color_to, i / steps))
+
+
+# 短按：0-60 亮斑；60-220 快速铺满；220-320 停；320-720 退
+band(150, [
+    (0, 60, (60, 40, 30), (90, 70, 40)),
+    (60, 220, lerp(GREEN, BG, 0.55), GREEN),
+    (220, 320, GREEN, GREEN),
+    (320, 720, GREEN, BG),
+], "短按 60ms", "松手后 0.16s 快速铺满 → 停 0.10s → 0.40s 退")
+d.text((ms_to_x(230), 182), "铺满 100%", font=font(14), fill=(20, 40, 24))
+
+# 长按：0-550 慢速铺满；550-650 停；650-1050 退
+band(320, [
+    (0, 550, lerp(GREEN, BG, 0.75), GREEN),
+    (550, 650, GREEN, GREEN),
+    (650, 1050, GREEN, BG),
+], "长按 550ms+", "按住时 0.55s 慢慢铺满 → 松手后停 0.10s → 0.40s 退")
+d.text((ms_to_x(560), 352), "铺满 100%", font=font(14), fill=(20, 40, 24))
 
 # 普通按钮
-y = 480
-d.text((40, y), "普通按钮", font=font(20), fill=FG)
-d.text((40, y + 26), "最短可见 160ms", font=font(13), fill=SUB)
-d.rectangle((ms_to_x(0), y + 10, ms_to_x(160), y + 50), fill=(46, 70, 52))
-d.text((ms_to_x(172), y + 18), "播放/暂停、工具按钮", font=font(15), fill=SUB)
+band(490, [
+    (0, 160, lerp(AMBER, BG, 0.6), AMBER),
+], "普通按钮", "按下 0.14s 缩到 0.95 / 压暗，最短可见 160ms")
+d.text((ms_to_x(170), 522), "缩放 + 压暗", font=font(14), fill=SUB)
+
+# 说明
+d.text((40, 620), "关键：短按不是停在半截再淡出——松手后用更快的速度把整条铺满，"
+                  "两种按法最终都是 100% 高亮。", font=font(15), fill=FG)
+d.text((40, 646), "高亮铺满后统一停 0.10s 再退；退的时长 0.40s。", font=font(14), fill=SUB)
 
 img.save(OUT, "PNG")
 print(OUT)

@@ -2623,8 +2623,10 @@ do {
 
 // MARK: - 按压反馈最短可见时长（PressTiming）
 //
-// 第三十七轮：老板真机"长按 OK、短按几乎没反馈"。短按的 isPressed 可能在同一帧
-// true→false，0.14s 的下压动画来不及起帧；这里把"补齐到最短可见时长"的算法钉死。
+// 第三十七轮：短按的 isPressed 可能同一帧 true→false，0.14s 下压动画来不及起帧；
+// 这里把"补齐到最短可见时长"的算法钉死。
+// 第三十八轮（老板：短按也要**完整铺满整条**高亮，只是比长按快）：
+// 补上 ripplePlan 的口径——短按松手后换 0.16s 快速高亮接着铺满，长按走 0.55s 慢速。
 
 section("按压反馈最短可见时长（PressTiming）")
 
@@ -2638,14 +2640,43 @@ do {
     check("刚按下：补满整个最短时长",
           PressTiming.holdAfterRelease(elapsed: 0,
                                        minVisible: PressTiming.minVisible) == PressTiming.minVisible)
-    check("列表行高亮的最短时长比普通按钮长",
-          PressTiming.minVisibleRow > PressTiming.minVisible,
-          "row=\(PressTiming.minVisibleRow) button=\(PressTiming.minVisible)")
+    check("短按阈值比普通按钮最短时长长",
+          PressTiming.quickTapThreshold > PressTiming.minVisible,
+          "threshold=\(PressTiming.quickTapThreshold) button=\(PressTiming.minVisible)")
     check("脏数据不产生负补时",
           PressTiming.holdAfterRelease(elapsed: Double.nan, minVisible: 0.16) == 0)
     check("比较常见的 80ms 快速点按也要补到 160ms",
           PressTiming.holdAfterRelease(elapsed: 0.08,
                                        minVisible: PressTiming.minVisible) > 0.07)
+
+    let quick = PressTiming.ripplePlan(elapsed: 0.06)
+    check("短按 60ms：松手后换 0.16s 快速高亮铺满",
+          quick.restart && abs(quick.duration - PressTiming.fastRipple) < 1e-9,
+          "\(quick)")
+    check("短按从当前进度接着长，不回到 0",
+          quick.startProgress > 0 && quick.startProgress < 0.1,
+          "start=\(quick.startProgress)")
+    check("短按也要等铺满 + 0.10s 再淡出",
+          abs(quick.waitBeforeFade
+              - (PressTiming.fastRipple + PressTiming.holdBeforeFade)) < 1e-9,
+          "wait=\(quick.waitBeforeFade)")
+
+    let medium = PressTiming.ripplePlan(elapsed: 0.30)
+    check("300ms 按：不重启，让慢速高亮自己走完",
+          !medium.restart
+            && abs(medium.waitBeforeFade
+                   - ((PressTiming.slowRipple - 0.30) + PressTiming.holdBeforeFade)) < 1e-9,
+          "\(medium)")
+
+    let long = PressTiming.ripplePlan(elapsed: 0.60)
+    check("600ms 长按：已经铺满，只等 0.10s",
+          !long.restart && long.waitBeforeFade == PressTiming.holdBeforeFade,
+          "\(long)")
+
+    let late = PressTiming.ripplePlan(elapsed: 0.20)
+    check("200ms 松手：从约 29% 进度快速铺满，不闪回",
+          late.restart && late.startProgress > 0.20 && late.startProgress < 0.40,
+          "start=\(late.startProgress)")
 }
 
 // MARK: - 汇总
