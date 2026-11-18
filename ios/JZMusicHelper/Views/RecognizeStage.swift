@@ -108,6 +108,7 @@ struct RecognizeStage: View {
     }
 
     private var haloScale: CGFloat {
+        guard !reduceMotion else { return 1 }
         let loud = CGFloat(RecognizeMotion.clamp01(Double(level)))
         switch phase {
         case .listening: return 1 + loud * 0.06
@@ -226,6 +227,7 @@ struct RecognizeStage: View {
     }
 
     private var coreScale: CGFloat {
+        guard !reduceMotion else { return 1 }
         switch phase {
         case .listening: return 1 + CGFloat(RecognizeMotion.clamp01(Double(level))) * 0.03
         case .recognizing: return 0.97

@@ -91,7 +91,9 @@ struct RootTabView: View {
     private var tabPages: some View {
         ZStack {
             ForEach(AppRouter.Tab.allCases, id: \.self) { tab in
-                if visited.contains(tab) {
+                // `router.tab == tab` 也要算进来：onChange 是在这一帧渲染之后才跑，
+                // 只等 visited 会先闪一帧空白再插入新页。
+                if visited.contains(tab) || router.tab == tab {
                     page(for: tab)
                         .opacity(router.tab == tab ? 1 : 0)
                         .scaleEffect(router.tab == tab || reduceMotion ? 1 : 0.985)
