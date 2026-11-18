@@ -21,7 +21,9 @@
 - 时序示意更新：`docs/ios/mockups/press-timing.png`（短按 0.12s 铺满、0.22s 后才弹栏/页）。
 
 **验证**：本机时序断言 12/12；typecheck 0、26 个 Views 解析通过；
-CI #（待补）/ 722 条断言全绿；IPA `JZ-Music-v2.4.11-（待补）-r108-ios-unsigned.ipa` 已发群。
+CI **#109 / `e32a5de` / 722 条断言全绿** / `build-ipa` 成功、飞书已收到包；
+IPA `JZ-Music-v2.4.11-e32a5de-r109-ios-unsigned.ipa`（2,227,105 B，sha256 `b01e46d2…6fbb`，
+版本 2.4.11 / 189，插件已嵌入）。#108 是同一份代码的行尾 churn 版，已取消。
 
 版本 2.4.11（189）。
 
