@@ -124,6 +124,9 @@
 - 尺寸走 `@ScaledMetric`（宽 = 高 × 3），AX5 下整卡变大但不截字；
 - 点任意一张卡 → 以**这一排 12 首**为队列起播（与最近播放同一口径，不是单曲循环）。
 
+版式预览稿（浏览器直接打开，真数据）：[mockups/new-songs-v1.html](mockups/new-songs-v1.html)
+/ [PNG](mockups/new-songs-v1.png)（`tools/ios/gen_new_songs_mockup.py` 重新生成）。
+
 **缓存与"同进度"**：
 
 - 老板："同样保持加载一次当天不再加载，除非第二天刷新，和酷我的接口保持同进度。"
