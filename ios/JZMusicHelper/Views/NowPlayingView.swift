@@ -31,6 +31,7 @@ struct NowPlayingView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(SettingsStore.self) private var settings
     @Environment(DownloadFlow.self) private var downloadFlow
+    @Environment(AppRouter.self) private var router
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -97,6 +98,7 @@ struct NowPlayingView: View {
                     .environment(downloadFlow)
                     .environment(settings)
                     .environment(player)
+                    .environment(router)
             }
             .task {
                 Haptics.prepare()

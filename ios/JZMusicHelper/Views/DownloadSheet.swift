@@ -10,6 +10,7 @@ struct DownloadSheet: View {
 
     @Environment(DownloadFlow.self) private var flow
     @Environment(SettingsStore.self) private var settings
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
         NavigationStack {
@@ -250,7 +251,12 @@ struct DownloadSheet: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             Button("去看下载") {
+                // 老板 r116："点了『去看下载』人还停在播放页，虽然底下已经切到下载页了，但播放页没退出。"
+                // 所以这一下要做三件事：关弹层 → 退出播放页 → 切到下载 Tab。
+                // （播放页是盖在根视图上的全屏模态，只关弹层的话人当然还在播放页里。）
                 flow.dismiss()
+                router.showPlayer = false
+                router.tab = .downloads
             }
             .font(.footnote.weight(.semibold))
             .foregroundStyle(Tokens.Palette.vermilion)

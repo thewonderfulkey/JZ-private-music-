@@ -71,6 +71,7 @@ struct RootTabView: View {
                 .environment(downloadFlow)
                 .environment(settings)
                 .environment(player)
+                .environment(router)
                 .environmentObject(downloads)
         }
         .onAppear {
