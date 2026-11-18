@@ -500,22 +500,24 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
 /// 反馈靠这一条亮色，而不是靠马达。
 ///
 /// 第三十四轮（老板又对着 Light Player 演示）：高亮"太快，肉眼看不清"。
-/// 逐帧量了 Light Player：按下 ~0.1s 亮起、松手后还要亮 ~0.6-0.9s 才退干净。
-/// 所以高亮单独走一条 `easeIn(0.6)+delay(0.1)` 的慢退（前段几乎不掉、后段才淡出），
-/// 缩放仍用 0.30s spring 快速回弹——两件事分开，不能共用一条动画。
+/// 把 Light Player 那段逐帧取了亮度（540×1168、30fps）：
+///   · 36.43s 开始亮 → 36.67s 到满，**涨上来 0.24s**；
+///   · 按住期间一直是满亮，松手后 37.47→37.87 退干净，**退 0.40s**；
+///   · 满亮时行底色约 RGB 79/255，即 ~31% 白，比我们旧的 22% 更亮。
+/// 所以这里按测量值复刻：涨 0.22s / 退 0.40s、亮色 30%；缩放仍走 0.30s spring，
+/// 和高亮分开——旧版两者共用 0.30s，高亮"啪"一下就没了。
 struct RowPressButtonStyle: ButtonStyle {
     var scale: CGFloat = 0.985
-    var highlight: Double = 0.22
-    var cornerRadius: CGFloat = 12
+    var highlight: Double = 0.30
+    var cornerRadius: CGFloat = 16
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.primary.opacity(configuration.isPressed ? highlight : 0))
-                    .animation(configuration.isPressed
-                               ? .easeOut(duration: 0.10)
-                               : .easeIn(duration: 0.60).delay(0.10),
+                    // 高亮自己的节奏：涨 0.22s、退 0.40s（与 Light Player 逐帧一致）
+                    .animation(.easeOut(duration: configuration.isPressed ? 0.22 : 0.40),
                                value: configuration.isPressed)
             )
             .scaleEffect(configuration.isPressed ? scale : 1)
