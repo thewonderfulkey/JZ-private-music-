@@ -2147,6 +2147,44 @@ check("模糊兜底也能命中（救历史缓存）",
 check("模糊兜底不会张冠李戴（别的歌不能认成它）",
       ResolvedSongCache.shared.fuzzyLookup(name: "光辉岁月", singer: "Beyond") == nil)
 
+section("第二十七轮：封面兜底（iTunes 公共兜底 + 坏地址拉黑）")
+
+// iTunes Search：无需 key、https，作为 QQ 严格匹配之后的最后一级
+let itunesURL = ITunesCover.searchURL(title: "青花瓷", artist: "周杰伦")
+check("iTunes 搜索 URL 走 https 且带 entity=song",
+      itunesURL.hasPrefix("https://itunes.apple.com/search?") && itunesURL.contains("entity=song"),
+      itunesURL)
+check("歌名/歌手里的空格与 & 被正确编码",
+      !ITunesCover.searchURL(title: "A & B", artist: "C D").contains("A & B"))
+check("artwork 100x100bb → 600x600bb",
+      ITunesCover.largeArtwork("https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg")
+        == "https://is1-ssl.mzstatic.com/image/thumb/x/600x600bb.jpg")
+check("artwork 100x100 → 600x600（无 bb 后缀）",
+      ITunesCover.largeArtwork("https://a/b/100x100.jpg") == "https://a/b/600x600.jpg")
+check("http 的 artwork 升 https",
+      ITunesCover.largeArtwork("http://a/b/100x100bb.jpg") == "https://a/b/600x600bb.jpg")
+check("不是 URL 就不认", ITunesCover.largeArtwork("not-a-url") == nil)
+
+// 严格匹配：iTunes 对华语歌相关性很差（搜"青花瓷 周杰伦"首条是《屋顶》），
+// 只认歌名核心名 + 歌手片段都对得上的，宁可不给图。
+let itunesPayload: [String: Any] = ["results": [
+    ["trackName": "屋顶", "artistName": "Landy Wen & Jay Chou", "artworkUrl100": "https://is1.mzstatic.com/wrong/100x100bb.jpg"],
+    ["trackName": "青花瓷", "artistName": "周杰伦", "artworkUrl100": "https://is1.mzstatic.com/right/100x100bb.jpg"]
+]]
+check("跳过名字不符的（屋顶不能当青花瓷的封面）",
+      ITunesCover.parse(itunesPayload, title: "青花瓷", artist: "周杰伦")
+        == "https://is1.mzstatic.com/right/600x600bb.jpg")
+check("歌手对不上的也不收",
+      ITunesCover.parse(["results": [["trackName": "青花瓷", "artistName": "吴英仔",
+                                      "artworkUrl100": "https://a/100x100bb.jpg"]]],
+                        title: "青花瓷", artist: "周杰伦") == nil)
+check("版本后缀不影响匹配（凉凉 (with 張碧晨) / Aska Yang）",
+      ITunesCover.parse(["results": [["trackName": "凉凉 (with 張碧晨)", "artistName": "Aska Yang",
+                                      "artworkUrl100": "https://a/100x100bb.jpg"]]],
+                        title: "凉凉", artist: "杨宗纬") != nil)
+check("没有结果时返回 nil",
+      ITunesCover.parse(["results": []], title: "青花瓷", artist: "周杰伦") == nil)
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -324,10 +324,14 @@ final class DiscoverFeed {
         let keyword = "\(seed.name) \(seed.singer)".trimmingCharacters(in: .whitespaces)
         let ranked = await SearchService.shared.searchRanked(keyword: keyword, limit: 12)
         let songs = ranked.songs
-        if let both = songs.first(where: {
+        // 歌名+歌手都对得上的候选里，**优先时长正常的录音室原版**：
+        // 截图里出现过「丑八怪 00:31」这种 31 秒片段版（播放侧 ±25s 闸门会直接判坏源）。
+        let both = songs.filter {
             NameMatch.titleMatches(seed.name, $0.name) && NameMatch.singerMatches(seed.singer, $0.singer)
-        }) {
-            return both
+        }
+        if !both.isEmpty {
+            let solid = both.filter { $0.durationSec >= 60 }
+            return StudioPick.pickBest(solid.isEmpty ? both : solid) ?? both[0]
         }
         if let titleOnly = songs.first(where: { NameMatch.titleMatches(seed.name, $0.name) }) {
             return titleOnly

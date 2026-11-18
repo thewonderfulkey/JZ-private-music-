@@ -30,6 +30,10 @@ actor CoverResolver {
 
     private var memory: [String: String] = [:]
     private var inFlight: [String: Task<String?, Never>] = [:]
+    /// 已知**加载不出来**的地址：key（歌名|歌手）→ url。
+    /// 用来避免"同一首歌每次都先试同一个坏地址"（酷我 rid_pic 有些地址就是 404）。
+    private var deadURLs: [String: String] = [:]
+    private static let deadCacheKey = "cover_dead_urls_v1"
     private var permits: Int
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var loaded = false
@@ -69,14 +73,27 @@ actor CoverResolver {
         let task = Task<String?, Never> { [weak self] in
             guard let self else { return nil }
             await self.acquire()
-            // ① 酷我：先同平台按 rid 取（同曲目必然同专辑图；跨平台兜底只是猜）
+            // 依次尝试：① 酷我按 rid 同平台取图 → ② QQ 严格匹配 → ③ iTunes（公共兜底）。
+            // 每一级都跳过"已知加载不出来的地址"（见 `markDead`）——
+            // 之前把 rid_pic 返回的**404 地址**直接写进缓存，于是固定那几首歌永远没有封面。
             var url: String?
             if let rid = Self.kuwoRid(song) {
-                url = await Self.lookupKuwoRidCover(rid: rid, timeout: timeout)
+                if let cand = await Self.lookupKuwoRidCover(rid: rid, timeout: timeout),
+                   await !self.isDead(cand, key: key) {
+                    url = cand
+                }
             }
-            // ② 其余平台，以及酷我 rid 取不到时：QQ 严格匹配
             if url == nil {
-                url = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout)
+                if let cand = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout),
+                   await !self.isDead(cand, key: key) {
+                    url = cand
+                }
+            }
+            if url == nil {
+                if let cand = await ITunesCover.fetch(song: song, timeout: timeout),
+                   await !self.isDead(cand, key: key) {
+                    url = cand
+                }
             }
             await self.release()
             if let url {
@@ -185,6 +202,38 @@ actor CoverResolver {
         "\(song.name)|\(song.singer)"
     }
 
+    // MARK: 坏地址（加载失败）黑名单
+
+    /// 这个地址对这首歌是不是已知加载不出来
+    func isDead(_ url: String, key: String) -> Bool {
+        deadURLs[key] == url
+    }
+
+    /// 调用方确认这张图**加载失败**时调用：拉黑地址并清掉缓存里的同名记录，
+    /// 下一次解析会降到下一级兜底（QQ → iTunes），而不是把坏地址又发一遍。
+    func markDead(_ url: String, for song: Song) {
+        let key = Self.cacheKeyFor(song)
+        if deadURLs[key] != url {
+            deadURLs[key] = url
+            persistDead()
+        }
+        if memory[key] == url {
+            memory[key] = nil
+            persist()
+        }
+    }
+
+    private func persistDead() {
+        UserDefaults.standard.set(deadURLs, forKey: Self.deadCacheKey)
+    }
+
+    private func loadDeadIfNeeded() {
+        guard let saved = UserDefaults.standard.dictionary(forKey: Self.deadCacheKey) as? [String: String] else {
+            return
+        }
+        deadURLs = saved
+    }
+
     // MARK: 状态
 
     private func store(_ url: String, for key: String) {
@@ -200,6 +249,7 @@ actor CoverResolver {
     private func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
+        loadDeadIfNeeded()
         guard let raw = UserDefaults.standard.array(forKey: cacheKey) as? [[String: String]] else { return }
         for entry in raw {
             if let k = entry["k"], let v = entry["v"], !k.isEmpty, !v.isEmpty {

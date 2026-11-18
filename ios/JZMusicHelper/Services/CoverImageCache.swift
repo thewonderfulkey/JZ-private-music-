@@ -112,10 +112,18 @@ final class CoverImageCache: @unchecked Sendable {
         if let raw = resolved, let url = URL(string: raw), let image = await image(for: url) {
             return image
         }
+        // 这个地址加载不出来（404 / CDN 拒绝 / 解码失败）：拉黑它，再走下一级兜底。
+        // 不拉黑的话，缓存里那个坏地址会被反复返回，固定几首歌就永远没有封面（老板 r90 的截图）。
+        if let raw = resolved {
+            await CoverResolver.shared.markDead(raw, for: song)
+        }
 
         let fallback = await CoverResolver.shared.coverURLIgnoringOriginal(for: song)
         if let raw = fallback, let url = URL(string: raw), let image = await image(for: url) {
             return image
+        }
+        if let raw = fallback {
+            await CoverResolver.shared.markDead(raw, for: song)
         }
         return nil
     }
