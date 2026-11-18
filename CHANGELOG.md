@@ -24,7 +24,12 @@
 预览稿（浏览器直接打开，可拖时间轴定格）：`docs/ios/mockups/splash-icon-v1.html`。
 
 验证：本地 harness **15/15**、WSL 全量 typecheck `TYPECHECK_EXIT=0`、`swiftc -parse` 三个新文件 0 error、
-UI 卫生 20 个界面文件通过、pbxproj 189 对象 / 2 target 通过。版本 2.4.0（178）——**本轮未推 CI、未出 IPA**。
+UI 卫生 20 个界面文件通过、pbxproj 189 对象 / 2 target 通过。版本 2.4.0（178）。
+- **出包**：CI run #95 / `c0ecb55` / **651 条断言全绿**（636 + 本轮 15）/ `build-ipa` 成功、飞书已收到包；
+  IPA `JZ-Music-v2.4.0-c0ecb55-r95-ios-unsigned.ipa`（1,925,451 B），
+  二进制里 grep 得到「轻点跳过开屏动画」，确认开屏代码真的进了包。
+  过程：先推 `b5e84ee` 后发现减弱动效分支的 `Group` 修饰符是按子视图生效（读屏会把「JZ 音乐」念两遍），
+  取消那次 run、改成 ZStack 再推。
 
 ## iOS 第二十七轮 · 2026-11-18 13:4x（封面兜底：坏地址不再被记住 / 加 iTunes 公共兜底）
 
