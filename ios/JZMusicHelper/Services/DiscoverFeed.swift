@@ -7,7 +7,9 @@ import Observation
 //   ① 编辑精选：本地预置池（DiscoverCatalog）按日期轮换 20 首，点开才去搜真实音源
 //   ② 热门音乐：**首选酷我官方热歌榜**（`KuwoChart`，真榜、每日更新），拿不到才回落到
 //      原来的「6 个种子词 → 四平台并发搜索 → `DiscoverRules.pick` 选 21 首」
-//   ③ 猜你喜欢：从最近播放里抽 3 个歌手 → 搜他们的歌 → 剔掉听过的 → 取 6 首
+//   ③ 最新单曲：**酷我官方歌单「每日最新单曲推荐」**（`KuwoPlaylist`，1082685104），
+//      带封面与发行日；与热门音乐同一趟加载、同一个本地日边界（老板："和酷我的接口保持同进度"）
+//   ④ 猜你喜欢：从最近播放里抽 3 个歌手 → 搜他们的歌 → 剔掉听过的 → 取 6 首
 //
 // 第二十轮（老板："把酷我热歌榜换到热门音乐里，原来的热门音乐逻辑作为兜底，优先用热歌榜，
 // 保持热门音乐的样式和页数"）：榜单不再单独占编辑精选的一个卡位，而是成为热门音乐的数据源；
@@ -36,6 +38,13 @@ final class DiscoverFeed {
     /// 每次启动只按服务端日期核对一次，避免每次回发现页都打一次探测请求
     private var didRevalidateHot = false
 
+    /// 最新单曲：一页 100 首，模块只露前 `DiscoverRules.newSongsModuleLimit` 张卡，
+    /// 「查看全部」进整页。「当天只拉一次」的判据是 `newDay`（本地日），不是服务端日期
+    /// —— 歌单没有 `pub` 字段，老板要的就是"第二天刷新"。
+    private(set) var newReleases: [KuwoPlaylist.Release] = []
+    private(set) var newState: LoadState = .idle
+    private var newDay: Int = -1
+
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
 
@@ -43,8 +52,7 @@ final class DiscoverFeed {
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
     private static let hotCacheKey = "discover_hot_cache_v2"
     /// 猜你喜欢的当天缓存（同一天 + 同一批"最近播放"才复用）
-    private static let guessCacheKey = "discover_guess_cache_v1"
-    /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
+    private static let guessCacheKey = "discover_guess_cache_v1"    /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
     private(set) var guessRound = 0
 
     /// 当天序号（本地日历天，见 `DiscoverRules.today`）
@@ -94,6 +102,71 @@ final class DiscoverFeed {
            !cached.songs.isEmpty {
             guessSongs = cached.songs
             guessState = .loaded
+        }
+        // 最新单曲：缓存里只要过了"本地日"就**先铺上去**（哪怕不是今天的），
+        // 以免跨天冷启动先闪一屏骨架；`loadNewSongsIfNeeded` 会按 `newDay` 决定要不要重取。
+        if let cached = KuwoPlaylist.cachedAnyDay(.newSongs) {
+            newReleases = cached
+            newState = .loaded
+        }
+        if let cached = KuwoPlaylist.cached(.newSongs, day: day) {
+            newReleases = cached
+            newDay = day
+            newState = .loaded
+        }
+    }
+
+    // MARK: 每日一趟（热门 + 最新单曲）
+
+    /// 发现页首屏的"当天数据"：热门音乐 + 最新单曲 **同一趟并发拉**。
+    ///
+    /// 老板 r96："最新单曲……同样保持加载一次当天不再加载除非第二天刷新，
+    /// **和酷我的接口保持同进度**"——两个模块都是酷我接口、都是一天定死的数据，
+    /// 所以合成一个入口：一起进加载态、一起靠本地日判缓存、下拉刷新一起重取。
+    /// 顺序不保证（谁先回来谁先铺），但状态机是各自的，互不阻塞。
+    func loadDaily() async {
+        async let hot: Void = loadHotIfNeeded()
+        async let fresh: Void = loadNewSongsIfNeeded()
+        _ = await (hot, fresh)
+    }
+
+    /// 下拉刷新：热门 / 最新单曲 / 猜你喜欢 三块一起重取（都强制，不吃缓存）
+    func refreshAll(recent: [Song]) async {
+        async let hot: Void = refreshHot()
+        async let fresh: Void = refreshNewSongs()
+        async let guess: Void = refreshGuess(recent: recent)
+        _ = await (hot, fresh, guess)
+    }
+
+    // MARK: 最新单曲
+
+    func loadNewSongsIfNeeded() async {
+        if newState == .loading { return }
+        if newDay == day, !newReleases.isEmpty { return }
+        // 缓存已经是今天的（init 里可能刚读过）→ 直接复用，一个请求都不发
+        if let cached = KuwoPlaylist.cached(.newSongs, day: day), !cached.isEmpty {
+            newReleases = cached
+            newDay = day
+            newState = .loaded
+            return
+        }
+        await refreshNewSongs()
+    }
+
+    /// 真正拉一次（一页 100 首）。失败时**不清空已有内容**：
+    /// 刷新失败不该把用户正在看的那排卡片抽走（与热门音乐同一口径）。
+    ///
+    /// 加载态也只在"手上没有内容"时才亮骨架：昨天那页还在屏幕上时，重取是后台行为，
+    /// 不该把整排卡片换成灰块（r84："一打开什么都在加载"的观感就是从这儿来的）。
+    func refreshNewSongs() async {
+        if newReleases.isEmpty { newState = .loading }
+        do {
+            let releases = try await KuwoPlaylist.fetch(.newSongs)
+            newReleases = releases
+            newDay = day
+            newState = .loaded
+        } catch {
+            newState = newReleases.isEmpty ? .failed : .loaded
         }
     }
 

@@ -1989,6 +1989,120 @@ check("两级 id 都留着：web 489927 / mobile 16",
       KuwoChart.Chart.hot.webId == "489927" && KuwoChart.Chart.hot.mobileId == "16",
       "\(KuwoChart.Chart.hot.webId)/\(KuwoChart.Chart.hot.mobileId)")
 
+// MARK: - 第二十九轮（r96）：发现页「最新单曲」（酷我歌单 playListInfo）
+
+section("最新单曲：酷我歌单解析 / 排序 / 日期缓存")
+
+// 真响应裁成五条（2026-11-18 实测字段名）：
+//   · 第 2 条 `duration`=4 但 `songTimeMinutes`=03:09 —— 就是 ksong.s 里踩过的那种脏值，
+//     解析必须认 mm:ss（189s），否则播放侧的 ±25s 时长闸门会把真歌全判成坏源；
+//   · 第 3 条与第 1 条同 rid（接口脏数据）→ 只留第一次出现；
+//   · 第 4 条 rid=0 → 丢掉；
+//   · 第 5 条没有 releaseDate → 排最后，但仍然保留（新歌单里偶有缺日期的老条目）。
+let newSongsFixture: [String: Any] = [
+    "code": 200,
+    "data": [
+        "name": "每日最新单曲推荐",
+        "total": "653",
+        "musicList": [
+            [
+                "rid": 670149467,
+                "name": "涌泉相报",
+                "artist": "刘惜君",
+                "album": "涌泉相报",
+                "duration": 267,
+                "songTimeMinutes": "04:27",
+                "pic": "https://img4.kuwo.cn/star/albumcover/500/s4s43/68/2072169166.jpg",
+                "releaseDate": "2026-11-18"
+            ],
+            [
+                "rid": "670146452",
+                "name": "宝珠",
+                "artist": "李佳薇",
+                "album": "",
+                "duration": "4",
+                "songTimeMinutes": "03:09",
+                "pic": "https://img4.kuwo.cn/a.jpg",
+                "releaseDate": "2026-11-17"
+            ],
+            [
+                "rid": 670149467,
+                "name": "涌泉相报（重复条目）",
+                "artist": "刘惜君",
+                "album": "涌泉相报",
+                "duration": 267,
+                "releaseDate": "2026-11-18"
+            ],
+            [
+                "rid": 0,
+                "name": "没有身份证的歌",
+                "artist": "某人",
+                "duration": 200,
+                "releaseDate": "2026-11-16"
+            ],
+            [
+                "rid": 668382564,
+                "name": "Pixel Slide (Carousel)",
+                "artist": "云顶之弈",
+                "album": "Pixel Slide",
+                "duration": 52,
+                "releaseDate": ""
+            ]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let releases = KuwoPlaylist.parse(newSongsFixture) {
+    check("解析出 3 条（重复 rid / rid=0 被丢掉）", releases.count == 3, "\(releases.count)")
+    check("按发行日倒序（11-18 → 11-17 → 无日期最后）",
+          releases.map(\.releaseDate) == ["2026-11-18", "2026-11-17", ""],
+          "\(releases.map(\.releaseDate))")
+    check("rid 进 platformID、平台是酷我",
+          releases.first?.song.platformID == "670149467" && releases.first?.song.platform == .kuwo,
+          "\(String(describing: releases.first?.song.platformID))")
+    check("曲长认 mm:ss（duration=4 的脏值被 03:09 盖掉）",
+          releases.first(where: { $0.song.platformID == "670146452" })?.song.durationSec == 189,
+          "\(String(describing: releases.first(where: { $0.song.platformID == "670146452" })?.song.durationSec))")
+    check("曲长正常时保持秒数", releases.first?.song.durationSec == 267,
+          "\(String(describing: releases.first?.song.durationSec))")
+    check("封面取 pic（https）",
+          releases.first?.song.picURL == "https://img4.kuwo.cn/star/albumcover/500/s4s43/68/2072169166.jpg")
+    check("收录于《专辑》有专辑就写、空专辑不写",
+          releases.first?.albumLine == "收录于《涌泉相报》"
+            && releases.first(where: { $0.song.platformID == "670146452" })?.albumLine == "",
+          "\(String(describing: releases.first?.albumLine))")
+    check("短日期 2026-11-18 → 11-18", releases.first?.shortDate == "11-18",
+          releases.first?.shortDate ?? "nil")
+    check("无日期的条目排在最后", releases.last?.releaseDate == "",
+          "\(String(describing: releases.last?.releaseDate))")
+} else {
+    check("最新单曲解析", false, "parse 返回 nil")
+}
+
+check("空 musicList 判失败", KuwoPlaylist.parse(["code": 200, "data": ["musicList": []]]) == nil)
+check("code 非 200 判失败",
+      KuwoPlaylist.parse(["code": 500, "data": ["musicList": [["rid": 1, "name": "x"]]]]) == nil)
+check("请求串带 pid / pn / rn",
+      KuwoPlaylist.url(pid: "1082685104").contains("pid=1082685104")
+        && KuwoPlaylist.url(pid: "1082685104").contains("pn=0")
+        && KuwoPlaylist.url(pid: "1082685104").contains("rn=100"),
+      KuwoPlaylist.url(pid: "1082685104"))
+check("模块只露 12 张卡，整页是一页 100 首", KuwoPlaylist.moduleCards == 12,
+      "\(KuwoPlaylist.moduleCards)")
+
+do {
+    // 当天缓存：同一天命中、隔天失效（老板："加载一次当天不再加载，除非第二天刷新"）
+    let testPlaylist = KuwoPlaylist.Playlist(pid: "selftest_new_songs", name: "测试歌单")
+    let releases = KuwoPlaylist.parse(newSongsFixture) ?? []
+    KuwoPlaylist.save(releases, for: testPlaylist, day: 20_000)
+    check("当天缓存命中", KuwoPlaylist.cached(testPlaylist, day: 20_000)?.count == releases.count,
+          "\(String(describing: KuwoPlaylist.cached(testPlaylist, day: 20_000)?.count))")
+    check("隔天缓存失效", KuwoPlaylist.cached(testPlaylist, day: 20_001) == nil)
+    check("不问日期时任何一天的缓存都能先铺界面",
+          KuwoPlaylist.cachedAnyDay(testPlaylist)?.count == releases.count)
+    UserDefaults.standard.removeObject(forKey: "kw_playlist_cache_v1_selftest_new_songs")
+}
+
 section("酷我封面（rid_pic 同平台兜底）")
 
 check("http 升 https，且 kwcdn 换成 kuwo.cn",

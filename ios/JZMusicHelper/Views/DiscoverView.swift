@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 发现（老板反馈 ①②⑥ 的全部改在这里）
 //
@@ -6,8 +7,9 @@ import SwiftUI
 //   ① 搜索框：**搜索入口搬到发现页最上方**（不再占一个 Tab）
 //   ② 编辑精选：横向长方形纸卡（对齐 Android `EditorCard` 150×66dp 的比例），不再是 160×160 大方块
 //   ③ 最近播放：小封面横排（有播放记录才出现）
-//   ④ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
-//   ⑤ 热门音乐：同一套分页，行内带名次
+//   ④ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
+//   ⑤ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
+//   ⑥ 热门音乐：同一套分页，行内带名次
 //
 // 三条数据链都是真数据（与 Android 同口径）：编辑精选是内置池按天轮换、热门是种子词实时搜索、
 // 猜你喜欢从最近播放抽歌手再搜——搜不到就显示失败态 + 重试，不放假歌糊页面。
@@ -17,6 +19,8 @@ struct DiscoverView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(DiscoverFeed.self) private var feed
     @Environment(AppRouter.self) private var router
+    /// 回到前台时按本地日核对一次（见 body 里的 `.onChange(of: scenePhase)`）
+    @Environment(\.scenePhase) private var scenePhase
 
     /// 编辑精选「换一批」的轮次：只在本次会话内叠加，不写盘（跨天本来就会换）
     @State private var rotation = 0
@@ -31,6 +35,7 @@ struct DiscoverView: View {
                 searchEntry
                 editorSection
                 recentSection
+                newSongsSection
                 guessSection
                 hotSection
                 // 迷你播放条是浮层（第五轮反馈 ⑨：它会压住最后一条），末尾显式让出高度
@@ -50,15 +55,17 @@ struct DiscoverView: View {
             SearchView()
         }
         .refreshable {
-            await feed.refreshHot()
-            await feed.refreshGuess(recent: library.recentSongs)
+            await feed.refreshAll(recent: library.recentSongs)
         }
         .task {
             // 第二十一轮（老板 r84："一打开什么都在加载，能不能加载一次就别再加载"）：
             // 热门/猜你喜欢都有**当天缓存**，`DiscoverFeed` 在 init 里已经同步读盘，
             // 所以这里多数情况下第一帧就有内容；`refreshGuessIfStale` 只在"最近播放变了"时
             // 才在后台换一批，界面先照旧显示，不阻塞首屏。
-            await feed.loadHotIfNeeded()
+            //
+            // 第二十九轮：热门与最新单曲合成一趟（`loadDaily`）——都是酷我接口、都按本地日定死，
+            // 老板要的"同进度"就是这一层：一个入口进去，两边一起加载/一起判缓存。
+            await feed.loadDaily()
             if !library.recentSongs.isEmpty {
                 await feed.refreshGuessIfStale(recent: library.recentSongs)
             }
@@ -66,6 +73,13 @@ struct DiscoverView: View {
             // 用户真正点进歌单页时就不用再现搜（老板："不希望进去还看到一行行加载"）。
             Task { await feed.prefetchEditorSeeds() }
             openSearchIfIntentAsked()
+        }
+        // App 挂着跨过 0 点（或第二天从后台回来）：TabView 不会重建这一页，
+        // `.task` 也不会再跑，所以回到前台时自己按本地日核对一次——
+        // 当天已加载过的话 `loadDaily` 就是两次缓存判断，一个请求都不发。
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await feed.loadDaily() }
         }
         .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
     }
@@ -184,6 +198,79 @@ struct DiscoverView: View {
                 }
             }
         }
+    }
+
+    // MARK: 最新单曲（第二十九轮：版式对齐网易云「你关注的艺人新动向」）
+    //
+    // 老板给的参照是飞书开发群那段录屏（网易云「推荐」页）：标题左边一叠圆形头像、
+    // 右边一排**横滑宽卡**——左半是方形封面，右半是同一张封面糊开的底色，卡上依次是
+    // 「新单曲」角标、歌名、歌手、「收录于《专辑》」、右下播放三角。
+    //
+    // 我们没有人家的"关注关系"，所以：
+    //   · 标题左边那叠圆头像用**前三首的封面**代替（都是图，视觉上是同一件事）；
+    //   · 卡片里每一条都是真歌（rid + 封面 + 发行日），点卡就播，队列是这一排新歌。
+    private var newSongsSection: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            HStack(spacing: Tokens.Spacing.xs) {
+                newSongsAvatars
+                Text("最新单曲")
+                    .font(FontRole.sectionTitle)
+                Text("每日更新")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: Tokens.Spacing.xxs)
+                if feed.newState == .loaded, !feed.newReleases.isEmpty {
+                    NavigationLink("查看全部") { NewSongsView() }
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+
+            Group {
+                switch feed.newState {
+                case .idle, .loading:
+                    NewReleaseCardSkeleton()
+                case .failed:
+                    retryBlock("新歌暂时取不到，稍后再试") {
+                        Task { await feed.refreshNewSongs() }
+                    }
+                case .loaded:
+                    newSongsRow
+                }
+            }
+        }
+    }
+
+    /// 标题左边那叠圆头像（网易云是"你关注的艺人"，我们取前三首的封面）
+    private var newSongsAvatars: some View {
+        HStack(spacing: -8) {
+            ForEach(feed.newReleases.prefix(3)) { release in
+                SongArtwork(song: release.song, size: 22, radius: 11)
+                    .overlay(Circle().strokeBorder(Tokens.Palette.paper, lineWidth: 1.5))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var newSongsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: Tokens.Spacing.s) {
+                ForEach(Array(newSongs.enumerated()), id: \.element.id) { index, release in
+                    NewReleaseCard(release: release) {
+                        // 点哪张卡，这一排新歌就是队列（与最近播放同一口径）
+                        play(newSongs.map(\.song), at: index)
+                    }
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .padding(.vertical, 2)
+        }
+    }
+
+    /// 模块里这一排：接口一页 100 首，只露前 12 张卡
+    private var newSongs: [KuwoPlaylist.Release] {
+        Array(feed.newReleases.prefix(KuwoPlaylist.moduleCards))
     }
 
     // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
@@ -420,6 +507,156 @@ struct EditorPlaylistCard: View {
         // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
         // 间距改由外层 HStack 统一给（见 `editorSection`）。
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 最新单曲卡（网易云「艺人新动向」式横滑宽卡）
+//
+// 版式（对着群里录屏那一帧量的，按 390pt 宽折算）：
+//   · 整卡 ≈ 300×100，圆角 12，卡片间距 12，整排可横滑；
+//   · 左半是 100×100 方形封面（撑满卡高），右半是同一张封面**糊开**当底色 + 黑色 42% 压暗，
+//     保证白字在亮封面上也读得清；
+//   · 卡上：左上「新单曲」角标 → 歌名（白色半粗）→ 歌手（白 72%）→「收录于《专辑》」（白 55%），
+//     右下播放三角。
+//
+// 尺寸用 `@ScaledMetric` 跟着 Dynamic Type 长（宽 = 高 × 3），不写死 pt：
+// AX5 下整卡会变大，但仍然只是"一张大卡"，不会把文字截掉。
+struct NewReleaseCard: View {
+
+    let release: KuwoPlaylist.Release
+    let onPlay: () -> Void
+
+    @ScaledMetric(relativeTo: .body) private var cardHeight: CGFloat = 100
+    /// 封面自己拉一份：卡片右半要用**同一张图**糊成底，`SongArtwork` 拿不到原图
+    @State private var cover: UIImage?
+
+    private var cardWidth: CGFloat { max(cardHeight * 3, 1) }
+    private var panelWidth: CGFloat { max(cardWidth - cardHeight, 1) }
+
+    var body: some View {
+        Button(action: onPlay) {
+            HStack(spacing: 0) {
+                artwork
+                panel
+            }
+            .frame(width: cardWidth, height: cardHeight)
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
+        }
+        .buttonStyle(.pressSubtle)
+        .task(id: release.id) {
+            let loaded = await CoverImageCache.shared.image(for: release.song)
+            guard !Task.isCancelled else { return }
+            cover = loaded
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("轻点播放，后面一排新歌会接着播")
+    }
+
+    private var artwork: some View {
+        Group {
+            if let cover {
+                Image(uiImage: cover)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    // 卡片整块是深底白字（照片卡），缺图占位也用深底，别跟着浅色主题变白
+                    Color.black.opacity(0.55)
+                    Image(systemName: "music.note")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+            }
+        }
+        .frame(width: cardHeight, height: cardHeight)
+        .clipped()
+    }
+
+    private var panel: some View {
+        ZStack(alignment: .bottomTrailing) {
+            background
+            VStack(alignment: .leading, spacing: 2) {
+                Text("新单曲")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(.white.opacity(0.22))
+                    )
+                Spacer(minLength: 2)
+                Text(release.song.name)
+                    .font(FontRole.songTitle.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(release.song.singer.isEmpty ? "未知歌手" : release.song.singer)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                if !release.albumLine.isEmpty {
+                    Text(release.albumLine)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.leading, Tokens.Spacing.s)
+            // 右下播放三角的位置让出来，长歌名宁可省略也不压到三角上
+            .padding(.trailing, Tokens.Spacing.xxl)
+            .padding(.vertical, Tokens.Spacing.xs)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Image(systemName: "play.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(Tokens.Spacing.s)
+        }
+        .frame(width: panelWidth, height: cardHeight)
+        .clipped()
+    }
+
+    /// 右半的底色：同一张封面糊开 + 压暗；没有封面就用深色兜底（仍然是深底白字）
+    ///
+    /// `scaleEffect(1.2)` 是为了让模糊的软边落到裁切框外——不放大时，blur 会在卡片接缝处
+    /// 透出一条纸色，看起来像卡片裂了。
+    @ViewBuilder
+    private var background: some View {
+        if let cover {
+            Image(uiImage: cover)
+                .resizable()
+                .scaledToFill()
+                .frame(width: panelWidth, height: cardHeight)
+                .scaleEffect(1.2)
+                .blur(radius: 16)
+                .overlay(Color.black.opacity(0.42))
+        } else {
+            Color.black.opacity(0.72)
+        }
+    }
+
+    private var accessibilityText: String {
+        var parts = ["新单曲", release.song.name]
+        if !release.song.singer.isEmpty { parts.append(release.song.singer) }
+        if !release.albumLine.isEmpty { parts.append(release.albumLine) }
+        if !release.releaseDate.isEmpty { parts.append(release.releaseDate) }
+        return parts.joined(separator: "，")
+    }
+}
+
+/// 卡片骨架：只占位不出字（高度跟随 Dynamic Type，避免 AX5 时和真卡拉不齐）
+struct NewReleaseCardSkeleton: View {
+
+    @ScaledMetric(relativeTo: .body) private var cardHeight: CGFloat = 100
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+            .fill(Color.primary.opacity(0.06))
+            .frame(width: cardHeight * 3, height: cardHeight)
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .accessibilityHidden(true)
     }
 }
 

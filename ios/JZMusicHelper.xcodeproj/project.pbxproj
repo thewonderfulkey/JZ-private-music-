@@ -87,6 +87,8 @@
 		B0000000000000000000005A /* SplashTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000058 /* SplashTimeline.swift */; };
 		B0000000000000000000005B /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000059 /* SplashView.swift */; };
 		B0000000000000000000005C /* SplashMarkPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005A /* SplashMarkPath.swift */; };
+		B0000000000000000000005D /* KuwoPlaylist.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005B /* KuwoPlaylist.swift */; };
+		B0000000000000000000005E /* NewSongsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005C /* NewSongsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -170,6 +172,8 @@
 		F00000000000000000000058 /* SplashTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashTimeline.swift; sourceTree = "<group>"; };
 		F00000000000000000000059 /* SplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashView.swift; sourceTree = "<group>"; };
 		F0000000000000000000005A /* SplashMarkPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashMarkPath.swift; sourceTree = "<group>"; };
+		F0000000000000000000005B /* KuwoPlaylist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoPlaylist.swift; sourceTree = "<group>"; };
+		F0000000000000000000005C /* NewSongsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSongsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -274,6 +278,7 @@
 				F00000000000000000000055 /* ResolvedSongCache.swift */,
 				F00000000000000000000057 /* ITunesCover.swift */,
 				F00000000000000000000058 /* SplashTimeline.swift */,
+				F0000000000000000000005B /* KuwoPlaylist.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -300,6 +305,7 @@
 				F00000000000000000000054 /* ChartSongsView.swift */,
 				F00000000000000000000059 /* SplashView.swift */,
 				F0000000000000000000005A /* SplashMarkPath.swift */,
+				F0000000000000000000005C /* NewSongsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -539,6 +545,8 @@
 				B0000000000000000000005A /* SplashTimeline.swift in Sources */,
 				B0000000000000000000005B /* SplashView.swift in Sources */,
 				B0000000000000000000005C /* SplashMarkPath.swift in Sources */,
+				B0000000000000000000005D /* KuwoPlaylist.swift in Sources */,
+				B0000000000000000000005E /* NewSongsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -676,7 +684,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 178;
+				CURRENT_PROJECT_VERSION = 179;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -685,7 +693,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.0;
+				MARKETING_VERSION = 2.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -700,7 +708,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 178;
+				CURRENT_PROJECT_VERSION = 179;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -709,7 +717,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.0;
+				MARKETING_VERSION = 2.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -723,7 +731,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 178;
+				CURRENT_PROJECT_VERSION = 179;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -732,7 +740,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.0;
+				MARKETING_VERSION = 2.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -747,7 +755,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 178;
+				CURRENT_PROJECT_VERSION = 179;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -756,7 +764,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.0;
+				MARKETING_VERSION = 2.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
