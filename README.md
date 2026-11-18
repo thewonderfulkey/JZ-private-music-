@@ -153,7 +153,7 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 |---|---|---|---|
 | ![下载](docs/images/ios-downloads.jpg) | ![识曲](docs/images/ios-recognize.jpg) | ![收藏](docs/images/ios-favorites.jpg) | ![设置](docs/images/ios-settings.jpg) |
 
-> 以上是 iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录，
+> 以上是 iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录（截图是页面上半部分），
 > 设置页只剩外观 / 车载自动播放 / 歌词字号 / 可缓存歌曲数量 / 识曲 / 下载 / 数据 / 关于。
 
 ### 特色
