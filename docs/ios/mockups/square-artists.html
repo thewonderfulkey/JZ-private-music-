@@ -1,0 +1,436 @@
+<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><title>歌单广场 + 歌手大全 · 方案预览</title><style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FAF8F3; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .label { font-size: 13px; color: #4c473d; margin: 0 0 10px 2px; letter-spacing: .3px; }
+  .phone { width: 390px; background: #FAF8F3; color: #16150F; padding: 56px 0 22px; overflow: hidden; }
+  .nav { position: relative; height: 44px; display: flex; align-items: center; justify-content: center;
+         font-size: 17px; font-weight: 600; }
+  .nav .back { position: absolute; left: 14px; font-size: 22px; font-weight: 400; color: #16150F; top: 8px; }
+  .large-title { font-size: 34px; font-weight: 700; padding: 4px 16px 12px; letter-spacing: .2px; }
+  .search { margin: 0 16px 18px; height: 42px; border-radius: 21px; background: #FFFDF8;
+            display: flex; align-items: center; gap: 8px; padding: 0 12px; color: #9A9486; font-size: 15px; }
+  .search .hint { margin-left: auto; font-size: 11px; }
+  .section-head { display: flex; align-items: center; gap: 8px; padding: 0 16px; margin: 0 0 10px; }
+  .section-head h2 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+  .meta { font-size: 12px; color: #9A9486; }
+  .more { margin-left: auto; font-size: 13px; color: #B03A2E; }
+  .cards { display: flex; gap: 12px; padding: 0 16px 22px 16px; }
+  .cover { position: relative; border-radius: 12px; overflow: hidden; background: #E8E3D8; flex: 0 0 auto; }
+  .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .count { position: absolute; left: 8px; bottom: 8px; font-size: 11px; color: #fff;
+           background: rgba(0,0,0,.42); border-radius: 8px; padding: 2px 6px; letter-spacing: .2px; }
+  .pl-name { font-size: 15px; font-weight: 500; line-height: 1.35; margin-top: 8px;
+             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .pl-meta { font-size: 12px; color: #9A9486; margin-top: 4px; }
+  .artists { display: flex; gap: 8px; padding: 0 16px 22px; }
+  .ar { text-align: center; }
+  .a-pic { border-radius: 50%; object-fit: cover; display: block; margin: 0 auto; background: #E8E3D8; }
+  .a-name { font-size: 12.5px; font-weight: 500; margin-top: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a-fans { font-size: 11px; color: #9A9486; margin-top: 1px; }
+  .chips { display: flex; gap: 8px; padding: 4px 16px 14px; overflow: hidden; }
+  .chip-pill { flex: 0 0 auto; font-size: 13px; color: #6F6A5E; background: #FFFDF8;
+               border-radius: 16px; padding: 6px 12px; }
+  .chip-pill.on { background: #16150F; color: #FAF8F3; font-weight: 500; }
+  .letters { display: flex; gap: 10px; padding: 0 16px 12px; overflow: hidden; align-items: center;
+             -webkit-mask-image: linear-gradient(to right, #000 90%, transparent); }
+  .letter { font-size: 12px; color: #9A9486; flex: 0 0 auto; }
+  .letter.on { color: #16150F; font-weight: 700; border-bottom: 2px solid #B03A2E; padding-bottom: 1px; }
+  .list-meta { font-size: 12px; color: #9A9486; padding: 0 16px 12px; }
+  .gridwrap { display: grid; grid-template-columns: 171px 171px; gap: 16px 16px; padding: 0 16px 18px; }
+  .artist-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 8px; padding: 0 16px 18px; }
+  .ag { text-align: center; }
+  .ag .a-name { font-size: 13px; }
+  .head-card { display: flex; gap: 14px; padding: 4px 16px 14px; }
+  .head-cover { width: 112px; height: 112px; border-radius: 12px; object-fit: cover; flex: 0 0 112px; background: #E8E3D8; }
+  .head-avatar { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; flex: 0 0 88px; background: #E8E3D8; }
+  .head-info { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; }
+  .head-title { font-size: 20px; font-weight: 600; line-height: 1.3; display: -webkit-box;
+                -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .head-sub { font-size: 13px; color: #6F6A5E; }
+  .play-all { margin: 0 16px 8px; height: 36px; border-radius: 12px; background: #B03A2E; color: #fff;
+              display: inline-flex; align-items: center; gap: 6px; padding: 0 18px; font-size: 15px; font-weight: 600; }
+  .song { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+  .song .idx { width: 22px; font-size: 12px; color: #B03A2E; font-weight: 600; }
+  .s-pic { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; background: #E8E3D8; }
+  .s-text { min-width: 0; flex: 1; }
+  .s-name { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s-sub { font-size: 13px; color: #6F6A5E; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip { font-size: 10px; color: #6F6A5E; border: 1px solid rgba(0,0,0,.10); background: rgba(0,0,0,.03);
+          border-radius: 999px; padding: 2px 7px; flex: 0 0 auto; }
+  .s-dur { font-size: 12px; color: #9A9486; font-variant-numeric: tabular-nums; }
+  .heart { font-size: 16px; color: #9A9486; }
+  .divider { height: 1px; background: rgba(0,0,0,.06); margin: 14px 16px 16px; }
+  .section-title { font-size: 20px; font-weight: 600; padding: 0 16px 8px; }
+  .ns { display: flex; width: 300px; height: 100px; border-radius: 12px; overflow: hidden; flex: 0 0 auto; }
+  .ns-cover { width: 100px; height: 100px; object-fit: cover; flex: 0 0 100px; }
+  .ns-panel { position: relative; flex: 1; overflow: hidden; }
+  .ns-blur { position: absolute; inset: -12px; width: 220px; height: 124px; object-fit: cover; filter: blur(16px); }
+  .ns-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.42); }
+  .ns-text { position: relative; height: 100%; padding: 8px 30px 8px 12px; display: flex; flex-direction: column; }
+  .ns-chip { align-self: flex-start; font-size: 10px; font-weight: 600; color: #fff; background: rgba(255,255,255,.22);
+             border-radius: 4px; padding: 2px 6px; }
+  .spacer { flex: 1; }
+  .ns-name { font-size: 17px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ns-artist { font-size: 13px; color: rgba(255,255,255,.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ns-album { font-size: 11px; color: rgba(255,255,255,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ns-play { position: absolute; right: 12px; bottom: 12px; color: rgba(255,255,255,.92); font-size: 12px; }
+.frame{padding:28px} body{background:#cfcac0}</style></head><body><div class='frame'><div class='label'>① 发现页：编辑精选 → 歌单广场 + 歌手大全（搜索之下，最近播放之上）</div><div class='phone'>
+  <div class="large-title">发现</div>
+  <div class="search"><span>⌕</span><span>搜索歌曲、歌手、专辑</span><span class="hint">四家一起找</span></div>
+
+  <div class="section-head"><h2>歌单广场</h2><span class="meta">1754 张</span><span class="more">查看全部</span></div>
+  <div class="cards">
+      <div class="pl" style="width:132px">
+        <div class="cover" style="width:132px;height:132px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/40/22/1767708768671_224576140_500.jpg" alt="">
+          <span class="count">♫ 91.2万</span>
+        </div>
+        <div class="pl-name">古风戏腔丨一曲舞霓裳清影醉红颜</div>
+      </div>
+      <div class="pl" style="width:132px">
+        <div class="cover" style="width:132px;height:132px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/25/94/1725873340689_174039025_500.jpg" alt="">
+          <span class="count">♫ 474.4万</span>
+        </div>
+        <div class="pl-name">短视频DJ热门歌曲｜网红BGM</div>
+      </div>
+      <div class="pl" style="width:132px">
+        <div class="cover" style="width:132px;height:132px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/78/22/1767155386545_224572078_500.jpg" alt="">
+          <span class="count">♫ 371.3万</span>
+        </div>
+        <div class="pl-name">爱的故事翻篇，被爱的人不用道歉</div>
+      </div>
+      <div class="pl" style="width:132px">
+        <div class="cover" style="width:132px;height:132px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/3/90/1641896326458_189029403_500.jpg" alt="">
+          <span class="count">♫ 1.1亿</span>
+        </div>
+        <div class="pl-name">经典老歌大放送！一人一首代表作！</div>
+      </div></div>
+
+  <div class="section-head"><h2>歌手大全</h2><span class="meta">8849 位</span><span class="more">查看全部</span></div>
+  <div class="artists">
+      <div class="ar" style="width:64px">
+        <img class="a-pic" style="width:64px;height:64px" src="https://img1.kuwo.cn/star/starheads/120/s4s56/58/291211030.jpg" alt="">
+        <div class="a-name">周杰伦</div>
+        <div class="a-fans">166.4万</div>
+      </div>
+      <div class="ar" style="width:64px">
+        <img class="a-pic" style="width:64px;height:64px" src="https://img3.kuwo.cn/star/starheads/120/65/42/2631374422.jpg" alt="">
+        <div class="a-name">刘德华</div>
+        <div class="a-fans">37.6万</div>
+      </div>
+      <div class="ar" style="width:64px">
+        <img class="a-pic" style="width:64px;height:64px" src="https://img3.kuwo.cn/star/starheads/120/s4s75/55/1654692628.jpg" alt="">
+        <div class="a-name">林俊杰</div>
+        <div class="a-fans">81.9万</div>
+      </div>
+      <div class="ar" style="width:64px">
+        <img class="a-pic" style="width:64px;height:64px" src="https://img4.kuwo.cn/star/starheads/120/37/26/3816222178.jpg" alt="">
+        <div class="a-name">陈奕迅</div>
+        <div class="a-fans">59.3万</div>
+      </div>
+      <div class="ar" style="width:64px">
+        <img class="a-pic" style="width:64px;height:64px" src="https://img4.kuwo.cn/star/starheads/120/40/9/1980630626.jpg" alt="">
+        <div class="a-name">G.E.M.邓紫棋</div>
+        <div class="a-fans">95.8万</div>
+      </div></div>
+
+  <div class="section-head"><h2>最近播放</h2><span class="meta">8 首</span></div>
+  <div class="cards">
+    <div class="pl" style="width:104px"><div class="cover" style="width:104px;height:104px">
+      <img src="https://img4.kuwo.cn/star/albumcover/500/s4s9/7/2733028697.jpg" alt=""></div>
+      <div class="pl-name">唐人恋曲</div><div class="pl-meta">小唐人</div></div>
+    <div class="pl" style="width:104px"><div class="cover" style="width:104px;height:104px">
+      <img src="https://img1.kuwo.cn/star/albumcover/500/s4s11/61/163306866.jpg" alt=""></div>
+      <div class="pl-name">戏文说</div><div class="pl-meta">叫宝宝&amp;祥嘞嘞</div></div>
+  </div>
+
+  <div class="section-head"><h2>最新单曲</h2><span class="meta">每日更新</span><span class="more">查看全部</span></div>
+  <div class="cards">
+      <div class="ns">
+        <img class="ns-cover" src="https://img4.kuwo.cn/star/albumcover/500/s4s43/68/2072169166.jpg" alt="">
+        <div class="ns-panel">
+          <img class="ns-blur" src="https://img4.kuwo.cn/star/albumcover/500/s4s43/68/2072169166.jpg" alt="">
+          <div class="ns-scrim"></div>
+          <div class="ns-text">
+            <span class="ns-chip">新单曲</span>
+            <div class="spacer"></div>
+            <div class="ns-name">New World (漫游异托邦)</div>
+            <div class="ns-artist">龙族:卡塞尔之门</div>
+            <div class="ns-album">收录于《New World (漫游异托邦)》</div>
+          </div>
+          <span class="ns-play">▶</span>
+        </div>
+      </div>
+      <div class="ns">
+        <img class="ns-cover" src="https://img3.kuwo.cn/star/albumcover/500/s4s47/85/4051833612.jpg" alt="">
+        <div class="ns-panel">
+          <img class="ns-blur" src="https://img3.kuwo.cn/star/albumcover/500/s4s47/85/4051833612.jpg" alt="">
+          <div class="ns-scrim"></div>
+          <div class="ns-text">
+            <span class="ns-chip">新单曲</span>
+            <div class="spacer"></div>
+            <div class="ns-name">涌泉相报</div>
+            <div class="ns-artist">刘惜君</div>
+            <div class="ns-album">收录于《涌泉相报》</div>
+          </div>
+          <span class="ns-play">▶</span>
+        </div>
+      </div></div>
+</div></div><div class='frame'><div class='label'>② 歌单广场整页：热门 / 最新 + 双列封面墙</div><div class='phone'>
+  <div class="nav"><span class="back">‹</span>歌单广场</div>
+  <div class='chips'><span class='chip-pill on'>热门</span><span class='chip-pill'>最新</span></div>
+  <div class="list-meta">1754 张热门歌单 · 按播放量排序</div>
+  <div class="gridwrap">
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/40/22/1767708768671_224576140_500.jpg" alt="">
+          <span class="count">♫ 91.2万</span>
+        </div>
+        <div class="pl-name">古风戏腔丨一曲舞霓裳清影醉红颜</div>
+        <div class="pl-meta">104 首 · 给票认真画</div>
+      </div>
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/25/94/1725873340689_174039025_500.jpg" alt="">
+          <span class="count">♫ 474.4万</span>
+        </div>
+        <div class="pl-name">短视频DJ热门歌曲｜网红BGM</div>
+        <div class="pl-meta">41 首 · 诗情画意</div>
+      </div>
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/78/22/1767155386545_224572078_500.jpg" alt="">
+          <span class="count">♫ 371.3万</span>
+        </div>
+        <div class="pl-name">爱的故事翻篇，被爱的人不用道歉</div>
+        <div class="pl-meta">121 首 · 余笑笑</div>
+      </div>
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/3/90/1641896326458_189029403_500.jpg" alt="">
+          <span class="count">♫ 1.1亿</span>
+        </div>
+        <div class="pl-name">经典老歌大放送！一人一首代表作！</div>
+        <div class="pl-meta">183 首 · 摘朵白莲花</div>
+      </div>
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/70/22/1766859167301_224578170_500.jpg" alt="">
+          <span class="count">♫ 108.9万</span>
+        </div>
+        <div class="pl-name">国风热歌来袭｜100首诗意旋律</div>
+        <div class="pl-meta">102 首 · 带我走</div>
+      </div>
+      <div class="pl grid" style="width:171px">
+        <div class="cover" style="width:171px;height:171px">
+          <img src="https://img1.kuwo.cn/star/userpl2015/23/76/1768379343889_135259123_500.jpg" alt="">
+          <span class="count">♫ 185.5万</span>
+        </div>
+        <div class="pl-name">2026短视频热门歌曲合集【精选】</div>
+        <div class="pl-meta">445 首 · 随阳而安</div>
+      </div></div>
+</div></div><div class='frame'><div class='label'>③ 歌手大全整页：分类 + A–Z + 头像墙（按粉丝排序）</div><div class='phone'>
+  <div class="nav"><span class="back">‹</span>歌手大全</div>
+  <div class='chips'><span class='chip-pill on'>全部</span><span class='chip-pill'>华语</span><span class='chip-pill'>欧美</span><span class='chip-pill'>组合</span><span class='chip-pill'>日韩男</span><span class='chip-pill'>日韩女</span></div>
+  <div class="letters"><span class='letter on'>热门</span><span class='letter'>A</span><span class='letter'>B</span><span class='letter'>C</span><span class='letter'>D</span><span class='letter'>E</span><span class='letter'>F</span><span class='letter'>G</span><span class='letter'>H</span><span class='letter'>I</span><span class='letter'>J</span><span class='letter'>K</span><span class='letter'>L</span><span class='letter'>M</span><span class='letter'>N</span><span class='letter'>O</span></div>
+  <div class="list-meta">8849 位 · 按粉丝排序</div>
+  <div class="artist-grid">
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img1.kuwo.cn/star/starheads/120/s4s56/58/291211030.jpg" alt="">
+        <div class="a-name">周杰伦</div>
+        <div class="a-fans">166.4万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img3.kuwo.cn/star/starheads/120/65/42/2631374422.jpg" alt="">
+        <div class="a-name">刘德华</div>
+        <div class="a-fans">37.6万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img3.kuwo.cn/star/starheads/120/s4s75/55/1654692628.jpg" alt="">
+        <div class="a-name">林俊杰</div>
+        <div class="a-fans">81.9万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img4.kuwo.cn/star/starheads/120/37/26/3816222178.jpg" alt="">
+        <div class="a-name">陈奕迅</div>
+        <div class="a-fans">59.3万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img4.kuwo.cn/star/starheads/120/40/9/1980630626.jpg" alt="">
+        <div class="a-name">G.E.M.邓紫棋</div>
+        <div class="a-fans">95.8万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img3.kuwo.cn/star/starheads/120/s4s5/17/3477575663.jpg" alt="">
+        <div class="a-name">BEYOND</div>
+        <div class="a-fans">30.1万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img1.kuwo.cn/star/starheads/120/s4s30/24/2781671968.png" alt="">
+        <div class="a-name">张学友</div>
+        <div class="a-fans">43.3万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img3.kuwo.cn/star/starheads/120/s4s84/13/1119809443.jpg" alt="">
+        <div class="a-name">周传雄</div>
+        <div class="a-fans">14.7万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img1.kuwo.cn/star/starheads/120/s4s63/78/3965267796.jpg" alt="">
+        <div class="a-name">王力宏</div>
+        <div class="a-fans">20.5万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img1.kuwo.cn/star/starheads/120/s4s28/47/3391812016.jpg" alt="">
+        <div class="a-name">孙燕姿</div>
+        <div class="a-fans">11.7万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img1.kuwo.cn/star/starheads/120/s4s79/6/3934255369.png" alt="">
+        <div class="a-name">王杰</div>
+        <div class="a-fans">12.3万</div>
+      </div>
+      <div class="ag">
+        <img class="a-pic" style="width:88px;height:88px" src="https://img2.kuwo.cn/star/starheads/120/55/19/2006209414.jpg" alt="">
+        <div class="a-name">任贤齐</div>
+        <div class="a-fans">14.0万</div>
+      </div></div>
+</div></div><div class='frame'><div class='label'>④ 歌单详情：封面头图 + 播放全部 + 统一 SongRow</div><div class='phone'>
+  <div class="nav"><span class="back">‹</span>歌单</div>
+  <div class="head-card">
+    <img class="head-cover" src="https://img1.kuwo.cn/star/userpl2015/40/22/1767708768671_224576140_150.jpg" alt="">
+    <div class="head-info">
+      <div class="head-title">古风戏腔丨一曲舞霓裳清影醉红颜</div>
+      <div class="head-sub">给票认真画</div>
+      <div class="head-sub">104 首 · 91.2万播放</div>
+    </div>
+  </div>
+  <div class="play-all">▶ 播放全部</div>
+  
+      <div class="song">
+        
+        <img class="s-pic" src="https://img3.kuwo.cn/star/albumcover/500/6/48/1406239650.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">牵丝戏</div>
+          <div class="s-sub">银临&amp;Aki阿杰 · 牵丝戏</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">03:59</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/500/s4s9/7/2733028697.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">唐人恋曲</div>
+          <div class="s-sub">小唐人 · 唐人恋曲</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">03:32</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img1.kuwo.cn/star/albumcover/500/s4s11/61/163306866.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">戏文说</div>
+          <div class="s-sub">叫宝宝&amp;祥嘞嘞 · 戏文说</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">02:50</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img2.kuwo.cn/star/albumcover/500/s4s30/74/2573798902.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">相思遥</div>
+          <div class="s-sub">魏玉慧 · 相思遥</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">03:13</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img3.kuwo.cn/star/albumcover/500/s3s44/78/3806802779.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">春不晚 (with 冰洁)</div>
+          <div class="s-sub">郑浩&amp;冰洁 · 须尽欢（Deluxe）</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">04:13</span>
+        <span class="heart">♡</span>
+      </div>
+</div></div><div class='frame'><div class='label'>⑤ 歌手页：头像 + 粉丝 + 播放全部 + 热门歌曲</div><div class='phone'>
+  <div class="nav"><span class="back">‹</span>歌手</div>
+  <div class="head-card">
+    <img class="head-avatar" src="https://img1.kuwo.cn/star/starheads/300/s4s56/58/291211030.jpg" alt="">
+    <div class="head-info">
+      <div class="head-title">周杰伦</div>
+      <div class="head-sub">166.4万粉丝 · 1707 首</div>
+    </div>
+  </div>
+  <div class="play-all">▶ 播放全部</div>
+  <div class="divider"></div>
+  <div class="section-title">热门歌曲</div>
+  
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/120/s3s94/93/211513640.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">晴天</div>
+          <div class="s-sub">周杰伦 · 叶惠美</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">04:29</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/120/s4s0/93/1794217775.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">稻香</div>
+          <div class="s-sub">周杰伦 · 魔杰座</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">03:43</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/120/7/83/4087363627.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">青花瓷</div>
+          <div class="s-sub">周杰伦 · 我很忙</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">03:59</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/120/s4s0/93/1794217775.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">兰亭序</div>
+          <div class="s-sub">周杰伦 · 魔杰座</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">04:13</span>
+        <span class="heart">♡</span>
+      </div>
+      <div class="song">
+        
+        <img class="s-pic" src="https://img4.kuwo.cn/star/albumcover/120/s4s81/2/3200337129.jpg" alt="">
+        <div class="s-text">
+          <div class="s-name">七里香</div>
+          <div class="s-sub">周杰伦 · 七里香</div>
+        </div>
+        <span class="chip">酷我</span>
+        <span class="s-dur">04:59</span>
+        <span class="heart">♡</span>
+      </div>
+</div></div></body></html>
