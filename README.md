@@ -104,6 +104,16 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ## Android 版
 
+![Android：发现页（编辑精选 / 热门音乐 / 猜你喜欢，纸墨版式）](docs/images/android-home.jpg)
+
+![Android：一次搜索，四家结果与各家条数（QQ 50 / 网易 50 / 酷我 32 / 酷狗 30）](docs/images/android-search.jpg)
+
+| 正在播放 | 听歌识曲 | 设置 |
+|---|---|---|
+| ![播放页](docs/images/android-player.jpg) | ![识曲](docs/images/android-recognize.jpg) | ![设置](docs/images/android-settings.jpg) |
+
+> 以上截图取自 Android 模拟器（Pixel 5，1080×2340）实跑，界面与真机一致。
+
 ### 特色
 
 - **听歌识曲**：录 12 / 15 / 20 秒（设置里可选），走酷狗指纹 + 网易 afp 双通道，两家候选统一打分，
