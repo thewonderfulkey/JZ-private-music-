@@ -1,3 +1,46 @@
+## iOS 第三十一轮 · 2026-11-18 16:1x（清理：编辑精选死代码全删，Widget 维持现状）
+
+**来源：老板「今日精选不用加了，维持现状就行了，原来的编辑精选逻辑已经可以完全删了」「现在还有什么剩下的收尾工作」**
+
+第三十轮把「编辑精选」整页下线后，还留着一批只有测试在引用的死代码。这一轮清干净：
+
+**删掉**
+
+- `Models/BakedSeedSongs.swift`（19KB 预生成映射：120 首歌名→真实 Song）与其生成脚本
+  `tools/ios/gen_baked_seeds.py`、`tools/ios/filter_baked_seeds.py`；
+- `Services/ResolvedSongCache.swift`（`Documents/resolved_songs.json` 解析缓存 + 负缓存）；
+- `DiscoverRules.pickByRecency`（编辑精选"最久没展示优先"的轮换）；
+- 对应的 24 条断言（BakedSeed 9 / 负缓存与键 5 / 缓存键 4 / pickByRecency 6），**702 → 678**；
+- pbxproj 4+4 处引用（203 对象）、CI `logic-tests` 与本地 harness 文件清单里的两行。
+
+**保留**
+
+- `DiscoverCatalog` 的 4 类池子（华语经典/粤语/OST/欧美）与 `hotSeedWords`：前者是**主屏幕
+  Widget「今日精选」**每天取 3 首的数据源，后者是热门音乐的种子词兜底；
+- Widget **不动**（老板决定维持现状），注释与文档改成"只给 Widget 用"，不再暗示 App 里有编辑精选。
+
+**顺手修的**
+
+- `ChartSongsView` 文件头还写着"编辑精选里那个榜单模块"，改成"热门音乐 → 查看全部"；
+- `IOS-DISCOVER.md` §4 / 文末的编辑精选取舍段落标注"已下线"；
+- 方案稿 R4 行标成已完成，Widget 决定写进"已拍板"。
+
+**验证**
+
+- 本机：typecheck 0、`-parse` 0、UI 卫生 25 个界面文件、pbxproj 203 对象 / 2 target；
+- CI **#98 / `c0c201a` / 678 条断言全绿** / `build-ipa` 成功、飞书已收到包；
+  IPA `JZ-Music-v2.4.3-c0c201a-r98-ios-unsigned.ipa`。
+- 包体：少了一个 19KB 源码文件 + 一套运行时缓存类（编译进包的字符串也一起没了）。
+
+版本 2.4.3（181）。
+
+**还剩下的收尾（不是代码问题）**
+
+1. **文档口径**：`IOS-IA-SCREENS.md`、`IOS-FEATURE-PARITY.md`、`IOS-ROLLOUT.md`、`P0-SHELL.md`
+   仍按"编辑精选"描述发现页，需要一次文档同步；
+2. **Android / Windows 桌面端**：两端的编辑精选还在（这次只动 iOS），要不要对齐是另一个项目；
+3. **Widget 接真数据**：要 App Group + 付费签名，目前故意不做。
+
 ## iOS 第三十轮 · 2026-11-18 15:4x（发现页「歌单广场 + 歌手大全」：编辑精选下线）
 
 **来源：老板「现在我想要把编辑精选换成歌单广场和歌手大全，这个方案可以怎么设计，UI 怎么改更好看」
