@@ -21,6 +21,11 @@
 
 断言 +7（iTunes URL/放大/严格匹配三例 + 名字不符不收 + 版本后缀可匹配），本地 harness **44/44**、
 typecheck `EXIT=0`。版本 2.3.9（177）。
+- **出包**：CI run #93 / `2ff6065` / **636 条断言全绿** / `build-ipa` 成功、插件已嵌入；
+  IPA `JZ-Music-v2.3.9-2ff6065-r93-ios-unsigned.ipa`（1,897,625 B），已发飞书群。
+  过程：这轮 CI 连挂 8 次，原因是**我把 `ITunesCover.swift` 加进了本地 CI 清单却没提交那个 yml**
+  （`cannot find 'ITunesCover' in scope`）；补提交后首跑即绿。教训：改了 `.github/workflows/*.yml`
+  要跟代码一起 commit，本地 typecheck 用的是本地清单，发现不了这种漏提交。
 
 ## iOS 第二十六轮 · 2026-11-18 13:1x（编辑精选"固定那几首反复加载"的根因：缓存键对不上）
 
