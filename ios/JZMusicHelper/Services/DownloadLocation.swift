@@ -65,15 +65,50 @@ enum DownloadLocation {
 
     // MARK: 当前生效目录
 
-    /// 当前该往哪存：自选目录优先，解不开就退回默认。
-    /// 目录不存在会顺手建出来（外部目录建失败会继续往上抛给调用方 → 退回默认）。
+    /// 当前该往哪存，三条路按优先级：
+    ///   ① 系统选择器选过、书签能解开的**外部目录**（iCloud / 别的 App 容器）；
+    ///   ② 只在 App 自己容器里换了个**子文件夹**（`download_folder_name`，App 内「新建文件夹」走这条）；
+    ///   ③ 默认 `Documents/Music`。
+    /// 目录不存在会顺手建出来；建不出来就退回默认，绝不往坏路径里写。
     static func currentDirectory() -> URL {
         if let data = UserDefaults.standard.data(forKey: bookmarkKey),
            let external = resolve(bookmark: data) {
             openScope(at: external)
             return external
         }
+        if let name = subfolderName(), let dir = ensuredSubfolder(name) {
+            return dir
+        }
         return ensureDefaultDirectory()
+    }
+
+    /// App 容器里自选的子文件夹名（不含书签那条路）
+    static func subfolderName() -> String? {
+        guard let name = UserDefaults.standard.string(forKey: folderNameKey),
+              !name.isEmpty, name != defaultFolderName else { return nil }
+        return name
+    }
+
+    /// 子文件夹的绝对路径（不存在就建）
+    static func ensuredSubfolder(_ name: String) -> URL? {
+        let dir = documentsDirectory().appendingPathComponent(name, isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir.path) { return dir }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        } catch {
+            return nil
+        }
+    }
+
+    /// 在 App 容器里建一个新子文件夹并返回（「新建文件夹」用；重名直接复用）
+    static func createSubfolder(_ rawName: String) -> URL? {
+        guard let name = DownloadPathRules.sanitizedFolderName(rawName) else { return nil }
+        return ensuredSubfolder(name)
+    }
+
+    static func documentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
     /// 当前保存位置的显示名（设置页 / 下载页的面包屑）
@@ -84,10 +119,10 @@ enum DownloadLocation {
         return defaultFolderName
     }
 
-    /// 当前是不是"用户自选的外部目录"
+    /// 当前是不是"用户改过保存位置"（外部书签，或 App 内的自选子文件夹）
     static var isCustomFolder: Bool {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return false }
-        return resolve(bookmark: data) != nil
+        if savedCustomDirectory() != nil { return true }
+        return subfolderName() != nil
     }
 
     // MARK: 路径文案（设置页要"完整路径"，不是只有一个文件夹名）
@@ -108,13 +143,18 @@ enum DownloadLocation {
     /// 老板第二轮反馈："设置页面显示的只有一个 Music，我要把完整的路径显示出来，像之前版本一样"——
     /// 所以这里给的是**从「文件」App 根往下的一整条**，不是一个 `lastPathComponent`。
     static var currentPathText: String {
-        guard let custom = savedCustomDirectory() else { return defaultPathText }
-        return breadcrumb(for: custom)
+        if let custom = savedCustomDirectory() { return breadcrumb(for: custom) }
+        if let name = subfolderName() { return "文件 › JZ 音乐 › " + name }
+        return defaultPathText
     }
 
     /// 当前保存位置的绝对路径（给想确认"到底在磁盘哪"的人；设置页用一行小字显示）
     static var currentAbsolutePathText: String {
-        savedCustomDirectory()?.path ?? defaultDirectory().path
+        if let custom = savedCustomDirectory() { return custom.path }
+        if let name = subfolderName() {
+            return documentsDirectory().appendingPathComponent(name, isDirectory: true).path
+        }
+        return defaultDirectory().path
     }
 
     /// URL → 「文件」App 里看到的那种面包屑（纯字符串规则见 `DownloadPathRules.breadcrumb`）

@@ -326,6 +326,17 @@ enum DownloadPathRules {
         return "文件 › " + last
     }
 
+    /// 用户在「新建文件夹」里输入的名字 → 真正可用的文件夹名
+    ///
+    /// 空 / 只有空格 / `.` / `..` → nil（调用方给一句人话）；
+    /// 带 `/` 一律换成 `_`（多层路径不是这里支持的输入，也不该让用户写出子目录）。
+    static func sanitizedFolderName(_ raw: String) -> String? {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "_")
+        guard !cleaned.isEmpty, cleaned != ".", cleaned != ".." else { return nil }
+        return cleaned
+    }
+
     /// `/a/b` → ` › a › b`（空串 → ""）
     private static func suffix(_ path: String, from index: String.Index) -> String {
         let parts = path[index...].split(separator: "/").map(String.init)

@@ -23,7 +23,6 @@ struct SettingsView: View {
 
     @State private var lyricsCacheCount = 0
     @State private var showClearLyricsConfirm = false
-    @State private var showLocationSheet = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -77,11 +76,12 @@ struct SettingsView: View {
                 Toggle("仅 Wi-Fi 下载", isOn: $settings.wifiOnlyDownload)
                 Toggle("后台下载", isOn: $settings.backgroundDownload)
                 LabeledContent("已下载", value: "\(downloads.items.count) 首")
-                // 第四十轮补丁（老板："只有一个 Music，我要把完整的路径显示出来"）：
-                // 这一行显示**整条面包屑**（文件 › JZ 音乐 › Music / iCloud Drive › …），
-                // 点开是一页能"选文件夹 + 明确保存"的界面（`DownloadLocationSheet`）。
-                Button {
-                    showLocationSheet = true
+                // 第四十轮补丁 3（老板录屏修正："点了也没关下去，是我手动关的"）：
+                // 系统选择器的「打开」在这台机器上根本不完成选择，所以那一页不再依赖它，
+                // 改成"列出 App 内的文件夹 → 选中 → 保存"的确定路径（见 `DownloadLocationView`）。
+                // 这一行始终显示**整条面包屑**。
+                NavigationLink {
+                    DownloadLocationView()
                 } label: {
                     HStack(spacing: Tokens.Spacing.xs) {
                         Text("保存位置")
@@ -91,9 +91,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                             .lineLimit(2)
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
                     }
                 }
                 Text(DownloadLocation.currentAbsolutePathText)
@@ -131,10 +128,6 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.large)
         .task {
             lyricsCacheCount = await LyricsService.shared.cachedCount()
-        }
-        .sheet(isPresented: $showLocationSheet) {
-            DownloadLocationSheet()
-                .environment(settings)
         }
         .confirmationDialog("清空 \(lyricsCacheCount) 首歌词缓存？",
                             isPresented: $showClearLyricsConfirm, titleVisibility: .visible) {

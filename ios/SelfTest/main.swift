@@ -2775,6 +2775,14 @@ do {
           DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌/", home: home)
             == "文件 › JZ 音乐 › 我的歌",
           DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌/", home: home))
+    check("新建文件夹：普通名字原样",
+          DownloadPathRules.sanitizedFolderName("  车载音乐 ") == "车载音乐")
+    check("新建文件夹：带斜杠换成下划线",
+          DownloadPathRules.sanitizedFolderName("2026/冬天") == "2026_冬天")
+    check("新建文件夹：空 / 点 / 双点都拒掉",
+          DownloadPathRules.sanitizedFolderName("   ") == nil
+            && DownloadPathRules.sanitizedFolderName(".") == nil
+            && DownloadPathRules.sanitizedFolderName("..") == nil)
 }
 
 // MARK: - 汇总
