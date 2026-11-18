@@ -2131,6 +2131,22 @@ check("换一天就重新尝试（负缓存按天失效）",
 check("没记过的歌不算未解析",
       !ResolvedSongCache.shared.isKnownUnresolved(name: "__nobody__", singer: "y", day: 20_000))
 
+section("第二十六轮：编辑精选缓存键（固定几首反复加载的根因）")
+
+// 池子写「海阔天空 / Beyond」，平台搜出来是「海阔天空 (Live) / BEYOND」——键差一点就 miss，
+// 于是每次进歌单都重新解析。现在按**种子键**也存一份，并且有模糊兜底。
+let aliasSong = Song(platform: .kuwo, platformID: "999001", name: "海阔天空 (Live)",
+                     singer: "BEYOND", album: "演唱会", duration: 239, picURL: nil)
+ResolvedSongCache.shared.store(aliasSong, seedName: "海阔天空", seedSinger: "Beyond")
+check("按种子键能取回（名字带版本后缀也不会每次重解析）",
+      ResolvedSongCache.shared.song(name: "海阔天空", singer: "Beyond")?.platformID == "999001")
+check("按平台原名也能取回",
+      ResolvedSongCache.shared.song(name: "海阔天空 (Live)", singer: "BEYOND")?.platformID == "999001")
+check("模糊兜底也能命中（救历史缓存）",
+      ResolvedSongCache.shared.fuzzyLookup(name: "海阔天空", singer: "Beyond")?.platformID == "999001")
+check("模糊兜底不会张冠李戴（别的歌不能认成它）",
+      ResolvedSongCache.shared.fuzzyLookup(name: "光辉岁月", singer: "Beyond") == nil)
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

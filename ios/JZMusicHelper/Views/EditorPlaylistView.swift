@@ -79,6 +79,11 @@ struct EditorPlaylistView: View {
                 songs[index] = hit
             } else if let baked = BakedSeedSongs.song(name: seed.name, singer: seed.singer) {
                 songs[index] = baked
+            } else if let loose = ResolvedSongCache.shared.fuzzyLookup(
+                name: seed.name, singer: seed.singer) {
+                // 历史缓存里键不完全一致（平台写法差一个后缀/大小写）也能认出来——
+                // 老板 r89：固定那几首歌每次都要重新加载，根因就是键对不上。
+                songs[index] = loose
             }
         }
     }
@@ -227,7 +232,7 @@ struct EditorPlaylistView: View {
         if let resolved {
             songs[index] = resolved
             failedRows.remove(index)
-            ResolvedSongCache.shared.store(resolved)
+            ResolvedSongCache.shared.store(resolved, seedName: seeds[index].name, seedSinger: seeds[index].singer)
         } else {
             failedRows.insert(index)
             ResolvedSongCache.shared.markUnresolved(
@@ -279,7 +284,7 @@ struct EditorPlaylistView: View {
                     songs[index] = resolved
                     failedRows.remove(index)
                     // 落盘：下次进这一页（甚至下次冷启动）直接渲染，不用再搜
-                    ResolvedSongCache.shared.store(resolved)
+                    ResolvedSongCache.shared.store(resolved, seedName: list[index].name, seedSinger: list[index].singer)
                 } else {
                     failedRows.insert(index)
                     // 今天确实没解析出来 → 记进负缓存，当天不再重试

@@ -46,14 +46,24 @@ final class ResolvedSongCache {
 
     // MARK: 写
 
-    /// 解析成功后落盘。同一个键只留一条（后来的覆盖旧的，比如平台换了源）。
-    func store(_ song: Song) {
-        let key = Self.key(name: song.name, singer: song.singer)
-        lock.lock()
-        if map[key] == nil {
-            order.append(key)
+    /// 解析成功后落盘。
+    ///
+    /// **必须同时按"种子键"存一份**（老板 r89：固定那几首歌每次进歌单都要重新加载）。
+    /// 原因：`resolve(seed:)` 返回的 Song，歌名/歌手经常和池子里写的不完全一样——
+    /// 例如池子写「海阔天空 / Beyond」，搜出来是「海阔天空 / BEYOND」；池子写「隐形的翅膀 / 张韶涵」，
+    /// 搜出来带 `(Live)`；`ResolvedSongCache.key` 只做小写去空白，这类差一点就 miss，
+    /// 于是每次进页面都重新解析。而 `prefillFromCache` 查的是**种子的键**，所以必须按种子键落盘。
+    func store(_ song: Song, seedName: String? = nil, seedSinger: String? = nil) {
+        var keys = [Self.key(name: song.name, singer: song.singer)]
+        if let seedName, let seedSinger {
+            let seedKey = Self.key(name: seedName, singer: seedSinger)
+            if seedKey != keys[0] { keys.append(seedKey) }
         }
-        map[key] = song
+        lock.lock()
+        for key in keys {
+            if map[key] == nil { order.append(key) }
+            map[key] = song
+        }
         if order.count > limit {
             let drop = order.count - limit
             for k in order.prefix(drop) { map[k] = nil }
@@ -61,6 +71,42 @@ final class ResolvedSongCache {
         }
         lock.unlock()
         scheduleSave()
+    }
+
+    /// 兜底查法：按"核心歌名 + 歌手片段"在已缓存条目里找。
+    ///
+    /// 用来救"键对不上"的历史数据（池子名与平台名差一个版本后缀 / 歌手大小写 / 多歌手顺序不同）。
+    /// 800 条上限，整表扫一遍是毫秒级。
+    func fuzzyLookup(name: String, singer: String) -> Song? {
+        let target = Self.loose(name)
+        guard !target.isEmpty else { return nil }
+        let targetCore = Self.loose(StudioPick.coreName(name))
+        let singerKey = Self.loose(singer)
+
+        lock.lock()
+        let entries = Array(map.values)
+        lock.unlock()
+
+        var best: Song?
+        for song in entries {
+            let songName = Self.loose(song.name)
+            let songCore = Self.loose(StudioPick.coreName(song.name))
+            let songSinger = Self.loose(song.singer)
+            let nameHit = songName == target || (!targetCore.isEmpty && songCore == targetCore)
+            guard nameHit else { continue }
+            let singerHit = !singerKey.isEmpty
+                && (songSinger.contains(singerKey) || singerKey.contains(songSinger))
+            if singerHit { return song }        // 名字和歌手都对上，直接给
+            if best == nil { best = song }      // 名字对上、歌手对不上：只当备选
+        }
+        return best
+    }
+
+    /// 粗归一：小写、去空白与常见标点，只用于"名字像不像"的比较
+    private static func loose(_ s: String) -> String {
+        let punctuation = CharacterSet(charactersIn: " \t\n-_·、,，.。()（）[]【】《》'\"!?！？~&/")
+        return String(s.lowercased().unicodeScalars.filter { !punctuation.contains($0) }
+            .map(Character.init))
     }
 
     /// 键：歌名 + 歌手（小写、去首尾空白）——与搜索去重同一个口径，不做模糊匹配

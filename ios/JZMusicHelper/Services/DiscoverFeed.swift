@@ -201,7 +201,7 @@ final class DiscoverFeed {
                 if ResolvedSongCache.shared.isKnownUnresolved(
                     name: seed.name, singer: seed.singer, day: day) { continue }
                 if let song = await resolve(seed: seed) {
-                    ResolvedSongCache.shared.store(song)
+                    ResolvedSongCache.shared.store(song, seedName: seed.name, seedSinger: seed.singer)
                     // 顺手把封面也写进磁盘缓存：老板反馈"封面加载完下次还要再加载"，
                     // 预取时一起拉一遍，进歌单页时封面就是本地 IO 了。
                     _ = await CoverImageCache.shared.image(for: song)
