@@ -104,15 +104,10 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ## Android 版
 
-![Android：发现页（编辑精选 / 热门音乐 / 猜你喜欢，纸墨版式）](docs/images/android-home.jpg)
+![Android 界面：发现 / 搜索（四平台）/ 正在播放 / 听歌识曲 / 设置](docs/images/android-ui.jpg)
 
-![Android：一次搜索，四家结果与各家条数（QQ 50 / 网易 50 / 酷我 32 / 酷狗 30）](docs/images/android-search.jpg)
-
-| 正在播放 | 听歌识曲 | 设置 |
-|---|---|---|
-| ![播放页](docs/images/android-player.jpg) | ![识曲](docs/images/android-recognize.jpg) | ![设置](docs/images/android-settings.jpg) |
-
-> 以上截图取自 Android 模拟器（Pixel 5，1080×2340）实跑，界面与真机一致。
+> 取自 Android 模拟器（Pixel 5，1080×2340）实跑：搜索「晴天」时四家分别返回 50 / 50 / 32 / 30 条；
+> 播放页底部那行是实际音源（cyapi QQ · 标准 128k · m4a · ID 直连）。
 
 ### 特色
 
@@ -145,15 +140,9 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ## iPhone 版（iOS 17+）
 
-![iPhone：发现页（歌手大全 / 最近播放 / 最新单曲 / 猜你喜欢）](docs/images/ios-discover.jpg)
+![iPhone 界面：发现 / 正在播放 / 下载 / 听歌识曲 / 我的收藏 / 设置](docs/images/ios-ui.jpg)
 
-![iPhone：正在播放（封面、无损 FLAC、已下载标记、歌词与音源入口）](docs/images/ios-player.jpg)
-
-| 下载 | 听歌识曲 | 我的收藏 | 设置 |
-|---|---|---|---|
-| ![下载](docs/images/ios-downloads.jpg) | ![识曲](docs/images/ios-recognize.jpg) | ![收藏](docs/images/ios-favorites.jpg) | ![设置](docs/images/ios-settings.jpg) |
-
-> 以上是 iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录（截图是页面上半部分），
+> iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录；
 > 设置页只剩外观 / 车载自动播放 / 歌词字号 / 可缓存歌曲数量 / 识曲 / 下载 / 数据 / 关于。
 
 ### 特色
