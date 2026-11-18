@@ -2682,6 +2682,66 @@ do {
           "start=\(late.startProgress)")
 }
 
+// MARK: - 第四十轮：设置页瘦身 + 车载自动播放
+
+// 这一轮把九个"只能这么办"的设置项收回到代码里。断言钉三件事：
+//   ① 车载只在"车机 / 蓝牙 + 开关开 + 没在播"时才自动起播（连 USB 声卡、连着耳机不抢）；
+//   ② 续播只认"真的听到一半"（开头 3 秒内、离结尾 8 秒内都不续，交给热门兜底）；
+//   ③ 歌词缓存上限怎么填都是合法值（0/负数回默认、超界夹住、步进对齐区间）。
+
+section("车载自动播放（CarAudioRules）")
+
+do {
+    check("车机端口 + 开关开 + 没在播 → 自动起播",
+          CarAudioRules.shouldAutoplay(enabled: true, isPlaying: false, kind: .carAudio))
+    check("车载蓝牙同样算（老板说的就是「连接车载蓝牙之后」）",
+          CarAudioRules.shouldAutoplay(enabled: true, isPlaying: false, kind: .bluetooth))
+    check("USB 声卡不算车载（电脑上插个声卡不该自己放歌）",
+          !CarAudioRules.shouldAutoplay(enabled: true, isPlaying: false, kind: .usb))
+    check("外放 / 有线耳机不算",
+          !CarAudioRules.shouldAutoplay(enabled: true, isPlaying: false, kind: .other))
+    check("开关关掉就一律不动",
+          !CarAudioRules.shouldAutoplay(enabled: false, isPlaying: false, kind: .carAudio))
+    check("正在播时连上车机不重头播（只是换了个输出）",
+          !CarAudioRules.shouldAutoplay(enabled: true, isPlaying: true, kind: .bluetooth))
+    check("端口名带车厂关键词能认出来（只用于文案）",
+          CarAudioRules.looksLikeCarName("BYD Han") && CarAudioRules.looksLikeCarName("我的车"))
+    check("普通耳机名不会被认成车",
+          !CarAudioRules.looksLikeCarName("AirPods Pro"))
+}
+
+section("上次没播完 → 接着放（PlaybackRestoreRules）")
+
+do {
+    check("听到一半：续播", PlaybackRestoreRules.shouldResume(positionSec: 90, durationSec: 269))
+    check("刚开头 1 秒：不续，重头放更自然",
+          !PlaybackRestoreRules.shouldResume(positionSec: 1, durationSec: 269))
+    check("刚好到最小位置：续播",
+          PlaybackRestoreRules.shouldResume(positionSec: PlaybackRestoreRules.minResumePositionSec,
+                                            durationSec: 269))
+    check("只剩 5 秒：当上一轮听完了，不续",
+          !PlaybackRestoreRules.shouldResume(positionSec: 264, durationSec: 269))
+    check("时长未知（0）：不续，走热门兜底",
+          !PlaybackRestoreRules.shouldResume(positionSec: 30, durationSec: 0))
+    check("脏数据（NaN / 负数）不崩也不续",
+          !PlaybackRestoreRules.shouldResume(positionSec: .nan, durationSec: 269)
+            && !PlaybackRestoreRules.shouldResume(positionSec: -5, durationSec: 269))
+    check("播放位置超过时长（容器时长偏短）：不续",
+          !PlaybackRestoreRules.shouldResume(positionSec: 300, durationSec: 269))
+}
+
+section("歌词缓存上限可配（LyricsCacheRules）")
+
+do {
+    check("没设置过（0）→ 默认 200 首", LyricsCacheRules.clamp(0) == 200)
+    check("负数同样回默认", LyricsCacheRules.clamp(-30) == 200)
+    check("低于下限夹到 50", LyricsCacheRules.clamp(10) == LyricsCacheRules.minLimit)
+    check("高于上限夹到 1000", LyricsCacheRules.clamp(9999) == LyricsCacheRules.maxLimit)
+    check("区间内原样保留（设置页步进 50）", LyricsCacheRules.clamp(350) == 350)
+    check("上下限之间容得下 20 档",
+          (LyricsCacheRules.maxLimit - LyricsCacheRules.minLimit) / LyricsCacheRules.step == 19)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

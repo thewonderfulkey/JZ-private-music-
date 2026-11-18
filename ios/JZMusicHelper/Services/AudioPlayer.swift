@@ -128,7 +128,11 @@ final class PlayerEngine {
         didSet { defaults.set(mode.rawValue, forKey: Self.keyMode) }
     }
 
-    /// 音质偏好（持久化，键名 `quality`；Android 默认 HIGH）
+    /// 音质偏好（持久化，键名 `quality`）。
+    ///
+    /// 第四十轮：设置页不再暴露这一项——老板口径是"默认就是最高音质，拿不到再逐级往下降"。
+    /// 这里仍保留这个值（下载页/诊断要看"我在按哪一档取"），初始化恒为无损；
+    /// 真正的降档由 `SourcePicker.score` 完成（无损 > 高品 > 标准，同分优先直连后端）。
     var quality: QualityLevel {
         didSet { defaults.set(quality.rawValue, forKey: Self.keyQuality) }
     }
@@ -151,6 +155,8 @@ final class PlayerEngine {
     private var consecutiveSkips = 0
     /// 被判为坏源（时长不符 / 放不出来）的 URL，换源时跳过，避免同一首歌反复撞同一条
     private var rejectedSourceURLs: Set<String> = []
+    /// 续播断点：等这一条播放项 ready 之后再 seek（见 `play(queue:startAt:positionSeconds:)`）
+    private var pendingRestoreSeconds: Double?
 
     var hasCurrentSong: Bool { currentSong != nil }
     var progress: Double {
@@ -165,9 +171,10 @@ final class PlayerEngine {
     init() {
         let store = UserDefaults.standard
         let savedMode = store.string(forKey: Self.keyMode).flatMap(PlayMode.init(rawValue:))
-        let savedQuality = store.string(forKey: Self.keyQuality).flatMap(QualityLevel.init(rawValue:))
         mode = savedMode ?? .listLoop
-        quality = savedQuality ?? .high
+        // 第四十轮：音质不再是设置项。恒从最高档起取，拿不到由取流器逐级下降
+        // （老用户存过的低档值一并忽略，不再把"以前调过 128k"带着走）。
+        quality = .lossless
     }
 
     private var systemAttached = false
@@ -215,6 +222,47 @@ final class PlayerEngine {
         Task { await loadCurrent() }
     }
 
+    /// 从"上次断点"续播（车载自动播放用）：队列 + 起始位置一起给。
+    ///
+    /// 位置要等播放项真的 ready 才能 seek（远端流刚 replace 时 `duration` 还是 0），
+    /// 所以这里只记 `pendingRestoreSeconds`，由 `wire(item:...)` 的 readyToPlay 分支落地。
+    func play(queue songs: [Song], startAt start: Int, positionSeconds: Double) {
+        guard !songs.isEmpty else { return }
+        attachSystemIfNeeded()
+        let target = min(max(start, 0), songs.count - 1)
+        stopCurrentForSwitch()
+        queue = songs
+        index = target
+        currentSong = songs[target]
+        rejectedSourceURLs.removeAll()
+        consecutiveSkips = 0
+        resetProgress()
+        pendingRestoreSeconds = positionSeconds.isFinite ? max(0, positionSeconds) : 0
+        prepareLyrics(for: songs[target])
+        Task { await loadCurrent() }
+    }
+
+    /// 上次播放快照（车载连上时"接着上次没播完的接着放"读它）
+    ///
+    /// - Parameter finished: 是否"自然播到结尾"结束（这种不算没播完，下次交给热门歌单）
+    func flushSnapshot(finished: Bool = false, force: Bool = false) {
+        guard let song = currentSong else { return }
+        let tail: [Song]
+        if queue.indices.contains(index) {
+            tail = Array(queue[index...].prefix(50))
+        } else {
+            tail = [song]
+        }
+        let total = duration > 0 ? duration : Double(song.durationSec)
+        let snapshot = PlaybackSnapshot(song: song,
+                                        songs: tail,
+                                        positionSec: max(0, currentTime),
+                                        durationSec: total,
+                                        savedAt: Date(),
+                                        finished: finished)
+        PlaybackSnapshotStore.shared.save(snapshot, force: force || finished)
+    }
+
     /// 同一首歌再次被点：只换列表，不动正在放的音频/进度/歌词
     private func adoptQueue(_ songs: [Song], at newIndex: Int) {
         queue = songs
@@ -231,6 +279,8 @@ final class PlayerEngine {
         if isPlaying {
             player.pause()
             isPlaying = false
+            // 暂停时落一次快照：车载连上要"接着放"，断点就在这一下
+            flushSnapshot(force: true)
         } else if player.currentItem != nil {
             player.play()
             isPlaying = true
@@ -403,6 +453,8 @@ final class PlayerEngine {
         seekOptimistic = nil
         // 换曲：上一首"还没唱到的那一行"不能带到新曲上（行号会撞到别的歌词）
         pendingLyricLine = nil
+        // 换曲：上一首的续播断点也不能带过来（否则这首会莫名其妙跳到那个位置）
+        pendingRestoreSeconds = nil
     }
 
     private func loadCurrent() async {
@@ -450,17 +502,17 @@ final class PlayerEngine {
         player.play()
         isPlaying = true
         updateNowPlaying()
+        // 起播就记一次（位置 0）：万一进程在这儿被杀，下次车载连上也知道"上一首是它"
+        flushSnapshot()
     }
 
     /// 三级取流 + 可配置重试（与 Android `AppState.resolveAndPlayIfNeeded` 同口径：
     /// 本平台后端 → 同曲跨平台补位 → 间隔 2s / 2.5s / 3s 再试）
     ///
-    /// 两个设置开关在这里真正生效：
-    ///   · 「无源自动换源」关掉 → 只解析一轮，不做 2s/2.5s/3s 重试
-    ///   · 「跨平台补源」关掉 → 不调用同曲跨平台解析
+    /// 第四十轮：这两个开关不再是设置项——老板口径"无源自动换源 / 跨平台补源都是默认行为，
+    /// 不用摆出来给人关"。所以这里恒按最完整的链路走：3 轮重试 + 跨平台补源。
     private func resolveStream(for song: Song) async -> StreamSource? {
-        let settings = SettingsStore.shared
-        let attempts = settings.autoFallback ? 3 : 1
+        let attempts = 3
         let triedCandidates = TriedKeys()
         for attempt in 0..<attempts {
             if attempt > 0 {
@@ -473,8 +525,7 @@ final class PlayerEngine {
                !rejectedSourceURLs.contains(pick.url) {
                 return pick
             }
-            if settings.crossPlatformBackfill,
-               let cross = await SameSongCrossResolver.resolve(
+            if let cross = await SameSongCrossResolver.resolve(
                 song: song, quality: quality, triedKeys: triedCandidates),
                !rejectedSourceURLs.contains(cross.url) {
                 return cross
@@ -503,6 +554,11 @@ final class PlayerEngine {
                 case .readyToPlay:
                     let actual = item.duration.seconds
                     self.adoptDuration(actual)
+                    // 续播断点：ready 之后才能 seek（这时 duration 才可信）
+                    if let restore = self.pendingRestoreSeconds {
+                        self.pendingRestoreSeconds = nil
+                        self.seek(toSeconds: restore)
+                    }
                     // 时长防线：与曲目时长差 >25s 就是"标着这首歌、给的是别的版本"
                     if PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
                         self.rejectSource(source, reason: "拿到的音频时长 \(Int(actual))s 与曲目 \(Int(song.duration))s 不符（±\(Int(PlaybackRules.durationToleranceSec))s），已换源")
@@ -536,6 +592,8 @@ final class PlayerEngine {
     private func handleTrackFinished() {
         // 播到真结尾了：这时 currentTime 就是这条音频的真实长度，覆盖掉容器/元数据那份
         if currentTime > duration { duration = currentTime }
+        // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门
+        flushSnapshot(finished: true)
         switch mode {
         case .singleLoop:
             // 单曲循环：同一份音频重播，不重新解析（省 1~12s）
@@ -551,11 +609,9 @@ final class PlayerEngine {
         }
     }
 
-    /// 连跳上限：设置里关掉「自动跳歌」时只允许跳 1 首就停
-    private var skipLimit: Int {
-        let settings = SettingsStore.shared
-        return settings.autoSkipDeadSongs ? max(1, settings.skipLimit) : 1
-    }
+    /// 连跳上限：第四十轮起不再是设置项，恒为 `PlaybackRules.autoSkipLimit`（3 首）。
+    /// 连续 3 首都没源就停下来给一句人话，不把整个队列烧光。
+    private var skipLimit: Int { PlaybackRules.autoSkipLimit }
 
     /// 采纳播放项的时长（只往"更可信"的方向走：有效、且和现有值差 > 0.5 秒）
     private func adoptDuration(_ seconds: Double) {
@@ -632,6 +688,10 @@ final class PlayerEngine {
                 if seconds.isFinite {
                     self.currentTime = seconds
                     self.updateLyricIndex()
+                    // 播放中每 10 秒落一次断点（store 内部还会再夹一次间隔）
+                    if self.isPlaying, Int(seconds) % 10 == 0 {
+                        self.flushSnapshot()
+                    }
                 }
                 if let item = self.player.currentItem {
                     self.adoptDuration(item.duration.seconds)
@@ -670,6 +730,8 @@ final class PlayerEngine {
         player.pause()
         isPlaying = false
         updateNowPlaying()
+        // 拔耳机 / 断开蓝牙（含下车）：把断点落盘，下次连上从这儿接着放
+        flushSnapshot(force: true)
     }
 
     func resumeAfterInterruption() {

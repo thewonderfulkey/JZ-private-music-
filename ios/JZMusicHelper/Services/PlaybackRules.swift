@@ -148,3 +148,70 @@ enum PlaybackRules {
         return "这首暂时没有可用的播放源，已跳到下一首（第 \(consecutiveSkips) 首）"
     }
 }
+
+// MARK: - 车载自动播放（纯函数）
+//
+// 第四十轮（老板："加了车载 car play：连上车载蓝牙之后自动播放歌曲"）。
+//
+// 边界先说清：真正的 **CarPlay 界面**需要 Apple 单独批的 `com.apple.developer.carplay-audio`
+// 权限（自签分发拿不到），所以这里做的是**车里"上车就响"这件事本身**：
+// 监听音频路由变成车机 / 蓝牙音频，就自动接着上次的往下放。
+//
+// 为什么把判断抽成纯函数：真机上"连上 AirPods 也算蓝牙音频"这种边界改错了不会崩，
+// 只会表现为"怎么突然自己放歌了"。CI 能把这张表钉住。
+enum CarRouteKind: String, Sendable {
+
+    /// 车机端口（有线 / 无线 CarPlay、USB 车机）
+    case carAudio
+
+    /// 蓝牙音频输出（车载蓝牙、蓝牙音箱、蓝牙耳机都走这一类）
+    case bluetooth
+
+    /// 有线 USB 音频（电脑、声卡）——不算车载
+    case usb
+
+    /// 其它（外放、耳机孔、AirPlay 等）
+    case other
+}
+
+enum CarAudioRules {
+
+    /// 连接后要不要自动起播：开关开着 + 当前没在播 + 这次的端口算"车里"
+    static func shouldAutoplay(enabled: Bool, isPlaying: Bool, kind: CarRouteKind) -> Bool {
+        guard enabled, !isPlaying else { return false }
+        return kind == .carAudio || kind == .bluetooth
+    }
+
+    /// 端口名里有没有车的关键词（蓝牙端口名就是车机自己的名字，如 "BYD"、"Tesla Model 3"）。
+    /// 只用于**文案/诊断**，不参与开合判断——蓝牙音频一律算（用户开的就是"上车自动播"）。
+    static func looksLikeCarName(_ name: String) -> Bool {
+        let n = name.lowercased()
+        let keys = ["car", "auto", "车", "byd", "tesla", "bmw", "benz", "audi", "volvo",
+                    "toyota", "honda", "nissan", "mazda", "vw", "ford", "chevrolet", "buick",
+                    "hyundai", "kia", "lexus", "porsche", "geely", "chery", "haval", "nio",
+                    "xpeng", "li auto", "lynk", "mg ", "roewe", "wuling", "hop"]
+        return keys.contains { n.contains($0) }
+    }
+}
+
+// MARK: - 上次没播完 → 接着放（纯函数）
+//
+// 第四十轮：车载连上时"接着上次没播完的接着放"。
+// 三条边界：从开头几秒（还没进副歌）不算"没播完"；剩不到 8 秒的也不用续，
+// 直接当"上一轮已经听完了"（交给热门歌单兜底），避免一上车就是一句尾奏。
+enum PlaybackRestoreRules {
+
+    /// 至少播过这么多秒才值得续播
+    static let minResumePositionSec: Double = 3
+
+    /// 距离结尾至少还要剩这么多秒才值得续播
+    static let minRemainingSec: Double = 8
+
+    static func shouldResume(positionSec: Double, durationSec: Double) -> Bool {
+        guard positionSec.isFinite, durationSec.isFinite, durationSec > 0 else { return false }
+        let position = max(0, positionSec)
+        guard position >= minResumePositionSec else { return false }
+        return durationSec - position >= minRemainingSec
+    }
+}
+

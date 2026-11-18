@@ -23,7 +23,6 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var items: [DownloadItem] = []
     @Published var backgroundTaskCount: Int = 0
 
-    private let musicDirName = "Music"
     private let backgroundID = "com.jz.musichelper.downloads"
 
     private var foregroundSession: URLSession!
@@ -65,13 +64,10 @@ final class DownloadManager: NSObject, ObservableObject {
 
     // MARK: - 目录
 
+    /// 当前保存目录：设置页选过「文件」App 里的文件夹就用它，否则还是 Documents/Music。
+    /// 自选目录会在这里顺手打开安全作用域（见 `DownloadLocation`）。
     var musicDirectory: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = docs.appendingPathComponent(musicDirName, isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        return dir
+        DownloadLocation.currentDirectory()
     }
 
     /// 清理文件名中的非法字符
@@ -172,7 +168,10 @@ final class DownloadManager: NSObject, ObservableObject {
         guard let item = items.first(where: { $0.song.id == song.id && $0.status == .completed }),
               let path = item.localPath,
               FileManager.default.fileExists(atPath: path) else { return nil }
-        return URL(fileURLWithPath: path)
+        let url = URL(fileURLWithPath: path)
+        // 文件可能在用户自选的外部目录里：每次取用前确认作用域开着（同目录只开一次）
+        DownloadLocation.openScope(forFile: url)
+        return url
     }
 
     /// 离线歌词（播放页在无网络时调用）：已下载完成 + 旁车 .lrc 存在才返回。
@@ -227,6 +226,8 @@ final class DownloadManager: NSObject, ObservableObject {
         cancelCompanion(itemID)
         if deleteFile, let path = item.localPath {
             let audio = URL(fileURLWithPath: path)
+            // 自选外部目录：删之前同样要确认作用域在开着，否则删除会静默失败
+            DownloadLocation.openScope(forFile: audio)
             // 一一对应：删音频之前先删同目录同基名的 .lrc / .jpg。
             // 旁车只依赖音频路径推导，不需要额外的清单文件，所以"谁被删、谁跟着删"永远对齐。
             DownloadCompanion.removeSidecars(audio: audio)

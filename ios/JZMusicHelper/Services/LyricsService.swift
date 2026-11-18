@@ -29,7 +29,14 @@ actor LyricsService {
     private var cache: [String: (result: LyricsResult, at: Date)] = [:]
     private var inflight: [String: Task<LyricsResult?, Never>] = [:]
     private let ttl: TimeInterval = 4 * 60 * 60
-    private let cacheLimit = 200
+
+    /// 缓存上限：设置页「可缓存歌曲数量」可配（默认 200 首）。
+    /// 直接读 UserDefaults 而不是 `SettingsStore`——这个 actor 会被 CI 单独编译，
+    /// 不能依赖带 SwiftUI 的 store；键与夹紧口径都在 `LyricsCacheRules`
+    /// （`LyricsCacheRules.clamp(0)` = 默认值，所以"没设置过"天然走进默认）。
+    private var cacheLimit: Int {
+        LyricsCacheRules.clamp(UserDefaults.standard.integer(forKey: LyricsCacheRules.key))
+    }
 
     /// 最近一次取词失败的**人话原因**（播放页空状态里显示，方便下一轮定位；不写日志文件）
     private(set) var lastFailure: String = ""

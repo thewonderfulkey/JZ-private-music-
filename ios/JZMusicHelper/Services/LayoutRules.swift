@@ -254,6 +254,37 @@ enum LyricOffsetRules {
     }
 }
 
+// MARK: - 歌词缓存上限（纯函数）
+//
+// 第四十轮：老板要"可缓存歌曲数量"能在设置页里改。以前它是 `LyricsService` 里写死的
+// `cacheLimit = 200`，用户既看不见也改不了——缓存多了占内存，少了又反复重下。
+//
+// 为什么单独抽出来：这个数既要被设置页（Stepper 的上下界）、SettingsStore（初始化夹紧）、
+// `LyricsService`（裁剪时机）三处读，还要能被 CI 断言住"脏数据不会把缓存卡到 0 首"。
+enum LyricsCacheRules {
+
+    /// UserDefaults 键。`LyricsService` 直接读这个键（它是 actor，不依赖 SettingsStore）
+    static let key = "lyrics_cache_limit"
+
+    /// 默认 200 首：与写死那版一致，升级后行为不变
+    static let defaultLimit = 200
+
+    /// 下限 50：少于这个数，正常听歌都会反复重下同一批词
+    static let minLimit = 50
+
+    /// 上限 1000：一首词几十 KB，1000 首也就几十 MB，再多没有意义
+    static let maxLimit = 1000
+
+    /// 设置页 Stepper 的步进
+    static let step = 50
+
+    /// 把任意输入夹进合法区间；`nil` / 0 / 负数一律回默认值
+    static func clamp(_ value: Int) -> Int {
+        guard value > 0 else { return defaultLimit }
+        return min(max(value, minLimit), maxLimit)
+    }
+}
+
 // MARK: - 按压反馈的最短可见时长（纯函数）
 //
 // 第三十七轮：老板真机反馈"长按 OK、短按几乎没反馈"。根因是快速点按时 `isPressed`

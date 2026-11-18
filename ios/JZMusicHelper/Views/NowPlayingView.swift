@@ -1173,7 +1173,10 @@ private struct LyricLineRow: View {
     @ViewBuilder
     private var textContent: some View {
         if isCurrent {
-            if settings.lyricAnimation {
+            // 第四十轮：逐字动画不再是设置开关——**词里有毫秒级逐字时间就逐字染色，
+            // 只有行级时间就整行白字**（老板："拿到了 lrc 是带有毫秒级的就用，没有那就不用也行"）。
+            // 判据就是 `line.hasWordTiming`（KRC/QRC 解析出来的行带 words，普通 LRC 没有）。
+            if line.hasWordTiming {
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !player.isPlaying)) { _ in
                     Text(currentLineString())
                         .font(currentLineFont)

@@ -20,6 +20,7 @@ struct RootTabView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(SettingsStore.self) private var settings
     @Environment(DownloadFlow.self) private var downloadFlow
+    @Environment(DiscoverFeed.self) private var discoverFeed
     @Environment(AppRouter.self) private var router
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,6 +76,8 @@ struct RootTabView: View {
         .onAppear {
             visited.insert(router.tab)
             drainIntents()
+            // 车载自动播放：连上车机 / 车载蓝牙就自动接着放（见 CarAudioAutoPlay）
+            CarAudioAutoPlay.shared.attach(player: player, feed: discoverFeed, library: library)
         }
         .onChange(of: router.tab) { _, newValue in
             visited.insert(newValue)
@@ -82,6 +85,9 @@ struct RootTabView: View {
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
             if phase == .active { drainIntents() }
+            // 退到后台先落一次播放断点：这时进程随时可能被系统收走，
+            // 下次车载连上要靠它"接着上次没播完的接着放"。
+            if phase == .background { player.flushSnapshot(force: true) }
             // r65：实时活动已下线，"退出后台还挂着灵动岛"这件事不会再发生，这里不再需要收尾
         }
     }

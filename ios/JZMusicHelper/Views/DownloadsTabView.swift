@@ -35,7 +35,9 @@ struct DownloadsTabView: View {
                         HStack(spacing: Tokens.Spacing.xs) {
                             Image(systemName: "folder")
                                 .foregroundStyle(.secondary)
-                            Text("我的 iPhone › JZ 音乐 › 下载")
+                            Text(DownloadLocation.currentLabel == DownloadLocation.defaultFolderName
+                                 ? "我的 iPhone › JZ 音乐 › \(DownloadLocation.defaultFolderName)"
+                                 : "文件 › \(DownloadLocation.currentLabel)")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

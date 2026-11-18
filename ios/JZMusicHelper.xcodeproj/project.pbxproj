@@ -97,6 +97,9 @@
 		B00000000000000000000067 /* JZTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000065 /* JZTabBar.swift */; };
 		B00000000000000000000068 /* RecognizeStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000066 /* RecognizeStage.swift */; };
 		B00000000000000000000069 /* RecognizeMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000067 /* RecognizeMotion.swift */; };
+		B0000000000000000000006A /* DownloadLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000068 /* DownloadLocation.swift */; };
+		B0000000000000000000006B /* PlaybackSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000069 /* PlaybackSnapshot.swift */; };
+		B0000000000000000000006C /* CarAudioAutoPlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000006A /* CarAudioAutoPlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -190,6 +193,9 @@
 		F00000000000000000000065 /* JZTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JZTabBar.swift; sourceTree = "<group>"; };
 		F00000000000000000000066 /* RecognizeStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeStage.swift; sourceTree = "<group>"; };
 		F00000000000000000000067 /* RecognizeMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeMotion.swift; sourceTree = "<group>"; };
+		F00000000000000000000068 /* DownloadLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadLocation.swift; sourceTree = "<group>"; };
+		F00000000000000000000069 /* PlaybackSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSnapshot.swift; sourceTree = "<group>"; };
+		F0000000000000000000006A /* CarAudioAutoPlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarAudioAutoPlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -297,6 +303,9 @@
 				F0000000000000000000005E /* SquareFeed.swift */,
 				F0000000000000000000005F /* ArtistFeed.swift */,
 				F00000000000000000000067 /* RecognizeMotion.swift */,
+				F00000000000000000000068 /* DownloadLocation.swift */,
+				F00000000000000000000069 /* PlaybackSnapshot.swift */,
+				F0000000000000000000006A /* CarAudioAutoPlay.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -579,6 +588,9 @@
 				B00000000000000000000067 /* JZTabBar.swift in Sources */,
 				B00000000000000000000068 /* RecognizeStage.swift in Sources */,
 				B00000000000000000000069 /* RecognizeMotion.swift in Sources */,
+				B0000000000000000000006A /* DownloadLocation.swift in Sources */,
+				B0000000000000000000006B /* PlaybackSnapshot.swift in Sources */,
+				B0000000000000000000006C /* CarAudioAutoPlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

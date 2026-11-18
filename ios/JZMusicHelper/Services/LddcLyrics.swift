@@ -98,11 +98,6 @@ enum LddcLyrics {
 
     // MARK: 入口
 
-    /// QQ 歌词源的开关（设置页「歌词」里的实验项，默认关）。
-    /// 老板口径：QQ 保留但降级——只在返回可用时采用，绝不拖慢主链。
-    static let qqPrefKey = "lyrics_qq_source_enabled"
-    static var qqEnabled: Bool { UserDefaults.standard.bool(forKey: qqPrefKey) }
-
     /// 全局截止时间（老板口径：全链 8 秒硬超时，对齐安卓 `withTimeoutOrNull(8000)`）
     static func withDeadline<T: Sendable>(seconds: Double,
                                           operation: @escaping @Sendable () async -> T) async -> T? {
@@ -118,7 +113,7 @@ enum LddcLyrics {
         }
     }
 
-    /// 入口：搜（酷狗，QQ 可选并行）→ 身份闸 → 按分数取词（首选 + 重试一次 + 同类第 2 个）
+    /// 入口：搜（酷狗 + QQ 内置并行）→ 身份闸 → 按分数取词（首选 + 重试一次 + 同类第 2 个）
     ///
     /// 老板 r74 定死的顺序（不要自行调换）：
     ///   1) 酷我平台的歌：酷我官方 `getlyric`（musicId 精确，1 个请求）—— 在 `LyricsService` 里先走；
@@ -144,10 +139,12 @@ enum LddcLyrics {
         return result(picked, song: song)
     }
 
-    /// 候选来源：酷狗为主；QQ 开关打开时**并行**参与（给它 2.5 秒，超时就丢）
+    /// 候选来源：酷狗 + QQ **内置并行**（第四十轮：老板定"QQ 歌词源直接内置，不用实验开关"）。
+    ///
+    /// QQ 这条给 2.5 秒上限：能带回来逐字（QRC）就赚，超时/被登录态拦住就直接丢，
+    /// 绝不拖慢主链（主链仍然是酷狗）。
     private static func searchCandidates(title: String, artist: String) async -> [Candidate] {
-        guard qqEnabled else { return await searchKg(title: title, artist: artist) }
-        return await withTaskGroup(of: [Candidate].self) { group in
+        await withTaskGroup(of: [Candidate].self) { group in
             group.addTask { await searchKg(title: title, artist: artist) }
             group.addTask {
                 await withDeadline(seconds: 2.5) { await searchQq(title: title, artist: artist) } ?? []

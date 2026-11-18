@@ -466,8 +466,9 @@ struct RecognizeView: View {
         }
         if Task.isCancelled { return }
 
-        // 识曲前先暂停自己的播放（否则麦克风收的是自己放的歌）
-        if settings.pauseBeforeRecognize, player.isPlaying {
+        // 识曲前一定先暂停自己的播放（否则麦克风收的是自己放的歌）。
+        // 第四十轮：这条不再是设置项——不暂停就根本识别不了，没得选。
+        if player.isPlaying {
             player.toggle()
         }
 
