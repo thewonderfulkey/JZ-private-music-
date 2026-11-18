@@ -181,6 +181,31 @@ do {
                                           artist: "茄子蛋", durationSec: 278))
 }
 
+// 第三十四轮（老板真机：点《青花瓷》放出来是 DJ 版）
+// 根因是跨源补源的 sameSong 允许"干净原唱 → 时长只差 3s 的 DJ Wave 版"。
+// 现在原唱只能换到原唱，宁可无源也不能偷偷换版本。
+do {
+    let src = song(.kugou, "青花瓷", "周杰伦", album: "我很忙", dur: 239, id: "qh_src")
+    let dj = song(.kugou, "青花瓷 (DJ Wave版)", "周杰伦", album: "", dur: 242, id: "qh_dj")
+    let live = song(.kugou, "青花瓷 (Live)", "周杰伦", album: "", dur: 238, id: "qh_live")
+    let cleanQQ = song(.qq, "青花瓷", "周杰伦", album: "我很忙", dur: 239, id: "qh_qq")
+    let longClean = song(.qq, "青花瓷", "周杰伦", album: "", dur: 270, id: "qh_long")
+    let remixSrc = song(.kugou, "青花瓷 (DJ版)", "周杰伦", album: "", dur: 378, id: "qh_remix")
+
+    check("原唱不会跨源换到 DJ 版（时长只差 3s 也不行）",
+          !SameSongCrossResolver.sameSong(src: src, cand: dj))
+    check("原唱不会跨源换到 Live 版",
+          !SameSongCrossResolver.sameSong(src: src, cand: live))
+    check("原唱可以跨源换到另一条原唱",
+          SameSongCrossResolver.sameSong(src: src, cand: cleanQQ))
+    check("原唱不会换到时长差太多的同名条目",
+          !SameSongCrossResolver.sameSong(src: src, cand: longClean))
+    check("现场版可以升级到录音室原唱",
+          SameSongCrossResolver.sameSong(src: live, cand: cleanQQ))
+    check("DJ 源不会跨源换到更短的原唱（时长闸门仍生效）",
+          !SameSongCrossResolver.sameSong(src: remixSrc, cand: cleanQQ))
+}
+
 // MARK: - 3 歌名/歌手匹配（NameMatch）
 
 section("NameMatch 身份校验")

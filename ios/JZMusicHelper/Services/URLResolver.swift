@@ -128,7 +128,6 @@ enum SameSongCrossResolver {
     static let maxExactKeep = 3
     static let totalTimeout: TimeInterval = 40
     static let maxDurationDiffSec = 12
-    static let strictDurationDiffSec = 3
 
     /// 播放用：拿到一条可用源就返回
     static func resolve(song: Song, quality: QualityLevel,
@@ -212,22 +211,36 @@ enum SameSongCrossResolver {
         var cands = results.flatMap { $0.songs }.filter { sameSong(src: song, cand: $0) }
         cands = cands.filter { !triedKeys.contains(candKey($0)) }
 
-        // 排序：无损档「同平台优先 → 原唱得分」；320k/128k 只信网易候选能出目标档，否则白耗 12s/条
+        // 排序（第三十四轮）：**干净原唱永远优先**，然后才看平台/档位/时长。
+        // 旧口径把「同平台」排在「原唱」前面，于是酷狗源一失败，同平台的 DJ Wave 版就先被拿去解析，
+        // 跨平台的 QQ 原唱反而排在后面——这是青花瓷放成 DJ 版的直接原因。
         if forDownload && quality != .lossless {
             cands.sort { a, b in
-                let ca = tierCapable(a.platform, want: quality) ? 0 : 1
-                let cb = tierCapable(b.platform, want: quality) ? 0 : 1
-                if ca != cb { return ca < cb }
+                let ca = StudioPick.isCleanTitle(a.name) && !StudioPick.isLiveAlbum(a.album)
+                let cb = StudioPick.isCleanTitle(b.name) && !StudioPick.isLiveAlbum(b.album)
+                if ca != cb { return ca && !cb }
+                let ta = tierCapable(a.platform, want: quality) ? 0 : 1
+                let tb = tierCapable(b.platform, want: quality) ? 0 : 1
+                if ta != tb { return ta < tb }
                 let pa = a.platform == song.platform ? 0 : 1
                 let pb = b.platform == song.platform ? 0 : 1
                 if pa != pb { return pa < pb }
+                let da = abs(a.durationSec - song.durationSec)
+                let db = abs(b.durationSec - song.durationSec)
+                if da != db { return da < db }
                 return StudioPick.studioScore(a) > StudioPick.studioScore(b)
             }
         } else {
             cands.sort { a, b in
+                let ca = StudioPick.isCleanTitle(a.name) && !StudioPick.isLiveAlbum(a.album)
+                let cb = StudioPick.isCleanTitle(b.name) && !StudioPick.isLiveAlbum(b.album)
+                if ca != cb { return ca && !cb }
                 let pa = a.platform == song.platform ? 0 : 1
                 let pb = b.platform == song.platform ? 0 : 1
                 if pa != pb { return pa < pb }
+                let da = abs(a.durationSec - song.durationSec)
+                let db = abs(b.durationSec - song.durationSec)
+                if da != db { return da < db }
                 return StudioPick.studioScore(a) > StudioPick.studioScore(b)
             }
         }
@@ -261,13 +274,13 @@ enum SameSongCrossResolver {
         guard sd > 0 && cd > 0 else { return true }
         let diff = abs(sd - cd)
 
-        // 版本防线：源是干净原唱、候选却是 live/综艺/节目变体时，只有时长几乎一致才认
-        let candIsVariant = !StudioPick.isCleanTitle(cand.name)
-            || (!cand.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && StudioPick.isLiveAlbum(cand.album))
-        if StudioPick.isCleanTitle(src.name) && candIsVariant && diff > strictDurationDiffSec {
-            return false
-        }
+        // 版本防线（第三十四轮，青花瓷事故）：
+        // 源是干净原唱时，跨源候选**必须也是干净原唱**——不能再拿"时长差不多"放行。
+        // 酷狗的《青花瓷 (DJ Wave版)》242s 与原唱 239s 只差 3s，旧口径（diff > 3 才拒）正好放它过去，
+        // 结果 UI 仍显示"青花瓷 / 周杰伦"，耳朵里放的是 DJ 版。
+        let srcIsClean = StudioPick.isCleanTitle(src.name) && !StudioPick.isLiveAlbum(src.album)
+        let candIsClean = StudioPick.isCleanTitle(cand.name) && !StudioPick.isLiveAlbum(cand.album)
+        if srcIsClean && !candIsClean { return false }
 
         if diff > maxDurationDiffSec {
             // 源本身是现场/节目变体，候选是干净录音室条目（裸名 + 正式专辑 + 更长）→ 视为同一首

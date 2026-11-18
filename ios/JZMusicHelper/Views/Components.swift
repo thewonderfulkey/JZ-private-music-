@@ -498,6 +498,11 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
 /// 第三十三轮（老板真机反馈）：12% 的底色在 OLED 纯黑上几乎看不见，而且点击还配了震动。
 /// 现在亮到 22%（深色模式下就是明显的浅灰条），并**取消点击震动**——
 /// 反馈靠这一条亮色，而不是靠马达。
+///
+/// 第三十四轮（老板又对着 Light Player 演示）：高亮"太快，肉眼看不清"。
+/// 逐帧量了 Light Player：按下 ~0.1s 亮起、松手后还要亮 ~0.6-0.9s 才退干净。
+/// 所以高亮单独走一条 `easeIn(0.6)+delay(0.1)` 的慢退（前段几乎不掉、后段才淡出），
+/// 缩放仍用 0.30s spring 快速回弹——两件事分开，不能共用一条动画。
 struct RowPressButtonStyle: ButtonStyle {
     var scale: CGFloat = 0.985
     var highlight: Double = 0.22
@@ -508,12 +513,13 @@ struct RowPressButtonStyle: ButtonStyle {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.primary.opacity(configuration.isPressed ? highlight : 0))
+                    .animation(configuration.isPressed
+                               ? .easeOut(duration: 0.10)
+                               : .easeIn(duration: 0.60).delay(0.10),
+                               value: configuration.isPressed)
             )
             .scaleEffect(configuration.isPressed ? scale : 1)
-            // 按下 40ms 就亮起来（要跟手），松手 0.30s 渐隐（留一条可见的拖尾）
-            .animation(configuration.isPressed
-                       ? .easeOut(duration: 0.04)
-                       : .easeOut(duration: 0.30),
+            .animation(configuration.isPressed ? Tokens.Motion.pressDown : Tokens.Motion.pressUp,
                        value: configuration.isPressed)
     }
 }
