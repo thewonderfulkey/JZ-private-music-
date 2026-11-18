@@ -134,8 +134,12 @@ struct DownloadLocationView: View {
                 if isDir { names.append(url.lastPathComponent) }
             }
         }
-        // 默认的 Music 永远在第一位，其余按名字排
-        let others = names.filter { $0 != DownloadLocation.defaultFolderName }.sorted()
+        // 默认的 Download 永远在第一位，其余按名字排。
+        // 旧版下载目录 `Music` 不列出来：它现在只是"老下载的历史文件夹"，
+        // 选它会在里面再套一层 Music/Lyrics/Cover，没有意义（老文件照样在、照样能播）。
+        let others = names
+            .filter { $0 != DownloadLocation.defaultFolderName && $0 != "Music" }
+            .sorted()
         folders = [DownloadLocation.defaultFolderName] + others
         selection = nil
     }
