@@ -490,43 +490,134 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
     }
 }
 
-/// 列表行 / 卡片专用：按下时**整块铺一层亮色高亮**（Light Player 那种"整条亮一下"），再轻缩一点。
+/// 列表行 / 卡片专用：按下瞬间在落点冒出一颗小亮斑，然后**慢慢**扩到整条、亮起来，松手再慢慢退。
 ///
-/// 为什么行不能只靠 `.press` 的缩放：行太宽，0.95 的缩放肉眼几乎看不出来；
-/// 而"按下就有一整条亮色"是手机上最容易被看见的反馈。高亮淡出比淡入慢，按一下有拖尾感。
+/// 第三十五轮（老板："点击反馈还是不及时……按住之后慢慢亮，开始扩散，渐变的时间也慢一些"）：
+/// 系统 `ButtonStyle.isPressed` 在 ScrollView 里会被"延迟触摸"拖一下（UIKit 的
+/// `delaysContentTouches`），所以视觉不能等 `isPressed`——改用 `simultaneousGesture`
+/// 的 `DragGesture(minimumDistance: 0)`：手指一落下就拿到落点，当帧从这一点开始亮。
+/// 但**不是瞬间铺满**：0.50s `easeInOut` 慢慢扩到整条、亮到 30%；松手 0.40s 退掉。
+/// 拖动超过 10pt 视为滚动，立刻收掉且不触发点击。
 ///
-/// 第三十三轮（老板真机反馈）：12% 的底色在 OLED 纯黑上几乎看不见，而且点击还配了震动。
-/// 现在亮到 22%（深色模式下就是明显的浅灰条），并**取消点击震动**——
-/// 反馈靠这一条亮色，而不是靠马达。
-///
-/// 第三十四轮（老板又对着 Light Player 演示）：高亮"太快，肉眼看不清"。
-/// 把 Light Player 那段逐帧取了亮度（540×1168、30fps）：
-///   · 36.43s 开始亮 → 36.67s 到满，**涨上来 0.24s**；
-///   · 按住期间一直是满亮，松手后 37.47→37.87 退干净，**退 0.40s**；
-///   · 满亮时行底色约 RGB 79/255，即 ~31% 白，比我们旧的 22% 更亮。
-/// 所以这里按测量值复刻：涨 0.22s / 退 0.40s、亮色 30%；缩放仍走 0.30s spring，
-/// 和高亮分开——旧版两者共用 0.30s，高亮"啪"一下就没了。
+/// 缩放不再参与（老板要的是"高亮扩散"，不是"整条缩一下"）。
 struct RowPressButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.985
     var highlight: Double = 0.30
     var cornerRadius: CGFloat = 16
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.primary.opacity(configuration.isPressed ? highlight : 0))
-                    // 高亮自己的节奏：涨 0.22s、退 0.40s（与 Light Player 逐帧一致）
-                    .animation(.easeOut(duration: configuration.isPressed ? 0.22 : 0.40),
-                               value: configuration.isPressed)
-            )
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .animation(configuration.isPressed ? Tokens.Motion.pressDown : Tokens.Motion.pressUp,
-                       value: configuration.isPressed)
+            .modifier(RipplePressModifier(highlight: highlight,
+                                          cornerRadius: cornerRadius,
+                                          action: nil))
     }
 }
 
 extension ButtonStyle where Self == RowPressButtonStyle {
     /// 用法（列表行）：`Button { … } label: { SongRow(song: song) }.buttonStyle(.rowPress)`
     static var rowPress: RowPressButtonStyle { RowPressButtonStyle() }
+}
+
+// MARK: - 从落点扩散的高亮
+
+/// 高亮扩散 + 可选点击动作。
+///
+/// - 给 `ButtonStyle` 用：`action` 传 nil，点击仍由 Button 自己触发，这里只画高亮；
+/// - 给 `onTapGesture` 的歌词行用：`.rippleTap { onTap() }`，落点高亮和点击一起接管。
+struct RipplePressModifier: ViewModifier {
+
+    var highlight: Double = 0.30
+    var cornerRadius: CGFloat = 16
+    var action: (() -> Void)?
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var origin: CGPoint = .zero
+    @State private var pressID = 0
+    @State private var glow: Double = 0
+    @State private var tracking = false
+    @State private var cancelled = false
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                GeometryReader { geo in
+                    if pressID > 0 {
+                        RippleFill(origin: origin,
+                                   size: geo.size,
+                                   color: Color.primary.opacity(highlight))
+                            .id(pressID)
+                            .opacity(cancelled ? 0 : glow)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(gesture, including: isEnabled ? .all : .none)
+    }
+
+    private var gesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !tracking {
+                    tracking = true
+                    cancelled = false
+                    origin = value.startLocation
+                    pressID += 1
+                    glow = 1                     // 落点当帧就亮，不做淡入等待
+                }
+                if abs(value.translation.width) > 10 || abs(value.translation.height) > 10 {
+                    if !cancelled {
+                        cancelled = true
+                        withAnimation(.easeOut(duration: 0.15)) { glow = 0 }
+                    }
+                }
+            }
+            .onEnded { _ in
+                let wasTracking = tracking
+                tracking = false
+                guard wasTracking, !cancelled else { return }
+                // 松手后停 0.08s 再淡出：快速连点时也能看到亮斑继续长一下，
+                // 不会"点一下就没了"；按住的情况则从满亮开始退。
+                withAnimation(.easeOut(duration: 0.40).delay(0.08)) { glow = 0 }
+                action?()
+            }
+    }
+}
+
+/// 一块从 `origin` 扩到盖住整个 `size` 的圆形亮色；由外层的圆角矩形裁掉。
+private struct RippleFill: View {
+
+    let origin: CGPoint
+    let size: CGSize
+    let color: Color
+
+    @State private var expanded = false
+
+    var body: some View {
+        let dx = max(origin.x, size.width - origin.x)
+        let dy = max(origin.y, size.height - origin.y)
+        let radius = max(24, (dx * dx + dy * dy).squareRoot() * 1.02)
+        return Circle()
+            .fill(color)
+            .frame(width: radius * 2, height: radius * 2)
+            .position(origin)
+            // 起点不是"全亮突然出现"：先是一颗 6% 大小、40% 亮度的亮斑，
+            // 0.50s 里一边长大一边变亮，看起来才是"按住之后慢慢亮、开始扩散"。
+            .scaleEffect(expanded ? 1 : 0.06)
+            .opacity(expanded ? 1 : 0.40)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.50)) { expanded = true }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// 给 `onTapGesture` 的条目用：点击落下即从落点扩散高亮，松手后触发动作。
+    func rippleTap(cornerRadius: CGFloat = 12,
+                   highlight: Double = 0.30,
+                   action: @escaping () -> Void) -> some View {
+        modifier(RipplePressModifier(highlight: highlight, cornerRadius: cornerRadius, action: action))
+            // 视觉高亮由手势负责；VoiceOver 激活仍走系统 action
+            .accessibilityAction { action() }
+    }
 }

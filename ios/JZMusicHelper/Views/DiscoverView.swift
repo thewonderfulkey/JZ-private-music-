@@ -34,12 +34,13 @@ struct DiscoverView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Tokens.Spacing.l) {
                 searchEntry
-                squareSection
                 artistSection
                 recentSection
                 newSongsSection
                 guessSection
                 hotSection
+                // 第三十五轮（老板）：歌单广场放到最下面
+                squareSection
                 // 迷你播放条是浮层（第五轮反馈 ⑨：它会压住最后一条），末尾显式让出高度
                 MiniPlayerSpacer()
             }

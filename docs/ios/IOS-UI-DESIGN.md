@@ -182,7 +182,7 @@
 | 歌词行推进 | `.spring(response: 0.38, dampingFraction: 0.92)` 位移 + 当前行字重/色过渡 | 380ms |
 | 逐字染色 | `linear(duration: 0.14)` 单字推进（跟随每字 start/end） | 140ms |
 | 收藏心跳 | `.bouncy(duration: 0.26)`，scale 1 → 1.16 → 1；图标 `replace` + `bounce` | 260ms |
-| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行 30% 亮色高亮 + scale 0.985，涨 0.22s、退 0.40s（逐帧对齐 Light Player）；缩放仍 0.30s 回弹；普通点击不给触觉 | 220 / 400ms |
+| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行 30% 亮色高亮，**从手指落点** 0.50s `easeInOut` 慢慢扩散铺满、松手停 0.08s 再 0.40s 渐隐（`DragGesture(minimumDistance: 0)`，不等系统 `isPressed`）；歌词行同一套 `.rippleTap`；普通点击不给触觉 | 500 / 480ms |
 | 下载完成 | 行内进度区收起 + `.snappy` 图标切换 | 260ms |
 | 列表增删 | 系统 `List` 默认动画，不自定义 | — |
 | 无源自动跳歌 | 无炫技：顶部内联提示条滑入 200ms，2s 后淡出 | 200ms |

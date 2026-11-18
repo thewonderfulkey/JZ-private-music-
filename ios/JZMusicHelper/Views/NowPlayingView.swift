@@ -1153,8 +1153,7 @@ private struct LyricLineRow: View {
             Spacer(minLength: 0)
             textContent
                 .multilineTextAlignment(.center)
-                .contentShape(Rectangle())
-                .onTapGesture { onTap() }
+                .rippleTap(cornerRadius: 10) { onTap() }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(line.text)
                 .accessibilityValue(isCurrent ? "第 \(index + 1) 行，共 \(player.lyrics.count) 行" : "")
