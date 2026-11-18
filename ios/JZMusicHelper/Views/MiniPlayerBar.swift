@@ -180,7 +180,7 @@ struct MiniPlayerOverlay: ViewModifier {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: player.hasCurrentSong)
+        .animation(Tokens.Motion.miniPlayer, value: player.hasCurrentSong)
     }
 }
 

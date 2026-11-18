@@ -73,6 +73,7 @@ jobs:
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
             ios/JZMusicHelper/Services/IntentInbox.swift \
             ios/JZMusicHelper/Services/LayoutRules.swift \
+            ios/JZMusicHelper/Services/RecognizeMotion.swift \
             ios/JZMusicHelper/Services/SplashTimeline.swift \
             ios/JZMusicHelper/Models/DiscoverCatalog.swift \
             ios/JZMusicHelper/Services/LyricsModel.swift \

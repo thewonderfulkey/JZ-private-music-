@@ -1,3 +1,42 @@
+## iOS 第三十二轮 · 2026-11-18 17:0x（动效与点击反馈全面优化：Light Player 底栏 + 识曲重做）
+
+**来源：老板「查看给我发 ipa 包的那个飞书开发群……里面有 Light Player 的最新实测录屏，我喜欢这个软件的点击反馈，以及切换底层栏的动画，我希望把我现在音乐软件 iOS 的动画和点击反馈全都优化一遍，尤其是听歌识曲的动画，点击识曲是渐变，太丑且不符合功能」**
+
+录屏取自群里 16:28 的 `3146922431.mov`（31s、540×1168，已下到 `.build/inbox/`），逐帧确认两件事：
+
+- **点击反馈**：按下当帧整行铺一层高亮 + 内容轻缩，松手用比按下更慢一档的 spring 顶回；
+- **底栏切换**：选中项从一排图标里"长"成带文字的胶囊，切换时胶囊滑到下一个槽位、文字只淡入，
+  内容整屏 0.985→1 交叉淡变（不是系统 tab bar 的 tint 变色）。
+
+**改了什么**
+
+- **新 `Views/JZTabBar.swift` + 重写 `RootTabView`**：5 Tab 改自绘栏（58pt 纸底 + 0.5pt 分割线、
+  朱砂 10% 胶囊、`matchedGeometryEffect` 滑动、图标 `symbolEffect(.bounce)`、下载角标、
+  VoiceOver 完整标签、Dynamic Type 上限 xxLarge）。Tab 内容改 visited-set 常驻容器：首次进入才建
+  `NavigationStack`（识曲页的 wasm WKWebView 不在启动时创建），切换 0.26s 交叉淡变，push 栈与滚动位置保留。
+- **新 `Views/RecognizeStage.swift` + `Services/RecognizeMotion.swift`**：识曲从"整页 0.6s 渐变"
+  改成三拍——聆听（三圈声波 1.5s/圈、24 根径向电平条、12 秒倒计时环）/ 辨认（204pt 雷达弧 1.1s/圈 +
+  `waveform` 变量色）/ 结果（0.55s 成功脉冲 + 勾；没听出来、失败 ±6pt 抖 3 下 + 斜杠）。
+  文案只做 6pt 上浮淡入，结果卡 0.42s spring 从下顶上来；全部尊重 Reduce Motion（只留倒计时环与 0.15s 淡变）。
+- **触觉补齐**：开始聆听 medium、辨认 light、出结果 success、没听出来 warning、失败 error；切 Tab
+  selection 只给一下；失败/成功触觉从业务层收进舞台，避免双响。
+- **全局按压**：`PressFeedbackButtonStyle` 0.94/0.72 → 0.95/0.78，下落 0.14s、松手 0.30s；
+  `RowPressButtonStyle` 高亮 0.10 → 0.12、scale 0.99；`MediaCard` 从 `onTapGesture` 改 Button
+  （原来点大卡片没有任何"被按住"的画面）。
+- **播放页**：封面 ↔ 歌词等 6 处 0.26s `easeInOut` → `Tokens.Motion.panelSwap` spring；播放/暂停、
+  收藏/下载/歌词、播放模式图标走 `contentTransition(.symbolEffect(.replace))` + bounce；迷你条入场换 spring。
+- **新增 14 条纯函数断言**（声波错峰/透明度、电平条上下界、倒计时夹紧、雷达周期、脉冲、抖动幅度、
+  同心圆顺序、频谱不压环、减弱动效时长），CI 断言 678 → 692。
+
+**视觉预演**：`docs/ios/mockups/motion-rework.html` / `.png`（识曲 6 拍 + 底栏 3 态），
+生成脚本 `tools/ios/gen_motion_mockup.py`，数值与 `RecognizeMotion.swift` 同步；
+设计口径写进 `docs/ios/IOS-UI-DESIGN.md` §6.1 / §6.3。
+
+**验证**：本机 typecheck 0、`-parse` 0、UI 卫生 27 个界面文件、识曲动效隔离自测 14/14；
+CI #（待补）/ 692 条断言全绿；IPA `JZ-Music-v2.4.4-（待补）-r99-ios-unsigned.ipa` 已发群。
+
+版本 2.4.4（182）。
+
 ## iOS 第三十一轮 · 2026-11-18 16:1x（清理：编辑精选死代码全删，Widget 维持现状）
 
 **来源：老板「今日精选不用加了，维持现状就行了，原来的编辑精选逻辑已经可以完全删了」「现在还有什么剩下的收尾工作」**

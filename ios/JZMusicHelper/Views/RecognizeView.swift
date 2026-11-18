@@ -28,7 +28,6 @@ struct RecognizeView: View {
 
     @State private var phase: Phase = .idle
     @State private var remaining = 12
-    @State private var pulse = false
     @State private var level: Float = 0
 
     @State private var recognized: RecognizeCandidate?
@@ -47,11 +46,14 @@ struct RecognizeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Tokens.Spacing.l) {
-                stage
+                // 第三十二轮：舞台从"整页渐变的一颗圈"换成 RecognizeStage（声波/频谱/倒计时/雷达）。
+                RecognizeStage(phase: phase,
+                               level: level,
+                               remaining: remaining,
+                               totalSeconds: settings.recognizeSeconds,
+                               onTap: handleMicTap)
                 phaseText
-                if phase == .result {
-                    resultSection
-                }
+                resultSlot
                 recentSection
                 // 迷你条是浮层：末尾让出高度（第五轮反馈 ⑨）
                 MiniPlayerSpacer()
@@ -92,6 +94,21 @@ struct RecognizeView: View {
             }
         }
         .onDisappear { cancelListen() }
+        // 第三十二轮：五个 Tab 改成常驻保活（切走不再触发 onDisappear），
+        // 所以"切走就停录"要显式盯 router.tab，否则麦克风会在后台一直录。
+        .onChange(of: router.tab) { _, newTab in
+            guard newTab != .recognize else { return }
+            if phase == .listening || phase == .recognizing {
+                cancelListen()
+            }
+        }
+        // 同理：全屏播放页盖上来时也别继续录（常驻 Tab 不会触发 onDisappear）
+        .onChange(of: router.showPlayer) { _, showing in
+            guard showing else { return }
+            if phase == .listening || phase == .recognizing {
+                cancelListen()
+            }
+        }
         // App Intent（「听歌识曲」快捷指令）进来时自动开始听
         .onChange(of: router.pendingRecognize) { _, value in
             guard value else { return }
@@ -106,106 +123,88 @@ struct RecognizeView: View {
         }
     }
 
-    // MARK: 麦克风舞台
-
-    private var stage: some View {
-        ZStack {
-            Circle()
-                .fill(Tokens.Palette.vermilion.opacity(0.06))
-                .frame(width: 210, height: 210)
-                .scaleEffect(pulseScale)
-                .opacity(phase == .listening ? 1 : 0.5)
-            Circle()
-                .fill(Tokens.Palette.vermilion.opacity(0.10))
-                .frame(width: 176, height: 176)
-            Circle()
-                .fill(Tokens.Palette.paperElevated)
-                .frame(width: 146, height: 146)
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-
-            Image(systemName: phase == .listening ? "stop.fill" : "mic.fill")
-                .font(.system(size: 38, weight: .regular))
-                .foregroundStyle(phase == .listening ? Tokens.Palette.vermilion : Color.primary)
-        }
-        .frame(height: 220)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: handleMicTap)
-        .accessibilityElement()
-        .accessibilityLabel(phase == .listening ? "停止聆听" : "开始识曲")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { handleMicTap() }
-        .animation(.easeInOut(duration: 0.6), value: phase)
-        .onChange(of: phase) { _, newValue in
-            if newValue == .listening {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true }
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) { pulse = false }
-            }
-        }
-    }
-
-    /// 呼吸圈 + 实时电平：安静时也有轻微起伏，不至于像卡死
-    private var pulseScale: CGFloat {
-        guard phase == .listening else { return 1.0 }
-        let base: CGFloat = pulse ? 1.06 : 0.98
-        return base + CGFloat(min(max(level, 0), 1)) * 0.18
-    }
-
     // MARK: 阶段文案
+    //
+    // 第三十二轮：文案不再跟着整页一起 0.6s 渐变。每个阶段是一条独立短句，
+    // 插入时 6pt 上浮 + 淡入（0.18s），移出只淡出；舞台、按钮、结果卡各走各的动画。
 
     @ViewBuilder
     private var phaseText: some View {
         VStack(spacing: Tokens.Spacing.xxs) {
             switch phase {
             case .idle:
-                Text("点一下麦克风，开始听")
-                    .font(.title3)
-                Text("把手机靠近正在外放的音箱")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                phaseMessage(title: "点一下麦克风，开始听",
+                             detail: "把手机靠近正在外放的音箱")
             case .listening:
-                Text("正在聆听…")
-                    .font(.title3)
-                Text("还能听 \(remaining) 秒 · 再点一下可取消")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                phaseMessage(title: "正在聆听…",
+                             detail: "还能听 \(remaining) 秒 · 再点一下可取消")
             case .recognizing:
-                Text("正在辨认…")
-                    .font(.title3)
-                Text("比对曲库中")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                phaseMessage(title: "正在辨认…", detail: "比对曲库中")
             case .result:
-                Text("听出来了")
-                    .font(.title3)
+                phaseMessage(title: "听出来了", detail: nil)
             case .noMatch:
-                Text("这次没听出来")
-                    .font(.title3)
-                Text("靠近一点、音量别太小，或者换个安静点的地方再试")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, Tokens.Spacing.l)
-                Button("再听一次") { handleMicTap() }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.top, Tokens.Spacing.xs)
+                retryMessage(title: "这次没听出来",
+                             detail: "靠近一点、音量别太小，或者换个安静点的地方再试",
+                             actionTitle: "再听一次")
             case .failed(let message):
-                Text("识别没成功")
-                    .font(.title3)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, Tokens.Spacing.l)
-                Button("再试一次") { handleMicTap() }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.top, Tokens.Spacing.xs)
+                retryMessage(title: "识别没成功",
+                             detail: message,
+                             actionTitle: "再试一次")
             }
         }
         .frame(maxWidth: .infinity)
+        .animation(Tokens.Motion.textSwap, value: phase)
+    }
+
+    private func phaseMessage(title: String, detail: String?) -> some View {
+        VStack(spacing: Tokens.Spacing.xxs) {
+            Text(title)
+                .font(.title3)
+            if let detail {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Tokens.Spacing.l)
+            }
+        }
+        .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)),
+                                removal: .opacity))
+    }
+
+    private func retryMessage(title: String, detail: String, actionTitle: String) -> some View {
+        VStack(spacing: Tokens.Spacing.xxs) {
+            Text(title)
+                .font(.title3)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, Tokens.Spacing.l)
+            Button(actionTitle) { handleMicTap() }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.press)
+                .padding(.top, Tokens.Spacing.xs)
+        }
+        .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)),
+                                removal: .opacity))
     }
 
     // MARK: 结果
+    //
+    // 结果卡单独占一个"插槽"：只有它的插入/移出走 resultIn（从下方 12pt 顶上来），
+    // 舞台与文案不受这条 spring 影响。
+
+    @ViewBuilder
+    private var resultSlot: some View {
+        Group {
+            if phase == .result {
+                resultSection
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(Tokens.Motion.resultIn, value: phase)
+    }
 
     @ViewBuilder
     private var resultSection: some View {
@@ -400,6 +399,7 @@ struct RecognizeView: View {
     private func handleMicTap() {
         switch phase {
         case .listening, .recognizing:
+            Haptics.tap()
             cancelListen()
         case .idle, .noMatch, .failed, .result:
             startListen()
@@ -441,7 +441,12 @@ struct RecognizeView: View {
             player.toggle()
         }
 
-        capture.onLevel = { value in level = value }
+        capture.onLevel = { value in
+            // RMS 原始值很小（外放音乐大约 0.02…0.2），直接画频谱几乎不动。
+            // 先放大 5.5 倍再夹到 0…1，并做一次低通（新值 45%），条子才不会一格一格跳。
+            let boosted = Float(min(max(Double(value) * 5.5, 0), 1))
+            level = level * 0.55 + boosted * 0.45
+        }
         do {
             try capture.start()
         } catch {
@@ -493,7 +498,7 @@ struct RecognizeView: View {
               let top = result.ranked.first else { return false }
         recognized = top.rep
         phase = .result
-        Haptics.success()
+        // 触觉统一由 RecognizeStage 在 phase 变化时给（这里再给一次会成功两下）
         await resolveVersions(top.rep)
         return true
     }
@@ -515,7 +520,6 @@ struct RecognizeView: View {
         }
         recognized = top.rep
         phase = .result
-        Haptics.success()
         await resolveVersions(top.rep)
     }
 

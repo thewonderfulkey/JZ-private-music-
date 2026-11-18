@@ -2463,6 +2463,87 @@ check("结束判定：差一点点不结束、到点就结束",
         && SplashTimeline.isFinished(at: SplashTimeline.total, reduceMotion: false)
         && SplashTimeline.isFinished(at: SplashTimeline.reduceMotionTotal, reduceMotion: true))
 
+// MARK: - 识曲舞台动效口径（RecognizeMotion）
+//
+// 第三十二轮：老板说"点击识曲是渐变，太丑且不符合功能"。新舞台全部由这几个纯函数驱动，
+// 这里把"声波几秒一圈、透明度上限、倒计时夹紧、抖动不越界、同心圆顺序"钉死——
+// 以后调手感只能改常量，不能改出"外圈跑出舞台"或"频谱压在倒计时环上"这种画面事故。
+
+section("识曲舞台动效口径（RecognizeMotion）")
+
+do {
+    let samples = stride(from: 0.0, through: 12.0, by: 0.017).map { $0 }
+    check("声波进度恒在 0…1（含长时间运行）",
+          samples.allSatisfy { t in
+              (0..<RecognizeMotion.rippleCount).allSatisfy { index in
+                  let p = RecognizeMotion.rippleProgress(elapsed: t + 10_000, index: index)
+                  return p >= 0 && p < 1
+              }
+          })
+    check("声波错峰：三圈不同时出生",
+          RecognizeMotion.rippleProgress(elapsed: 0, index: 0) == 0
+            && RecognizeMotion.rippleProgress(elapsed: 0, index: 1) > 0.5,
+          "i1=\(RecognizeMotion.rippleProgress(elapsed: 0, index: 1))")
+    check("声波缩放 1 → 1.55，且单调外扩",
+          abs(RecognizeMotion.rippleScale(progress: 0) - 1) < 1e-9
+            && abs(RecognizeMotion.rippleScale(progress: 1) - RecognizeMotion.rippleMaxScale) < 1e-9
+            && RecognizeMotion.rippleScale(progress: 0.4) < RecognizeMotion.rippleScale(progress: 0.8))
+    check("声波透明度：峰值 0.42 → 0，且随距离递减",
+          abs(RecognizeMotion.rippleOpacity(progress: 0) - RecognizeMotion.ripplePeakOpacity) < 1e-9
+            && RecognizeMotion.rippleOpacity(progress: 1) == 0
+            && RecognizeMotion.rippleOpacity(progress: 0.5) < RecognizeMotion.rippleOpacity(progress: 0.2))
+    check("声波外圈不会跑出舞台",
+          RecognizeMotion.coreDiameter * RecognizeMotion.rippleMaxScale <= RecognizeMotion.stageHeight,
+          "outer=\(RecognizeMotion.coreDiameter * RecognizeMotion.rippleMaxScale)")
+    check("电平条：静音留 3pt、满电平不超过 18pt、不为 NaN",
+          (0..<RecognizeMotion.barCount).allSatisfy { index in
+              let quiet = RecognizeMotion.barLength(index: index, level: 0, elapsed: 1.23)
+              let loud = RecognizeMotion.barLength(index: index, level: 1, elapsed: 1.23)
+              return abs(quiet - RecognizeMotion.barBaseLength) < 1e-9
+                  && loud >= RecognizeMotion.barBaseLength
+                  && loud <= RecognizeMotion.barMaxLength + 1e-9
+                  && loud.isFinite
+          })
+    check("电平条透明度有上下界",
+          (0...10).allSatisfy { step in
+              let value = RecognizeMotion.barOpacity(level: Double(step) / 10)
+              return value >= 0 && value <= RecognizeMotion.barPeakOpacity + 1e-9
+          })
+    check("倒计时环：听满为 1、刚开始为 0、越界夹紧",
+          RecognizeMotion.countdownProgress(remaining: 0, total: 12) == 1
+            && RecognizeMotion.countdownProgress(remaining: 12, total: 12) == 0
+            && RecognizeMotion.countdownProgress(remaining: 20, total: 12) == 0
+            && RecognizeMotion.countdownProgress(remaining: -3, total: 12) == 1
+            && RecognizeMotion.countdownProgress(remaining: 5, total: 0) == 0)
+    check("雷达弧：1.1s 一圈，进度循环",
+          RecognizeMotion.scanRotation(elapsed: 0) == 0
+            && abs(RecognizeMotion.scanRotation(elapsed: RecognizeMotion.scanCycle / 2) - 0.5) < 1e-6
+            && abs(RecognizeMotion.scanRotation(elapsed: RecognizeMotion.scanCycle)) < 1e-9
+            && RecognizeMotion.scanRotation(elapsed: 9.9) < 1)
+    check("成功脉冲：0.55s 扩到 1.55，透明度归零",
+          abs(RecognizeMotion.burstScale(elapsed: 0) - 1) < 1e-9
+            && abs(RecognizeMotion.burstScale(elapsed: RecognizeMotion.burstCycle) - RecognizeMotion.burstMaxScale) < 1e-9
+            && RecognizeMotion.burstOpacity(elapsed: RecognizeMotion.burstCycle) == 0
+            && RecognizeMotion.burstOpacity(elapsed: RecognizeMotion.burstCycle / 2) < 0.55)
+    check("失败抖动：起止为 0，全程不超出 ±6pt",
+          RecognizeMotion.shakeOffset(elapsed: 0) == 0
+            && RecognizeMotion.shakeOffset(elapsed: RecognizeMotion.shakeDuration) == 0
+            && (0...36).allSatisfy { step in
+                abs(RecognizeMotion.shakeOffset(elapsed: Double(step) / 100))
+                    <= RecognizeMotion.shakeAmplitude + 1e-9
+            },
+          "peak=\(RecognizeMotion.shakeOffset(elapsed: 0.18))")
+    check("同心圆顺序：底盘 < 光晕 < 倒计时环，且都在舞台高度内",
+          RecognizeMotion.coreDiameter < RecognizeMotion.haloDiameter
+            && RecognizeMotion.haloDiameter < RecognizeMotion.countdownDiameter
+            && RecognizeMotion.countdownDiameter <= RecognizeMotion.stageHeight)
+    check("频谱整圈在倒计时环以内（不压环）",
+          RecognizeMotion.barRadius + RecognizeMotion.barMaxLength < RecognizeMotion.countdownDiameter / 2,
+          "barOuter=\(RecognizeMotion.barRadius + RecognizeMotion.barMaxLength)")
+    check("减弱动效的淡变不超过 0.2s",
+          RecognizeMotion.reduceFade > 0 && RecognizeMotion.reduceFade <= 0.2)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

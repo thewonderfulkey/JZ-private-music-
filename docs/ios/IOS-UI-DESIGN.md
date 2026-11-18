@@ -160,7 +160,7 @@
 
 | 表面 | 材质 |
 |---|---|
-| Tab 栏 | 系统默认（自动 blur） |
+| Tab 栏 | 自绘 58pt 纸底（`paper`）+ 0.5pt 顶部 `.08` 分割线；选中项是朱砂 10% 胶囊（不透明、不用 blur） |
 | Mini Player 背景 | `.regularMaterial` + 1pt `.separator` 上边线，圆角 12，左右 8pt 内缩 |
 | 播放页背景 | 封面取色 → `LinearGradient` + `.ultraThinMaterial` 叠层（暗色下用 `.thickMaterial` 保对比） |
 | Sheet | 系统默认 `.large` detent + `.presentationBackground(.regularMaterial)` |
@@ -176,17 +176,22 @@
 
 | 场景 | 做法 | 时长/曲线 |
 |---|---|---|
-| Tab 切换 | 系统默认。**不做** Android 的左右滑入 | — |
+| Tab 切换 | 自绘 `JZTabBar`：选中胶囊用 `matchedGeometryEffect` 在 5 个槽位间滑动（0.36s / damping 0.80），文字只淡入、图标换实心并 `symbolEffect(.bounce)`；Tab 内容 0.985→1 + 交叉淡变 0.26s（`Tokens.Motion.tabContent`）。**不做** Android 的左右滑入 | 360 / 260ms |
 | 进播放页 | `matchedTransitionSource` + `.navigationTransition(.zoom)` 从 mini player 封面放大（iOS 18+）；iOS 17 回退为 `.sheet` 默认上滑 | 系统 |
-| 封面 ↔ 歌词切换 | `.spring(response: 0.42, dampingFraction: 0.86)` 交叉淡变 + 轻微缩放 | 420ms |
+| 封面 ↔ 歌词切换 | `.spring(response: 0.42, dampingFraction: 0.86)` 交叉淡变 + 轻微缩放（`Tokens.Motion.panelSwap`） | 340ms |
 | 歌词行推进 | `.spring(response: 0.38, dampingFraction: 0.92)` 位移 + 当前行字重/色过渡 | 380ms |
 | 逐字染色 | `linear(duration: 0.14)` 单字推进（跟随每字 start/end） | 140ms |
-| 收藏心跳 | `.bouncy(duration: 0.26)`，scale 1 → 1.16 → 1 | 260ms |
+| 收藏心跳 | `.bouncy(duration: 0.26)`，scale 1 → 1.16 → 1；图标 `replace` + `bounce` | 260ms |
+| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行改为整条 12% 高亮 + scale 0.99。下落 0.14s spring，松手 0.30s spring | 140 / 300ms |
 | 下载完成 | 行内进度区收起 + `.snappy` 图标切换 | 260ms |
 | 列表增删 | 系统 `List` 默认动画，不自定义 | — |
 | 无源自动跳歌 | 无炫技：顶部内联提示条滑入 200ms，2s 后淡出 | 200ms |
+| 识曲 · 聆听 | 三圈声波从 136pt 底盘外扩（1.5s 一圈、错峰 0.42s、1→1.55、0.32→0）；24 根径向电平条（麦克风 RMS ×5.5 后低通，3→15pt）；12 秒倒计时环（0.08 底轨 + 朱砂进度） | 30fps `TimelineView` |
+| 识曲 · 辨认 | 声波收起；204pt 雷达弧 1.1s 转一圈（18% 弧长，`AngularGradient` 尾迹）+ `waveform` 变量色 | 1.1s/圈 |
+| 识曲 · 结果 | 一次 0.55s 成功脉冲（1→1.55、0.55→0）+ 图标 `replace` 变勾；结果卡 0.42s spring 从下方 12pt 顶上来 | 550 / 420ms |
+| 识曲 · 失败 | 舞台横向抖 3 下（±6pt / 0.36s）+ 图标斜杠；文案只做 6pt 上浮淡入，**不整页渐变** | 360ms |
 | 开屏（冷启动一次） | 耳机标自绘三拍：头梁扇形遮罩落笔（easeOut）→ 两只耳罩弹入（spring 0.40 / 0.72，右耳罩晚 0.06s）→ 朱砂声波 + 1.04 轻顶；退场时纸底淡出、首页 0.985→1 交叉淡入 | 1.72s（图标 1.30–1.58 先走，纸底 1.30–1.72） |
-| `Reduce Motion` 开启 | 关闭 zoom 转场、关闭封面缩放，改纯 crossfade；歌词改为直接跳行；开屏不做落笔/弹入/声波，图标直接是完整的，停 0.35s 淡出 0.30s | 0.65s |
+| `Reduce Motion` 开启 | 关闭 zoom 转场、关闭封面缩放，改纯 crossfade；歌词改为直接跳行；开屏不做落笔/弹入/声波，图标直接是完整的，停 0.35s 淡出 0.30s；底部栏胶囊不滑动只换底色；识曲不做声波/抖动/成功脉冲/`bounce`，只留倒计时环与 0.15s 淡变 | 0.65s / 0.15s |
 
 ### 6.2 触觉（克制：只在"改变了什么"时给）
 
@@ -199,9 +204,31 @@
 | 下载开始 | `.light` |
 | 下载完成 / 全部源解析失败 | `UINotificationFeedbackGenerator` `.success` / `.error` |
 | 识曲出结果 | `.success` |
+| 识曲没听出来 / 失败 | `.warning` / `.error` |
+| 切 Tab | `UISelectionFeedbackGenerator()`（只在真的换 Tab 时一下） |
 | 麦克风开始聆听 | `.medium`（物理动作） |
 | 拖拽排序（队列） | `.light` + 系统 drag 反馈 |
 | **禁止**：滚动、翻页、每次打勾、Toast 出现时给触觉 | — |
+
+### 6.3 识曲舞台的结构（第三十二轮）
+
+老板 2026-11-18 对着 Light Player 录屏说"点击识曲是渐变，太丑且不符合功能"。旧实现只有一颗
+210pt 的圈在 `easeInOut(0.6)` 里整体淡入淡出，把图标、文字、结果卡一起拖着渐变；新实现把
+"听音"这件事拆成三拍，每一拍只动该动的东西：
+
+| 拍 | 画面 | 为什么 |
+|---|---|---|
+| 听 | 底盘外三圈声波（1.5s/圈、错峰 0.42s）+ 24 根径向电平条（跟麦克风 RMS）+ 12 秒倒计时环 | 声波=在听，电平=听到了，倒计时=还要多久——三个都是真信息，不是装饰 |
+| 认 | 声波收掉，204pt 雷达弧 1.1s 转一圈 + `waveform` 变量色 | 换了个动作，用户能看出"录完了，在比对" |
+| 果 | 0.55s 成功脉冲 + 图标变勾 + 结果卡从下顶上来；没听出来/失败则舞台抖 3 下 + 斜杠 | 成功"放大一下"，失败"摇一下头"；文案只做 6pt 上浮淡入 |
+
+数值口径全部在 `Services/RecognizeMotion.swift`（纯函数，CI 有 14 条断言钉住），
+视觉预演 `docs/ios/mockups/motion-rework.html` 与 `motion-rework.png`（6 拍 + 底栏 3 态），
+生成脚本 `tools/ios/gen_motion_mockup.py`——改手感先改预演，再同步回 Swift。
+
+> 自绘底栏是本次唯一偏离系统控件的地方（系统 tab bar 的选中态没有可插手的位移），
+> 其余仍是系统控件；iPad 也走同一条底部栏（与 iPhone 一致，不做侧栏），
+> 底栏字号上限 `xxLarge`，VoiceOver 读完整标签（"我的收藏"而不是"收藏"）。
 
 ---
 

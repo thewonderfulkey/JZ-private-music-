@@ -282,7 +282,7 @@ struct NowPlayingView: View {
                 if showLyrics {
                     Button {
                         Haptics.tap()
-                        withAnimation(.easeInOut(duration: 0.26)) { showLyrics = false }
+                        withAnimation(Tokens.Motion.panelSwap) { showLyrics = false }
                     } label: {
                         Text("封面")
                             .font(.footnote.weight(.medium))
@@ -307,7 +307,7 @@ struct NowPlayingView: View {
         Menu {
             if showLyrics {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.26)) { showLyrics = false }
+                    withAnimation(Tokens.Motion.panelSwap) { showLyrics = false }
                 } label: {
                     Label("回到封面", systemImage: "rectangle.portrait")
                 }
@@ -373,13 +373,13 @@ struct NowPlayingView: View {
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 Haptics.tap()
-                withAnimation(.easeInOut(duration: 0.26)) { showLyrics = true }
+                withAnimation(Tokens.Motion.panelSwap) { showLyrics = true }
             }
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("专辑封面")
             .accessibilityHint("双击看全屏歌词")
             .accessibilityAction {
-                withAnimation(.easeInOut(duration: 0.26)) { showLyrics = true }
+                withAnimation(Tokens.Motion.panelSwap) { showLyrics = true }
             }
 
             Text("双击封面看歌词")
@@ -496,7 +496,7 @@ struct NowPlayingView: View {
                         label: showLyrics ? "封面" : "歌词",
                         tint: .white.opacity(0.82)) {
                 Haptics.tap()
-                withAnimation(.easeInOut(duration: 0.26)) { showLyrics.toggle() }
+                withAnimation(Tokens.Motion.panelSwap) { showLyrics.toggle() }
             }
             .frame(width: itemWidth, height: 52)
             .accessibilityLabel(showLyrics ? "回到封面" : "看歌词")
@@ -521,6 +521,10 @@ struct NowPlayingView: View {
                 Image(systemName: icon)
                     .font(.title3)
                     .foregroundStyle(tint)
+                    // 第三十二轮：图标换形（心 → 实心、下载 → 已下载）走系统 replace，
+                    // 不再"旧图标消失、新图标出现"硬切；配一下 bounce 当按下的回声。
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: icon)
                 Text(label)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.58))
@@ -529,6 +533,7 @@ struct NowPlayingView: View {
             }
             .frame(maxWidth: .infinity, minHeight: Tokens.Spacing.minTapTarget)
             .contentShape(Rectangle())
+            .animation(.snappy, value: icon)
         }
         .buttonStyle(.press)
     }
@@ -640,6 +645,7 @@ struct NowPlayingView: View {
                 Image(systemName: player.mode.symbolName)
                     .font(.title3)
                     .foregroundStyle(.white.opacity(0.85))
+                    .contentTransition(.symbolEffect(.replace))
                 Text(player.mode.displayName)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.58))
@@ -648,6 +654,7 @@ struct NowPlayingView: View {
             }
             .frame(maxWidth: .infinity, minHeight: Tokens.Spacing.minTapTarget)
             .contentShape(Rectangle())
+            .animation(.snappy, value: player.mode)
         }
         .buttonStyle(.press)
         .accessibilityLabel("播放模式，当前\(player.mode.displayName)")
@@ -702,10 +709,12 @@ struct NowPlayingView: View {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.black)
+                        .contentTransition(.symbolEffect(.replace))
                 }
             }
             .frame(width: 64, height: 64)
             .contentShape(Circle())
+            .animation(.snappy, value: player.isPlaying)
         }
         .buttonStyle(.press)
         .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
@@ -759,7 +768,7 @@ struct NowPlayingView: View {
     /// 歌词页 → 封面（双击空白处、点右上角「封面」、⋯ 菜单都走这里）
     private func backToCover() {
         Haptics.tap()
-        withAnimation(.easeInOut(duration: 0.26)) { showLyrics = false }
+        withAnimation(Tokens.Motion.panelSwap) { showLyrics = false }
     }
 
     /// 歌词页顶部的歌名 / 行数来源 / 当前偏移（一行放完，不吃歌词的高度）

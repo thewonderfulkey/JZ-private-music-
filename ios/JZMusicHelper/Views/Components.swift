@@ -293,36 +293,43 @@ struct MediaCard: View {
     var onTap: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Group {
-                if let artwork {
-                    artwork
-                } else {
-                    ZStack {
-                        Tokens.Palette.paperElevated
-                        Image(systemName: "music.note")
-                            .font(.title3)
-                            .foregroundStyle(.tertiary)
+        // 第三十二轮：从 `onTapGesture` 改成 Button + `.pressSubtle`——
+        // 大卡片原来点下去只有导航，没有任何"被按住"的画面，老板对着 Light Player 说"反馈不明显"。
+        Button {
+            onTap?()
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                Group {
+                    if let artwork {
+                        artwork
+                    } else {
+                        ZStack {
+                            Tokens.Palette.paperElevated
+                            Image(systemName: "music.note")
+                                .font(.title3)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
-            }
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
 
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .padding(.top, Tokens.Spacing.xs)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .padding(.top, Tokens.Spacing.xs)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .frame(width: size, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(width: size, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap?() }
+        .buttonStyle(.pressSubtle)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)，\(subtitle)")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -450,24 +457,25 @@ struct PendingFeatureRow: View {
     }
 }
 
-// MARK: - 按压反馈（老板反馈 ③ / r65 反馈 ⑨：点击反馈不明显）
+// MARK: - 按压反馈（老板反馈 ③ / r65 反馈 ⑨ / 第三十二轮：对齐 Light Player）
 
-/// 全 App 统一的按压反馈：按下缩到 0.94、压暗到 0.72、松手弹回。
+/// 全 App 统一的按压反馈：按下缩到 0.95、压暗到 0.78，松手弹回。
 ///
 /// 为什么不用 `.plain`：`.plain` 把系统的按下高亮也一起去掉了，行/卡片点下去毫无反馈，
 /// 加上"卡了一下"的体感就变成"点了没反应"。触觉由调用方在动作里补（`Haptics.tap()`）。
 ///
-/// r65：老板对着群里那段 Light Player 的录屏说"所有的点击反馈都不明显"，所以缩得更狠、压得更暗，
-/// 松手用更快的 spring 弹回——按下去要立刻有"被按住了"的感觉。
+/// 第三十二轮（2026-11-18，老板对着 Light Player 录屏）：按下要"一按就有"——
+/// 下落压到 0.14s 的紧 spring，松手才用 0.30s 的慢一档 spring 顶回来；
+/// 两边用同一条曲线会显得"按下去和弹回来一样软"，没有手感。
 struct PressFeedbackButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.94
-    var dim: Double = 0.72
+    var scale: CGFloat = 0.95
+    var dim: Double = 0.78
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
             .opacity(configuration.isPressed ? dim : 1)
-            .animation(.spring(response: 0.18, dampingFraction: 0.6),
+            .animation(configuration.isPressed ? Tokens.Motion.pressDown : Tokens.Motion.pressUp,
                        value: configuration.isPressed)
     }
 }
@@ -475,19 +483,19 @@ struct PressFeedbackButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == PressFeedbackButtonStyle {
     /// 用法：`.buttonStyle(.press)`
     static var press: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
-    /// 大块卡片用更轻的缩放（整张卡缩 0.94 会显得晃）
+    /// 大块卡片用更轻的缩放（整张卡缩 0.95 会显得晃）
     static var pressSubtle: PressFeedbackButtonStyle {
-        PressFeedbackButtonStyle(scale: 0.97, dim: 0.88)
+        PressFeedbackButtonStyle(scale: 0.968, dim: 0.90)
     }
 }
 
 /// 列表行 / 卡片专用：按下时**整块铺一层高亮**（Light Player 那种"整条压暗"），再轻缩一点。
 ///
-/// 为什么行不能只靠 `.press` 的缩放：行太宽，0.94 的缩放肉眼几乎看不出来；
+/// 为什么行不能只靠 `.press` 的缩放：行太宽，0.95 的缩放肉眼几乎看不出来；
 /// 而"按下就有一整条底色"是手机上最容易被看见的反馈。高亮淡出比淡入慢，按一下有拖尾感。
 struct RowPressButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.985
-    var highlight: Double = 0.10
+    var scale: CGFloat = 0.99
+    var highlight: Double = 0.12
     var cornerRadius: CGFloat = 12
 
     func makeBody(configuration: Configuration) -> some View {
@@ -498,8 +506,8 @@ struct RowPressButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? scale : 1)
             .animation(configuration.isPressed
-                       ? .easeOut(duration: 0.06)
-                       : .easeOut(duration: 0.22),
+                       ? .easeOut(duration: 0.05)
+                       : Tokens.Motion.pressUp,
                        value: configuration.isPressed)
     }
 }

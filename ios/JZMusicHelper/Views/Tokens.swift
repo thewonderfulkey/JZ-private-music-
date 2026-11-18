@@ -63,6 +63,8 @@ enum Tokens {
     enum Motion {
         /// 封面 ↔ 歌词
         static let coverToggle = Animation.spring(response: 0.42, dampingFraction: 0.86)
+        /// 播放页里整块面板互换（封面 ↔ 歌词、更多菜单回封面）：比封面缩放快半档
+        static let panelSwap = Animation.spring(response: 0.34, dampingFraction: 0.90)
         /// 歌词行推进
         static let lyricAdvance = Animation.spring(response: 0.28, dampingFraction: 1.0)
         /// 收藏心跳
@@ -71,6 +73,27 @@ enum Tokens {
         static let stateChange = Animation.snappy(duration: 0.26)
         /// 逐字染色单字时长（秒）
         static let perCharacterSeconds: Double = 0.14
+
+        // MARK: 第三十二轮（2026-11-18，参照 Light Player 录屏）
+
+        /// 底部栏选中胶囊滑动：位移要"跟手"，落点允许一点点回弹
+        static let tabSwitch = Animation.spring(response: 0.36, dampingFraction: 0.80)
+        /// Tab 内容交叉淡变（新页 0.985 → 1，旧页 1 → 0）
+        static let tabContent = Animation.spring(response: 0.26, dampingFraction: 0.94)
+        /// 按下：一按就有，不拖泥带水
+        static let pressDown = Animation.spring(response: 0.14, dampingFraction: 0.86)
+        /// 松手：比按下去慢一档，像弹簧把手顶回来
+        static let pressUp = Animation.spring(response: 0.30, dampingFraction: 0.70)
+        /// 识曲麦克风：按下去"陷"一下
+        static let micPress = Animation.spring(response: 0.26, dampingFraction: 0.60)
+        /// 识曲结果卡：从下方顶上来
+        static let resultIn = Animation.spring(response: 0.42, dampingFraction: 0.86)
+        /// 识曲阶段文案的短淡入（只动文字，不动整页）
+        static let textSwap = Animation.easeOut(duration: 0.18)
+        /// 迷你条出现 / 消失
+        static let miniPlayer = Animation.spring(response: 0.34, dampingFraction: 0.86)
+        /// 识曲出结果时舞台图标的一次轻顶
+        static let stagePop = Animation.spring(response: 0.34, dampingFraction: 0.62)
     }
 }
 

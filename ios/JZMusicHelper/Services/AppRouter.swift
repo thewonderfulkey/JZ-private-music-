@@ -14,8 +14,52 @@ import Observation
 @Observable
 final class AppRouter {
 
-    enum Tab: Hashable {
+    enum Tab: String, CaseIterable, Hashable {
         case discover, favorites, recognize, downloads, settings
+
+        /// 底部栏里显示的单字标签（导航标题仍用「我的收藏」全称）
+        var barTitle: String {
+            switch self {
+            case .discover: return "发现"
+            case .favorites: return "收藏"
+            case .recognize: return "识曲"
+            case .downloads: return "下载"
+            case .settings: return "设置"
+            }
+        }
+
+        /// 未选中（线框）符号
+        var symbol: String {
+            switch self {
+            case .discover: return "house"
+            case .favorites: return "heart"
+            case .recognize: return "waveform"
+            case .downloads: return "arrow.down.circle"
+            case .settings: return "gearshape"
+            }
+        }
+
+        /// 选中（实心）符号
+        var filledSymbol: String {
+            switch self {
+            case .discover: return "house.fill"
+            case .favorites: return "heart.fill"
+            case .recognize: return "waveform"
+            case .downloads: return "arrow.down.circle.fill"
+            case .settings: return "gearshape.fill"
+            }
+        }
+
+        /// VoiceOver 用的完整名称（栏里是"收藏"，读屏要读"我的收藏"）
+        var accessibilityTitle: String {
+            switch self {
+            case .discover: return "发现"
+            case .favorites: return "我的收藏"
+            case .recognize: return "识曲"
+            case .downloads: return "下载"
+            case .settings: return "设置"
+            }
+        }
     }
 
     /// 当前 Tab（TabView 直接绑它）
