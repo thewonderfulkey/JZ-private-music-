@@ -1,3 +1,22 @@
+## Android v2.4.17（195） · 2026-11-19（版本号与 iOS 对齐 + 两处修正）
+
+**为什么发这一版**：iOS 线已经走到 2.4.17（195），而 Release 里 Android 还是 2.1.95（153）。
+两端本来就是同一套「搜索 → 换源 → 取流 → 歌词」代码，版本号分开没有好处，所以统一到 **2.4.17（195）**。
+
+**改了什么**
+
+| 项 | 说明 |
+|---|---|
+| 版本号 | `versionName` 2.4.17 / `versionCode` 195，与 iOS 一致；签名不变（debug 证书），可直接覆盖安装 |
+| 设置页文案 | 修掉「高品 320k **320k**」重复：档位名本身已带码率（标准 128k / 高品 320k / 无损 FLAC），不再额外补后缀。桌面版 `SettingsScreen.kt` 同步修（同一段代码） |
+| 构建 | `assembleDebug` 之前编不过（`RECOG_TEST_HOOK` 只在 release / smoke 两个 buildType 里定义），补上 debug 的编译期常量（false） |
+
+**产物**：`JZ-Music-v2.4.17.apk`（29,875,521 B，sha256 `eb10818c…45aa7e08`，md5 `9e8b1974…e516e9`）
+已挂到 [最新 Release](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)，并移除了旧的 2.1.95 APK；
+仓库 `releases/` 同步换成这一份（命名从「JZ音乐助手-v…」改成与 iOS 一致的 `JZ-Music-v…`）。
+
+**验证**：本机 `assembleRelease` 成功；装进 Pixel 5 模拟器实测 versionName=2.4.17 / versionCode=195，
+设置页显示「标准 128k / 高品 320k / 无损 FLAC」（不再重复），README 的 Android 截图也已换成修好的这一张。
 ## iOS 第四十轮补丁 5 · 2026-11-19 02:4x（「去看下载」真的退出播放页并切到下载 Tab）
 
 **来源：老板 r116 真机反馈**

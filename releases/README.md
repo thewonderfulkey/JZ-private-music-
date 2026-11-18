@@ -1,6 +1,6 @@
 # releases/ · 交付规则
 
-1. **只放最新一版 APK**，命名 `JZ音乐助手-v<versionName>.apk`（与 `versionName` 严格一致）。
+1. **只放最新一版 APK**，命名 `JZ-Music-v<versionName>.apk`（与 `versionName` 严格一致；2026-11-19 起从「JZ音乐助手-v…」改成与 iOS 一致的 ASCII 名）。
 2. 旧包一律移到 `../archive/apk/`，不要留在这一层。
 3. 每版同时写 `docs/changelog/note_v<版本>.md`；本目录不再单独写说明。
 4. 签名：Android Debug 证书（SHA-256 `916ad2328810c691a4022d9716a77709e9ebb08aa262b373c0b05b8c6aed07ac`），
@@ -31,6 +31,7 @@
 
 | 版本 | versionCode | 主题 | APK |
 |---|---|---|---|
+| v2.4.17 | 195 | 版本号与 iOS 对齐；修设置页「高品 320k 320k」重复；`assembleDebug` 可用 | `JZ-Music-v2.4.17.apk` |
 | v2.1.95 | 153 | 四个界面细节：识曲列表贴底/去平台并发/酷我时长/结果行对齐 | `JZ音乐助手-v2.1.95.apk` |
 | v2.1.94 | 152 | 六项修复（原唱/酷我解析/酷狗/封面/闸门/提示） | archive |
 | v2.1.93 | 151 | 识曲可自动测（smoke 变体）+ 现场收录版不再抢位 | archive |

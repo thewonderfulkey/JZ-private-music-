@@ -144,15 +144,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     },
                     colors = RadioButtonDefaults.colors(selectedColor = p.accent, unselectedColor = p.text3)
                 )
+                // 档位文案已经自带码率（"标准 128k" / "高品 320k" / "无损 FLAC"），
+                // 以前这里再补一个 "320k" / "FLAC"，界面上就变成「高品 320k 320k」——重复了。
                 Text(q.displayName, color = p.text, fontSize = 14.sp)
-                if (q == QualityLevel.HIGH || q == QualityLevel.LOSSLESS) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (q == QualityLevel.HIGH) "320k" else "FLAC",
-                        color = p.text3,
-                        fontSize = 11.sp
-                    )
-                }
             }
         }
         Spacer(Modifier.height(20.dp))

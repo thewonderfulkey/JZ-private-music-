@@ -17,6 +17,12 @@ android {
     }
 
     buildTypes {
+        // 本机调试：MainActivity 里那段「测试注入入口」用的是编译期常量 BuildConfig.RECOG_TEST_HOOK，
+        // release / smoke 都定义了，唯独 debug 没定义 → assembleDebug 会报 Unresolved reference。
+        // 这里补上（false，正式行为），让 assembleDebug 也能直接用。
+        debug {
+            buildConfigField("boolean", "RECOG_TEST_HOOK", "false")
+        }
         release {
             isMinifyEnabled = false
             // 用 debug 签名：保证发布产物可直接安装（个人分发场景），且 release 体积远小于 debug
