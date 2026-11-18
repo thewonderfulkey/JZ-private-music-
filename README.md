@@ -145,6 +145,17 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ## iPhone 版（iOS 17+）
 
+![iPhone：发现页（歌手大全 / 最近播放 / 最新单曲 / 猜你喜欢）](docs/images/ios-discover.jpg)
+
+![iPhone：正在播放（封面、无损 FLAC、已下载标记、歌词与音源入口）](docs/images/ios-player.jpg)
+
+| 下载 | 听歌识曲 | 我的收藏 | 设置 |
+|---|---|---|---|
+| ![下载](docs/images/ios-downloads.jpg) | ![识曲](docs/images/ios-recognize.jpg) | ![收藏](docs/images/ios-favorites.jpg) | ![设置](docs/images/ios-settings.jpg) |
+
+> 以上是 iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录，
+> 设置页只剩外观 / 车载自动播放 / 歌词字号 / 可缓存歌曲数量 / 识曲 / 下载 / 数据 / 关于。
+
 ### 特色
 
 - **五个页签**：发现 / 我的收藏 / 识曲 / 下载 / 设置。发现页有歌单广场、歌手大全、最新单曲、热门与猜你喜欢。
