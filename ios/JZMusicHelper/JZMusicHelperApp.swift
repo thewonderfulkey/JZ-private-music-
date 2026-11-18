@@ -15,6 +15,10 @@ struct JZMusicHelperApp: App {
     @State private var discoverFeed = MainActor.assumeIsolated { DiscoverFeed() }
     @State private var router = AppRouter()
 
+    /// 开屏动画：只在**这次进程的第一次**显示（App 的 @State 一个进程只初始化一次，
+    /// 所以从后台回来不会重播）。时长/曲线见 `Services/SplashTimeline.swift`。
+    @State private var showSplash = true
+
     init() {
         // 下载完成提示（可选权限，拒绝也不影响下载）
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -22,16 +26,32 @@ struct JZMusicHelperApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView()
-                .environment(player)
-                .environment(library)
-                .environment(settings)
-                .environment(downloadFlow)
-                .environment(discoverFeed)
-                .environment(router)
-                .environmentObject(downloads)
-                .preferredColorScheme(settings.appearance.colorScheme)
-                .tint(Tokens.Palette.vermilion)
+            ZStack {
+                // 首页在开屏底下**照常挂载**：启动时它自己的首帧数据/布局跟动画同时跑，
+                // 动画一退场就是现成的界面，不用再等一次白屏。
+                RootTabView()
+                    .environment(player)
+                    .environment(library)
+                    .environment(settings)
+                    .environment(downloadFlow)
+                    .environment(discoverFeed)
+                    .environment(router)
+                    .environmentObject(downloads)
+                    // 开屏期间首页既点不到，VoiceOver 也读不到（否则读屏会把底下整页念一遍）
+                    .allowsHitTesting(!showSplash)
+                    .accessibilityHidden(showSplash)
+
+                if showSplash {
+                    SplashView {
+                        // 自然播完时纸底已经淡到 0，这层 animation 只是给"点击跳过"一个收尾
+                        withAnimation(.easeOut(duration: 0.22)) { showSplash = false }
+                    }
+                    .transition(.opacity)
+                    .zIndex(1)
+                }
+            }
+            .preferredColorScheme(settings.appearance.colorScheme)
+            .tint(Tokens.Palette.vermilion)
         }
     }
 }

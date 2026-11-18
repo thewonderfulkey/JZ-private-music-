@@ -2191,6 +2191,62 @@ check("罗马音歌手不硬凑（已知边界：宁缺毋滥）",
 check("没有结果时返回 nil",
       ITunesCover.parse(["results": []], title: "青花瓷", artist: "周杰伦") == nil)
 
+// MARK: - 开屏动画时间轴（SplashTimeline）
+//
+// 开屏是冷的：没人会为了它写回归测试，但它一旦"顺序错了"——比如声波先响、耳罩还没戴，
+// 或者退场比落笔还早——看起来就是幻灯片，而且只在真机冷启动那一秒出现，极难复现。
+// 所以把每一拍的先后关系都钉在这里。
+
+section("开屏动画时间轴")
+
+check("头梁先落笔，耳罩才开始戴",
+      SplashTimeline.bandDraw.start < SplashTimeline.cupLeft.start)
+check("两只耳罩错开 0.06s（同时落会像“啪”一下）",
+      abs(SplashTimeline.cupRight.start - SplashTimeline.cupLeft.start - 0.06) < 0.001)
+check("两只耳罩都在声波之前开始",
+      SplashTimeline.cupLeft.start < SplashTimeline.sound.start
+        && SplashTimeline.cupRight.start < SplashTimeline.sound.start)
+check("声波开始时头梁已经画完",
+      SplashTimeline.bandDraw.end <= SplashTimeline.sound.start)
+check("图标轻顶落在声波窗口内",
+      SplashTimeline.thump.start >= SplashTimeline.sound.start
+        && SplashTimeline.thump.end <= SplashTimeline.sound.end)
+check("耳罩彻底落位之后才退场",
+      SplashTimeline.cupLeft.end <= SplashTimeline.exit.start
+        && SplashTimeline.cupRight.end <= SplashTimeline.exit.start)
+check("图标比纸底先走（不留一枚淡影压在新出现的封面上）",
+      SplashTimeline.markFade.end <= SplashTimeline.exit.end)
+check("首页与退场交叉淡入，不是等黑屏再出来",
+      SplashTimeline.contentIn.start < SplashTimeline.exit.end
+        && SplashTimeline.contentIn.end >= SplashTimeline.exit.end - 0.0001)
+check("全片时长 = 退场结束，且压在 1.9s 以内",
+      abs(SplashTimeline.total - SplashTimeline.exit.end) < 0.0001
+        && SplashTimeline.total < 1.9,
+      "total=\(SplashTimeline.total)")
+check("每一拍都落在 0…total 之间",
+      [SplashTimeline.bandDraw, SplashTimeline.cupLeft, SplashTimeline.cupRight,
+       SplashTimeline.sound, SplashTimeline.thump, SplashTimeline.exit,
+       SplashTimeline.markFade, SplashTimeline.contentIn]
+        .allSatisfy { $0.start >= 0 && $0.end <= SplashTimeline.total + 0.0001 })
+check("进度两端夹紧（不许越界，也不许倒流）",
+      SplashTimeline.bandDraw.progress(at: -1) == 0
+        && SplashTimeline.bandDraw.progress(at: 99) == 1
+        && SplashTimeline.bandDraw.progress(at: SplashTimeline.bandDraw.start + 0.1)
+             < SplashTimeline.bandDraw.progress(at: SplashTimeline.bandDraw.start + 0.4))
+check("减弱动效的总时长不到正常版的一半",
+      SplashTimeline.reduceMotionTotal < SplashTimeline.total / 2,
+      "reduce=\(SplashTimeline.reduceMotionTotal)")
+check("图标透明度：开场不透明、结束为 0",
+      SplashTimeline.markOpacity(at: 0, reduceMotion: false) == 1
+        && SplashTimeline.markOpacity(at: SplashTimeline.total, reduceMotion: false) == 0)
+check("减弱动效：先完整停住，再淡出",
+      SplashTimeline.markOpacity(at: SplashTimeline.reduceMotionHold - 0.01, reduceMotion: true) == 1
+        && SplashTimeline.markOpacity(at: SplashTimeline.reduceMotionTotal, reduceMotion: true) < 1e-9)
+check("结束判定：差一点点不结束、到点就结束",
+      !SplashTimeline.isFinished(at: SplashTimeline.total - 0.01, reduceMotion: false)
+        && SplashTimeline.isFinished(at: SplashTimeline.total, reduceMotion: false)
+        && SplashTimeline.isFinished(at: SplashTimeline.reduceMotionTotal, reduceMotion: true))
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

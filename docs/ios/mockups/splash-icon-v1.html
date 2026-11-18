@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>JZ 音乐 · 开屏动画预览 v1（耳机标）</title>
+<style>
+  :root{ --paper:#FAF8F3; --ink:#1D1C1A; --vermilion:#B03A2E; }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#E8E4DA;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:13px;letter-spacing:.16em;color:#4E483F;font-weight:600;text-align:center;padding:28px 0 4px;margin:0}
+  h1 span{color:#8C8578;font-weight:400}
+  .wrap{display:flex;justify-content:center;padding:22px 24px 10px}
+  .phone{position:relative;width:393px;height:852px;background:var(--paper);border-radius:44px;overflow:hidden;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06)}
+  .statusbar{position:absolute;inset:0 0 auto 0;height:54px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 28px;font-size:15px;font-weight:600;color:var(--ink);z-index:6;letter-spacing:.02em}
+  .app{position:absolute;inset:0;padding:74px 20px 0;opacity:0;transform:scale(.985);transform-origin:50% 45%}
+  .app .date{font-size:13px;color:#8A8378;letter-spacing:.06em}
+  .app .hero{margin-top:16px;font-size:30px;font-weight:700;color:var(--ink);letter-spacing:-.01em}
+  .app .grid{margin-top:26px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .app .tile{aspect-ratio:1/1;border-radius:4px;background:#EDE8DE}
+  .app .tile:nth-child(2){background:#E7E2D7}
+  .app .tile:nth-child(3){background:#EFEADF}
+  .app .tile:nth-child(4){background:#E4DFD3}
+  .splash{position:absolute;inset:0;background:var(--paper);z-index:5;display:grid;place-items:center}
+  .markbox{position:relative;width:150px;height:150px;transform-origin:50% 50%}
+  .mark{width:100%;height:100%;display:block;overflow:visible}
+  .cupfill{fill:var(--ink)}
+  .waves{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+  .controls{display:flex;gap:12px;align-items:center;justify-content:center;padding:0 0 26px;font-size:12px;color:#5F594F}
+  .controls button{font:inherit;padding:6px 14px;border-radius:999px;border:1px solid #C9C3B6;background:#FBF9F4;cursor:pointer}
+  .controls input[type=range]{width:360px}
+  .film{display:flex;gap:14px;justify-content:center;padding:18px 24px 40px;flex-wrap:wrap}
+  .film figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .film .phone{width:196px;height:425px;border-radius:22px;box-shadow:0 12px 30px -16px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.06)}
+  .film .statusbar{height:26px;padding:0 14px;font-size:8px}
+  .film .app{padding:36px 10px 0}
+  .film .app .date{font-size:7px} .film .app .hero{font-size:15px;margin-top:8px}
+  .film .app .grid{gap:7px;margin-top:13px}
+  .film .markbox{width:75px;height:75px}
+  .film figcaption{font-size:11px;color:#6B655D;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+  .legend{max-width:880px;margin:0 auto;padding:0 24px 56px;font-size:12.5px;line-height:1.9;color:#514B42}
+  .legend b{color:#2A2622}
+</style>
+</head>
+<body>
+
+<h1>开屏动画 · 图标是耳机，就让它自己“戴上”<span>　1.80s · 冷启动一次 · 点屏幕跳过</span></h1>
+
+<div class="wrap"><div class="phone" id="stage"></div></div>
+
+<div class="controls">
+  <button id="play">重播</button>
+  <input type="range" id="seek" min="0" max="2.2" step="0.01" value="0">
+  <span id="tlabel">t = 0.00s</span>
+</div>
+
+<div class="film" id="film"></div>
+
+<div class="legend">
+  <b>三步，每步都有物理含义：</b>① <b>落笔</b>——头梁沿着自己的弧度长出来（一块从弧心扫过去的扇形遮罩，前端是垂直于走向的一刀，不是普普通通的淡入）；
+  ② <b>戴上</b>——两只耳罩从下方弹入落位，微微外倾 6° 再收正；③ <b>出声</b>——两圈极淡的朱砂声波从耳心荡开，图标同时轻顶一下 1.04。
+  最后图标上浮淡出、耳罩向两侧各让开 6 单位（像张开），首页从 0.985 涨到 1。<br>
+  <b>为什么只有图标：</b>iOS 的启动图（LaunchScreen）只能是静态纸底，所以这一屏必须"从一张空白纸开始"才接得上——
+  第一个动作就是落笔，正好由空白纸起笔。加一行字反而会让它变成海报，而不是开屏。
+</div>
+
+<script>
+// ── 图标轮廓：由 tools/ios/gen_splash_mark.py 从 AppIcon.png 描出（240×240 设计单位）
+const PTS = {
+  band: [[114.9,0],[127.3,0],[145.4,2.3],[157,5.3],[173.1,11.3],[184,16.9],[197.6,25.9],[207.3,34.2],[218.6,46.6],[229.9,62.7],[233.6,69.5],[237.7,79.6],[240,89.4],[239.2,92.8],[235.9,97.3],[235.9,117.2],[234,131.5],[230.2,146.9],[228.7,146.9],[224.2,142.7],[220.8,137.8],[223.5,120.2],[224.2,99.5],[219,93.9],[217.5,89],[215.6,77],[213.7,71.4],[202.8,55.2],[192.3,44.3],[185.9,39.1],[178.4,33.8],[164.9,26.7],[153.6,22.5],[139.7,19.2],[120.9,17.3],[104.8,18.4],[95,20.3],[86.8,22.5],[74.4,27.4],[62.3,33.8],[52.2,40.9],[37.9,54.8],[30,65.7],[24.8,75.9],[21.8,92],[19.9,96.2],[15.8,101],[15.4,112.3],[18.8,138.2],[11.3,147.2],[9.4,146.9],[4.1,124.3],[3.4,116.4],[3.8,99.5],[0,92.4],[0,90.1],[3.8,75.1],[9.8,63.1],[15.8,54.1],[25.9,41.3],[36.1,31.2],[46.6,22.9],[58.2,15.8],[75.5,7.9],[87.5,4.1],[98,1.9]],
+  cup: [[81.5,112.7],[87.1,113.1],[94.6,116.4],[100.3,121.7],[102.9,126.6],[108.2,161.5],[114.6,217.5],[113.8,224.6],[111.5,228.7],[108.2,232.5],[99.2,237.7],[89.8,240],[81.1,239.6],[74,237],[69.5,233.2],[66.5,227.6],[56,156.2],[51.1,129.6],[51.5,123.9],[53.3,120.6],[56,117.9],[63.8,114.2],[67.2,114.2],[69.5,115.3],[72.1,119.1],[74.4,124.7],[78.9,145.4],[79.6,146.5],[81.5,146.5],[82.3,145.4],[81.9,137.8],[78.9,116.8],[79.6,114.2]],
+  flank: [[40.2,123.2],[43.6,123.2],[44.7,125.8],[47.3,149.1],[59.7,228],[59.3,229.9],[57.1,230.6],[52.6,230.2],[49.6,227.6],[47.3,222],[46.2,212.2],[45.4,211.1],[43.9,210.7],[41.7,212.2],[37.6,213.3],[33.1,213],[26.7,210.3],[21,205.1],[13.1,188.2],[7.9,169],[7.5,161.5],[10.5,154.7],[14.6,151.7],[18.4,151.4],[19.9,146.1],[22.5,143.5],[25.9,141.6],[29.3,140.8],[30.4,142],[31.2,145],[36.1,170.5],[37.6,172],[39.4,170.9],[33.8,139],[33.1,129.2],[34.9,125.4]]
+};
+const d = pts => "M" + pts.map(p => p[0] + " " + p[1]).join(" L ") + " Z";
+
+// ── 时间轴（SwiftUI 端逐条一致）
+const T = {
+  band:  {start:0.00, dur:0.62},
+  cupL:  {start:0.34, dur:0.62},
+  cupR:  {start:0.40, dur:0.62},
+  pulse: {start:0.66, dur:0.66},
+  thump: {start:0.66, dur:0.32},
+  exit:  {start:1.30, dur:0.42},
+  appIn: {start:1.36, dur:0.36},
+  total: 1.80
+};
+const RESPONSE = 0.40, DAMPING = 0.72;
+const HEAD = {cx:120, cy:98, r:330, from:152, to:385};   // 头梁扇形遮罩（度，y 向下）
+
+const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const p = (t, b) => clamp((t - b.start) / b.dur);
+const easeOut = x => 1 - Math.pow(1 - clamp(x), 3);
+const spring = (sec, response, damping) => {
+  if (sec <= 0) return 0;
+  const w0 = 2*Math.PI/response, z = damping, wd = w0*Math.sqrt(1 - z*z);
+  return 1 - Math.exp(-z*w0*sec)*(Math.cos(wd*sec) + (z*w0/wd)*Math.sin(wd*sec));
+};
+// 圆弧（度，y 向下：180° 指向左，270° 指向上）
+function arcPath(cx, cy, r, a0, a1){
+  const p0 = [cx + r*Math.cos(a0*Math.PI/180), cy + r*Math.sin(a0*Math.PI/180)];
+  const p1 = [cx + r*Math.cos(a1*Math.PI/180), cy + r*Math.sin(a1*Math.PI/180)];
+  const large = Math.abs(a1 - a0) > 180 ? 1 : 0;
+  const sweep = a1 > a0 ? 1 : 0;
+  return `M${p0[0].toFixed(2)} ${p0[1].toFixed(2)} A${r} ${r} 0 ${large} ${sweep} ${p1[0].toFixed(2)} ${p1[1].toFixed(2)}`;
+}
+
+function wedgePath(deg){
+  const a = deg*Math.PI/180, f = HEAD.from*Math.PI/180;
+  const x1 = HEAD.cx + HEAD.r*Math.cos(f), y1 = HEAD.cy + HEAD.r*Math.sin(f);
+  const x2 = HEAD.cx + HEAD.r*Math.cos(a), y2 = HEAD.cy + HEAD.r*Math.sin(a);
+  const large = (deg - HEAD.from) > 180 ? 1 : 0;
+  return `M${HEAD.cx} ${HEAD.cy} L${x1} ${y1} A${HEAD.r} ${HEAD.r} 0 ${large} 1 ${x2} ${y2} Z`;
+}
+
+const TEMPLATE = `
+  <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌁ ▰</span></div>
+  <div class="app">
+    <div class="date">十一月十八日 · 周三</div>
+    <div class="hero">最近播放</div>
+    <div class="grid"><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div></div>
+  </div>
+  <div class="splash">
+    <div class="markbox">
+      <svg class="waves" viewBox="0 0 240 240">
+        <g class="waveL"><path class="w" fill="none" stroke="#B03A2E" stroke-width="2.2" stroke-linecap="round"/>
+                     <path class="w" fill="none" stroke="#B03A2E" stroke-width="1.8" stroke-linecap="round"/></g>
+        <g class="waveR"><path class="w" fill="none" stroke="#B03A2E" stroke-width="2.2" stroke-linecap="round"/>
+                     <path class="w" fill="none" stroke="#B03A2E" stroke-width="1.8" stroke-linecap="round"/></g>
+      </svg>
+      <svg class="mark" viewBox="0 0 240 240">
+        <defs><clipPath class="bandClip"><path class="bandWedge"/></clipPath></defs>
+        <g clip-path="url(#CLIP)"><path class="bandPath cupfill"/></g>
+        <g class="cupL"><path class="cupPath cupfill"/><path class="flankPath cupfill"/></g>
+        <g class="cupR"><path class="cupPath cupfill" transform="translate(240,0) scale(-1,1)"/><path class="flankPath cupfill" transform="translate(240,0) scale(-1,1)"/></g>
+      </svg>
+    </div>
+  </div>`;
+
+let clipSeq = 0;
+function makeScreen(phone){
+  phone.innerHTML = TEMPLATE.replace("CLIP", "clip" + (++clipSeq));
+  phone.querySelectorAll(".bandClip").forEach(e => e.setAttribute("id", "clip" + clipSeq));
+  const q = s => phone.querySelector(s);
+  const bandPath = q(".bandPath"), wedge = q(".bandWedge");
+  const cupL = q(".cupL"), cupR = q(".cupR");
+  const waveL = q(".waveL"), waveR = q(".waveR");
+  const markbox = q(".markbox"), splash = q(".splash"), app = q(".app");
+
+  bandPath.setAttribute("d", d(PTS.band));
+  phone.querySelectorAll(".cupPath").forEach(e => e.setAttribute("d", d(PTS.cup)));
+  phone.querySelectorAll(".flankPath").forEach(e => e.setAttribute("d", d(PTS.flank)));
+  // 两只耳罩外侧的声波：左 140°→220°，右镜像 -40°→40°（y 向下）
+  const waveCenter = {L:[12,176], R:[228,176]};
+  [["L", waveL, [140,220]], ["R", waveR, [-40,40]]].forEach(([side, g, [a0,a1]]) => {
+    const [cx, cy] = waveCenter[side];
+    g.querySelectorAll(".w").forEach((el, i) => {
+      const r = 26 + i * 15;
+      el.setAttribute("d", arcPath(cx, cy, r, a0, a1));
+    });
+  });
+
+  return function render(t){
+    const bp = easeOut(p(t, T.band));
+    wedge.setAttribute("d", wedgePath(HEAD.from + (HEAD.to - HEAD.from) * bp));
+
+    [[T.cupL, cupL, -1], [T.cupR, cupR, 1]].forEach(([beat, g, dir]) => {
+      const s = spring(t - beat.start, RESPONSE, DAMPING);
+      const dy = 26 * (1 - s), sc = 0.86 + 0.14 * s, rot = 6 * dir * (1 - s);
+      const op = clamp((t - beat.start) / 0.08);
+      const ex = easeOut(p(t, T.exit));
+      g.setAttribute("opacity", String(op * (1 - ex)));
+      g.setAttribute("transform",
+        `translate(120 176) rotate(${rot}) scale(${sc}) translate(-120 -176) translate(${dir * 6 * ex} ${dy})`);
+    });
+
+    const waveP = p(t, T.pulse);
+    [[waveL, 0], [waveR, 1]].forEach(([g, side]) => {
+      const local = easeOut(clamp((waveP - 0.05 - side * 0.06) / 0.78));
+      const op = waveP > 0 ? 0.55 * (1 - local) : 0;
+      g.setAttribute("opacity", op.toFixed(3));
+      const cx = side ? 228 : 12, cy = 176;
+      const sc = 0.86 + 0.30 * local;
+      g.setAttribute("transform", `translate(${cx} ${cy}) scale(${sc.toFixed(3)}) translate(${-cx} ${-cy})`);
+    });
+    const thump = Math.sin(Math.PI * p(t, T.thump)) ** 2;
+
+    const ex = easeOut(p(t, T.exit));
+    markbox.style.transform = `translateY(${(-7 * ex).toFixed(2)}px) scale(${(1 + 0.04*thump - 0.015*ex).toFixed(4)})`;
+    markbox.style.opacity = String(1 - clamp((t - T.exit.start) / 0.28));
+
+    const ap = easeOut(p(t, T.appIn));
+    app.style.opacity = String(ap);
+    app.style.transform = `scale(${(0.985 + 0.015*ap).toFixed(4)})`;
+    splash.style.opacity = String(1 - ex);
+  };
+}
+
+// 主舞台
+const stage = makeScreen(document.getElementById("stage"));
+
+// 关键帧胶片条（同一套渲染，只是定格）
+const FRAMES = [0.22, 0.48, 0.95, 1.12, 1.52, 1.74];
+const film = document.getElementById("film");
+FRAMES.forEach(t => {
+  const fig = document.createElement("figure");
+  const ph = document.createElement("div");
+  ph.className = "phone";
+  fig.appendChild(ph);
+  const cap = document.createElement("figcaption");
+  cap.textContent = t.toFixed(2) + "s";
+  fig.appendChild(cap);
+  film.appendChild(fig);
+  makeScreen(ph)(t);
+});
+
+let t0 = performance.now(), playing = true, frozen = 0;
+function loop(now){
+  if (playing){
+    let t = (now - t0) / 1000;
+    if (t > T.total + 0.7){ t0 = now; t = 0; }
+    frozen = t;
+  }
+  stage(frozen);
+  document.getElementById("seek").value = frozen.toFixed(2);
+  document.getElementById("tlabel").textContent = "t = " + frozen.toFixed(2) + "s";
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+const seek = document.getElementById("seek");
+seek.addEventListener("input", () => { playing = false; frozen = parseFloat(seek.value); });
+document.getElementById("play").addEventListener("click", () => { playing = true; t0 = performance.now(); });
+</script>
+</body>
+</html>
+
+
+
+
+
