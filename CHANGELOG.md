@@ -1,3 +1,34 @@
+## iOS 第三十七轮 · 2026-11-18 22:xx（短按也必须有反馈：最短可见时长 + 关掉 ScrollView 延迟触摸）
+
+**来源：管家转发老板真机反馈（21:24 录屏）**
+
+- 长按的点击反馈已经 OK，但**短按（快速点一下）几乎仍然没有反馈**；
+- 老板要求：短按的点击瞬间也要有长按那种效果，哪怕只是"亮一下 + 缩一下"，必须看得见。
+
+**根因**
+
+- SwiftUI 的 ScrollView 背后是 UIScrollView，默认 `delaysContentTouches = true`：快速点按时
+  `isPressed` 的 true 态可能撑不到渲染就被松手覆盖；
+- 0.14s 的下压动画还没起帧就被回弹覆盖，肉眼就是"没反应"。
+
+**修法**
+
+- 新增 `PressTiming`（`LayoutRules.swift`，纯函数，6 条断言）：普通按钮最短可见 **160ms**、
+  列表行 **220ms**；`holdAfterRelease(elapsed:minVisible:)` 算松手后还要补多久。
+- `PressFeedbackButtonStyle` 包一层 `PressVisual`：本地 `shown` 状态，按下立刻 true；松手时不足最短
+  时长就用**可取消的 Task** 补齐，再按 `pressDown` / `pressUp` 令牌回落；再次按下会取消旧定时器。
+- `RowPressButtonStyle` / `RipplePressModifier` 同样补齐 220ms；新增 `ScrollTouchFix`（1×1
+  `UIViewRepresentable`）找到所在 `UIScrollView` 并设 `delaysContentTouches = false`，按下当帧就进
+  `isPressed`；长按超过最短时长后行为不变。
+- Reduce Motion：普通按钮不做缩放、改用更强的压暗；列表行不做扩散、整块 0.20s 淡入。
+- 验收用的录屏需要真机：本机没有 Mac/iPhone，无法录制装机画面；下面附确定性时序断言与 CI 结果，
+  装包后请连续快速点按 10 次验证。
+
+**验证**：本机 PressTiming 6/6、typecheck 0、26 个 Views 解析通过；
+CI #（待补）/ 715 条断言全绿；IPA `JZ-Music-v2.4.9-（待补）-r106-ios-unsigned.ipa` 已发群。
+
+版本 2.4.9（187）。
+
 ## iOS 第三十六轮 · 2026-11-18 21:xx（修 r104：长按后高亮卡住、短按无反馈）
 
 **来源：老板真机（r104）+ 群消息**

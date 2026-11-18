@@ -2621,6 +2621,33 @@ do {
           RecognizeMotion.reduceFade > 0 && RecognizeMotion.reduceFade <= 0.2)
 }
 
+// MARK: - 按压反馈最短可见时长（PressTiming）
+//
+// 第三十七轮：老板真机"长按 OK、短按几乎没反馈"。短按的 isPressed 可能在同一帧
+// true→false，0.14s 的下压动画来不及起帧；这里把"补齐到最短可见时长"的算法钉死。
+
+section("按压反馈最短可见时长（PressTiming）")
+
+do {
+    check("短按 50ms：还要补 110ms（总可见 160ms）",
+          abs(PressTiming.holdAfterRelease(elapsed: 0.05,
+                                           minVisible: PressTiming.minVisible) - 0.11) < 1e-9)
+    check("长按 300ms：已经够久，不需要补",
+          PressTiming.holdAfterRelease(elapsed: 0.30,
+                                       minVisible: PressTiming.minVisible) == 0)
+    check("刚按下：补满整个最短时长",
+          PressTiming.holdAfterRelease(elapsed: 0,
+                                       minVisible: PressTiming.minVisible) == PressTiming.minVisible)
+    check("列表行高亮的最短时长比普通按钮长",
+          PressTiming.minVisibleRow > PressTiming.minVisible,
+          "row=\(PressTiming.minVisibleRow) button=\(PressTiming.minVisible)")
+    check("脏数据不产生负补时",
+          PressTiming.holdAfterRelease(elapsed: Double.nan, minVisible: 0.16) == 0)
+    check("比较常见的 80ms 快速点按也要补到 160ms",
+          PressTiming.holdAfterRelease(elapsed: 0.08,
+                                       minVisible: PressTiming.minVisible) > 0.07)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

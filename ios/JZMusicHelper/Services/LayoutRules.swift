@@ -253,3 +253,24 @@ enum LyricOffsetRules {
         clamp(effective(global: global, perSong: perSong, songID: songID) + byMs)
     }
 }
+
+// MARK: - 按压反馈的最短可见时长（纯函数）
+//
+// 第三十七轮：老板真机反馈"长按 OK、短按几乎没反馈"。根因是快速点按时 `isPressed`
+// 可能在**同一帧内** true→false，SwiftUI 没有保证中间态一定渲染；0.14s 的下压动画
+// 还没来得及起帧就被回弹覆盖。修法是本地维护一个 `shown`，按下立刻为 true，
+// 松手时若按下时长不足最小值就补齐再回落——短按也一定亮够几帧。
+enum PressTiming {
+
+    /// 普通按钮（播放/暂停、工具按钮）：最短可见 160ms
+    static let minVisible: Double = 0.16
+
+    /// 列表行（高亮扩散）：最短可见 220ms，短按也看得到"亮斑铺开一点"
+    static let minVisibleRow: Double = 0.22
+
+    /// 松手后还要补多久（秒），用于延迟回落；已经按够就返回 0
+    static func holdAfterRelease(elapsed: Double, minVisible: Double) -> Double {
+        guard elapsed.isFinite, minVisible.isFinite, minVisible > 0 else { return 0 }
+        return max(0, minVisible - max(0, elapsed))
+    }
+}

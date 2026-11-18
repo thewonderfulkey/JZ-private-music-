@@ -473,11 +473,63 @@ struct PressFeedbackButtonStyle: ButtonStyle {
     var dim: Double = 0.78
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .opacity(configuration.isPressed ? dim : 1)
-            .animation(configuration.isPressed ? Tokens.Motion.pressDown : Tokens.Motion.pressUp,
-                       value: configuration.isPressed)
+        PressVisual(isPressed: configuration.isPressed, scale: scale, dim: dim) {
+            configuration.label
+        }
+    }
+}
+
+/// 按压态的最短可见时长。
+///
+/// 第三十七轮：快速点按时 `isPressed` 可能在同一帧内 true→false，0.14s 的下压动画
+/// 还没来得及起帧就被回弹覆盖。这里把"是否显示按压态"从 `isPressed` 解耦成本地 `shown`：
+/// 按下立刻 `shown = true`；松手时若按下时长不足 `PressTiming.minVisible`，
+/// 用可取消的 Task 补齐再回落——短按也一定亮够 160ms。
+private struct PressVisual<Content: View>: View {
+
+    let isPressed: Bool
+    let scale: CGFloat
+    let dim: Double
+    let content: Content
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
+    @State private var pressedAt = Date()
+    @State private var releaseTask: Task<Void, Never>?
+
+    init(isPressed: Bool, scale: CGFloat, dim: Double,
+         @ViewBuilder content: () -> Content) {
+        self.isPressed = isPressed
+        self.scale = scale
+        self.dim = dim
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            // 关掉所在 UIScrollView 的 delaysContentTouches：短按也能当帧收到 isPressed
+            .background(ScrollTouchFix().frame(width: 1, height: 1))
+            // Reduce Motion：不做缩放，用更明显的压暗代替
+            .scaleEffect(reduceMotion ? 1 : (shown ? scale : 1))
+            .opacity(shown ? (reduceMotion ? min(dim, 0.62) : dim) : 1)
+            .onChange(of: isPressed) { _, pressed in
+                releaseTask?.cancel()
+                if pressed {
+                    pressedAt = Date()
+                    withAnimation(Tokens.Motion.pressDown) { shown = true }
+                } else {
+                    let hold = PressTiming.holdAfterRelease(
+                        elapsed: Date().timeIntervalSince(pressedAt),
+                        minVisible: PressTiming.minVisible)
+                    releaseTask = Task { @MainActor in
+                        if hold > 0 {
+                            try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
+                        }
+                        guard !Task.isCancelled else { return }
+                        withAnimation(Tokens.Motion.pressUp) { shown = false }
+                    }
+                }
+            }
     }
 }
 
@@ -492,14 +544,14 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
 
 /// 列表行 / 卡片专用：按下时从落点冒出一颗小亮斑，0.50s 慢慢扩满整条、亮到 30%，松手 0.40s 退掉。
 ///
-/// 第三十六轮（老板真机：**长按后高亮卡住、短按干脆没反馈**）：
-/// 上一版把"亮/灭"交给 DragGesture 的 onChanged/onEnded，结果手势在 ScrollView / Button
-/// 的竞争里会被取消——短按的 onChanged 根本没来、长按的 onEnded 也可能不来，高亮就卡住了。
-/// 现在**亮灭只信 `ButtonStyle.isPressed`**（系统保证按下/松手各一次），
-/// DragGesture 只负责"记下落点"；手势没来就用条目中心兜底。
-///
-/// 按下：落点亮斑 6% 大小 / 40% 亮度 → 0.50s `easeInOut` 扩满、亮到 30%；
-/// 松手：停 0.08s 再 0.40s 渐隐。缩放不参与（要的是"高亮扩散"）。
+/// 第三十七轮（老板真机：长按 OK、短按几乎没反馈）：
+/// 两个原因叠加——
+/// ① SwiftUI 的 ScrollView 背后是 UIScrollView，`delaysContentTouches` 默认 true，
+///    快速点按时 `isPressed` 的 true 态可能撑不到渲染就被松手覆盖；
+/// ② 0.14s 的下压动画来不及起帧。
+/// 修法：行里挂一个 0×0 的 `ScrollTouchFix`，把所在 UIScrollView 的
+/// `delaysContentTouches` 关掉（按下当帧就来）；再给高亮一个最短可见时长
+/// `PressTiming.minVisibleRow`（0.22s），松手不足就补齐再淡出。
 struct RowPressButtonStyle: ButtonStyle {
     var highlight: Double = 0.30
     var cornerRadius: CGFloat = 16
@@ -531,8 +583,9 @@ struct RipplePressModifier: ViewModifier {
     @State private var activeOrigin: CGPoint?
     @State private var pressID = 0
     @State private var glow: Double = 0
+    @State private var pressedAt = Date()
     /// 松手后的延迟淡出；下一次按下要能取消它，否则快速连点会被上一次的淡出拖暗
-    @State private var fadeTask: Task<Void, Never>?
+    @State private var releaseTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
@@ -548,6 +601,8 @@ struct RipplePressModifier: ViewModifier {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
+            // 关掉所在 UIScrollView 的 delaysContentTouches：短按也能当帧收到 isPressed
+            .background(ScrollTouchFix().frame(width: 1, height: 1))
             .contentShape(Rectangle())
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
@@ -566,16 +621,19 @@ struct RipplePressModifier: ViewModifier {
                     .onEnded { _ in hasOrigin = false }
             )
             .onChange(of: isPressed) { _, pressed in
-                fadeTask?.cancel()
+                releaseTask?.cancel()
                 if pressed {
+                    pressedAt = Date()
                     activeOrigin = hasOrigin ? origin : nil
                     pressID += 1
                     glow = 1
                 } else {
-                    // 松手后停 0.08s 再淡出；快速连点也能看到亮斑继续长一下。
-                    // 用 Task 而不是 `.delay()`：下一次按下能取消它，不会被上一轮的延迟淡出拖暗。
-                    fadeTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 80_000_000)
+                    // 短按也要亮够 0.22s 再退；长按已经超过这个时长就只留 0.08s 的尾巴。
+                    let hold = max(0.08, PressTiming.holdAfterRelease(
+                        elapsed: Date().timeIntervalSince(pressedAt),
+                        minVisible: PressTiming.minVisibleRow))
+                    releaseTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
                         guard !Task.isCancelled else { return }
                         withAnimation(.easeOut(duration: 0.40)) { glow = 0 }
                     }
@@ -586,12 +644,12 @@ struct RipplePressModifier: ViewModifier {
 
 /// 一块从 `origin` 扩到盖住整个 `size` 的圆形亮色；由外层的圆角矩形裁掉。
 private struct RippleFill: View {
-
     /// nil = 没有落点（手势没来），从条目中心长
     let origin: CGPoint?
     let size: CGSize
     let color: Color
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     var body: some View {
@@ -605,11 +663,46 @@ private struct RippleFill: View {
             .position(point)
             // 起点不是"全亮突然出现"：先是一颗 6% 大小、40% 亮度的亮斑，
             // 0.50s 里一边长大一边变亮，看起来才是"按住之后慢慢亮、开始扩散"。
-            .scaleEffect(expanded ? 1 : 0.06)
-            .opacity(expanded ? 1 : 0.40)
+            // 减弱动效：不做缩放/扩散，整块 0.20s 淡入，仍有可见反馈。
+            .scaleEffect(reduceMotion ? 1 : (expanded ? 1 : 0.06))
+            .opacity(reduceMotion ? (expanded ? 1 : 0) : (expanded ? 1 : 0.40))
             .onAppear {
-                withAnimation(.easeInOut(duration: 0.50)) { expanded = true }
+                withAnimation(.easeInOut(duration: reduceMotion ? 0.20 : 0.50)) {
+                    expanded = true
+                }
             }
             .accessibilityHidden(true)
+    }
+}
+
+/// 0×0 的探针：找到自己所在的 `UIScrollView`，把 `delaysContentTouches` 关掉。
+///
+/// SwiftUI 的 ScrollView 背后就是 UIScrollView，默认延迟把触摸交给内容（为了区分滚动），
+/// 快速点按时按钮的 `isPressed` 的 true 态可能撑不到渲染。关掉以后按下当帧就到，
+/// 滚动仍然正常（手指一动 ScrollView 还是会接管）。
+private struct ScrollTouchFix: UIViewRepresentable {
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        // make 的时候还没进视图树，等一拍再往上找
+        DispatchQueue.main.async { apply(from: view) }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        apply(from: uiView)
+    }
+
+    private func apply(from view: UIView) {
+        var node = view.superview
+        while let current = node {
+            if let scroll = current as? UIScrollView {
+                if scroll.delaysContentTouches { scroll.delaysContentTouches = false }
+                return
+            }
+            node = current.superview
+        }
     }
 }

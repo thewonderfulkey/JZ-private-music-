@@ -182,7 +182,7 @@
 | 歌词行推进 | `.spring(response: 0.38, dampingFraction: 0.92)` 位移 + 当前行字重/色过渡 | 380ms |
 | 逐字染色 | `linear(duration: 0.14)` 单字推进（跟随每字 start/end） | 140ms |
 | 收藏心跳 | `.bouncy(duration: 0.26)`，scale 1 → 1.16 → 1；图标 `replace` + `bounce` | 260ms |
-| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行 30% 亮色高亮，**亮灭只信 `isPressed`**（可靠），落点由 `DragGesture` 记录（没来时用条目中心）；从落点 0.50s `easeInOut` 慢慢扩散铺满、松手停 0.08s 再 0.40s 渐隐（可取消 Task）；歌词行同样走 Button + `.rowPress`；普通点击不给触觉 | 500 / 480ms |
+| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；普通按钮/列表行都有**最短可见时长**（160ms / 220ms，`PressTiming`），短按也一定亮够；列表行 30% 亮色从落点 0.50s 慢慢扩散铺满、松手 0.40s 渐隐；`ScrollTouchFix` 关掉所在 UIScrollView 的 `delaysContentTouches`，按下当帧进 `isPressed`；减小动效时不做缩放/扩散、改用压暗/整块淡入；普通点击不给触觉 | 最短 160/220ms，渐隐 0.40s |
 | 下载完成 | 行内进度区收起 + `.snappy` 图标切换 | 260ms |
 | 列表增删 | 系统 `List` 默认动画，不自定义 | — |
 | 无源自动跳歌 | 无炫技：顶部内联提示条滑入 200ms，2s 后淡出 | 200ms |
