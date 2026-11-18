@@ -2109,6 +2109,26 @@ check("没有 Live/伴奏/钢琴 这类非原版专辑混进来",
           return !["live", "演唱会", "现场", "伴奏", "纯音乐", "ktv", "dj", "翻唱"].contains { a.contains($0) }
       })
 
+section("第二十四轮：本地日 / 负缓存 / 播放页时钟")
+
+// ① "今天"必须按本地日历天切（老板 11-18：白天还显示前一天缓存，因为旧实现用 UTC 日，
+//    澳大利亚 UTC+10:30 要到本地上午 ~10:30 才翻页）
+let utcDay = Int(Date().timeIntervalSince1970 / 86_400)
+check("本地日与 UTC 日最多差 1 天（跨时区不会错很久）",
+      abs(DiscoverRules.today - utcDay) <= 1, "\(DiscoverRules.today) vs \(utcDay)")
+check("同一天内两次取值一致（不会因为时刻不同跳变）",
+      DiscoverRules.today == DiscoverRules.today)
+
+// ② 负缓存：当天失败的不再反复搜索，跨天自动失效
+let ghostName = "__selftest_ghost__"
+ResolvedSongCache.shared.markUnresolved(name: ghostName, singer: "x", day: 20_000)
+check("当天记为未解析 → 当天下次跳过",
+      ResolvedSongCache.shared.isKnownUnresolved(name: ghostName, singer: "x", day: 20_000))
+check("换一天就重新尝试（负缓存按天失效）",
+      !ResolvedSongCache.shared.isKnownUnresolved(name: ghostName, singer: "x", day: 20_001))
+check("没记过的歌不算未解析",
+      !ResolvedSongCache.shared.isKnownUnresolved(name: "__nobody__", singer: "y", day: 20_000))
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

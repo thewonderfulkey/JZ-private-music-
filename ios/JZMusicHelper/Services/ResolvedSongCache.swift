@@ -21,6 +21,9 @@ final class ResolvedSongCache {
     private var map: [String: Song] = [:]
     /// 插入顺序（淘汰用）
     private var order: [String] = []
+    /// **当日负缓存**：key → day。解析失败（真的没有原版）的歌当天不再重试，
+    /// 否则每次进歌单页都会为同一首再搜一遍 —— 老板说的"多次加载后还是会重新加载"。
+    private var failed: [String: Int] = [:]
     private var saveTask: Task<Void, Never>?
 
     private init() {
@@ -67,11 +70,31 @@ final class ResolvedSongCache {
         return "\(n)|\(s)"
     }
 
+    // MARK: 当日负缓存
+
+    /// 记下"这一首今天确实没解析出来"，当天不再重试（跨天自动失效）
+    func markUnresolved(name: String, singer: String, day: Int) {
+        let key = Self.key(name: name, singer: singer)
+        lock.lock()
+        failed[key] = day
+        lock.unlock()
+        scheduleSave()
+    }
+
+    func isKnownUnresolved(name: String, singer: String, day: Int) -> Bool {
+        let key = Self.key(name: name, singer: singer)
+        lock.lock()
+        defer { lock.unlock() }
+        return failed[key] == day
+    }
+
     // MARK: 落盘
 
     private struct Payload: Codable {
         let order: [String]
         let items: [String: Song]
+        /// 老文件没有这个字段 → 用可选类型兼容
+        let failed: [String: Int]?
     }
 
     /// 攒 1 秒再写：一次解析 20 首时不会写 20 次盘
@@ -90,7 +113,7 @@ final class ResolvedSongCache {
 
     func flush() {
         lock.lock()
-        let payload = Payload(order: order, items: map)
+        let payload = Payload(order: order, items: map, failed: failed)
         saveTask = nil
         lock.unlock()
         guard let data = try? JSONEncoder().encode(payload) else { return }
@@ -102,6 +125,7 @@ final class ResolvedSongCache {
               let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return }
         map = payload.items
         order = payload.order.filter { payload.items[$0] != nil }
+        failed = payload.failed ?? [:]
     }
 
     private static func docURL(_ name: String) -> URL {

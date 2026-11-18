@@ -38,6 +38,31 @@ final class PlayerEngine {
         return t.isFinite ? max(0, t) : currentTime
     }
 
+    /// 进度条 / 时间标签显示用的位置——**必须和歌词用同一个时钟**。
+    ///
+    /// 为什么不能直接用 `currentTime`：seek 之后 `currentTime` 先被设成目标，但 0.5 秒一次的
+    /// 时间观察者随后会把播放头**尚未落地时的旧值**写回来（录屏里表现为：点歌词跳到 1:49，
+    /// 标签却回到 1:20；拖到 1:46，标签对而高亮是 0:41）。标签和歌词各自用一套时间，
+    /// 用户看到的就永远是"歌词不准"。
+    ///
+    /// 现在两边都走 `LyricsUXRules.seekClockSource`：seek 未落地用目标位置，落地（±1.2s）或
+    /// 窗口到期用真实位置。这样"标签显示的时间"和"高亮那一行"在任何时刻都对得上。
+    var displayTime: Double {
+        guard let optimistic = seekOptimistic else { return currentTime }
+        let rawMs = Int(preciseTime * 1000)
+        let source = LyricsUXRules.seekClockSource(
+            positionMs: rawMs,
+            targetMs: optimistic.targetMs,
+            optimisticExpired: Date() >= optimistic.until)
+        return source == .useTarget ? Double(optimistic.targetMs) / 1000 : currentTime
+    }
+
+    /// 进度条（含迷你条那条 2pt 细线）用的比例：跟着 `displayTime` 走
+    var displayProgress: Double {
+        guard duration > 0 else { return 0 }
+        return min(max(displayTime / duration, 0), 1)
+    }
+
     // 歌词（由 LyricsService 取，酷我官方优先、失败回退 LDDC）
     private(set) var lyrics: [LyricLine] = []
     private(set) var lyricsSource: String = ""

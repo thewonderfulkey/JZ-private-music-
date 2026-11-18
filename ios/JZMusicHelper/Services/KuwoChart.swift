@@ -71,7 +71,7 @@ enum KuwoChart {
 
     // MARK: 当天缓存（UserDefaults，JSON）
 
-    static var today: Int { Int(Date().timeIntervalSince1970 / 86_400) }
+    static var today: Int { DiscoverRules.today }
 
     private static func cacheKey(_ chart: Chart) -> String {
         "kw_chart_page_v1_\(chart.mobileId)"

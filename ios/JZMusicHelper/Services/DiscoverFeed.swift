@@ -43,8 +43,8 @@ final class DiscoverFeed {
     /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
     private(set) var guessRound = 0
 
-    /// 当天序号（UTC 天，与 Android `HomeCache.today` 一致）
-    var day: Int { Int(Date().timeIntervalSince1970 / 86_400) }
+    /// 当天序号（本地日历天，见 `DiscoverRules.today`）
+    var day: Int { DiscoverRules.today }
 
     private struct HotCache: Codable {
         let day: Int
@@ -163,8 +163,16 @@ final class DiscoverFeed {
                 if Task.isCancelled { return }
                 if BakedSeedSongs.song(name: seed.name, singer: seed.singer) != nil { continue }
                 if ResolvedSongCache.shared.song(name: seed.name, singer: seed.singer) != nil { continue }
+                if ResolvedSongCache.shared.isKnownUnresolved(
+                    name: seed.name, singer: seed.singer, day: day) { continue }
                 if let song = await resolve(seed: seed) {
                     ResolvedSongCache.shared.store(song)
+                    // 顺手把封面也写进磁盘缓存：老板反馈"封面加载完下次还要再加载"，
+                    // 预取时一起拉一遍，进歌单页时封面就是本地 IO 了。
+                    _ = await CoverImageCache.shared.image(for: song)
+                } else {
+                    ResolvedSongCache.shared.markUnresolved(
+                        name: seed.name, singer: seed.singer, day: day)
                 }
             }
         }

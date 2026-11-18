@@ -60,7 +60,7 @@ struct NowPlayingView: View {
         return 393
     }
 
-    private var shownFraction: Double { dragFraction ?? player.progress }
+    private var shownFraction: Double { dragFraction ?? player.displayProgress }
 
     private var bufferedFraction: Double {
         guard player.duration > 0 else { return 0 }
@@ -553,18 +553,18 @@ struct NowPlayingView: View {
         .frame(width: width)
         .accessibilityElement()
         .accessibilityLabel("播放进度")
-        .accessibilityValue("\(Self.timeText(player.currentTime)) / \(Self.timeText(player.duration))")
+        .accessibilityValue("\(Self.timeText(player.displayTime)) / \(Self.timeText(player.duration))")
         .accessibilityAdjustableAction { direction in
             guard player.duration > 0 else { return }
             let step = 5.0
-            let target = direction == .increment ? player.currentTime + step : player.currentTime - step
+            let target = direction == .increment ? player.displayTime + step : player.displayTime - step
             player.seek(toSeconds: target)
         }
     }
 
     private var currentShownTime: Double {
         if let f = dragFraction { return f * player.duration }
-        return player.currentTime
+        return player.displayTime
     }
 
     private var remainingShownTime: Double {

@@ -12,6 +12,16 @@ enum DiscoverRules {
     /// 同一歌手在榜单里最多出现几次（Android 口径：2）
     static let maxPerSinger = 2
 
+    /// "今天"的序号——**按设备本地日历的 0 点**切天，不再用 UTC。
+    ///
+    /// 为什么必须本地日（老板 11-18 的反馈）：以前用 `timeIntervalSince1970 / 86400`（UTC 日），
+    /// 在澳大利亚（UTC+10:30）要到本地上午 ~10:30 才翻页，于是"11-18 白天还显示 11-17 的缓存"。
+    /// 换成 `startOfDay` 之后，本地 0 点就是新的一天，热门/猜你喜欢/榜单/歌单都会按新的一天重取。
+    static var today: Int {
+        let start = Calendar.current.startOfDay(for: Date())
+        return Int(start.timeIntervalSince1970 / 86_400)
+    }
+
     /// 热门音乐模块只放 21 首（3 行 × 7 页，与这一轮之前的口径一致——老板要求"保持那个页数"）
     static let hotModuleLimit = 21
 

@@ -126,7 +126,7 @@ struct MiniPlayerBar: View {
                 Capsule().fill(Color.primary.opacity(0.08))
                 Capsule()
                     .fill(Color.accentColor)
-                    .frame(width: geo.size.width * player.progress)
+                    .frame(width: geo.size.width * player.displayProgress)
             }
             .frame(height: 2)
             .padding(.horizontal, 10)

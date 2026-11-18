@@ -230,6 +230,8 @@ struct EditorPlaylistView: View {
             ResolvedSongCache.shared.store(resolved)
         } else {
             failedRows.insert(index)
+            ResolvedSongCache.shared.markUnresolved(
+                name: seeds[index].name, singer: seeds[index].singer, day: DiscoverRules.today)
         }
         return resolved
     }
@@ -242,9 +244,18 @@ struct EditorPlaylistView: View {
         let list = seeds
         guard !list.isEmpty else { return }
 
-        let pending = list.indices.filter { songs[$0] == nil }
+        // 只补"今天还没确认失败、也没有缓存"的那几首：
+        // · 缓存里有（写死 / 之前解析过）→ `prefillFromCache` 已经铺好了；
+        // · 今天已经确认没解析出来 → 负缓存，不再为同一首反复搜索。
+        let pending = list.indices.filter { index in
+            guard songs[index] == nil else { return false }
+            return !ResolvedSongCache.shared.isKnownUnresolved(
+                name: list[index].name, singer: list[index].singer, day: DiscoverRules.today)
+        }
         guard !pending.isEmpty else {
-            status = "今日精选 \(list.count) 首 · 点任意一首播放"
+            status = songs.count == list.count
+                ? "今日精选 \(list.count) 首 · 点任意一首播放"
+                : "今日精选 \(list.count) 首，其中 \(list.count - songs.count) 首没找到可播放版本"
             return
         }
 
@@ -271,6 +282,9 @@ struct EditorPlaylistView: View {
                     ResolvedSongCache.shared.store(resolved)
                 } else {
                     failedRows.insert(index)
+                    // 今天确实没解析出来 → 记进负缓存，当天不再重试
+                    ResolvedSongCache.shared.markUnresolved(
+                        name: list[index].name, singer: list[index].singer, day: DiscoverRules.today)
                 }
                 if done < total {
                     status = "正在补全封面 \(done)/\(total)…"
