@@ -14,10 +14,12 @@
   朱砂 10% 胶囊、`matchedGeometryEffect` 滑动、图标 `symbolEffect(.bounce)`、下载角标、
   VoiceOver 完整标签、Dynamic Type 上限 xxLarge）。Tab 内容改 visited-set 常驻容器：首次进入才建
   `NavigationStack`（识曲页的 wasm WKWebView 不在启动时创建），切换 0.26s 交叉淡变，push 栈与滚动位置保留。
+  设备侧补丁（#100）：选中的 Tab 即使还没进 visited 也立即渲染，避免 onChange 晚一帧闪白。
 - **新 `Views/RecognizeStage.swift` + `Services/RecognizeMotion.swift`**：识曲从"整页 0.6s 渐变"
   改成三拍——聆听（三圈声波 1.5s/圈、24 根径向电平条、12 秒倒计时环）/ 辨认（204pt 雷达弧 1.1s/圈 +
   `waveform` 变量色）/ 结果（0.55s 成功脉冲 + 勾；没听出来、失败 ±6pt 抖 3 下 + 斜杠）。
-  文案只做 6pt 上浮淡入，结果卡 0.42s spring 从下顶上来；全部尊重 Reduce Motion（只留倒计时环与 0.15s 淡变）。
+  文案只做 6pt 上浮淡入，结果卡 0.42s spring 从下顶上来；全部尊重 Reduce Motion（只留倒计时环与 0.15s 淡变，
+  光晕与中心圆也不再跟随电平缩放）。
 - **触觉补齐**：开始聆听 medium、辨认 light、出结果 success、没听出来 warning、失败 error；切 Tab
   selection 只给一下；失败/成功触觉从业务层收进舞台，避免双响。
 - **全局按压**：`PressFeedbackButtonStyle` 0.94/0.72 → 0.95/0.78，下落 0.14s、松手 0.30s；
@@ -33,7 +35,9 @@
 设计口径写进 `docs/ios/IOS-UI-DESIGN.md` §6.1 / §6.3。
 
 **验证**：本机 typecheck 0、`-parse` 0、UI 卫生 27 个界面文件、识曲动效隔离自测 14/14；
-CI #（待补）/ 692 条断言全绿；IPA `JZ-Music-v2.4.4-（待补）-r99-ios-unsigned.ipa` 已发群。
+CI **#99（`3a61fad`）先绿**，随后补了两处设备侧修正（底栏首帧不闪白、减弱动效不做缩放）再跑 **#100
+（`cd8c176`）/ 692 条断言全绿** / `build-ipa` 成功、飞书已收到包；
+IPA `JZ-Music-v2.4.4-cd8c176-r100-ios-unsigned.ipa`（2,194,726 B，sha256 `278d7997…3e69`，版本 2.4.4 / 182，插件已嵌入）。
 
 版本 2.4.4（182）。
 
