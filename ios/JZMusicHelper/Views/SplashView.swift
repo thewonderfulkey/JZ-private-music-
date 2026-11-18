@@ -40,10 +40,14 @@ struct SplashView: View {
     var body: some View {
         Group {
             if reduceMotion {
-                // 减弱动效：图标就是完整的，不做任何位移/缩放
-                paper(opacity: 1)
-                markShape(band: 1, cupLeft: 1, cupRight: 1, sound: 0, thump: 0, exit: 0)
-                    .opacity(reducedOpacity)
+                // 减弱动效：图标就是完整的，不做任何位移/缩放。
+                // 外面必须包一层 ZStack：`Group` 上的修饰符是**逐子视图**生效的，
+                // 直接并列两个 view 会让 VoiceOver 把「JZ 音乐」念两遍。
+                ZStack {
+                    paper(opacity: 1)
+                    markShape(band: 1, cupLeft: 1, cupRight: 1, sound: 0, thump: 0, exit: 0)
+                        .opacity(reducedOpacity)
+                }
             } else {
                 TimelineView(.animation) { context in
                     let t = context.date.timeIntervalSince(start)
