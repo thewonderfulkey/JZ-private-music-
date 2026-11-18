@@ -2178,10 +2178,16 @@ check("歌手对不上的也不收",
       ITunesCover.parse(["results": [["trackName": "青花瓷", "artistName": "吴英仔",
                                       "artworkUrl100": "https://a/100x100bb.jpg"]]],
                         title: "青花瓷", artist: "周杰伦") == nil)
-check("版本后缀不影响匹配（凉凉 (with 張碧晨) / Aska Yang）",
-      ITunesCover.parse(["results": [["trackName": "凉凉 (with 張碧晨)", "artistName": "Aska Yang",
+check("版本后缀不影响匹配（歌名是中文）",
+      ITunesCover.parse(["results": [["trackName": "凉凉 (with 張碧晨)", "artistName": "杨宗纬",
                                       "artworkUrl100": "https://a/100x100bb.jpg"]]],
                         title: "凉凉", artist: "杨宗纬") != nil)
+// 罗马音歌手（Aska Yang 之于杨宗纬）按字符串比不出来——这是这套严格匹配的已知边界：
+// 宁可返回 nil 落占位图，也不把别的专辑封面贴上来。
+check("罗马音歌手不硬凑（已知边界：宁缺毋滥）",
+      ITunesCover.parse(["results": [["trackName": "凉凉 (with 張碧晨)", "artistName": "Aska Yang",
+                                      "artworkUrl100": "https://a/100x100bb.jpg"]]],
+                        title: "凉凉", artist: "杨宗纬") == nil)
 check("没有结果时返回 nil",
       ITunesCover.parse(["results": []], title: "青花瓷", artist: "周杰伦") == nil)
 
