@@ -73,11 +73,8 @@ final class DiscoverFeed {
     }
 
     /// 编辑精选的「上次展示日」：key = 类别|歌名|歌手 → 天序号（没有 = 从没展示过）
-    private static let shownKey = "discover_shown_days_v1"
-    private var shownDays: [String: Int] = [:]
 
     init() {
-        shownDays = defaults.dictionary(forKey: Self.shownKey) as? [String: Int] ?? [:]
         // 第二十一轮（老板 r84："一打开就到处在转圈，能不能加载一次就别再加载"）：
         // 缓存**在 init 里同步读进来**，这样发现页第一帧就有内容，不再先闪一屏骨架屏。
         // 热门/猜你喜欢都是一天定死的数据，同一天再打开直接复用，一个请求都不发。
@@ -253,39 +250,6 @@ final class DiscoverFeed {
         saveHot(picked, fromChart: false, chartDate: nil)
     }
 
-    // MARK: 编辑精选：把当天没写死的那几首后台补齐
-    //
-    // 包内写死了 102/120 首；剩下十几首（多为 Live/KTV/纯音乐 版被过滤掉的、或搜索里确实没有原版的）
-    // 如果等用户点进歌单页再解析，那几行还是会"先文字后变歌"。这里在**发现页加载完之后**
-    // 后台把它们补齐并写进 `ResolvedSongCache`，用户真正进歌单时基本都是现成的。
-    private(set) var prefetchingEditor = false
-
-    func prefetchEditorSeeds() async {
-        guard !prefetchingEditor else { return }
-        prefetchingEditor = true
-        defer { prefetchingEditor = false }
-
-        for playlist in DiscoverCatalog.playlists {
-            if Task.isCancelled { return }
-            for seed in editorSeeds(for: playlist, rotation: 0) {
-                if Task.isCancelled { return }
-                if BakedSeedSongs.song(name: seed.name, singer: seed.singer) != nil { continue }
-                if ResolvedSongCache.shared.song(name: seed.name, singer: seed.singer) != nil { continue }
-                if ResolvedSongCache.shared.isKnownUnresolved(
-                    name: seed.name, singer: seed.singer, day: day) { continue }
-                if let song = await resolve(seed: seed) {
-                    ResolvedSongCache.shared.store(song, seedName: seed.name, seedSinger: seed.singer)
-                    // 顺手把封面也写进磁盘缓存：老板反馈"封面加载完下次还要再加载"，
-                    // 预取时一起拉一遍，进歌单页时封面就是本地 IO 了。
-                    _ = await CoverImageCache.shared.image(for: song)
-                } else {
-                    ResolvedSongCache.shared.markUnresolved(
-                        name: seed.name, singer: seed.singer, day: day)
-                }
-            }
-        }
-    }
-
     // MARK: 猜你喜欢
 
     func refreshGuess(recent: [Song]) async {
@@ -352,65 +316,6 @@ final class DiscoverFeed {
     func nextGuessRound(recent: [Song]) async {
         guessRound += 1
         await refreshGuess(recent: recent)
-    }
-
-    // MARK: 编辑精选：每日这一批（最久没展示的优先）
-
-    /// 当天这批 20 首：按「最久没展示」排，`rotation` 只用来做「换一批」（0 = 今天第一组）
-    func editorSeeds(for playlist: DiscoverCatalog.Playlist, rotation: Int = 0) -> [DiscoverCatalog.Seed] {
-        DiscoverRules.pickByRecency(
-            playlist.seeds,
-            key: { Self.seedKey(playlist: playlist.title, seed: $0) },
-            lastShown: shownDays,
-            day: day,
-            take: 20,
-            offset: rotation * 20)
-    }
-
-    /// 展示过就记下今天（下次优先推别的）——只在 .task 里调，不要在 body 里调（会改状态）
-    func markShown(_ seeds: [DiscoverCatalog.Seed], in playlist: DiscoverCatalog.Playlist) {
-        var changed = false
-        for seed in seeds {
-            let key = Self.seedKey(playlist: playlist.title, seed: seed)
-            if shownDays[key] != day {
-                shownDays[key] = day
-                changed = true
-            }
-        }
-        if changed { defaults.set(shownDays, forKey: Self.shownKey) }
-    }
-
-    private static func seedKey(playlist: String, seed: DiscoverCatalog.Seed) -> String {
-        "\(playlist)|\(seed.name)|\(seed.singer)"
-    }
-
-    // MARK: 编辑精选：把「歌名 + 歌手」换成真实 Song
-
-    /// 点歌单里的某一首时调用：先按「歌名 + 歌手」搜，再按身份校验挑最像的那条。
-    /// 与播放层一致：叫不出名字的宁可返回 nil（行尾显示失败），也不放错歌。
-    func resolve(seed: DiscoverCatalog.Seed) async -> Song? {
-        // 预置池里的歌**写死**在包里（`BakedSeedSongs`）：命中就不用搜索，点下去立刻是歌。
-        // 这是老板 r85 要的"一步到位"——没有这一层，每次点进去都要先等四平台搜索。
-        if let baked = BakedSeedSongs.song(name: seed.name, singer: seed.singer) {
-            return baked
-        }
-        let keyword = "\(seed.name) \(seed.singer)".trimmingCharacters(in: .whitespaces)
-        let ranked = await SearchService.shared.searchRanked(keyword: keyword, limit: 12)
-        let songs = ranked.songs
-        // 歌名+歌手都对得上的候选里，**优先时长正常的录音室原版**：
-        // 截图里出现过「丑八怪 00:31」这种 31 秒片段版（播放侧 ±25s 闸门会直接判坏源）。
-        let both = songs.filter {
-            NameMatch.titleMatches(seed.name, $0.name) && NameMatch.singerMatches(seed.singer, $0.singer)
-        }
-        if !both.isEmpty {
-            let solid = both.filter { $0.durationSec >= 60 }
-            return StudioPick.pickBest(solid.isEmpty ? both : solid) ?? both[0]
-        }
-        if let titleOnly = songs.first(where: { NameMatch.titleMatches(seed.name, $0.name) }) {
-            return titleOnly
-        }
-        // 最后兜底：搜索结果第一首（与 Android「点单曲才搜索播放」同口径）
-        return songs.first
     }
 
     // MARK: 缓存

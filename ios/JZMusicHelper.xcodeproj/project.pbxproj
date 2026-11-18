@@ -54,7 +54,6 @@
 		B00000000000000000000033 /* DiscoverCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* DiscoverCatalog.swift */; };
 		B00000000000000000000034 /* DiscoverRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* DiscoverRules.swift */; };
 		B00000000000000000000035 /* DiscoverFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000037 /* DiscoverFeed.swift */; };
-		B00000000000000000000036 /* EditorPlaylistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000038 /* EditorPlaylistView.swift */; };
 		B00000000000000000000038 /* RecognizeScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003A /* RecognizeScore.swift */; };
 		B00000000000000000000039 /* KugouRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003B /* KugouRecognizer.swift */; };
 		B0000000000000000000003A /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000003C /* AudioCapture.swift */; };
@@ -89,6 +88,14 @@
 		B0000000000000000000005C /* SplashMarkPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005A /* SplashMarkPath.swift */; };
 		B0000000000000000000005D /* KuwoPlaylist.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005B /* KuwoPlaylist.swift */; };
 		B0000000000000000000005E /* NewSongsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005C /* NewSongsView.swift */; };
+		B0000000000000000000005F /* KuwoArtist.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005D /* KuwoArtist.swift */; };
+		B00000000000000000000060 /* SquareFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005E /* SquareFeed.swift */; };
+		B00000000000000000000061 /* ArtistFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000005F /* ArtistFeed.swift */; };
+		B00000000000000000000062 /* DiscoverCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000060 /* DiscoverCards.swift */; };
+		B00000000000000000000063 /* PlaylistSquareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000061 /* PlaylistSquareView.swift */; };
+		B00000000000000000000064 /* PlaylistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000062 /* PlaylistDetailView.swift */; };
+		B00000000000000000000065 /* ArtistDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000063 /* ArtistDirectoryView.swift */; };
+		B00000000000000000000066 /* ArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000064 /* ArtistDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -141,7 +148,6 @@
 		F00000000000000000000035 /* DiscoverCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverCatalog.swift; sourceTree = "<group>"; };
 		F00000000000000000000036 /* DiscoverRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverRules.swift; sourceTree = "<group>"; };
 		F00000000000000000000037 /* DiscoverFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverFeed.swift; sourceTree = "<group>"; };
-		F00000000000000000000038 /* EditorPlaylistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPlaylistView.swift; sourceTree = "<group>"; };
 		F0000000000000000000003A /* RecognizeScore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeScore.swift; sourceTree = "<group>"; };
 		F0000000000000000000003B /* KugouRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KugouRecognizer.swift; sourceTree = "<group>"; };
 		F0000000000000000000003C /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
@@ -174,6 +180,14 @@
 		F0000000000000000000005A /* SplashMarkPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashMarkPath.swift; sourceTree = "<group>"; };
 		F0000000000000000000005B /* KuwoPlaylist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoPlaylist.swift; sourceTree = "<group>"; };
 		F0000000000000000000005C /* NewSongsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSongsView.swift; sourceTree = "<group>"; };
+		F0000000000000000000005D /* KuwoArtist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoArtist.swift; sourceTree = "<group>"; };
+		F0000000000000000000005E /* SquareFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SquareFeed.swift; sourceTree = "<group>"; };
+		F0000000000000000000005F /* ArtistFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistFeed.swift; sourceTree = "<group>"; };
+		F00000000000000000000060 /* DiscoverCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverCards.swift; sourceTree = "<group>"; };
+		F00000000000000000000061 /* PlaylistSquareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistSquareView.swift; sourceTree = "<group>"; };
+		F00000000000000000000062 /* PlaylistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistDetailView.swift; sourceTree = "<group>"; };
+		F00000000000000000000063 /* ArtistDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDirectoryView.swift; sourceTree = "<group>"; };
+		F00000000000000000000064 /* ArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -279,6 +293,9 @@
 				F00000000000000000000057 /* ITunesCover.swift */,
 				F00000000000000000000058 /* SplashTimeline.swift */,
 				F0000000000000000000005B /* KuwoPlaylist.swift */,
+				F0000000000000000000005D /* KuwoArtist.swift */,
+				F0000000000000000000005E /* SquareFeed.swift */,
+				F0000000000000000000005F /* ArtistFeed.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -300,12 +317,16 @@
 				F0000000000000000000002E /* LibraryView.swift */,
 				F0000000000000000000002F /* Components.swift */,
 				F00000000000000000000034 /* DownloadSheet.swift */,
-				F00000000000000000000038 /* EditorPlaylistView.swift */,
 				F0000000000000000000004C /* ReadableWidth.swift */,
 				F00000000000000000000054 /* ChartSongsView.swift */,
 				F00000000000000000000059 /* SplashView.swift */,
 				F0000000000000000000005A /* SplashMarkPath.swift */,
 				F0000000000000000000005C /* NewSongsView.swift */,
+				F00000000000000000000060 /* DiscoverCards.swift */,
+				F00000000000000000000061 /* PlaylistSquareView.swift */,
+				F00000000000000000000062 /* PlaylistDetailView.swift */,
+				F00000000000000000000063 /* ArtistDirectoryView.swift */,
+				F00000000000000000000064 /* ArtistDetailView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -520,7 +541,6 @@
 				B00000000000000000000033 /* DiscoverCatalog.swift in Sources */,
 				B00000000000000000000034 /* DiscoverRules.swift in Sources */,
 				B00000000000000000000035 /* DiscoverFeed.swift in Sources */,
-				B00000000000000000000036 /* EditorPlaylistView.swift in Sources */,
 				B00000000000000000000038 /* RecognizeScore.swift in Sources */,
 				B00000000000000000000039 /* KugouRecognizer.swift in Sources */,
 				B0000000000000000000003A /* AudioCapture.swift in Sources */,
@@ -547,6 +567,14 @@
 				B0000000000000000000005C /* SplashMarkPath.swift in Sources */,
 				B0000000000000000000005D /* KuwoPlaylist.swift in Sources */,
 				B0000000000000000000005E /* NewSongsView.swift in Sources */,
+				B0000000000000000000005F /* KuwoArtist.swift in Sources */,
+				B00000000000000000000060 /* SquareFeed.swift in Sources */,
+				B00000000000000000000061 /* ArtistFeed.swift in Sources */,
+				B00000000000000000000062 /* DiscoverCards.swift in Sources */,
+				B00000000000000000000063 /* PlaylistSquareView.swift in Sources */,
+				B00000000000000000000064 /* PlaylistDetailView.swift in Sources */,
+				B00000000000000000000065 /* ArtistDirectoryView.swift in Sources */,
+				B00000000000000000000066 /* ArtistDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -684,7 +712,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 179;
+				CURRENT_PROJECT_VERSION = 180;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -693,7 +721,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -708,7 +736,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 179;
+				CURRENT_PROJECT_VERSION = 180;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -717,7 +745,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -731,7 +759,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 179;
+				CURRENT_PROJECT_VERSION = 180;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -740,7 +768,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -755,7 +783,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 179;
+				CURRENT_PROJECT_VERSION = 180;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -764,7 +792,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

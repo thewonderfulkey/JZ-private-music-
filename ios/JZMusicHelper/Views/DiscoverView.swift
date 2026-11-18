@@ -3,27 +3,28 @@ import UIKit
 
 // MARK: - 发现（老板反馈 ①②⑥ 的全部改在这里）
 //
-// 结构（自上而下，v2.2 口径）：
+// 结构（自上而下，第三十轮口径）：
 //   ① 搜索框：**搜索入口搬到发现页最上方**（不再占一个 Tab）
-//   ② 编辑精选：横向长方形纸卡（对齐 Android `EditorCard` 150×66dp 的比例），不再是 160×160 大方块
-//   ③ 最近播放：小封面横排（有播放记录才出现）
-//   ④ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
-//   ⑤ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
-//   ⑥ 热门音乐：同一套分页，行内带名次
+//   ② 歌单广场：横滑封面卡（热门歌单，132×132 + 播放量角标）
+//   ③ 歌手大全：横滑圆头像（5 个 64，名字 + 粉丝）
+//   ④ 最近播放：小封面横排（有播放记录才出现）
+//   ⑤ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
+//   ⑥ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
+//   ⑦ 热门音乐：同一套分页，行内带名次
 //
-// 三条数据链都是真数据（与 Android 同口径）：编辑精选是内置池按天轮换、热门是种子词实时搜索、
-// 猜你喜欢从最近播放抽歌手再搜——搜不到就显示失败态 + 重试，不放假歌糊页面。
+// 第二十九轮起所有数据链都是真数据；第三十轮把「编辑精选」（本地池 + 逐首解析）下线，
+// 换成歌单广场 / 歌手大全——点开即播，不再有"占位行 → 正式行"的等待。
 struct DiscoverView: View {
 
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
     @Environment(DiscoverFeed.self) private var feed
+    @Environment(SquareFeed.self) private var squareFeed
+    @Environment(ArtistFeed.self) private var artistFeed
     @Environment(AppRouter.self) private var router
     /// 回到前台时按本地日核对一次（见 body 里的 `.onChange(of: scenePhase)`）
     @Environment(\.scenePhase) private var scenePhase
 
-    /// 编辑精选「换一批」的轮次：只在本次会话内叠加，不写盘（跨天本来就会换）
-    @State private var rotation = 0
     @State private var showSearch = false
     /// 轻提示（换一批之后的确认）
     @State private var toast: String?
@@ -33,7 +34,8 @@ struct DiscoverView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Tokens.Spacing.l) {
                 searchEntry
-                editorSection
+                squareSection
+                artistSection
                 recentSection
                 newSongsSection
                 guessSection
@@ -55,33 +57,49 @@ struct DiscoverView: View {
             SearchView()
         }
         .refreshable {
-            await feed.refreshAll(recent: library.recentSongs)
+            await refreshEverything()
         }
         .task {
             // 第二十一轮（老板 r84："一打开什么都在加载，能不能加载一次就别再加载"）：
-            // 热门/猜你喜欢都有**当天缓存**，`DiscoverFeed` 在 init 里已经同步读盘，
-            // 所以这里多数情况下第一帧就有内容；`refreshGuessIfStale` 只在"最近播放变了"时
-            // 才在后台换一批，界面先照旧显示，不阻塞首屏。
+            // 每个模块都有**当天缓存**，feed 的 init 里已经同步读盘，所以这里多数情况下第一帧就有内容。
             //
-            // 第二十九轮：热门与最新单曲合成一趟（`loadDaily`）——都是酷我接口、都按本地日定死，
-            // 老板要的"同进度"就是这一层：一个入口进去，两边一起加载/一起判缓存。
-            await feed.loadDaily()
+            // 第三十轮：歌单广场 / 歌手大全也并进这一趟——老板要的"同进度、当天只拉一次"，
+            // 就是这一层：一个入口进去，四块酷我数据一起加载 / 一起判缓存。
+            await loadEverything()
             if !library.recentSongs.isEmpty {
                 await feed.refreshGuessIfStale(recent: library.recentSongs)
             }
-            // 编辑精选里没被"写死"进包的那十几首，在后台补进本地缓存——
-            // 用户真正点进歌单页时就不用再现搜（老板："不希望进去还看到一行行加载"）。
-            Task { await feed.prefetchEditorSeeds() }
             openSearchIfIntentAsked()
+            // "当天新上架的歌单立刻能看到"：1KB 探测最新歌单首条 id，变了才重取第一页
+            Task { await squareFeed.probeNewestIfNeeded() }
         }
         // App 挂着跨过 0 点（或第二天从后台回来）：TabView 不会重建这一页，
         // `.task` 也不会再跑，所以回到前台时自己按本地日核对一次——
-        // 当天已加载过的话 `loadDaily` 就是两次缓存判断，一个请求都不发。
+        // 当天已加载过的话这里就是几次缓存判断，一个请求都不发。
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await feed.loadDaily() }
+            Task {
+                await loadEverything()
+                await squareFeed.probeNewestIfNeeded()
+            }
         }
         .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
+    }
+
+    /// 首屏这一趟：热门 + 最新单曲（`feed`）+ 歌单广场 + 歌手大全，四块并发
+    private func loadEverything() async {
+        async let daily: Void = feed.loadDaily()
+        async let square: Void = squareFeed.loadIfNeeded()
+        async let artists: Void = artistFeed.loadIfNeeded()
+        _ = await (daily, square, artists)
+    }
+
+    /// 下拉刷新：四块一起重取（都强制，不吃缓存）
+    private func refreshEverything() async {
+        async let daily: Void = feed.refreshAll(recent: library.recentSongs)
+        async let square: Void = squareFeed.refreshAll()
+        async let artists: Void = artistFeed.refresh()
+        _ = await (daily, square, artists)
     }
 
     /// 快捷指令「搜索歌曲」把词塞进 router，回到发现页时自动把搜索页推到前台
@@ -138,34 +156,96 @@ struct DiscoverView: View {
         .accessibilityHint("打开搜索页")
     }
 
-    // MARK: 编辑精选（反馈 ①：长方形卡）
+    // MARK: 歌单广场（第三十轮：替换编辑精选）
 
-    private var editorSection: some View {
+    private var squareSection: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-            DiscoverSectionHeader(title: "编辑精选", meta: "每日换一批",
-                                  actionTitle: "换一批",
-                                  action: {
-                                      Haptics.refresh()
-                                      withAnimation(Tokens.Motion.stateChange) { rotation += 1 }
-                                      // r86：点完要有反馈，否则用户不知道换没换
-                                      flash("编辑精选已换一批")
-                                  })
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
+                Text("歌单广场")
+                    .font(FontRole.sectionTitle)
+                Text(squareFeed.hotTotal > 0 ? "\(squareFeed.hotTotal) 张" : "每日更新")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if !squareFeed.hot.isEmpty {
+                    NavigationLink("查看全部") { PlaylistSquareView() }
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                // r79：卡片底撤掉之后，卡与卡之间要靠间距分开（以前是两块圆角板）。
-                HStack(spacing: Tokens.Spacing.l) {
-                    ForEach(DiscoverCatalog.playlists) { playlist in
-                        NavigationLink {
-                            EditorPlaylistView(playlist: playlist, rotation: rotation)
-                        } label: {
-                            EditorPlaylistCard(playlist: playlist)
+            Group {
+                switch squareFeed.hotState {
+                case .idle, .loading:
+                    SquareSkeletonRow()
+                case .failed:
+                    retryBlock("歌单广场暂时取不到，稍后再试") {
+                        Task { await squareFeed.refresh(.hot) }
+                    }
+                case .loaded:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .top, spacing: Tokens.Spacing.s) {
+                            ForEach(squareFeed.hot.prefix(8)) { summary in
+                                NavigationLink {
+                                    PlaylistDetailView(summary: summary)
+                                } label: {
+                                    PlaylistCoverCard(summary: summary)
+                                }
+                                .buttonStyle(.pressSubtle)
+                            }
                         }
-                        .buttonStyle(.press)
-                        .accessibilityLabel("\(playlist.title)，20 首，每日换一批")
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        .padding(.vertical, 2)
                     }
                 }
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
-                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    // MARK: 歌手大全（第三十轮：替换编辑精选）
+
+    private var artistSection: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
+                Text("歌手大全")
+                    .font(FontRole.sectionTitle)
+                Text(artistFeed.total > 0 ? "\(artistFeed.total) 位" : "热门歌手")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if !artistFeed.items.isEmpty {
+                    NavigationLink("查看全部") { ArtistDirectoryView() }
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+
+            Group {
+                switch artistFeed.state {
+                case .idle, .loading:
+                    ArtistSkeletonRow()
+                case .failed:
+                    retryBlock("歌手列表暂时取不到，稍后再试") {
+                        Task { await artistFeed.refresh() }
+                    }
+                case .loaded:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: Tokens.Spacing.xs) {
+                            ForEach(artistFeed.items.prefix(5)) { artist in
+                                NavigationLink {
+                                    ArtistDetailView(artist: artist)
+                                } label: {
+                                    ArtistCircleCell(artist: artist)
+                                }
+                                .buttonStyle(.pressSubtle)
+                            }
+                        }
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        .padding(.vertical, 2)
+                    }
+                }
             }
         }
     }
@@ -461,54 +541,6 @@ struct DiscoverSectionHeader: View {
     }
 }
 
-// MARK: - 编辑精选卡（长方形，对齐 Android `EditorCard`）
-
-/// 长方形入口卡：左边一条细色条 + 歌单名 + 首数 + 右箭头。
-///
-/// r86（老板："编辑精选每个模块的 UI 太花里胡哨，不用带那么多颜色；高度略高一点，显得太窄了，
-/// 但保持长方形"）：
-///   · 色条**不再用四个类别色**（0xF0B45A / 0x5A7DF0 / 0xE0608E / 0x3EC6A8），统一成墨色 28%
-///     —— 一整排看起来就是"一个模块的几张卡"，不再是四块彩色；
-///   · 尺寸 170×64 → 186×78：还是长方形，但不再是细长条。
-///
-/// 第二十轮：榜单卡从这里撤掉（老板："把酷我热歌榜换到热门音乐里"），这一排回到 4 张池卡，
-/// 之前为两种内容抽的 `EditorCardShell` 也一并收回来——只有一个使用者就别留中间层。
-struct EditorPlaylistCard: View {
-
-    let playlist: DiscoverCatalog.Playlist
-
-    var body: some View {
-        HStack(spacing: Tokens.Spacing.s) {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(Color.primary.opacity(0.28))
-                .frame(width: 3, height: 30)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(playlist.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text("20 首 · 每日换一批")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, Tokens.Spacing.s)
-        .frame(width: 186, alignment: .leading)
-        .frame(minHeight: 78)
-        // r78 去描边；r79 连纸卡底也去掉（老板："就是纯色的背景"）——只留左边那条色块。
-        // 底去掉之后卡片内那 12pt 横内缩会让文字比区块标题多缩 12pt，所以内缩撤掉、
-        // 间距改由外层 HStack 统一给（见 `editorSection`）。
-        .contentShape(Rectangle())
-    }
-}
 
 // MARK: - 最新单曲卡（网易云「艺人新动向」式横滑宽卡）
 //

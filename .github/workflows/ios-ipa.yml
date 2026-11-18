@@ -88,6 +88,7 @@ jobs:
             ios/JZMusicHelper/Services/DownloadCompanion.swift \
             ios/JZMusicHelper/Services/KuwoChart.swift \
             ios/JZMusicHelper/Services/KuwoPlaylist.swift \
+            ios/JZMusicHelper/Services/KuwoArtist.swift \
             ios/JZMusicHelper/Models/BakedSeedSongs.swift \
             ios/JZMusicHelper/Services/ITunesCover.swift \
             ios/JZMusicHelper/Services/ResolvedSongCache.swift \

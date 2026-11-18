@@ -13,6 +13,8 @@ struct JZMusicHelperApp: App {
     @State private var settings = SettingsStore.shared
     @State private var downloadFlow = MainActor.assumeIsolated { DownloadFlow() }
     @State private var discoverFeed = MainActor.assumeIsolated { DiscoverFeed() }
+    @State private var squareFeed = MainActor.assumeIsolated { SquareFeed() }
+    @State private var artistFeed = MainActor.assumeIsolated { ArtistFeed() }
     @State private var router = AppRouter()
 
     /// 开屏动画：只在**这次进程的第一次**显示（App 的 @State 一个进程只初始化一次，
@@ -35,6 +37,8 @@ struct JZMusicHelperApp: App {
                     .environment(settings)
                     .environment(downloadFlow)
                     .environment(discoverFeed)
+                    .environment(squareFeed)
+                    .environment(artistFeed)
                     .environment(router)
                     .environmentObject(downloads)
                     // 开屏期间首页既点不到，VoiceOver 也读不到（否则读屏会把底下整页念一遍）

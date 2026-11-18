@@ -2103,6 +2103,188 @@ do {
     UserDefaults.standard.removeObject(forKey: "kw_playlist_cache_v1_selftest_new_songs")
 }
 
+// MARK: - 第三十轮（r97）：歌单广场 + 歌手大全
+
+section("歌单广场：列表 / 详情 / 数字缩写 / 当天缓存")
+
+let squareFixture: [String: Any] = [
+    "code": 200,
+    "data": [
+        "total": "1754",
+        "data": [
+            [
+                "id": 3678617986,
+                "name": "古风戏腔丨一曲舞霓裳清影醉红颜",
+                "img": "http://img1.kuwo.cn/star/userpl2015/40/22/a.jpg",
+                "uname": "给票认真画",
+                "total": "104",
+                "listencnt": "912116"
+            ],
+            [
+                "id": "3575766446",
+                "name": "短视频DJ热门歌曲｜网红BGM",
+                "img": "https://img1.kuwo.cn/star/userpl2015/25/94/b.jpg",
+                "uname": "诗情画意",
+                "total": "41",
+                "listencnt": 4743590
+            ],
+            [
+                "name": "没有 id 的那条"
+            ]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let page = KuwoPlaylist.parseSquare(squareFixture) {
+    check("广场一页解析出 2 张（缺 id 的被丢掉）", page.items.count == 2, "\(page.items.count)")
+    check("广场 total 取接口给的 1754", page.total == 1754, "\(page.total)")
+    check("歌单 id 转字符串", page.items.first?.id == "3678617986",
+          page.items.first?.id ?? "nil")
+    check("歌单封面 http 升 https", page.items.first?.cover == "https://img1.kuwo.cn/star/userpl2015/40/22/a.jpg",
+          page.items.first?.cover ?? "nil")
+    check("创建者 / 首数 / 播放量都取对",
+          page.items.first?.creator == "给票认真画"
+            && page.items.first?.songCount == 104
+            && page.items.first?.playCount == 912116,
+          "\(String(describing: page.items.first))")
+    check("数字型 listencnt 也能解", page.items.last?.playCount == 4743590,
+          "\(String(describing: page.items.last?.playCount))")
+} else {
+    check("歌单广场解析", false, "parseSquare 返回 nil")
+}
+
+check("广场空列表判失败", KuwoPlaylist.parseSquare(["code": 200, "data": ["data": []]]) == nil)
+check("广场请求串带 order 与 pn",
+      KuwoPlaylist.squareURL(sort: .hot, page: 2).contains("order=hot")
+        && KuwoPlaylist.squareURL(sort: .hot, page: 2).contains("pn=2")
+        && KuwoPlaylist.squareURL(sort: .new).contains("order=new"),
+      KuwoPlaylist.squareURL(sort: .new))
+
+let detailFixture: [String: Any] = [
+    "code": 200,
+    "data": [
+        "id": "3678617986",
+        "name": "古风戏腔丨一曲舞霓裳清影醉红颜",
+        "img": "https://img1.kuwo.cn/star/userpl2015/40/22/a.jpg",
+        "uname": "kw2427722717",
+        "userName": "给票认真画",
+        "total": "104",
+        "listencnt": "912116",
+        "musicList": [
+            ["rid": 228908, "name": "牵丝戏", "artist": "银临&Aki阿杰", "album": "牵丝戏",
+             "duration": 239, "pic": "https://img4.kuwo.cn/a.jpg", "releaseDate": "2015-01-01"],
+            ["rid": 670146452, "name": "唐人恋曲", "artist": "小唐人", "album": "唐人恋曲",
+             "duration": 212, "pic": "https://img4.kuwo.cn/b.jpg", "releaseDate": "2020-08-18"]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let detail = KuwoPlaylist.parseDetail(detailFixture) {
+    check("详情带 2 首", detail.releases.count == 2, "\(detail.releases.count)")
+    check("详情创建者取 userName（不是登录名 kw 开头）",
+          detail.summary.creator == "给票认真画", detail.summary.creator)
+    check("详情保持歌单原顺序（不按发行日重排）",
+          detail.releases.map(\.song.name) == ["牵丝戏", "唐人恋曲"],
+          "\(detail.releases.map(\.song.name))")
+    check("详情 meta 取总首数与播放量",
+          detail.summary.songCount == 104 && detail.summary.playCount == 912116,
+          "\(detail.summary.songCount)/\(detail.summary.playCount)")
+} else {
+    check("歌单详情解析", false, "parseDetail 返回 nil")
+}
+
+check("数字缩写：不足一万原样", CountFormat.short(8849) == "8849", CountFormat.short(8849))
+check("数字缩写：万", CountFormat.short(912116) == "91.2万", CountFormat.short(912116))
+check("数字缩写：整万去掉 .0", CountFormat.short(47435) == "4.7万" && CountFormat.short(10000) == "1万",
+      "\(CountFormat.short(47435))/\(CountFormat.short(10000))")
+check("数字缩写：亿", CountFormat.short(106793500) == "1.1亿", CountFormat.short(106793500))
+check("数字缩写：0", CountFormat.short(0) == "0", CountFormat.short(0))
+
+do {
+    let page = KuwoPlaylist.parseSquare(squareFixture) ?? KuwoPlaylist.SquarePage(total: 0, items: [])
+    KuwoPlaylist.saveSquare(page, sort: .hot, day: 20_000)
+    check("广场当天缓存命中", KuwoPlaylist.cachedSquare(.hot, day: 20_000)?.items.count == page.items.count)
+    check("广场隔天缓存失效", KuwoPlaylist.cachedSquare(.hot, day: 20_001) == nil)
+    KuwoPlaylist.storeNewestID("3678617986")
+    check("最新歌单 id 记下来了", KuwoPlaylist.storedNewestID() == "3678617986")
+    UserDefaults.standard.removeObject(forKey: "kw_square_v1_hot")
+    UserDefaults.standard.removeObject(forKey: "kw_square_newest_id_v1")
+}
+
+section("歌手大全：列表 / 歌曲 / 分类 / 当天缓存")
+
+let artistFixture: [String: Any] = [
+    "code": 200,
+    "data": [
+        "total": "8849",
+        "artistList": [
+            ["id": 336, "name": "周杰伦", "aartist": "Jay Chou",
+             "pic300": "http://img1.kuwo.cn/star/starheads/300/a.jpg",
+             "artistFans": 1664361, "musicNum": 1707, "albumNum": 45],
+            ["id": "5371", "name": "G.E.M.邓紫棋", "pic120": "https://img4.kuwo.cn/star/starheads/120/b.jpg",
+             "artistFans": "957941", "musicNum": 958, "albumNum": 20],
+            ["name": "没有 id 的歌手"]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let page = KuwoArtist.parseDirectory(artistFixture) {
+    check("歌手一页解析出 2 位（缺 id 的丢掉）", page.items.count == 2, "\(page.items.count)")
+    check("歌手 total 8849", page.total == 8849, "\(page.total)")
+    check("歌手 id 转字符串", page.items.first?.id == "336", page.items.first?.id ?? "nil")
+    check("歌手外文名取 aartist", page.items.first?.alias == "Jay Chou", page.items.first?.alias ?? "nil")
+    check("歌手头像 http 升 https",
+          page.items.first?.picURL == "https://img1.kuwo.cn/star/starheads/300/a.jpg",
+          page.items.first?.picURL ?? "nil")
+    check("粉丝 / 歌曲数 / 专辑数", page.items.first?.fans == 1664361
+            && page.items.first?.songCount == 1707 && page.items.first?.albumCount == 45,
+          "\(String(describing: page.items.first))")
+    check("缺图用首字占位", page.items.first?.initial == "周" && page.items.last?.initial == "G",
+          "\(page.items.map(\.initial))")
+} else {
+    check("歌手列表解析", false, "parseDirectory 返回 nil")
+}
+
+let artistSongsFixture: [String: Any] = [
+    "code": 200,
+    "data": [
+        "total": "1707",
+        "list": [
+            ["rid": 228908, "name": "晴天", "artist": "周杰伦", "album": "叶惠美",
+             "duration": 269, "songTimeMinutes": "04:29",
+             "pic": "https://img4.kuwo.cn/a.jpg", "releasedate": "2003-07-31"],
+            ["rid": 440613, "name": "稻香", "artist": "周杰伦", "album": "魔杰座",
+             "duration": 223, "pic": "https://img4.kuwo.cn/b.jpg"]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let songs = KuwoArtist.parseSongs(artistSongsFixture) {
+    check("歌手歌曲解析出 2 首", songs.count == 2, "\(songs.count)")
+    check("歌手歌曲的 releasedate（全小写）也认",
+          songs.first?.releaseDate == "2003-07-31", songs.first?.releaseDate ?? "nil")
+    check("歌手歌曲时长取对", songs.first?.song.durationSec == 269,
+          "\(String(describing: songs.first?.song.durationSec))")
+    check("歌手歌曲 rid 进 platformID", songs.first?.song.platformID == "228908")
+} else {
+    check("歌手歌曲解析", false, "parseSongs 返回 nil")
+}
+
+check("歌手分类 id 与实测一致",
+      KuwoArtist.categories.map(\.id) == [0, 11, 13, 12, 4, 5, 6],
+      "\(KuwoArtist.categories.map(\.id))")
+check("字母条：热门 + A–Z", KuwoArtist.letters.count == 27 && KuwoArtist.letters.first == "热门",
+      "\(KuwoArtist.letters.count)")
+
+do {
+    let page = KuwoArtist.parseDirectory(artistFixture)
+        ?? KuwoArtist.Page(total: 0, items: [])
+    KuwoArtist.save(page, category: 999, day: 20_000)
+    check("歌手当天缓存命中", KuwoArtist.cached(category: 999, day: 20_000)?.items.count == page.items.count)
+    check("歌手隔天缓存失效", KuwoArtist.cached(category: 999, day: 20_001) == nil)
+    UserDefaults.standard.removeObject(forKey: "kw_artists_v1_999")
+}
+
 section("酷我封面（rid_pic 同平台兜底）")
 
 check("http 升 https，且 kwcdn 换成 kuwo.cn",

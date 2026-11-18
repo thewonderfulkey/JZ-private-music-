@@ -56,8 +56,44 @@ enum KuwoPlaylist {
     /// 整页（「查看全部」）是接口一页的 100 首。
     static let moduleCards = 12
 
+    // MARK: 歌单广场（第二十轮之后新增：getRcmPlayList）
+
+    /// 广场里的一张歌单（比 `playListInfo` 轻，只有列表页需要的字段）。
+    struct Summary: Identifiable, Codable, Hashable {
+        let id: String
+        let name: String
+        let cover: String
+        let creator: String
+        let songCount: Int
+        let playCount: Int
+    }
+
+    /// 一页广场歌单：`total` 是接口给的总数（热门 1754 / 最新 9086），用来写"还有多少"。
+    struct SquarePage: Codable, Hashable {
+        let total: Int
+        let items: [Summary]
+    }
+
+    /// 歌单详情：歌单元信息 + 按歌单原顺序的歌
+    struct Detail {
+        let summary: Summary
+        let releases: [Release]
+    }
+
+    /// 歌单广场排序：`hot` = 按播放量（1754 张），`new` = 最新上架（9086 张）
+    enum Sort: String, CaseIterable, Identifiable {
+        case hot
+        case new
+
+        var id: String { rawValue }
+        var title: String { self == .hot ? "热门" : "最新" }
+    }
+
     /// 一页 100 首（服务端上限）
     static let pageSize = 100
+
+    /// 广场 / 歌手列表一页 30 条（一屏 2 列约 6 张、3 列约 9 位，30 够滚两屏）
+    static let squarePageSize = 30
 
     /// 酷我这一族接口带自家 Referer 最稳（与 `KuwoChart` 同一口径）
     static let headers = ["Referer": "https://www.kuwo.cn/"]
@@ -69,6 +105,12 @@ enum KuwoPlaylist {
     static func url(pid: String, page: Int = 0, rn: Int = pageSize) -> String {
         "https://wapi.kuwo.cn/api/www/playlist/playListInfo"
             + "?pid=\(pid)&pn=\(page)&rn=\(rn)&httpsStatus=1"
+    }
+
+    /// 歌单广场列表（`pn` 从 1 起，和详情接口的 0 起不一样——实测踩过）
+    static func squareURL(sort: Sort, page: Int = 1, rn: Int = squarePageSize) -> String {
+        "https://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList"
+            + "?pn=\(page)&rn=\(rn)&order=\(sort.rawValue)&pay=0&pow=0&kbps=0"
     }
 
     // MARK: 拉取
@@ -91,11 +133,61 @@ enum KuwoPlaylist {
         return releases
     }
 
+    /// 拉广场一页（热门 / 最新）。成功时**第一页**写当天缓存；第 2 页起只在内存。
+    static func fetchSquare(sort: Sort,
+                            page: Int = 1,
+                            rn: Int = squarePageSize,
+                            day: Int = KuwoPlaylist.today) async throws -> SquarePage {
+        let json = try await APIClient.shared.getJSON(
+            squareURL(sort: sort, page: page, rn: rn),
+            headers: headers,
+            timeout: 20
+        )
+        guard let result = parseSquare(json) else {
+            throw APIError.parse("歌单广场解析失败（\(sort.title)）")
+        }
+        if page == 1 { saveSquare(result, sort: sort, day: day) }
+        return result
+    }
+
+    /// 只有"当前最新一张歌单的 id"——`rn=1` 约 1KB，用来判断当天有没有新歌单上架。
+    /// 老板要的是"新上架的立刻能看到"，所以只比 id，不拉整页。
+    static func latestNewPlaylistID() async -> String? {
+        guard let json = try? await APIClient.shared.getJSON(
+            squareURL(sort: .new, page: 1, rn: 1),
+            headers: headers, timeout: 12),
+            let page = parseSquare(json),
+            let first = page.items.first else { return nil }
+        return first.id
+    }
+
+    /// 拉歌单详情（元信息 + 第一页歌）。歌单自己的顺序不做二次排序。
+    static func fetchDetail(pid: String,
+                            page: Int = 0,
+                            rn: Int = pageSize) async throws -> Detail {
+        let json = try await APIClient.shared.getJSON(
+            url(pid: pid, page: page, rn: rn),
+            headers: headers,
+            timeout: 20
+        )
+        guard let detail = parseDetail(json) else {
+            throw APIError.parse("歌单详情解析失败")
+        }
+        return detail
+    }
+
     // MARK: 解析（纯函数，CI 断言直接喂字典进来）
 
     /// 解析 `playListInfo` 的响应。`musicList` 空 / 全被丢掉时返回 nil —— 让上层走失败态，
     /// 而不是显示一个 0 首的"正常"页面。
     static func parse(_ json: [String: Any]) -> [Release]? {
+        guard let releases = rawReleases(json) else { return nil }
+        return ordered(releases)
+    }
+
+    /// 按接口原顺序解析（**不排序**）：歌单详情要保留歌单自己的排法，
+    /// 只有「最新单曲」才按发行日重排。
+    static func rawReleases(_ json: [String: Any]) -> [Release]? {
         if let code = number(json["code"]), code != 200 { return nil }
         guard let data = json["data"] as? [String: Any] else { return nil }
 
@@ -105,7 +197,53 @@ enum KuwoPlaylist {
             ?? []
         let releases = list.compactMap(release(from:))
         guard !releases.isEmpty else { return nil }
-        return ordered(releases)
+        return releases
+    }
+
+    // MARK: 广场 / 详情解析（纯函数，CI 断言直接喂字典进来）
+
+    static func parseSquare(_ json: [String: Any]) -> SquarePage? {
+        if let code = number(json["code"]), code != 200 { return nil }
+        guard let data = json["data"] as? [String: Any] else { return nil }
+        let list = data["data"] as? [[String: Any]] ?? []
+        let items = list.compactMap(summary(from:))
+        guard !items.isEmpty else { return nil }
+        return SquarePage(total: number(data["total"]) ?? items.count, items: items)
+    }
+
+    static func summary(from item: [String: Any]) -> Summary? {
+        guard let id = text(item["id"]), !id.isEmpty else { return nil }
+        guard let name = text(item["name"]), !name.isEmpty else { return nil }
+        return Summary(
+            id: id,
+            name: TextClean.text(name),
+            cover: https(text(item["img"]) ?? text(item["img1"]) ?? ""),
+            creator: TextClean.text(text(item["uname"]) ?? ""),
+            songCount: number(item["total"]) ?? 0,
+            playCount: number(item["listencnt"]) ?? 0
+        )
+    }
+
+    static func parseDetail(_ json: [String: Any]) -> Detail? {
+        // 详情页要歌单自己的顺序，所以走 rawReleases（不按发行日重排）
+        guard let releases = rawReleases(json) else { return nil }
+        guard let data = json["data"] as? [String: Any] else { return nil }
+        let summary = Summary(
+            id: text(data["id"]) ?? "",
+            name: TextClean.text(text(data["name"]) ?? ""),
+            cover: https(text(data["img"]) ?? ""),
+            // `uname` 有时是登录名（kw+数字），`userName` 才是显示名
+            creator: TextClean.text(text(data["userName"]) ?? text(data["uname"]) ?? ""),
+            songCount: number(data["total"]) ?? releases.count,
+            playCount: number(data["listencnt"]) ?? 0
+        )
+        return Detail(summary: summary, releases: releases)
+    }
+
+    /// 接口偶尔给 `http://`（封面、歌手头像都有）。ATS 严格，统一升 https。
+    static func https(_ url: String) -> String {
+        guard url.hasPrefix("http://") else { return url }
+        return "https://" + url.dropFirst("http://".count)
     }
 
     static func release(from item: [String: Any]) -> Release? {
@@ -199,6 +337,51 @@ enum KuwoPlaylist {
         let cached = CachedReleases(day: day, releases: releases)
         guard let data = try? JSONEncoder().encode(cached) else { return }
         UserDefaults.standard.set(data, forKey: cacheKey(playlist))
+    }
+
+    // MARK: 广场缓存（UserDefaults，JSON）
+
+    private static func squareCacheKey(_ sort: Sort) -> String {
+        "kw_square_v1_\(sort.rawValue)"
+    }
+
+    private struct CachedSquare: Codable {
+        let day: Int
+        let page: SquarePage
+    }
+
+    /// 当天缓存（热门 / 最新各一份，只存第一页）
+    static func cachedSquare(_ sort: Sort, day: Int = KuwoPlaylist.today) -> SquarePage? {
+        guard let data = UserDefaults.standard.data(forKey: squareCacheKey(sort)),
+              let cached = try? JSONDecoder().decode(CachedSquare.self, from: data),
+              cached.day == day, !cached.page.items.isEmpty else { return nil }
+        return cached.page
+    }
+
+    /// 不问日期（跨天冷启动先铺旧内容，再核对要不要换）
+    static func cachedSquareAnyDay(_ sort: Sort) -> SquarePage? {
+        guard let data = UserDefaults.standard.data(forKey: squareCacheKey(sort)),
+              let cached = try? JSONDecoder().decode(CachedSquare.self, from: data),
+              !cached.page.items.isEmpty else { return nil }
+        return cached.page
+    }
+
+    static func saveSquare(_ page: SquarePage, sort: Sort, day: Int = KuwoPlaylist.today) {
+        let cached = CachedSquare(day: day, page: page)
+        guard let data = try? JSONEncoder().encode(cached) else { return }
+        UserDefaults.standard.set(data, forKey: squareCacheKey(sort))
+    }
+
+    // MARK: "有没有新歌单"的探测锚点
+
+    private static let newestIDKey = "kw_square_newest_id_v1"
+
+    static func storedNewestID() -> String? {
+        UserDefaults.standard.string(forKey: newestIDKey)
+    }
+
+    static func storeNewestID(_ id: String) {
+        UserDefaults.standard.set(id, forKey: newestIDKey)
     }
 
     // MARK: 字段取值（接口里同一字段常常有时是字符串有时是数字）
