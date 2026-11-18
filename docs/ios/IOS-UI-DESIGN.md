@@ -49,7 +49,7 @@
 | 毛笔题字「发现音乐」 | 文本渲染 | 静态图（PDF 矢量资产，**不参与** 无障碍朗读文字，`accessibilityLabel("发现音乐")`） | 装饰性字形 |
 | 朱砂印章 | 10dp 旋转方印 | App 图标主体 + 空态/关于页的小图形（1 处） | 品牌符号，不做 UI 元素 |
 | 山水位图 | 播放页 `ink_bg_player` | ❌ 不进。改用**封面取色的柔和光晕**（同 Apple Music） | 位图在 iOS 上会与小尺寸屏幕/暗色模式冲突 |
-| 水墨开场动画 | 5.3s 自绘 Canvas 山水 | ❌ **不搬那一套**。改为「耳机标自己戴上」：落笔（头梁沿弧长出来）→ 戴上（两只耳罩自下弹入）→ 出声（朱砂声波 + 轻顶），1.72s、冷启动一次、点即跳过、减弱动效静态 0.65s。代码 `Views/SplashView.swift`，时间轴 `Services/SplashTimeline.swift` | iOS LaunchScreen 是系统静态截图、播不了动画，所以它是启动后的**覆盖层**；正因为起点是空白纸，第一拍才必须是"落笔"。超过 2s 的开场是首启流失点，故压到 1.72s |
+| 水墨开场动画 | 5.3s 自绘 Canvas 山水 | ❌ **不搬那一套**。改为「耳机标自己戴上」：落笔（头梁沿弧长出来）→ 戴上（两只耳罩自下弹入）→ 出声（朱砂声波 + 轻顶），1.72s、冷启动一次、点即跳过、减弱动效静态 0.65s。代码 `Views/SplashView.swift`，时间轴 `Services/SplashTimeline.swift`，预览 `mockups/splash-icon-v1.html`，分镜 `mockups/splash-frames.png` | iOS LaunchScreen 是系统静态截图、播不了动画，所以它是启动后的**覆盖层**；正因为起点是空白纸，第一拍才必须是"落笔"。超过 2s 的开场是首启流失点，故压到 1.72s |
 | 自绘底栏 | 墨印滑动的 6 格 | 系统 `TabView`（5 格） | 见 [IOS-IA-SCREENS.md](IOS-IA-SCREENS.md) §1 |
 
 ---
