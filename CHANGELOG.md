@@ -25,7 +25,10 @@
   装包后请连续快速点按 10 次验证。
 
 **验证**：本机 PressTiming 6/6、typecheck 0、26 个 Views 解析通过；
-CI #（待补）/ 715 条断言全绿；IPA `JZ-Music-v2.4.9-（待补）-r106-ios-unsigned.ipa` 已发群。
+CI **#106 / `36fa37f` / 715 条断言全绿** / `build-ipa` 成功、飞书已收到包；
+IPA `JZ-Music-v2.4.9-36fa37f-r106-ios-unsigned.ipa`（2,222,226 B，sha256 `227c4e75…f2a0`，
+版本 2.4.9 / 187，插件已嵌入）。
+时序示意（非真机录屏）：`docs/ios/mockups/press-timing.png`，生成脚本 `tools/ios/gen_press_timing_chart.py`。
 
 版本 2.4.9（187）。
 
