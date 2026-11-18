@@ -2076,10 +2076,12 @@ let cacheChart = KuwoChart.Chart(webId: "1", mobileId: "99999", name: "测试榜
 let cachePage = KuwoChart.Page(name: "测试榜", publishedDate: "2026-11-18",
                                songs: [song(.kuwo, "晴天", "周杰伦", id: "228908")])
 KuwoChart.save(cachePage, for: cacheChart, day: 20_000)
-check("榜单当天缓存能读回",
-      KuwoChart.cachedPage(cacheChart, day: 20_000)?.songs.count == 1)
-check("榜单缓存跨天失效（每日更新的榜不跨天复用）",
-      KuwoChart.cachedPage(cacheChart, day: 20_001) == nil)
+check("缓存能读回（不按我们这边的日期判断）",
+      KuwoChart.cachedPageAnyDay(cacheChart)?.songs.count == 1)
+check("服务端 pub 没变 → 命中缓存，不重取整页",
+      KuwoChart.cachedPage(cacheChart, publishedDate: "2026-11-18") != nil)
+check("服务端 pub 变了 → 视为未命中，要重取",
+      KuwoChart.cachedPage(cacheChart, publishedDate: "2026-11-19") == nil)
 
 section("编辑精选：预置歌写死进包（一步到位，不再文字转歌曲）")
 

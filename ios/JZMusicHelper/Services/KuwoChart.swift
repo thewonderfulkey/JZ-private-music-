@@ -69,7 +69,20 @@ enum KuwoChart {
         return page
     }
 
-    // MARK: 当天缓存（UserDefaults，JSON）
+    /// 只问"这个榜现在是哪一天的"——`rn=1` 的 `ksong.s` 只有 ~1.5 KB（整页 100 首要 ~120 KB）。
+    ///
+    /// 老板："热门音乐不用按本地日期强刷，按酷我接口自己换榜的时间换就行。"
+    /// 所以缓存有效性不再看"我们的哪一天"，而是看**服务端返回的 `pub` 日期**：
+    /// 日期没变 → 一个整页请求都不发；日期变了 → 才重取 100 首。
+    static func latestPublishedDate(_ chart: Chart) async -> String? {
+        guard let json = try? await APIClient.shared.getJSON(
+            songsURL(mobileId: chart.mobileId, rn: 1),
+            headers: headers, timeout: 12),
+            let pub = json["pub"] as? String, !pub.isEmpty else { return nil }
+        return pub
+    }
+
+    // MARK: 缓存（UserDefaults，JSON）
 
     static var today: Int { DiscoverRules.today }
 
@@ -84,13 +97,18 @@ enum KuwoChart {
         let songs: [Song]
     }
 
-    /// 当天缓存。`day` 不匹配（跨天）就当没有——榜单每日更新，隔天的榜不该再显示。
-    static func cachedPage(_ chart: Chart, day: Int = KuwoChart.today) -> Page? {
+    /// 缓存里的整页（不问日期）——调用方先拿它铺满界面，再决定要不要按 `pub` 核对
+    static func cachedPageAnyDay(_ chart: Chart) -> Page? {
         guard let data = UserDefaults.standard.data(forKey: cacheKey(chart)),
               let cached = try? JSONDecoder().decode(CachedPage.self, from: data),
-              cached.day == day,
               !cached.songs.isEmpty else { return nil }
         return Page(name: cached.name, publishedDate: cached.publishedDate, songs: cached.songs)
+    }
+
+    /// 只有"缓存里的 `pub` 与给定的服务端日期一致"才算命中。
+    static func cachedPage(_ chart: Chart, publishedDate: String) -> Page? {
+        guard let page = cachedPageAnyDay(chart), page.publishedDate == publishedDate else { return nil }
+        return page
     }
 
     static func save(_ page: Page, for chart: Chart, day: Int = KuwoChart.today) {

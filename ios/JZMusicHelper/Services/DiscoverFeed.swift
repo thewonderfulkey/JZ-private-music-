@@ -29,8 +29,12 @@ final class DiscoverFeed {
     private(set) var hotState: LoadState = .idle
     /// 这批热门是"酷我官方榜"还是"四平台合并兜底"——只用来写副标题，不参与排序
     private(set) var hotFromChart = false
-    /// 这批热门是哪一天的（用来处理"App 挂着跨过 0 点"：内存里有旧数据也必须重取）
+    /// 这批热门是哪一天的（兜底数据用：跨本地日要重算）
     private var hotDay: Int = -1
+    /// 榜单数据对应的**服务端 `pub` 日期**（这才是"换榜"的信号）
+    private var hotChartDate: String?
+    /// 每次启动只按服务端日期核对一次，避免每次回发现页都打一次探测请求
+    private var didRevalidateHot = false
 
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
@@ -50,6 +54,8 @@ final class DiscoverFeed {
         let day: Int
         let songs: [Song]
         let fromChart: Bool
+        /// 榜单的 `pub` 日期（老缓存没有这个字段 → 可选类型兼容）
+        let chartDate: String?
     }
 
     private struct GuessCache: Codable {
@@ -70,12 +76,16 @@ final class DiscoverFeed {
         primeFromCaches()
     }
 
-    /// 同步预载当天缓存（只读本地，不发请求）
+    /// 同步预载缓存（只读本地，不发请求）
+    ///
+    /// 热门不再按"我们这边的哪一天"判断：**只要缓存里有内容就先铺上去**，
+    /// 之后再按酷我返回的 `pub` 日期核对要不要换（见 `revalidateHotIfNeeded`）。
     private func primeFromCaches() {
-        if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
+        if let cached = cachedHot(), !cached.songs.isEmpty {
             hotSongs = cached.songs
             hotFromChart = cached.fromChart
             hotDay = cached.day
+            hotChartDate = cached.chartDate
             hotState = .loaded
         }
         if let cached = cachedGuess(),
@@ -91,16 +101,39 @@ final class DiscoverFeed {
 
     func loadHotIfNeeded() async {
         if hotState == .loading { return }
-        // 当天已有一批（内存里）就直接用；但**跨天必须重取**——App 挂着过 0 点也算新的一天
-        if !hotSongs.isEmpty, hotDay == day { return }
-        if let cached = cachedHot(), cached.day == day, !cached.songs.isEmpty {
+
+        if !hotSongs.isEmpty {
+            // 榜单：按**酷我返回的 `pub` 日期**决定要不要换（老板："跟接口一起换"）；
+            // 兜底数据（种子词）没有服务端日期，仍按本地日重算。
+            await revalidateHotIfNeeded()
+            if !hotFromChart, hotDay != day { await refreshHot() }
+            return
+        }
+        if let cached = cachedHot(), !cached.songs.isEmpty {
             hotSongs = cached.songs
             hotFromChart = cached.fromChart
             hotDay = cached.day
+            hotChartDate = cached.chartDate
             hotState = .loaded
+            await revalidateHotIfNeeded()
+            if !hotFromChart, hotDay != day { await refreshHot() }
             return
         }
         await refreshHot()
+    }
+
+    /// 按服务端的换榜日期核对一次（每次启动只查一次；探测请求 rn=1 仅约 1.5 KB）。
+    ///
+    /// 榜单没换（`pub` 与本地记录一致）→ **一个整页请求都不发**；
+    /// 换了 → 重取 100 首（`refreshHot` 会顺带写回新的 `chartDate`）。
+    private func revalidateHotIfNeeded() async {
+        guard !didRevalidateHot else { return }
+        didRevalidateHot = true
+        guard hotFromChart else { return }
+        guard let latest = await KuwoChart.latestPublishedDate(.hot) else { return }
+        if latest != hotChartDate {
+            await refreshHot()
+        }
     }
 
     func refreshHot() async {
@@ -112,8 +145,9 @@ final class DiscoverFeed {
             hotSongs = songs
             hotFromChart = true
             hotDay = day
+            hotChartDate = page.publishedDate
             hotState = .loaded
-            saveHot(songs, fromChart: true)
+            saveHot(songs, fromChart: true, chartDate: page.publishedDate)
             return
         }
 
@@ -141,8 +175,9 @@ final class DiscoverFeed {
         hotSongs = picked
         hotFromChart = false
         hotDay = day
+        hotChartDate = nil
         hotState = .loaded
-        saveHot(picked, fromChart: false)
+        saveHot(picked, fromChart: false, chartDate: nil)
     }
 
     // MARK: 编辑精选：把当天没写死的那几首后台补齐
@@ -308,8 +343,8 @@ final class DiscoverFeed {
         return try? JSONDecoder().decode(HotCache.self, from: data)
     }
 
-    private func saveHot(_ songs: [Song], fromChart: Bool) {
-        let cache = HotCache(day: day, songs: songs, fromChart: fromChart)
+    private func saveHot(_ songs: [Song], fromChart: Bool, chartDate: String?) {
+        let cache = HotCache(day: day, songs: songs, fromChart: fromChart, chartDate: chartDate)
         guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.hotCacheKey)
     }

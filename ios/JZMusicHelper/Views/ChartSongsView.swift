@@ -144,18 +144,27 @@ struct ChartSongsView: View {
 
     private func load(force: Bool) async {
         if loading { return }
-        // 同一天且有数据就直接用（老板："加载一次，当天不用再发请求"）；
-        // 跨天（App 挂着过 0 点）要重取，否则第二天还显示昨天的榜。
         if !force, page != nil, pageDay == KuwoChart.today { return }
 
-        // ① 当天缓存：进页面直接铺满，一个请求都不发
-        if !force, let cached = KuwoChart.cachedPage(chart) {
+        // ① 先铺缓存（不区分我们这边的日期）——用户进页面立刻有内容
+        if !force, let cached = KuwoChart.cachedPageAnyDay(chart) {
             page = cached
-            pageDay = KuwoChart.today
             failed = false
+            // ② 再按**服务端 pub 日期**核对：只有酷我换榜了才重取整页（rn=1 探测约 1.5 KB）
+            if let latest = await KuwoChart.latestPublishedDate(chart),
+               latest != cached.publishedDate {
+                await reloadFull()
+            } else {
+                pageDay = KuwoChart.today
+            }
             return
         }
 
+        await reloadFull()
+    }
+
+    /// 真正拉整页（100 首）
+    private func reloadFull() async {
         loading = true
         failed = false
         do {
