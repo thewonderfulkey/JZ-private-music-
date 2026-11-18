@@ -16,6 +16,17 @@
 
 安装/卸载/静默参数：`--silent --dir="D:\JZ Music" --no-launch`；详见 `docs/INSTALL.md`。
 
+## iOS 未签名包
+
+| 产物 | 用途 |
+|---|---|
+| `JZ-Music-v<版本>-<sha7>-r<run>-ios-unsigned.ipa` | 对外主发：iPhone 端（SwiftUI，iOS 17+）的当前包，由 GitHub Actions 的 `ios-ipa.yml` 构建，跑完自动发飞书群 + 作为 Release 资产上传 |
+
+- **未签名**：自签分发（Sideloadly / AltStore），个人签名 7 天有效，AltStore 可自动续签。仓库不保存签名证书。
+- 文件名里的 `sha7-rNN` 是构建戳（`rNN` 是 Actions 运行号），**装之前核对**，别装回旧包。
+- 本目录只留**最新一份** IPA；旧包不入库（每轮产物都在飞书群里，Release 里留最新）。
+- 当前：`JZ-Music-v2.4.17-cad8b4a-r117-ios-unsigned.ipa`（2.3 MB，版本 2.4.17 / 195）。
+
 ## 版本表
 
 | 版本 | versionCode | 主题 | APK |
