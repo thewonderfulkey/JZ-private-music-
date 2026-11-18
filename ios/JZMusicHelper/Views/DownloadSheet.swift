@@ -88,7 +88,6 @@ struct DownloadSheet: View {
 
             ForEach(DownloadGuard.qualityOptions()) { level in
                 Button {
-                    Haptics.tap()
                     flow.choose(level)
                 } label: {
                     qualityRow(level)

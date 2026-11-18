@@ -281,7 +281,6 @@ struct NowPlayingView: View {
                 // 歌词页收起了功能键行，这里必须有「回封面」的出口（不然只能关掉整个播放页）
                 if showLyrics {
                     Button {
-                        Haptics.tap()
                         withAnimation(Tokens.Motion.panelSwap) { showLyrics = false }
                     } label: {
                         Text("封面")
@@ -372,7 +371,6 @@ struct NowPlayingView: View {
             .shadow(color: .black.opacity(0.45), radius: 26, y: 12)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                Haptics.tap()
                 withAnimation(Tokens.Motion.panelSwap) { showLyrics = true }
             }
             .accessibilityAddTraits(.isButton)
@@ -495,7 +493,6 @@ struct NowPlayingView: View {
             quickButton(icon: showLyrics ? "text.alignleft" : "quote.bubble",
                         label: showLyrics ? "封面" : "歌词",
                         tint: .white.opacity(0.82)) {
-                Haptics.tap()
                 withAnimation(Tokens.Motion.panelSwap) { showLyrics.toggle() }
             }
             .frame(width: itemWidth, height: 52)
@@ -663,7 +660,6 @@ struct NowPlayingView: View {
 
     private var queueButton: some View {
         Button {
-            Haptics.tap()
             showQueue = true
         } label: {
             VStack(spacing: 3) {
@@ -767,7 +763,6 @@ struct NowPlayingView: View {
 
     /// 歌词页 → 封面（双击空白处、点右上角「封面」、⋯ 菜单都走这里）
     private func backToCover() {
-        Haptics.tap()
         withAnimation(Tokens.Motion.panelSwap) { showLyrics = false }
     }
 
@@ -807,15 +802,12 @@ struct NowPlayingView: View {
         return HStack(spacing: Tokens.Spacing.xs) {
             offsetPill(title: "慢一点") {
                 settings.adjustOffset(byMs: -LyricOffsetRules.stepMs, forSong: songID)
-                Haptics.tap()
             }
             offsetPill(title: "归零") {
                 settings.resetOffset(forSong: songID)
-                Haptics.tap()
             }
             offsetPill(title: "快一点") {
                 settings.adjustOffset(byMs: LyricOffsetRules.stepMs, forSong: songID)
-                Haptics.tap()
             }
         }
         .frame(width: max(80, width - Tokens.Spacing.m * 2))
@@ -1078,7 +1070,6 @@ private struct LyricsPane: View {
 
     private func returnButton(proxy: ScrollViewProxy) -> some View {
         Button {
-            Haptics.tap()
             resumeTask?.cancel()
             resumeTask = nil
             browsing = false
@@ -1297,7 +1288,6 @@ struct PlayerQueueSheet: View {
             }
             Spacer(minLength: 0)
             Button {
-                Haptics.tap()
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
@@ -1331,7 +1321,6 @@ struct PlayerQueueSheet: View {
     private func row(index: Int, song: Song) -> some View {
         let isCurrent = index == player.index
         return Button {
-            Haptics.tap()
             player.jump(to: index)
             dismiss()
         } label: {

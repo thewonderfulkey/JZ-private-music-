@@ -269,7 +269,6 @@ struct DiscoverView: View {
                                                                    radius: Tokens.Radius.artworkSmall)),
                                       size: 104,
                                       onTap: {
-                                          Haptics.tap()
                                           play(library.recentSongs, at: index)
                                       })
                         }
@@ -496,7 +495,6 @@ struct DiscoverView: View {
 
     private func play(_ songs: [Song], at index: Int) {
         guard songs.indices.contains(index) else { return }
-        Haptics.tap()
         player.play(queue: songs, startAt: index)
         library.recordPlayed(songs[index])
         router.showPlayer = true
@@ -540,7 +538,6 @@ struct DiscoverSectionHeader: View {
         .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
 }
-
 
 // MARK: - 最新单曲卡（网易云「艺人新动向」式横滑宽卡）
 //

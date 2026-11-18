@@ -118,7 +118,6 @@ private struct DownloadRowView: View {
             // 第五轮（老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"）：
             // 从列表里点一首时，**整列已完成下载**就是队列——否则队列里只有这一首，
             // 列表循环退化成单曲循环。
-            Haptics.tap()
             let songs = downloads.completedSongs
             if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
                 player.play(queue: songs, startAt: index)

@@ -26,7 +26,6 @@ struct FavoritesView: View {
                             Button {
                                 player.play(queue: library.favorites, startAt: index)
                                 library.recordPlayed(song)
-                                Haptics.tap()
                                 router.showPlayer = true
                             } label: {
                                 SongRow(song: song,
@@ -96,7 +95,6 @@ struct FavoritesView: View {
                             guard !library.favorites.isEmpty else { return }
                             player.play(queue: library.favorites, startAt: 0)
                             library.recordPlayed(library.favorites[0])
-                            Haptics.tap()
                             router.showPlayer = true
                         } label: {
                             Label("播放全部", systemImage: "play.fill")
@@ -111,7 +109,6 @@ struct FavoritesView: View {
                         Button {
                             guard !library.favorites.isEmpty else { return }
                             player.replaceQueue(library.favorites, shuffle: true)
-                            Haptics.tap()
                             router.showPlayer = true
                         } label: {
                             Label("随机", systemImage: "shuffle")

@@ -110,6 +110,94 @@ enum StudioPick {
         return cands.max { studioScore($0, consensusDurSec: cons) < studioScore($1, consensusDurSec: cons) }
     }
 
+    // MARK: 同一首歌的「其他版本」与原唱标签（第三十三轮）
+    //
+    // 老板 2026-11-18 真机截图：识曲《阁爱你一摆》的「其他版本」里，六条**不同的歌**
+    // （我的未来不是梦 / 敢傻敢冲 / 浪子的路 …）全被打了「原唱」。根因有两层：
+    //   ① 搜索关键词是「歌名 + 歌手」，对高产歌手会返回一堆同歌手的别的歌；
+    //   ② 旧标签只看「这一行自己的歌名是否裸名 + 歌手是否含原唱」，没看「是不是同一首歌」。
+    // 现在：先按核心歌名（繁简折叠 + 去标点）严格过滤出同一首歌，再去重、排除主结果那条录音，
+    // 最后最多只给**一条**与原唱时长对得上的裸名版本打「原唱」。
+
+    private static let namePunct = Pattern.make(
+        "[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+()（）\\[\\]【】]")
+
+    /// 核心歌名的比较键：剥版本后缀 → 繁转简 → 小写 → 去标点空白
+    static func normalizedCoreName(_ raw: String) -> String {
+        let core = coreName(raw)
+        guard !core.isEmpty else { return "" }
+        let folded = TradToSimpMap.toSimplified(core).lowercased()
+        return namePunct.stringByReplacingMatches(in: folded, range: ns(folded), withTemplate: "")
+    }
+
+    /// 同一首歌的所有版本（严格核心歌名相等；「阁爱妳一摆」与「阁爱你一摆」视为同一首）
+    static func sameSongVersions(_ songs: [Song], matching title: String) -> [Song] {
+        let target = normalizedCoreName(title)
+        guard !target.isEmpty else { return [] }
+        return songs.filter { song in
+            let key = normalizedCoreName(song.name)
+            return !key.isEmpty && key == target
+        }
+    }
+
+    /// 同一条录音的键：核心歌名 + 歌手集合 + 时长 5 秒桶。
+    /// 跨平台的同一录音（QQ / 网易 / 酷狗各一条）会落到同一个键，只留第一条。
+    static func recordingKey(_ song: Song) -> String {
+        let singers = NameMatch.singerTokens(song.singer).sorted().joined(separator: "/")
+        let bucket = song.durationSec > 0 ? song.durationSec / 5 : 0
+        return "\(normalizedCoreName(song.name))|\(singers)|\(bucket)"
+    }
+
+    /// 跨平台去重：同一条录音只留一条（不同版本/翻唱时长或歌手不同，不会被合掉）
+    static func dedupeRecordings(_ songs: [Song]) -> [Song] {
+        var seen = Set<String>()
+        var out: [Song] = []
+        for song in songs {
+            let key = recordingKey(song)
+            if key.isEmpty || seen.contains(key) { continue }
+            seen.insert(key)
+            out.append(song)
+        }
+        return out
+    }
+
+    /// 把主结果那条录音（含它在别的平台的副本）从「其他版本」里剔掉，
+    /// 避免同一首歌在主卡和列表里各出现一次。
+    static func excludingRecording(of main: Song?, from songs: [Song]) -> [Song] {
+        guard let main else { return songs }
+        let key = recordingKey(main)
+        guard !key.isEmpty else { return songs }
+        return songs.filter { recordingKey($0) != key }
+    }
+
+    /// 这一条是否「原唱录音」：同一首歌 + 裸名 + 歌手匹配 + 时长对得上识别时长（±15s）
+    static func isOriginalRecording(_ song: Song, title: String, artist: String,
+                                    durationSec: Int) -> Bool {
+        let target = normalizedCoreName(title)
+        guard !target.isEmpty, normalizedCoreName(song.name) == target else { return false }
+        guard isCleanTitle(song.name) else { return false }
+        guard NameMatch.singerMatches(artist, song.singer) else { return false }
+        if durationSec > 0, song.durationSec > 0 {
+            return abs(song.durationSec - durationSec) <= 15
+        }
+        return true
+    }
+
+    /// 在一组「其他版本」里挑唯一一条原唱（没有就返回 nil，绝不批量打标签）
+    static func originalVersion(in songs: [Song], title: String, artist: String,
+                                durationSec: Int) -> Song? {
+        let candidates = songs.filter {
+            isOriginalRecording($0, title: title, artist: artist, durationSec: durationSec)
+        }
+        guard !candidates.isEmpty else { return nil }
+        if durationSec > 0 {
+            return candidates.min {
+                abs($0.durationSec - durationSec) < abs($1.durationSec - durationSec)
+            }
+        }
+        return pickBest(candidates)
+    }
+
     /// 候选池按核心歌名归并：同一首歌只保留「最像录音室原唱」的一条
     static func dedupeByCore(_ cands: [Song]) -> [Song] {
         if cands.count <= 1 { return cands }

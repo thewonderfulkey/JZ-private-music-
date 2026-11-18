@@ -48,10 +48,9 @@ enum Haptics {
         light.impactOccurred()
     }
 
-    /// 普通点击（列表行、卡片、胶囊）——老板反馈 ③：点了要先"有感觉"
-    static func tap() {
-        light.impactOccurred()
-    }
+    /// 普通点击不再给触觉（第三十三轮：老板要"高亮"而不是"震动"）。
+    /// 列表行/卡片的反馈统一走 `.rowPress` / `.press` 的视觉高亮，
+    /// 触觉只留给真正改变状态的动作：播放/暂停、切歌、收藏、识曲结果、下载完成。
 
     /// 切 Tab：用 selection 更轻，只有"格"变了才给一次
     static func tabChanged() {

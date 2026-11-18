@@ -38,7 +38,6 @@ struct ArtistDirectoryView: View {
                 ForEach(KuwoArtist.categories) { category in
                     FilterPill(title: category.title,
                                isSelected: feed.category == category.id && feed.prefix.isEmpty) {
-                        Haptics.tap()
                         Task { await feed.select(category: category.id, prefix: "") }
                     }
                 }
@@ -55,7 +54,6 @@ struct ArtistDirectoryView: View {
                 ForEach(KuwoArtist.letters, id: \.self) { letter in
                     let prefix = letter == "热门" ? "" : letter
                     Button {
-                        Haptics.tap()
                         Task { await feed.select(category: feed.category, prefix: prefix) }
                     } label: {
                         Text(letter)

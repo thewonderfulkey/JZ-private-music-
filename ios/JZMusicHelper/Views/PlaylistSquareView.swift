@@ -58,7 +58,6 @@ struct PlaylistSquareView: View {
             ForEach(KuwoPlaylist.Sort.allCases) { option in
                 FilterPill(title: option.title, isSelected: sort == option) {
                     guard sort != option else { return }
-                    Haptics.tap()
                     sort = option
                     Task {
                         if option == .new { await feed.loadLatestIfNeeded() }

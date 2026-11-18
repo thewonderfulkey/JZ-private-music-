@@ -462,7 +462,8 @@ struct PendingFeatureRow: View {
 /// 全 App 统一的按压反馈：按下缩到 0.95、压暗到 0.78，松手弹回。
 ///
 /// 为什么不用 `.plain`：`.plain` 把系统的按下高亮也一起去掉了，行/卡片点下去毫无反馈，
-/// 加上"卡了一下"的体感就变成"点了没反应"。触觉由调用方在动作里补（`Haptics.tap()`）。
+/// 加上"卡了一下"的体感就变成"点了没反应"。第三十三轮起普通点击不再配触觉——
+/// 老板明确要 Light Player 那种"亮一下"的高亮，不是震动。
 ///
 /// 第三十二轮（2026-11-18，老板对着 Light Player 录屏）：按下要"一按就有"——
 /// 下落压到 0.14s 的紧 spring，松手才用 0.30s 的慢一档 spring 顶回来；
@@ -489,13 +490,17 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
     }
 }
 
-/// 列表行 / 卡片专用：按下时**整块铺一层高亮**（Light Player 那种"整条压暗"），再轻缩一点。
+/// 列表行 / 卡片专用：按下时**整块铺一层亮色高亮**（Light Player 那种"整条亮一下"），再轻缩一点。
 ///
 /// 为什么行不能只靠 `.press` 的缩放：行太宽，0.95 的缩放肉眼几乎看不出来；
-/// 而"按下就有一整条底色"是手机上最容易被看见的反馈。高亮淡出比淡入慢，按一下有拖尾感。
+/// 而"按下就有一整条亮色"是手机上最容易被看见的反馈。高亮淡出比淡入慢，按一下有拖尾感。
+///
+/// 第三十三轮（老板真机反馈）：12% 的底色在 OLED 纯黑上几乎看不见，而且点击还配了震动。
+/// 现在亮到 22%（深色模式下就是明显的浅灰条），并**取消点击震动**——
+/// 反馈靠这一条亮色，而不是靠马达。
 struct RowPressButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.99
-    var highlight: Double = 0.12
+    var scale: CGFloat = 0.985
+    var highlight: Double = 0.22
     var cornerRadius: CGFloat = 12
 
     func makeBody(configuration: Configuration) -> some View {
@@ -505,9 +510,10 @@ struct RowPressButtonStyle: ButtonStyle {
                     .fill(Color.primary.opacity(configuration.isPressed ? highlight : 0))
             )
             .scaleEffect(configuration.isPressed ? scale : 1)
+            // 按下 40ms 就亮起来（要跟手），松手 0.30s 渐隐（留一条可见的拖尾）
             .animation(configuration.isPressed
-                       ? .easeOut(duration: 0.05)
-                       : Tokens.Motion.pressUp,
+                       ? .easeOut(duration: 0.04)
+                       : .easeOut(duration: 0.30),
                        value: configuration.isPressed)
     }
 }

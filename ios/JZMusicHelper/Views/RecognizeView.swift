@@ -33,6 +33,8 @@ struct RecognizeView: View {
     @State private var recognized: RecognizeCandidate?
     @State private var resolved: Song?
     @State private var versions: [Song] = []
+    /// 「其他版本」里唯一一条该打「原唱」的 id；nil = 这一组没有可标的原唱
+    @State private var originalVersionID: String?
     @State private var isResolvingVersions = false
 
     @State private var task: Task<Void, Never>?
@@ -222,9 +224,24 @@ struct RecognizeView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(recognized.title)
-                                .font(.headline)
-                                .lineLimit(2)
+                            HStack(spacing: 6) {
+                                Text(recognized.title)
+                                    .font(.headline)
+                                    .lineLimit(2)
+                                    .layoutPriority(1)
+                                if mainIsOriginal {
+                                    Text("原唱")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(Tokens.Palette.vermilion)
+                                        .fixedSize()
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .overlay(Capsule().strokeBorder(Tokens.Palette.vermilion.opacity(0.5),
+                                                                        lineWidth: 0.5))
+                                        .transition(.opacity)
+                                }
+                            }
+                            .animation(Tokens.Motion.stateChange, value: mainIsOriginal)
                             Text(recognized.artist.isEmpty ? "未知歌手" : recognized.artist)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -305,6 +322,15 @@ struct RecognizeView: View {
         return parts.joined(separator: " · ")
     }
 
+    /// 主结果这条录音是不是原唱（同一首歌 + 裸名 + 歌手匹配 + 时长对得上）
+    private var mainIsOriginal: Bool {
+        guard let recognized, let resolved else { return false }
+        return StudioPick.isOriginalRecording(resolved,
+                                              title: recognized.title,
+                                              artist: recognized.artist,
+                                              durationSec: recognized.durationSec)
+    }
+
     private func channelName(_ source: String) -> String {
         switch source {
         case RecognizeScore.sourceKugou: return "酷狗"
@@ -313,10 +339,11 @@ struct RecognizeView: View {
         }
     }
 
-    /// 版本行：原唱标记只在"裸名 + 同歌手"时给，避免把所有翻唱都盖上原唱印
+    /// 版本行：「原唱」只给**唯一一条**与识别时长对得上的裸名同歌手版本。
+    /// 第三十三轮：旧规则只看这一行自己的歌名/歌手，没校验「是不是同一首歌」，
+    /// 结果同歌手的其他歌全被打成原唱（真机截图六条全中）。
     private func versionRow(_ song: Song) -> some View {
-        let isStudio = StudioPick.isCleanTitle(song.name)
-            && (recognized.map { NameMatch.singerMatches($0.artist, song.singer) } ?? false)
+        let isOriginal = song.id == originalVersionID
         return HStack(spacing: Tokens.Spacing.s) {
             SongArtwork(song: song, size: 44, radius: Tokens.Radius.artworkSmall)
             VStack(alignment: .leading, spacing: 1) {
@@ -329,7 +356,7 @@ struct RecognizeView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: Tokens.Spacing.xs)
-            if isStudio {
+            if isOriginal {
                 Text("原唱")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Tokens.Palette.vermilion)
@@ -345,14 +372,14 @@ struct RecognizeView: View {
         .frame(minHeight: Tokens.Size.songRowHeight)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(song.name)，\(song.singer)\(isStudio ? "，原唱" : "")")
+        .accessibilityLabel("\(song.name)，\(song.singer)\(isOriginal ? "，原唱" : "")")
     }
 
-    /// 所有"点一行就播"的地方走这一个口（其他版本 / 最近识过）
+    /// 所有"点一行就播"的地方走这一个口（其他版本 / 最近识过）。
+    /// 第三十三轮：点歌不再给触觉——老板要的是 Light Player 那种高亮，不是震动。
     private func play(_ song: Song) {
         player.playSingle(song)
         library.recordPlayed(song)
-        Haptics.playbackToggle()
         router.showPlayer = true
     }
 
@@ -399,7 +426,6 @@ struct RecognizeView: View {
     private func handleMicTap() {
         switch phase {
         case .listening, .recognizing:
-            Haptics.tap()
             cancelListen()
         case .idle, .noMatch, .failed, .result:
             startListen()
@@ -411,6 +437,7 @@ struct RecognizeView: View {
         recognized = nil
         resolved = nil
         versions = []
+        originalVersionID = nil
         remaining = settings.recognizeSeconds
         task = Task { await listen() }
     }
@@ -567,12 +594,30 @@ struct RecognizeView: View {
             library.recordRecognized(resolved)
         }
 
-        // 同名不同版本最多 6 条，按"原唱优先"排
-        versions = StudioPick.dedupeByCore(songs)
+        // 同名不同版本最多 6 条：
+        //   ① 先按核心歌名严格过滤（繁简折叠），把同歌手的**别的歌**挡在外面；
+        //   ② 跨平台同一条录音去重，并剔掉主结果那条（含它在别的平台的副本）；
+        //   ③ 最多只挑一条原唱（时长对得上）；原唱优先、同歌手优先、裸名优先。
+        let sameSong = StudioPick.sameSongVersions(songs, matching: candidate.title)
+        let distinct = StudioPick.dedupeRecordings(sameSong)
+        let others = StudioPick.excludingRecording(of: resolved, from: distinct)
+        let original = StudioPick.originalVersion(in: others,
+                                                 title: candidate.title,
+                                                 artist: candidate.artist,
+                                                 durationSec: candidate.durationSec)
+        originalVersionID = original?.id
+
+        versions = others
             .sorted { a, b in
-                let sa = StudioPick.isCleanTitle(a.name) && NameMatch.singerMatches(candidate.artist, a.singer)
-                let sb = StudioPick.isCleanTitle(b.name) && NameMatch.singerMatches(candidate.artist, b.singer)
+                let oa = a.id == original?.id
+                let ob = b.id == original?.id
+                if oa != ob { return oa && !ob }
+                let sa = NameMatch.singerMatches(candidate.artist, a.singer)
+                let sb = NameMatch.singerMatches(candidate.artist, b.singer)
                 if sa != sb { return sa && !sb }
+                let ca = StudioPick.isCleanTitle(a.name)
+                let cb = StudioPick.isCleanTitle(b.name)
+                if ca != cb { return ca && !cb }
                 return a.duration < b.duration
             }
             .prefix(6)

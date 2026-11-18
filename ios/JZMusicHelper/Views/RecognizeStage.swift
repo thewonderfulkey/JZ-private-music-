@@ -275,7 +275,6 @@ struct RecognizeStage: View {
             Haptics.listeningStart()
         case .recognizing:
             analyzingStart = Date()
-            Haptics.tap()
         case .result:
             Haptics.success()
         case .noMatch:

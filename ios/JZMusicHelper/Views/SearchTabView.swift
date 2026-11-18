@@ -192,7 +192,6 @@ struct SearchView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
-                            Haptics.tap()
                             player.play(queue: visibleSongs, startAt: index)
                             library.recordPlayed(song)
                             router.showPlayer = true
@@ -299,7 +298,6 @@ struct SearchView: View {
         VStack(spacing: Tokens.Spacing.xs) {
             if canLoadMore {
                 Button {
-                    Haptics.tap()
                     loadMore()
                 } label: {
                     HStack(spacing: Tokens.Spacing.xs) {

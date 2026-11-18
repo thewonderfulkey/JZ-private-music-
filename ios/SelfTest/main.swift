@@ -129,6 +129,58 @@ do {
     check("归并保留录音室版", deduped.first?.platformID == "studio")
 }
 
+// 第三十三轮（老板真机截图：识曲《阁爱你一摆》的「其他版本」六条不同的歌全被打成原唱）
+do {
+    let originalQQ = song(.qq, "阁爱妳一摆", "茄子蛋", album: "阁爱妳一摆", dur: 278, id: "orig_qq")
+    let originalNE = song(.netease, "阁爱妳一摆", "茄子蛋", album: "阁爱妳一摆", dur: 278, id: "orig_ne")
+    let live = song(.qq, "閣愛妳一擺 (Live)", "茄子蛋", album: "", dur: 293, id: "live")
+    let dj = song(.qq, "阁爱妳一摆 (DJ Nova夜阑版)", "茄子蛋", album: "", dur: 194, id: "dj")
+    let cover = song(.qq, "阁爱妳一摆", "陈吉雯", album: "陈素衣翻唱集", dur: 278, id: "cover")
+    let unrelated1 = song(.qq, "我的未来不是梦", "茄子蛋", album: "我的未来不是梦", dur: 160, id: "u1")
+    let unrelated2 = song(.qq, "浪子回头", "茄子蛋", album: "卡通人物", dur: 259, id: "u2")
+    let pool = [unrelated1, originalQQ, live, dj, cover, originalNE, unrelated2]
+
+    check("繁简/异体折叠：閣愛妳一擺 与 阁爱你一摆 视为同一首",
+          StudioPick.normalizedCoreName("閣愛妳一擺 (Live)")
+            == StudioPick.normalizedCoreName("阁爱你一摆"),
+          "a=\(StudioPick.normalizedCoreName("閣愛妳一擺 (Live)")) b=\(StudioPick.normalizedCoreName("阁爱你一摆"))")
+
+    let same = StudioPick.sameSongVersions(pool, matching: "阁爱你一摆")
+    check("其他版本只留同一首歌（同歌手的别的歌不进）",
+          same.count == 5 && !same.contains { $0.id == unrelated1.id || $0.id == unrelated2.id },
+          "count=\(same.count)")
+
+    let deduped = StudioPick.dedupeRecordings(same)
+    check("跨平台同一条录音只留一条",
+          deduped.filter { $0.name == "阁爱妳一摆" && $0.singer == "茄子蛋" }.count == 1,
+          "count=\(deduped.count)")
+    check("翻唱 / 现场 / Remix 不会被当重复合掉", deduped.count == 4, "count=\(deduped.count)")
+
+    let others = StudioPick.excludingRecording(of: originalQQ, from: deduped)
+    check("主结果那条录音（含跨平台副本）要从其他版本剔除",
+          others.allSatisfy { $0.id != originalQQ.id && $0.id != originalNE.id },
+          "ids=\(others.map(\.id))")
+
+    check("主卡已经是原唱时，列表里不再批量打原唱",
+          StudioPick.originalVersion(in: others, title: "阁爱你一摆",
+                                     artist: "茄子蛋", durationSec: 278) == nil)
+    check("主卡是翻唱时，列表里唯一原唱能被标出",
+          StudioPick.originalVersion(in: [cover, originalQQ, live], title: "阁爱你一摆",
+                                     artist: "茄子蛋", durationSec: 278)?.id == originalQQ.id)
+    check("原唱判定：裸名 + 同歌手 + 长度吻合",
+          StudioPick.isOriginalRecording(originalQQ, title: "阁爱你一摆",
+                                         artist: "茄子蛋", durationSec: 278))
+    check("原唱判定：翻唱不算",
+          !StudioPick.isOriginalRecording(cover, title: "阁爱你一摆",
+                                          artist: "茄子蛋", durationSec: 278))
+    check("原唱判定：Live 不算",
+          !StudioPick.isOriginalRecording(live, title: "阁爱你一摆",
+                                          artist: "茄子蛋", durationSec: 278))
+    check("原唱判定：同歌手别的歌不算",
+          !StudioPick.isOriginalRecording(unrelated1, title: "阁爱你一摆",
+                                          artist: "茄子蛋", durationSec: 278))
+}
+
 // MARK: - 3 歌名/歌手匹配（NameMatch）
 
 section("NameMatch 身份校验")

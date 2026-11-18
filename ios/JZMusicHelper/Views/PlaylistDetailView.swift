@@ -131,7 +131,6 @@ struct PlaylistDetailView: View {
 
     private func play(_ songs: [Song], at index: Int) {
         guard songs.indices.contains(index) else { return }
-        Haptics.tap()
         player.play(queue: songs, startAt: index)
         library.recordPlayed(songs[index])
         router.showPlayer = true

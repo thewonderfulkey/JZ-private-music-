@@ -182,7 +182,7 @@
 | 歌词行推进 | `.spring(response: 0.38, dampingFraction: 0.92)` 位移 + 当前行字重/色过渡 | 380ms |
 | 逐字染色 | `linear(duration: 0.14)` 单字推进（跟随每字 start/end） | 140ms |
 | 收藏心跳 | `.bouncy(duration: 0.26)`，scale 1 → 1.16 → 1；图标 `replace` + `bounce` | 260ms |
-| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行改为整条 12% 高亮 + scale 0.99。下落 0.14s spring，松手 0.30s spring | 140 / 300ms |
+| 按压反馈（全局） | 按下 scale 0.95 / 压暗 0.78；列表行改为整条 22% 亮色高亮 + scale 0.985（Light Player 式"亮一下"）。下落 0.14s spring，松手 0.30s 渐隐；普通点击不再给触觉 | 140 / 300ms |
 | 下载完成 | 行内进度区收起 + `.snappy` 图标切换 | 260ms |
 | 列表增删 | 系统 `List` 默认动画，不自定义 | — |
 | 无源自动跳歌 | 无炫技：顶部内联提示条滑入 200ms，2s 后淡出 | 200ms |
@@ -206,6 +206,7 @@
 | 识曲出结果 | `.success` |
 | 识曲没听出来 / 失败 | `.warning` / `.error` |
 | 切 Tab | `UISelectionFeedbackGenerator()`（只在真的换 Tab 时一下） |
+| 普通点击 / 点歌 / 列表行 / 卡片 | **不给触觉**（第三十三轮：老板要"高亮"不要"震动"）；反馈走 22% 亮色高亮 |
 | 麦克风开始聆听 | `.medium`（物理动作） |
 | 拖拽排序（队列） | `.light` + 系统 drag 反馈 |
 | **禁止**：滚动、翻页、每次打勾、Toast 出现时给触觉 | — |
