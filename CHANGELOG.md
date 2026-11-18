@@ -1,3 +1,30 @@
+## iOS 第四十轮补丁 5 · 2026-11-19 02:4x（「去看下载」真的退出播放页并切到下载 Tab）
+
+**来源：老板 r116 真机反馈**
+
+> "点击下载后提示查看下载，点击后还停留在播放页，虽然后面已经到下载页了，但是没有自动退出播放页。"
+
+**根因**：那个按钮只调了 `flow.dismiss()`（关下载弹层）。播放页是**盖在根视图上的全屏模态**，
+弹层只是播放页里的一张 sheet——关掉 sheet，人当然还在播放页里；而且当时也没有任何代码切 Tab。
+
+**改法**（`DownloadSheet.startedView`）：一颗按钮做三件事
+
+1. `flow.dismiss()` —— 关下载弹层；
+2. `router.showPlayer = false` —— **退出播放页**；
+3. `router.tab = .downloads` —— 切到下载 Tab。
+
+两处 `DownloadSheet` 的呈现（根外壳 / 播放页）都补了 `.environment(router)`，`NowPlayingView`
+也补了 `@Environment(AppRouter.self)`，避免缺环境。
+
+**验证**：typecheck 0、27 个 Views 解析通过、pbxproj/UI 卫生通过；
+CI **#117 / `cad8b4a` / 761 条断言全绿** / `build-ipa` 成功、飞书已收到包
+（file_key `om_x100b60e8aba768a4c3255deb0ef0fb7`）；
+IPA `JZ-Music-v2.4.17-cad8b4a-r117-ios-unsigned.ipa`（2,296,109 B，sha256 `929e919f…6513af2d`，
+版本 2.4.17 / 195，插件已嵌入）。
+（#117 第一次跑是 macOS runner 把 logic-tests 挂掉后判失败，已 rerun，日志与产物以 rerun 为准。）
+
+版本 2.4.17（195）。
+
 ## iOS 第四十轮补丁 4 · 2026-11-19 02:0x（下载：进度条收尾即消失 / 恢复左滑删除 / 旧 Music 搬家并删掉）
 
 **来源：老板 r115 真机三条反馈 + 两张截图**
