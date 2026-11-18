@@ -674,7 +674,7 @@ do {
     check("体积未知写待核对", DownloadGuard.sizeText(0) == "待核对")
 }
 
-// MARK: - 发现页口径（编辑精选 / 热门榜单 / 猜你喜欢）
+// MARK: - 发现页口径（轮换 / 原版判定 / 榜单 / 猜你喜欢）
 
 section("发现页口径：每日轮换 / 原版判定 / 榜单挑选")
 
@@ -738,7 +738,7 @@ do {
           "\(DiscoverRules.guessKeywords(from: recent, limit: 5))")
 
     // ⑥ 目录本身
-    check("编辑精选 4 类", DiscoverCatalog.playlists.count == 4)
+    check("Widget「每日三首」4 类池子", DiscoverCatalog.playlists.count == 4)
     check("每类 30 首", DiscoverCatalog.playlists.allSatisfy { $0.seeds.count == 30 },
           "\(DiscoverCatalog.playlists.map { $0.seeds.count })")
     check("热门种子词 24 个", DiscoverCatalog.hotSeedWords.count == 24,
@@ -903,9 +903,9 @@ do {
     check("同歌同歌手去重", multi.count == 1, "\(multi.count)")
 }
 
-// MARK: - 收尾口径（可配置跳过上限 / 编辑精选按新旧轮换）
+// MARK: - 收尾口径（可配置跳过上限）
 
-section("收尾口径：可配置跳过上限 / 编辑精选按新旧轮换")
+section("收尾口径：可配置跳过上限")
 
 do {
     // ① 跳过上限（设置里「跳过上限」与「自动跳歌」开关都落到这两个函数）
@@ -919,26 +919,6 @@ do {
           PlaybackRules.skipMessage(3, limit: 3))
     check("未到上限时不写停", !PlaybackRules.skipMessage(2, limit: 3).contains("先停在这里"),
           PlaybackRules.skipMessage(2, limit: 3))
-
-    // ② 编辑精选「最久没展示优先」
-    let pool = ["A", "B", "C", "D"]
-    let none: [String: Int] = [:]
-    check("没展示过的按池子顺序",
-          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2) == ["A", "B"])
-    let shown = ["A": 5, "B": 5, "C": 1, "D": 1]
-    check("最久没展示的优先",
-          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: shown, day: 6, take: 2) == ["C", "D"],
-          "\(DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: shown, day: 6, take: 2))")
-    check("take 超过池子按池子长度",
-          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 99).count == 4)
-    check("空池子返回空",
-          DiscoverRules.pickByRecency([String](), key: { $0 }, lastShown: none, day: 1, take: 3).isEmpty)
-    check("换一批会换一组",
-          DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2, offset: 1) == ["B", "C"],
-          "\(DiscoverRules.pickByRecency(pool, key: { $0 }, lastShown: none, day: 1, take: 2, offset: 1))")
-    check("30 首池子取 20 首",
-          DiscoverRules.pickByRecency(DiscoverCatalog.playlists[0].seeds,
-                                      key: { $0.name }, lastShown: none, day: 1, take: 20).count == 20)
 }
 
 // MARK: - 系统面：Intent 信箱与分享文案（P4）
@@ -2361,12 +2341,6 @@ check("猜你喜欢指纹只看最近播放前 3 首",
         song(.netease, "C", "z", id: "c"), song(.kugou, "D", "w", id: "d")
       ]))
 check("没有最近播放时指纹为空", DiscoverRules.guessSignature([]) == "")
-check("解析缓存键：歌名|歌手，小写去空白",
-      ResolvedSongCache.key(name: " 晴天 ", singer: " 周杰伦 ") == "晴天|周杰伦",
-      ResolvedSongCache.key(name: " 晴天 ", singer: " 周杰伦 "))
-check("解析缓存键：不同歌手不同键",
-      ResolvedSongCache.key(name: "晴天", singer: "周杰伦")
-        != ResolvedSongCache.key(name: "晴天", singer: "陈奕迅"))
 
 let cacheChart = KuwoChart.Chart(webId: "1", mobileId: "99999", name: "测试榜")
 let cachePage = KuwoChart.Page(name: "测试榜", publishedDate: "2026-11-18",
@@ -2379,35 +2353,7 @@ check("服务端 pub 没变 → 命中缓存，不重取整页",
 check("服务端 pub 变了 → 视为未命中，要重取",
       KuwoChart.cachedPage(cacheChart, publishedDate: "2026-11-19") == nil)
 
-section("编辑精选：预置歌写死进包（一步到位，不再文字转歌曲）")
-
-check("预生成覆盖 ≥ 90 首", BakedSeedSongs.byKey.count >= 90,
-      "\(BakedSeedSongs.byKey.count)")
-let bakedQingtian = BakedSeedSongs.song(name: "晴天", singer: "周杰伦")
-check("晴天 → 酷我 228908", bakedQingtian?.platformID == "228908",
-      bakedQingtian?.platformID ?? "nil")
-check("晴天的时长是原版（>200s，防 Live/钢琴版混进来）",
-      (bakedQingtian?.durationSec ?? 0) > 200, "\(bakedQingtian?.durationSec ?? -1)")
-check("键与缓存同口径：大小写/空白不敏感",
-      BakedSeedSongs.song(name: " 晴天 ", singer: "周杰伦")?.platformID == "228908")
-check("写死的条目都有正时长（0 会让 ±25s 闸门失效）",
-      BakedSeedSongs.byKey.values.allSatisfy { $0.duration > 0 })
-check("写死的 rid 全是数字",
-      BakedSeedSongs.byKey.values.allSatisfy { v in
-          !v.platformID.isEmpty && v.platformID.allSatisfy { $0.isNumber }
-      })
-check("写死的封面一律 https（ATS 严格，http 图加载不出来）",
-      BakedSeedSongs.byKey.values.allSatisfy { $0.pic.isEmpty || $0.pic.hasPrefix("https://") })
-check("英文歌也命中写死数据（键必须大小写不敏感——否则欧美热单整张都 miss）",
-      BakedSeedSongs.song(name: "Shape of You", singer: "Ed Sheeran") != nil,
-      BakedSeedSongs.song(name: "shape of you", singer: "ed sheeran")?.platformID ?? "nil")
-check("没有 Live/伴奏/钢琴 这类非原版专辑混进来",
-      BakedSeedSongs.byKey.values.allSatisfy { v in
-          let a = v.album.lowercased()
-          return !["live", "演唱会", "现场", "伴奏", "纯音乐", "ktv", "dj", "翻唱"].contains { a.contains($0) }
-      })
-
-section("第二十四轮：本地日 / 负缓存 / 播放页时钟")
+section("第二十四轮：本地日 / 播放页时钟")
 
 // ① "今天"必须按本地日历天切（老板 11-18：白天还显示前一天缓存，因为旧实现用 UTC 日，
 //    澳大利亚 UTC+10:30 要到本地上午 ~10:30 才翻页）
@@ -2416,32 +2362,6 @@ check("本地日与 UTC 日最多差 1 天（跨时区不会错很久）",
       abs(DiscoverRules.today - utcDay) <= 1, "\(DiscoverRules.today) vs \(utcDay)")
 check("同一天内两次取值一致（不会因为时刻不同跳变）",
       DiscoverRules.today == DiscoverRules.today)
-
-// ② 负缓存：当天失败的不再反复搜索，跨天自动失效
-let ghostName = "__selftest_ghost__"
-ResolvedSongCache.shared.markUnresolved(name: ghostName, singer: "x", day: 20_000)
-check("当天记为未解析 → 当天下次跳过",
-      ResolvedSongCache.shared.isKnownUnresolved(name: ghostName, singer: "x", day: 20_000))
-check("换一天就重新尝试（负缓存按天失效）",
-      !ResolvedSongCache.shared.isKnownUnresolved(name: ghostName, singer: "x", day: 20_001))
-check("没记过的歌不算未解析",
-      !ResolvedSongCache.shared.isKnownUnresolved(name: "__nobody__", singer: "y", day: 20_000))
-
-section("第二十六轮：编辑精选缓存键（固定几首反复加载的根因）")
-
-// 池子写「海阔天空 / Beyond」，平台搜出来是「海阔天空 (Live) / BEYOND」——键差一点就 miss，
-// 于是每次进歌单都重新解析。现在按**种子键**也存一份，并且有模糊兜底。
-let aliasSong = Song(platform: .kuwo, platformID: "999001", name: "海阔天空 (Live)",
-                     singer: "BEYOND", album: "演唱会", duration: 239, picURL: nil)
-ResolvedSongCache.shared.store(aliasSong, seedName: "海阔天空", seedSinger: "Beyond")
-check("按种子键能取回（名字带版本后缀也不会每次重解析）",
-      ResolvedSongCache.shared.song(name: "海阔天空", singer: "Beyond")?.platformID == "999001")
-check("按平台原名也能取回",
-      ResolvedSongCache.shared.song(name: "海阔天空 (Live)", singer: "BEYOND")?.platformID == "999001")
-check("模糊兜底也能命中（救历史缓存）",
-      ResolvedSongCache.shared.fuzzyLookup(name: "海阔天空", singer: "Beyond")?.platformID == "999001")
-check("模糊兜底不会张冠李戴（别的歌不能认成它）",
-      ResolvedSongCache.shared.fuzzyLookup(name: "光辉岁月", singer: "Beyond") == nil)
 
 section("第二十七轮：封面兜底（iTunes 公共兜底 + 坏地址拉黑）")
 

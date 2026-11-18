@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 发现页的判定口径（纯函数）
 //
-// 与 Android `HotMusic` / `EditorPlaylist` 同口径，全部是纯函数，CI 的 logic-tests 直接断言：
+// 与 Android `HotMusic` 同口径，全部是纯函数，CI 的 logic-tests 直接断言：
 //   · 每日轮换：`rotate`（编辑精选池按天滑窗取 20 首）
 //   · 原版判定：`coreName` / `plainScore`（去括号、去 Live/DJ/翻唱等版本修饰）
 //   · 榜单挑选：`pick`（同曲只留 1 首、同歌手 ≤2 首、同歌手不相邻）
@@ -163,30 +163,6 @@ enum DiscoverRules {
             if out.count >= limit { break }
         }
         return out
-    }
-
-    // MARK: 不过重复的每日轮换（简易 DynamicPool）
-
-    /// 按「最久没展示的优先」挑 `take` 个：`lastShown[key]` 是上次展示的天数（没展示过为 -1）。
-    /// `offset` 用来做「换一批」——先把池子整体转一格，再按新旧排，换出来的才是不同的一组。
-    ///
-    /// 为什么不用纯日期滑窗（rotate）：30 首池子按天滑窗，第 8 天开始就会反复推同样那几首；
-    /// 按"最久没展示"排能保证一圈之内不重复，把"每日换一批"真的做到了。
-    static func pickByRecency<T>(_ pool: [T],
-                                 key: (T) -> String,
-                                 lastShown: [String: Int],
-                                 day: Int,
-                                 take: Int,
-                                 offset: Int = 0) -> [T] {
-        guard !pool.isEmpty, take > 0 else { return [] }
-        let shifted = rotate(pool, day: offset, take: pool.count)
-        let ordered = shifted.enumerated().sorted { a, b in
-            let da = lastShown[key(a.element)] ?? -1
-            let db = lastShown[key(b.element)] ?? -1
-            if da != db { return da < db }
-            return a.offset < b.offset
-        }.map { $0.element }
-        return Array(ordered.prefix(min(take, ordered.count)))
     }
 
     // MARK: 正则小工具
