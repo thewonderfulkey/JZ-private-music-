@@ -118,13 +118,16 @@ private struct DownloadRowView: View {
             // 第五轮（老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"）：
             // 从列表里点一首时，**整列已完成下载**就是队列——否则队列里只有这一首，
             // 列表循环退化成单曲循环。
-            let songs = downloads.completedSongs
-            if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
-                player.play(queue: songs, startAt: index)
-            } else {
-                player.playSingle(item.song)
+            // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+            RowTap.afterHighlight {
+                let songs = downloads.completedSongs
+                if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
+                    player.play(queue: songs, startAt: index)
+                } else {
+                    player.playSingle(item.song)
+                }
+                router.showPlayer = true
             }
-            router.showPlayer = true
         } label: {
             rowContent
         }

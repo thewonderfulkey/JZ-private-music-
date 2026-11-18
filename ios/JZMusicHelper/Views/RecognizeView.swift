@@ -378,9 +378,12 @@ struct RecognizeView: View {
     /// 所有"点一行就播"的地方走这一个口（其他版本 / 最近识过）。
     /// 第三十三轮：点歌不再给触觉——老板要的是 Light Player 那种高亮，不是震动。
     private func play(_ song: Song) {
-        player.playSingle(song)
-        library.recordPlayed(song)
-        router.showPlayer = true
+        // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+        RowTap.afterHighlight {
+            player.playSingle(song)
+            library.recordPlayed(song)
+            router.showPlayer = true
+        }
     }
 
     // MARK: 最近识过

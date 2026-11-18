@@ -71,3 +71,24 @@ final class AppRouter {
     /// 播放页（全屏）是否展示。点歌 / 点迷你条 / 快捷指令都往这里写。
     var showPlayer = false
 }
+
+// MARK: - 点歌条的延迟执行（第三十九轮）
+//
+// 老板真机录屏：点歌条后高亮还没铺满，悬浮栏/全屏播放页就盖上来，看起来"一松手高亮就停了"。
+// 把"播放 + 记最近 + 开播放页"整体延后 `PressTiming.rowActionDelay`，
+// 让短按 0.12s 的高亮先铺满（外加 0.10s 停留）再弹。
+// 连点会取消上一条待执行，避免排队连播；播放页/迷你条仍由调用方在闭包里打开。
+@MainActor
+enum RowTap {
+
+    private static var pending: Task<Void, Never>?
+
+    static func afterHighlight(_ work: @escaping @MainActor () -> Void) {
+        pending?.cancel()
+        pending = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(PressTiming.rowActionDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            work()
+        }
+    }
+}

@@ -133,9 +133,12 @@ struct ChartSongsView: View {
     /// 取流仍由引擎按平台适配器走（酷我按歌名+歌手取流，失败再跨平台补位）。
     private func play(_ songs: [Song], at index: Int) {
         guard songs.indices.contains(index) else { return }
-        player.play(queue: songs, startAt: index)
-        library.recordPlayed(songs[index])
-        router.showPlayer = true
+        // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+        RowTap.afterHighlight {
+            player.play(queue: songs, startAt: index)
+            library.recordPlayed(songs[index])
+            router.showPlayer = true
+        }
     }
 
     // MARK: 取数

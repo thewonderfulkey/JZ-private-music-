@@ -2650,7 +2650,7 @@ do {
                                        minVisible: PressTiming.minVisible) > 0.07)
 
     let quick = PressTiming.ripplePlan(elapsed: 0.06)
-    check("短按 60ms：松手后换 0.16s 快速高亮铺满",
+    check("短按 60ms：松手后换 0.12s 快速高亮铺满",
           quick.restart && abs(quick.duration - PressTiming.fastRipple) < 1e-9,
           "\(quick)")
     check("短按从当前进度接着长，不回到 0",
@@ -2660,6 +2660,9 @@ do {
           abs(quick.waitBeforeFade
               - (PressTiming.fastRipple + PressTiming.holdBeforeFade)) < 1e-9,
           "wait=\(quick.waitBeforeFade)")
+    check("点歌条动作延迟覆盖铺满 + 停留（悬浮栏/播放页不会打断高亮）",
+          PressTiming.rowActionDelay >= PressTiming.fastRipple + PressTiming.holdBeforeFade,
+          "delay=\(PressTiming.rowActionDelay)")
 
     let medium = PressTiming.ripplePlan(elapsed: 0.30)
     check("300ms 按：不重启，让慢速高亮自己走完",

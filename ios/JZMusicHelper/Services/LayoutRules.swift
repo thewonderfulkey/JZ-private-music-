@@ -268,14 +268,19 @@ enum PressTiming {
     /// 列表行（高亮扩散）：按多久算"短按"——短于它就在松手时切到快速铺满
     static let quickTapThreshold: Double = 0.22
 
-    /// 短按：松手后 0.16s 把高亮快速铺满整条
-    static let fastRipple: Double = 0.16
+    /// 短按：松手后 0.12s 把高亮快速铺满整条
+    static let fastRipple: Double = 0.12
 
     /// 长按：按住时 0.55s 慢慢铺满
     static let slowRipple: Double = 0.55
 
     /// 高亮铺满后再停 0.10s 才开始退
     static let holdBeforeFade: Double = 0.10
+
+    /// 点歌条后延迟执行整条动作（播放 / 记最近 / 开播放页）：
+    /// 让短按 0.12s 的高亮先铺满、再停 0.10s，然后悬浮栏/播放页才弹出来。
+    /// 0.22 > 0.12 + 0.10，刚好覆盖"铺满 + 停留"。
+    static let rowActionDelay: Double = 0.22
 
     /// 松手后还要补多久（秒），用于普通按钮的延迟回落；已经按够就返回 0
     static func holdAfterRelease(elapsed: Double, minVisible: Double) -> Double {

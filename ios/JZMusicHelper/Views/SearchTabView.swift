@@ -192,9 +192,12 @@ struct SearchView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
-                            player.play(queue: visibleSongs, startAt: index)
-                            library.recordPlayed(song)
-                            router.showPlayer = true
+                            // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+                            RowTap.afterHighlight {
+                                player.play(queue: visibleSongs, startAt: index)
+                                library.recordPlayed(song)
+                                router.showPlayer = true
+                            }
                         } label: {
                             SongRow(song: song,
                                     showsFavorite: true,
