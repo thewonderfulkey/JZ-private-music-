@@ -1604,19 +1604,26 @@ do {
                                         declaredMs: 100_000, audioSec: 100).ratio == 1)
 }
 
-section("第五轮：下载把歌词和封面一起带走（老板反馈 ⑧）")
+section("第五轮：下载把歌词和封面一起带走（老板反馈 ⑧ / 第四十轮补丁 3 分目录）")
 
 do {
-    // 旁车路径：同目录、同基名，只换最后一段扩展名
-    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
-    let audio = URL(fileURLWithPath: "/m/A - B [QQ_cyapi].m4a")
-    check("旁车歌词 = 同基名 .lrc",
-          DownloadCompanion.lyricsURL(for: audio).lastPathComponent == "A - B [QQ_cyapi].lrc",
-          DownloadCompanion.lyricsURL(for: audio).lastPathComponent)
-    check("旁车封面 = 同基名 .jpg",
-          DownloadCompanion.coverURL(for: audio).lastPathComponent == "A - B [QQ_cyapi].jpg")
-    check("多段扩展名只换最后一段",
-          DownloadCompanion.lyricsURL(for: URL(fileURLWithPath: "/m/x.y.z.mp3")).lastPathComponent == "x.y.z.lrc")
+    // 第四十轮补丁 3（老板："歌曲 / 歌词 / 封面各放一个文件夹"）：
+    // 音频在 `Download/Music`，旁车分别在 `Download/Lyrics`、`Download/Cover`，基名一致。
+    let audio = URL(fileURLWithPath: "/m/Music/A - B [QQ_cyapi].m4a")
+    let lyricsDir = URL(fileURLWithPath: "/m/Lyrics")
+    let coverDir = URL(fileURLWithPath: "/m/Cover")
+    let base = DownloadCompanion.baseName(for: audio)
+    check("基名只去掉最后一段扩展名", base == "A - B [QQ_cyapi]", base)
+    check("歌词旁车落在 Lyrics 目录、同基名 .lrc",
+          DownloadCompanion.lyricsURL(in: lyricsDir, baseName: base).path
+            == "/m/Lyrics/A - B [QQ_cyapi].lrc",
+          DownloadCompanion.lyricsURL(in: lyricsDir, baseName: base).path)
+    check("封面旁车落在 Cover 目录、同基名 .jpg",
+          DownloadCompanion.coverURL(in: coverDir, baseName: base).path
+            == "/m/Cover/A - B [QQ_cyapi].jpg",
+          DownloadCompanion.coverURL(in: coverDir, baseName: base).path)
+    check("多段扩展名只去掉最后一段",
+          DownloadCompanion.baseName(for: URL(fileURLWithPath: "/m/x.y.z.mp3")) == "x.y.z")
 
     // LRC 文本：头部 + 行级时间（逐字不落 LRC），空行跳过
     let lrcLines = [LyricLine(timeMs: 0, text: "第一行"),
@@ -1630,29 +1637,59 @@ do {
     check("空文本行不写时间戳", !lrc.contains("[01:01.00]"))
 
     // 写旁车 → 读回来 → 删干净（真实文件 IO，用临时目录）
-    let dir = FileManager.default.temporaryDirectory
+    let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("jz-companion-\(UUID().uuidString)", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let audioFile = dir.appendingPathComponent("A - B [QQ_cyapi].m4a")
+    let musicDir = root.appendingPathComponent("Music", isDirectory: true)
+    let lyrics = root.appendingPathComponent("Lyrics", isDirectory: true)
+    let covers = root.appendingPathComponent("Cover", isDirectory: true)
+    for dir in [musicDir, lyrics, covers] {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    let audioFile = musicDir.appendingPathComponent("A - B [QQ_cyapi].m4a")
     try? Data("fake-audio".utf8).write(to: audioFile)
     let coverBytes = Data([0xFF, 0xD8, 0xFF, 0x11, 0x22])
     let written = DownloadCompanion.writeSidecars(audio: audioFile, lyricsText: lrc,
-                                                  coverData: coverBytes)
+                                                  coverData: coverBytes,
+                                                  lyricsDirectory: lyrics,
+                                                  coverDirectory: covers)
     check("旁车写成功（歌词 + 封面）",
           written.lyricsURL != nil && written.coverURL != nil)
-    let readBack = DownloadCompanion.readLyrics(from: audioFile)
+    check("歌词写进 Lyrics 而不是音频旁边",
+          written.lyricsURL?.deletingLastPathComponent().lastPathComponent == "Lyrics",
+          written.lyricsURL?.path ?? "nil")
+    check("封面写进 Cover 而不是音频旁边",
+          written.coverURL?.deletingLastPathComponent().lastPathComponent == "Cover",
+          written.coverURL?.path ?? "nil")
+    check("音频目录里没有多出 .lrc/.jpg",
+          !FileManager.default.fileExists(atPath:
+            audioFile.deletingPathExtension().appendingPathExtension("lrc").path)
+          && !FileManager.default.fileExists(atPath:
+            audioFile.deletingPathExtension().appendingPathExtension("jpg").path))
+    let readBack = DownloadCompanion.readLyrics(from: audioFile, in: [lyrics])
     check("读回 2 行（空行已被跳过）", readBack?.count == 2, "\(readBack?.count ?? -1)")
     check("读回的行时间对得上", readBack?.map { $0.timeMs } == [0, 12_340],
           "\(readBack?.map { $0.timeMs } ?? [])")
-    check("读回封面字节一致", DownloadCompanion.readCover(from: audioFile) == coverBytes)
-    DownloadCompanion.removeSidecars(audio: audioFile)
-    check("删旁车后歌词/封面都读不到",
-          DownloadCompanion.readLyrics(from: audioFile) == nil
-          && DownloadCompanion.readCover(from: audioFile) == nil)
+    check("读回封面字节一致", DownloadCompanion.readCover(from: audioFile, in: [covers]) == coverBytes)
+
+    // 旧版布局（旁车与音频同目录）仍要能读回来，升级后老下载不能突然没词没图
+    let legacyLrc = audioFile.deletingPathExtension().appendingPathExtension("lrc")
+    try? Data(lrc.utf8).write(to: legacyLrc)
+    check("旧版同目录旁车仍能读回",
+          DownloadCompanion.readLyrics(from: audioFile, in: [])?.count == 2)
+
+    DownloadCompanion.removeSidecars(audio: audioFile, lyricsDirectory: lyrics, coverDirectory: covers)
+    check("删旁车后歌词/封面都读不到（新旧位置一起清）",
+          DownloadCompanion.readLyrics(from: audioFile, in: [lyrics]) == nil
+          && DownloadCompanion.readCover(from: audioFile, in: [covers]) == nil
+          && !FileManager.default.fileExists(atPath: legacyLrc.path))
 
     check("不可写目录只返回 nil，不抛错",
           DownloadCompanion.writeSidecars(audio: URL(fileURLWithPath: "/no/such/dir/a.m4a"),
-                                          lyricsText: lrc, coverData: coverBytes).lyricsURL == nil)
+                                          lyricsText: lrc, coverData: coverBytes,
+                                          lyricsDirectory: URL(fileURLWithPath: "/no/such/dir/Lyrics"),
+                                          coverDirectory: URL(fileURLWithPath: "/no/such/dir/Cover")
+          ).lyricsURL == nil)
+    try? FileManager.default.removeItem(at: root)
 
     // ID3v2.4：mp3 内嵌（字节布局逐项钉住）
     func syncsafeValue(_ bytes: [UInt8]) -> Int {
@@ -1704,6 +1741,7 @@ do {
           && !DownloadCompanion.canEmbed(extension: "wav"))
 
     // 旧下载记录（downloads.json 没有 companionsNote 键）必须仍能解码
+    let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")
     let legacyItem = DownloadItem(song: qili, streamURL: "https://x", backendName: "b",
                                   quality: .high, status: .completed,
                                   companionsNote: "已内嵌歌词+封面")
@@ -1721,7 +1759,7 @@ do {
         check("DownloadItem 能编码", false)
     }
 
-    try? FileManager.default.removeItem(at: dir)
+    try? FileManager.default.removeItem(at: root)
 }
 
 // MARK: - 第十二轮：单曲偏移 / 换曲先暂停 / 取词第二轮 / 酷狗第二条通道
@@ -2746,9 +2784,15 @@ section("下载保存位置的路径文案（DownloadPathRules）")
 
 do {
     let home = "/var/mobile/Containers/Data/Application/ABC"
-    check("默认位置给的是整条面包屑，不是一个 Music",
-          DownloadPathRules.defaultPathText == "文件 › JZ 音乐 › Music",
+    check("默认位置给的是整条面包屑，根目录是 Download",
+          DownloadPathRules.defaultPathText == "文件 › JZ 音乐 › Download",
           DownloadPathRules.defaultPathText)
+    check("三个子目录固定为 Music / Lyrics / Cover",
+          DownloadPathRules.musicSubfolder == "Music"
+            && DownloadPathRules.lyricsSubfolder == "Lyrics"
+            && DownloadPathRules.coverSubfolder == "Cover")
+    check("子目录说明文案", DownloadPathRules.foldersSummary == "Music · Lyrics · Cover",
+          DownloadPathRules.foldersSummary)
     check("App 容器里的子目录 → 文件 › JZ 音乐 › 子目录",
           DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌", home: home)
             == "文件 › JZ 音乐 › 我的歌",

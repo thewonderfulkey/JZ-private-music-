@@ -63,11 +63,31 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     // MARK: - 目录
+    //
+    // 第四十轮补丁 3（老板："歌曲 / 歌词 / 封面各放一个文件夹"）：
+    //   音频 → `文件 › JZ 音乐 › Download › Music`
+    //   歌词 → `文件 › JZ 音乐 › Download › Lyrics`
+    //   封面 → `文件 › JZ 音乐 › Download › Cover`
+    // 根目录由设置页决定（默认 `Download`），三个子目录在根下面同级。
 
-    /// 当前保存目录：设置页选过「文件」App 里的文件夹就用它，否则还是 Documents/Music。
-    /// 自选目录会在这里顺手打开安全作用域（见 `DownloadLocation`）。
-    var musicDirectory: URL {
+    /// 当前根目录（设置页选的位置；默认 Documents/Download）
+    var rootDirectory: URL {
         DownloadLocation.currentDirectory()
+    }
+
+    /// 音频目录（`…/Music`）
+    var musicDirectory: URL {
+        DownloadLocation.musicDirectory()
+    }
+
+    /// 歌词旁车目录（`…/Lyrics`）
+    var lyricsDirectory: URL {
+        DownloadLocation.lyricsDirectory()
+    }
+
+    /// 封面旁车目录（`…/Cover`）
+    var coverDirectory: URL {
+        DownloadLocation.coverDirectory()
     }
 
     /// 清理文件名中的非法字符
@@ -178,19 +198,22 @@ final class DownloadManager: NSObject, ObservableObject {
     ///
     /// 只读旁车、不读内嵌标签：旁车是我们自己写的 UTF-8 LRC，解析口径完全可控；
     /// 内嵌标签是"拷走也带着"的保险，不是 App 内播放的首选来源。
+    /// 第四十轮补丁 3 起旁车在 `…/Lyrics`；旧版下载的旁车在音频同目录（`readLyrics` 里自带回退）。
     /// 只在主线程调用（`items` 只在主线程改）。
     func localLyrics(for song: Song) -> [LyricLine]? {
         guard let audio = localFileURL(for: song) else { return nil }
-        return DownloadCompanion.readLyrics(from: audio)
+        return DownloadCompanion.readLyrics(from: audio, in: [lyricsDirectory])
     }
 
     /// 离线封面（列表/播放页显示本地封面用）：已下载完成 + 旁车 .jpg 存在才返回。
+    /// 第四十轮补丁 3 起封面在 `…/Cover`；旧版仍在音频同目录（`readCover` 里自带回退）。
     /// 只在主线程调用（`items` 只在主线程改）。
     func localCoverURL(for song: Song) -> URL? {
         guard let audio = localFileURL(for: song) else { return nil }
-        let cover = DownloadCompanion.coverURL(for: audio)
-        guard FileManager.default.fileExists(atPath: cover.path) else { return nil }
-        return cover
+        let base = DownloadCompanion.baseName(for: audio)
+        let candidates = [DownloadCompanion.coverURL(in: coverDirectory, baseName: base),
+                          DownloadCompanion.legacyCoverURL(for: audio)]
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     /// 已下载完成的歌（按下载顺序）：从下载页点一首时，**整列**就是播放队列。
@@ -228,9 +251,11 @@ final class DownloadManager: NSObject, ObservableObject {
             let audio = URL(fileURLWithPath: path)
             // 自选外部目录：删之前同样要确认作用域在开着，否则删除会静默失败
             DownloadLocation.openScope(forFile: audio)
-            // 一一对应：删音频之前先删同目录同基名的 .lrc / .jpg。
-            // 旁车只依赖音频路径推导，不需要额外的清单文件，所以"谁被删、谁跟着删"永远对齐。
-            DownloadCompanion.removeSidecars(audio: audio)
+            // 一一对应：删音频之前先把它的 .lrc / .jpg 一起删掉（新位置 + 旧版同目录都清）。
+            // 旁车只依赖"音频基名"推导，不需要额外的清单文件，所以"谁被删、谁跟着删"永远对齐。
+            DownloadCompanion.removeSidecars(audio: audio,
+                                             lyricsDirectory: lyricsDirectory,
+                                             coverDirectory: coverDirectory)
             try? FileManager.default.removeItem(at: audio)
         }
         items.remove(at: idx)
@@ -306,10 +331,13 @@ final class DownloadManager: NSObject, ObservableObject {
         // 写盘前再确认一次：歌词接口 + 封面下载可能花掉几秒，用户完全可能已经删了这条下载
         guard await isCompletedDownload(itemID) else { return }
 
-        // ③ 旁车：任何容器都能用，是离线播放读取的第一来源
+        // ③ 旁车：任何容器都能用，是离线播放读取的第一来源。
+        //    第四十轮补丁 3：歌词进 `…/Lyrics`、封面进 `…/Cover`，和音频分开摆。
         var sidecars = DownloadCompanion.writeSidecars(audio: audioURL,
                                                        lyricsText: lyricsText,
-                                                       coverData: cover?.data)
+                                                       coverData: cover?.data,
+                                                       lyricsDirectory: lyricsDirectory,
+                                                       coverDirectory: coverDirectory)
 
         // ④ 内嵌：只有 m4a/mp3 有可靠写法；失败时 AudioTagEmbedder 内部保证保留原文件
         var embedded = false

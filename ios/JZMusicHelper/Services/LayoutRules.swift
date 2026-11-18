@@ -293,8 +293,19 @@ enum LyricsCacheRules {
 // 这条文案错了不会崩，只会让老板在「文件」App 里找不到自己的歌。
 enum DownloadPathRules {
 
-    /// 默认文件夹名。**磁盘上就是 `Documents/Music`**（老版本一直用它，改了就找不到旧下载）
-    static let defaultFolderName = "Music"
+    /// 默认根目录名。老板口径（第四十轮补丁 3）：
+    /// `文件 › JZ 音乐 › Download › Music`，所以根是 `Download`，音频再进一层的 `Music`。
+    static let defaultFolderName = "Download"
+
+    /// 根目录下的三个子目录（老板："歌曲 / 歌词 / 封面各放一个文件夹"）
+    static let musicSubfolder = "Music"
+    static let lyricsSubfolder = "Lyrics"
+    static let coverSubfolder = "Cover"
+
+    /// 三个子目录的说明（设置页一行小字）
+    static var foldersSummary: String {
+        "\(musicSubfolder) · \(lyricsSubfolder) · \(coverSubfolder)"
+    }
 
     /// 默认位置的面包屑
     static var defaultPathText: String {

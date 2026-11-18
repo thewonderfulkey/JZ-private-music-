@@ -36,29 +36,43 @@ enum DownloadCompanion {
     }
 
     // MARK: - 旁车路径
+    //
+    // 第四十轮补丁 3（老板："歌曲 / 歌词 / 封面各放一个文件夹"）：
+    // 音频、`.lrc`、`.jpg` 不再挤在同一个目录，而是分成
+    //   `文件 › JZ 音乐 › Download › Music` / `… › Lyrics` / `… › Cover`
+    // 三个同级目录，**基名一致**（`A - B [QQ_cyapi]`），所以"哪个词/哪张图属于哪首歌"
+    // 仍然只靠基名推导，不需要额外清单，删除时也天然一一对应。
 
-    /// 音频文件对应的歌词旁车路径：与音频**同目录、同基名**，后缀换成 `.lrc`。
-    ///
-    /// 例：`A - B [QQ_cyapi].m4a` → `A - B [QQ_cyapi].lrc`
-    /// （下载时的文件名里 `/` 已被 `DownloadManager.sanitizeFileName` 换成 `_`；
-    /// 这里只按"去掉最后一个扩展名再补后缀"推导，不关心名字里有哪些字符。）
-    ///
-    /// 为什么用同基名：删除时只要拿着音频 URL 就能算出该删哪两个文件，
-    /// 不需要额外存一份"旁车清单"，天然保证音频与旁车一一对应。
-    static func lyricsURL(for audio: URL) -> URL {
+    /// 音频文件的基名（去掉最后一个扩展名）
+    static func baseName(for audio: URL) -> String {
+        audio.deletingPathExtension().lastPathComponent
+    }
+
+    /// 歌词旁车路径：`<歌词目录>/<基名>.lrc`
+    static func lyricsURL(in directory: URL, baseName: String) -> URL {
+        directory.appendingPathComponent(baseName).appendingPathExtension("lrc")
+    }
+
+    /// 封面旁车路径：`<封面目录>/<基名>.jpg`
+    /// 注意：扩展名固定 `.jpg` 只是"我们约定的旁车名"，实际字节可能是 PNG/WebP，
+    /// iOS 的 `UIImage(data:)` 按内容解码，不看扩展名。
+    static func coverURL(in directory: URL, baseName: String) -> URL {
+        directory.appendingPathComponent(baseName).appendingPathExtension("jpg")
+    }
+
+    /// 旧版布局：旁车与音频同目录同基名（升级前的下载都是这样）。
+    /// 只用于**兼容读取**与清理，新下载不再往这里写。
+    static func legacyLyricsURL(for audio: URL) -> URL {
         audio.deletingPathExtension().appendingPathExtension("lrc")
     }
 
-    /// 音频文件对应的封面旁车路径：同目录、同基名，后缀 `.jpg`。
-    /// 注意：扩展名固定 `.jpg` 只是"我们约定的旁车名"，实际字节可能是 PNG/WebP，
-    /// iOS 的 `UIImage(data:)` 按内容解码，不看扩展名。
-    static func coverURL(for audio: URL) -> URL {
+    static func legacyCoverURL(for audio: URL) -> URL {
         audio.deletingPathExtension().appendingPathExtension("jpg")
     }
 
     // MARK: - 写旁车
 
-    /// 写旁车（歌词文本 + 封面二进制）。
+    /// 写旁车（歌词文本 → 歌词目录，封面二进制 → 封面目录）。
     ///
     /// 约束：
     ///   · 任何一项为 nil/空 → 该项不写，返回 nil（"没拿到"和"写了空文件"必须能区分）；
@@ -67,13 +81,18 @@ enum DownloadCompanion {
     ///   · 已存在的旧旁车不会被 nil 覆盖删除：同一首歌重下时，上一次的歌词/封面
     ///     依然是这首歌的，留着比删掉更安全（真删只发生在 `removeSidecars`）。
     ///
-    /// 不主动创建目录：音频所在目录本应存在（音频刚写进去），
-    /// 凭空创建目录只会把"路径算错了"这种 bug 藏起来。
-    static func writeSidecars(audio: URL, lyricsText: String?, coverData: Data?) -> Sidecars {
+    /// 不主动创建目录：这两个目录由 `DownloadLocation` 的 `lyricsDirectory()` /
+    /// `coverDirectory()` 保证存在；凭空创建只会把"路径算错了"这种 bug 藏起来。
+    static func writeSidecars(audio: URL,
+                              lyricsText: String?,
+                              coverData: Data?,
+                              lyricsDirectory: URL,
+                              coverDirectory: URL) -> Sidecars {
         var result = Sidecars(lyricsURL: nil, coverURL: nil, embedded: false)
+        let base = baseName(for: audio)
 
         if let lyricsText, !lyricsText.isEmpty {
-            let url = lyricsURL(for: audio)
+            let url = lyricsURL(in: lyricsDirectory, baseName: base)
             // .atomic：先写临时文件再 rename，播放端不会读到写了一半的歌词
             if let data = lyricsText.data(using: .utf8),
                (try? data.write(to: url, options: .atomic)) != nil {
@@ -82,7 +101,7 @@ enum DownloadCompanion {
         }
 
         if let coverData, !coverData.isEmpty {
-            let url = coverURL(for: audio)
+            let url = coverURL(in: coverDirectory, baseName: base)
             if (try? coverData.write(to: url, options: .atomic)) != nil {
                 result.coverURL = url
             }
@@ -93,15 +112,34 @@ enum DownloadCompanion {
 
     // MARK: - 读旁车（离线播放）
 
-    /// 读旁车歌词并解析成行级时间轴；文件不存在/为空/解析不出行 → nil。
-    ///
-    /// 返回 nil 而不是空数组：调用方据此决定"退回网络取词"还是"就显示空"，
-    /// 空数组会把"没词"和"有词但坏了"混成一件事。
-    static func readLyrics(from audio: URL) -> [LyricLine]? {
-        let url = lyricsURL(for: audio)
-        guard let data = try? Data(contentsOf: url), !data.isEmpty,
-              var text = String(data: data, encoding: .utf8) else { return nil }
+    /// 在给定目录里按顺序找歌词旁车并解析成行级时间轴；找不到再回退旧版"音频同目录"。
+    /// 文件不存在/为空/解析不出行 → nil（空数组会把"没词"和"有词但坏了"混成一件事）。
+    static func readLyrics(from audio: URL, in directories: [URL]) -> [LyricLine]? {
+        let base = baseName(for: audio)
+        var candidates = directories.map { lyricsURL(in: $0, baseName: base) }
+        candidates.append(legacyLyricsURL(for: audio))
+        for url in candidates {
+            guard let data = try? Data(contentsOf: url), !data.isEmpty,
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            if let lines = parseLRC(text) { return lines }
+        }
+        return nil
+    }
 
+    /// 在给定目录里按顺序找封面旁车字节；找不到再回退旧版"音频同目录"。
+    static func readCover(from audio: URL, in directories: [URL]) -> Data? {
+        let base = baseName(for: audio)
+        var candidates = directories.map { coverURL(in: $0, baseName: base) }
+        candidates.append(legacyCoverURL(for: audio))
+        for url in candidates {
+            if let data = try? Data(contentsOf: url), !data.isEmpty { return data }
+        }
+        return nil
+    }
+
+    /// LRC 文本 → 行级时间轴（兼容读取用）
+    private static func parseLRC(_ text: String) -> [LyricLine]? {
+        var text = text
         // 我们自己写的是无 BOM UTF-8；仍容忍 BOM，避免用户用记事本编辑过的文件首行解析失败
         if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
 
@@ -135,24 +173,20 @@ enum DownloadCompanion {
         return lines.sorted { $0.timeMs < $1.timeMs }
     }
 
-    /// 读旁车封面字节；不存在/为空 → nil。
-    static func readCover(from audio: URL) -> Data? {
-        let url = coverURL(for: audio)
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        return data
-    }
-
     // MARK: - 删旁车
 
-    /// 删除旁车（音频被删时调用）。文件本来就不存在也算成功，不抛错。
+    /// 删除旁车（音频被删时调用）。新位置 + 旧版位置一起清，文件不存在也算成功，不抛错。
     ///
     /// 为什么必须和音频删除绑在一起：老板要的是"一一对应地删"。
     /// 只删音频会留下"没有歌的歌词/封面"孤儿文件，用户下次搜索又下载同一首时
     /// 还会读到上一份旧旁车 —— 比不删更糟。
-    static func removeSidecars(audio: URL) {
+    static func removeSidecars(audio: URL, lyricsDirectory: URL, coverDirectory: URL) {
         let fm = FileManager.default
-        try? fm.removeItem(at: lyricsURL(for: audio))
-        try? fm.removeItem(at: coverURL(for: audio))
+        let base = baseName(for: audio)
+        try? fm.removeItem(at: lyricsURL(in: lyricsDirectory, baseName: base))
+        try? fm.removeItem(at: coverURL(in: coverDirectory, baseName: base))
+        try? fm.removeItem(at: legacyLyricsURL(for: audio))
+        try? fm.removeItem(at: legacyCoverURL(for: audio))
     }
 
     // MARK: - LRC 文本

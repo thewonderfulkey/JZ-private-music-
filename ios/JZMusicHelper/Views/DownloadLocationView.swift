@@ -34,6 +34,9 @@ struct DownloadLocationView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                Text("歌曲 → \(DownloadPathRules.musicSubfolder)　歌词 → \(DownloadPathRules.lyricsSubfolder)　封面 → \(DownloadPathRules.coverSubfolder)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 if let savedHint {
                     Text(savedHint)
                         .font(.caption)
@@ -79,7 +82,7 @@ struct DownloadLocationView: View {
             } header: {
                 Text("选一个文件夹")
             } footer: {
-                Text("都在「文件 › JZ 音乐」下面：选完点下面的「保存」立刻生效，新下载的歌就存到这里（已下好的不动）。")
+                Text("选完点下面的「保存」立刻生效。根目录下会自动分成三个子文件夹：歌曲 `Music`、歌词 `Lyrics`、封面 `Cover`（即 \(DownloadPathRules.foldersSummary)），已下好的不动。")
             }
 
             Section {

@@ -127,9 +127,47 @@ enum DownloadLocation {
 
     // MARK: 路径文案（设置页要"完整路径"，不是只有一个文件夹名）
 
-    /// 默认位置的面包屑（文案规则在 `DownloadPathRules`，CI 有条断言钉着）
+    /// 默认文件夹名 / 默认位置的面包屑（文案规则在 `DownloadPathRules`，CI 有条断言钉着）
     static var defaultPathText: String {
         DownloadPathRules.defaultPathText
+    }
+
+    // MARK: 三个子目录（歌曲 / 歌词 / 封面分开放）
+
+    /// 根目录下的 `Music`（音频）。老板口径：`文件 › JZ 音乐 › Download › Music`
+    static func musicDirectory() -> URL {
+        ensuredSubdirectory(DownloadPathRules.musicSubfolder)
+    }
+
+    /// 根目录下的 `Lyrics`（旁车 `.lrc`）
+    static func lyricsDirectory() -> URL {
+        ensuredSubdirectory(DownloadPathRules.lyricsSubfolder)
+    }
+
+    /// 根目录下的 `Cover`（旁车 `.jpg`）
+    static func coverDirectory() -> URL {
+        ensuredSubdirectory(DownloadPathRules.coverSubfolder)
+    }
+
+    /// 在"当前根"下面建一个子目录并返回；建不出来就退回根（宁可在根里放，也别丢文件）
+    static func ensuredSubdirectory(_ name: String) -> URL {
+        let root = currentDirectory()
+        let dir = root.appendingPathComponent(name, isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir.path) { return dir }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        } catch {
+            return root
+        }
+    }
+
+    /// 旧版本的旁车放在音频旁边（`Documents/Music/xxx.lrc`）：读不到新位置时回这里找一次
+    static func legacySidecarCandidates() -> [URL] {
+        var urls: [URL] = []
+        let legacy = documentsDirectory().appendingPathComponent("Music", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacy.path) { urls.append(legacy) }
+        return urls
     }
 
     /// 用户已保存的自选目录（解不开就是 nil，不建目录、不产生副作用）
