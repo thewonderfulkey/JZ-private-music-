@@ -285,6 +285,55 @@ enum LyricsCacheRules {
     }
 }
 
+// MARK: - 下载保存位置的路径文案（纯函数）
+//
+// 老板真机反馈（第四十轮补丁）："设置页面显示的只有一个 Music，我要把完整的路径显示出来，
+// 像之前版本一样"。路径本身来自系统（App 容器 / iCloud Drive / 别的 App 容器），
+// 但"怎么显示成人能读的面包屑"是纯字符串规则，抽出来让 CI 钉住——
+// 这条文案错了不会崩，只会让老板在「文件」App 里找不到自己的歌。
+enum DownloadPathRules {
+
+    /// 默认文件夹名。**磁盘上就是 `Documents/Music`**（老版本一直用它，改了就找不到旧下载）
+    static let defaultFolderName = "Music"
+
+    /// 默认位置的面包屑
+    static var defaultPathText: String {
+        "文件 › JZ 音乐 › \(defaultFolderName)"
+    }
+
+    /// 把磁盘路径翻成「文件」App 里那种面包屑
+    ///
+    /// - Parameters:
+    ///   - path: 目录的绝对路径（`url.standardizedFileURL.path`）
+    ///   - home: App 容器根（真机 `NSHomeDirectory()`；CI 上也可以传任意值做断言）
+    static func breadcrumb(path: String, home: String = NSHomeDirectory()) -> String {
+        if let range = path.range(of: "/com~apple~CloudDocs") {
+            return "iCloud Drive" + suffix(path, from: range.upperBound)
+        }
+        let documents = home + "/Documents"
+        if path == documents { return defaultPathText }
+        if documents == home { return defaultPathText }
+        if path.hasPrefix(documents + "/") {
+            return "文件 › JZ 音乐" + suffix(path, from: path.index(path.startIndex, offsetBy: documents.count))
+        }
+        if path.hasPrefix(home + "/") {
+            return "文件" + suffix(path, from: path.index(path.startIndex, offsetBy: home.count))
+        }
+        // 别的 App 的容器 / 外置盘：给末两级（调用方还会另给绝对路径）
+        let parts = path.split(separator: "/").map(String.init)
+        guard let last = parts.last else { return "文件" }
+        if parts.count >= 2 { return "文件 › " + parts[parts.count - 2] + " › " + last }
+        return "文件 › " + last
+    }
+
+    /// `/a/b` → ` › a › b`（空串 → ""）
+    private static func suffix(_ path: String, from index: String.Index) -> String {
+        let parts = path[index...].split(separator: "/").map(String.init)
+        guard !parts.isEmpty else { return "" }
+        return " › " + parts.joined(separator: " › ")
+    }
+}
+
 // MARK: - 按压反馈的最短可见时长（纯函数）
 //
 // 第三十七轮：老板真机反馈"长按 OK、短按几乎没反馈"。根因是快速点按时 `isPressed`

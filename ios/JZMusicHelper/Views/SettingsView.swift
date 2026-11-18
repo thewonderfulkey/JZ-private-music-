@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - 设置（设计稿 §3.11）
 //
@@ -24,8 +23,7 @@ struct SettingsView: View {
 
     @State private var lyricsCacheCount = 0
     @State private var showClearLyricsConfirm = false
-    @State private var showFolderPicker = false
-    @State private var folderError: String?
+    @State private var showLocationSheet = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -79,27 +77,27 @@ struct SettingsView: View {
                 Toggle("仅 Wi-Fi 下载", isOn: $settings.wifiOnlyDownload)
                 Toggle("后台下载", isOn: $settings.backgroundDownload)
                 LabeledContent("已下载", value: "\(downloads.items.count) 首")
+                // 第四十轮补丁（老板："只有一个 Music，我要把完整的路径显示出来"）：
+                // 这一行显示**整条面包屑**（文件 › JZ 音乐 › Music / iCloud Drive › …），
+                // 点开是一页能"选文件夹 + 明确保存"的界面（`DownloadLocationSheet`）。
                 Button {
-                    showFolderPicker = true
+                    showLocationSheet = true
                 } label: {
-                    LabeledContent("保存位置", value: settings.downloadFolderName ?? DownloadLocation.defaultFolderName)
-                        .foregroundStyle(.primary)
-                }
-                if let name = settings.downloadFolderName {
-                    Button("恢复默认保存位置（\(DownloadLocation.defaultFolderName)）") {
-                        settings.downloadFolderBookmark = nil
-                        settings.downloadFolderName = nil
-                        folderError = nil
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        Text("保存位置")
+                        Spacer(minLength: Tokens.Spacing.xs)
+                        Text(DownloadLocation.currentPathText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                 }
-                Text(downloadFolderHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let folderError {
-                    Text(folderError)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
+                Text(DownloadLocation.currentAbsolutePathText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             Section("数据") {
@@ -131,25 +129,9 @@ struct SettingsView: View {
         .task {
             lyricsCacheCount = await LyricsService.shared.cachedCount()
         }
-        .fileImporter(isPresented: $showFolderPicker,
-                      allowedContentTypes: [.folder],
-                      allowsMultipleSelection: false) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                // 选完必须"就地"建书签：`startAccessing` 只在这段作用域内有效
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                guard let bookmark = DownloadLocation.makeBookmark(for: url) else {
-                    folderError = "这个文件夹拿不到长期权限，请换一个（例如「我的 iPhone」下的文件夹）。"
-                    return
-                }
-                settings.downloadFolderBookmark = bookmark
-                settings.downloadFolderName = url.lastPathComponent
-                folderError = nil
-            case .failure(let error):
-                folderError = "没选成文件夹：\(error.localizedDescription)"
-            }
+        .sheet(isPresented: $showLocationSheet) {
+            DownloadLocationSheet()
+                .environment(settings)
         }
         .confirmationDialog("清空 \(lyricsCacheCount) 首歌词缓存？",
                             isPresented: $showClearLyricsConfirm, titleVisibility: .visible) {
@@ -161,13 +143,6 @@ struct SettingsView: View {
             }
             Button("取消", role: .cancel) {}
         }
-    }
-
-    private var downloadFolderHint: String {
-        if let name = settings.downloadFolderName {
-            return "已选「\(name)」：新下载的歌存到这里，已经下好的不动。删掉或移走这个文件夹，会退回默认位置。"
-        }
-        return "默认存在 App 自己的文件夹：文件 › JZ 音乐 › \(DownloadLocation.defaultFolderName)。也可以点上面选「文件」App 里的其它文件夹。"
     }
 
     private var appVersion: String {

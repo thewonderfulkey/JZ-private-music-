@@ -24,7 +24,7 @@ enum DownloadLocation {
     /// 默认文件夹名。**磁盘上就是 `Documents/Music`**（老版本一直用它，改了就找不到旧下载），
     /// 「文件」App 里看到的那一层名字也是它，所以界面文案直接用它，不另起中文名——
     /// 以前界面写"下载"、磁盘其实是 `Music`，用户去文件里找会对不上。
-    static let defaultFolderName = "Music"
+    static let defaultFolderName = DownloadPathRules.defaultFolderName
 
     /// 用户自选目录的安全书签
     static let bookmarkKey = "download_folder_bookmark"
@@ -90,6 +90,38 @@ enum DownloadLocation {
         return resolve(bookmark: data) != nil
     }
 
+    // MARK: 路径文案（设置页要"完整路径"，不是只有一个文件夹名）
+
+    /// 默认位置的面包屑（文案规则在 `DownloadPathRules`，CI 有条断言钉着）
+    static var defaultPathText: String {
+        DownloadPathRules.defaultPathText
+    }
+
+    /// 用户已保存的自选目录（解不开就是 nil，不建目录、不产生副作用）
+    static func savedCustomDirectory() -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
+        return resolve(bookmark: data)
+    }
+
+    /// 当前保存位置的面包屑（设置页那一行显示的就是它）
+    ///
+    /// 老板第二轮反馈："设置页面显示的只有一个 Music，我要把完整的路径显示出来，像之前版本一样"——
+    /// 所以这里给的是**从「文件」App 根往下的一整条**，不是一个 `lastPathComponent`。
+    static var currentPathText: String {
+        guard let custom = savedCustomDirectory() else { return defaultPathText }
+        return breadcrumb(for: custom)
+    }
+
+    /// 当前保存位置的绝对路径（给想确认"到底在磁盘哪"的人；设置页用一行小字显示）
+    static var currentAbsolutePathText: String {
+        savedCustomDirectory()?.path ?? defaultDirectory().path
+    }
+
+    /// URL → 「文件」App 里看到的那种面包屑（纯字符串规则见 `DownloadPathRules.breadcrumb`）
+    static func breadcrumb(for url: URL) -> String {
+        DownloadPathRules.breadcrumb(path: url.standardizedFileURL.path)
+    }
+
     // MARK: 安全作用域
 
     /// 给外部目录打开一次作用域（进程内同一个目录只开一次；默认目录是 App 沙盒内，直接跳过）
@@ -106,6 +138,18 @@ enum DownloadLocation {
     /// 给某个已下载文件所在的目录打开作用域（播放/删除本地文件前调用）
     static func openScope(forFile fileURL: URL) {
         openScope(at: fileURL.deletingLastPathComponent())
+    }
+
+    /// 真写一次再删掉：确认这个目录**现在就能写**。
+    ///
+    /// 为什么必须试：安全书签能解开、目录也存在，但某些云盘/别的 App 的容器是只读的——
+    /// 不试的话要等下一次下载失败（"文件写入失败"）才发现，正是老板这次"选了半天、什么都没变"的观感。
+    static func isWritable(_ directory: URL) -> Bool {
+        let probe = directory.appendingPathComponent(".jz-write-test-\(UUID().uuidString)")
+        let created = FileManager.default.createFile(atPath: probe.path, contents: Data("ok".utf8))
+        guard created else { return false }
+        try? FileManager.default.removeItem(at: probe)
+        return true
     }
 
     // MARK: 内部

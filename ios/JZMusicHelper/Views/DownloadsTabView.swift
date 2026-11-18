@@ -32,15 +32,13 @@ struct DownloadsTabView: View {
             } else {
                 List {
                     Section {
-                        HStack(spacing: Tokens.Spacing.xs) {
+                        HStack(alignment: .top, spacing: Tokens.Spacing.xs) {
                             Image(systemName: "folder")
                                 .foregroundStyle(.secondary)
-                            Text(DownloadLocation.currentLabel == DownloadLocation.defaultFolderName
-                                 ? "我的 iPhone › JZ 音乐 › \(DownloadLocation.defaultFolderName)"
-                                 : "文件 › \(DownloadLocation.currentLabel)")
+                            Text(DownloadLocation.currentPathText)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
                         Text(sizeSummary)
                             .font(.caption2)

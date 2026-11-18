@@ -2742,6 +2742,41 @@ do {
           (LyricsCacheRules.maxLimit - LyricsCacheRules.minLimit) / LyricsCacheRules.step == 19)
 }
 
+section("下载保存位置的路径文案（DownloadPathRules）")
+
+do {
+    let home = "/var/mobile/Containers/Data/Application/ABC"
+    check("默认位置给的是整条面包屑，不是一个 Music",
+          DownloadPathRules.defaultPathText == "文件 › JZ 音乐 › Music",
+          DownloadPathRules.defaultPathText)
+    check("App 容器里的子目录 → 文件 › JZ 音乐 › 子目录",
+          DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌", home: home)
+            == "文件 › JZ 音乐 › 我的歌",
+          DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌", home: home))
+    check("两层子目录要一路展开",
+          DownloadPathRules.breadcrumb(path: home + "/Documents/2026/冬天", home: home)
+            == "文件 › JZ 音乐 › 2026 › 冬天")
+    check("Documents 本身 → 就是默认位置文案",
+          DownloadPathRules.breadcrumb(path: home + "/Documents", home: home)
+            == DownloadPathRules.defaultPathText)
+    check("iCloud Drive 里的文件夹 → iCloud Drive › …",
+          DownloadPathRules.breadcrumb(
+            path: "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/我的音乐",
+            home: home) == "iCloud Drive › 我的音乐")
+    check("iCloud Drive 根目录 → iCloud Drive",
+          DownloadPathRules.breadcrumb(
+            path: "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs",
+            home: home) == "iCloud Drive")
+    check("别的 App 的容器 → 末两级（不给一长串哈希）",
+          DownloadPathRules.breadcrumb(
+            path: "/private/var/mobile/Containers/Shared/AppGroup/XYZ/我的音乐",
+            home: home) == "文件 › XYZ › 我的音乐")
+    check("末尾多一个斜杠不会出现空段",
+          DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌/", home: home)
+            == "文件 › JZ 音乐 › 我的歌",
+          DownloadPathRules.breadcrumb(path: home + "/Documents/我的歌/", home: home))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -100,6 +100,7 @@
 		B0000000000000000000006A /* DownloadLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000068 /* DownloadLocation.swift */; };
 		B0000000000000000000006B /* PlaybackSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000069 /* PlaybackSnapshot.swift */; };
 		B0000000000000000000006C /* CarAudioAutoPlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000006A /* CarAudioAutoPlay.swift */; };
+		B0000000000000000000006D /* DownloadLocationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000006B /* DownloadLocationSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -196,6 +197,7 @@
 		F00000000000000000000068 /* DownloadLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadLocation.swift; sourceTree = "<group>"; };
 		F00000000000000000000069 /* PlaybackSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSnapshot.swift; sourceTree = "<group>"; };
 		F0000000000000000000006A /* CarAudioAutoPlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarAudioAutoPlay.swift; sourceTree = "<group>"; };
+		F0000000000000000000006B /* DownloadLocationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadLocationSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -339,6 +341,7 @@
 				F00000000000000000000064 /* ArtistDetailView.swift */,
 				F00000000000000000000065 /* JZTabBar.swift */,
 				F00000000000000000000066 /* RecognizeStage.swift */,
+				F0000000000000000000006B /* DownloadLocationSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -591,6 +594,7 @@
 				B0000000000000000000006A /* DownloadLocation.swift in Sources */,
 				B0000000000000000000006B /* PlaybackSnapshot.swift in Sources */,
 				B0000000000000000000006C /* CarAudioAutoPlay.swift in Sources */,
+				B0000000000000000000006D /* DownloadLocationSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
