@@ -1151,14 +1151,20 @@ private struct LyricLineRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            textContent
-                .multilineTextAlignment(.center)
-                .rippleTap(cornerRadius: 10) { onTap() }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(line.text)
-                .accessibilityValue(isCurrent ? "第 \(index + 1) 行，共 \(player.lyrics.count) 行" : "")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHint("跳到这一句")
+            // 第三十六轮：歌词行也走 Button + `.rowPress`。
+            // 之前用 onTapGesture + 自定义手势驱动高亮，短按会丢事件、长按松手收不回来；
+            // 交给 ButtonStyle 的 isPressed 才可靠，落点扩散仍然保留。
+            Button {
+                onTap()
+            } label: {
+                textContent
+                    .multilineTextAlignment(.center)
+            }
+            .buttonStyle(.rowPress)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(line.text)
+            .accessibilityValue(isCurrent ? "第 \(index + 1) 行，共 \(player.lyrics.count) 行" : "")
+            .accessibilityHint("跳到这一句")
             Spacer(minLength: 0)
         }
         .padding(.vertical, Tokens.Spacing.xxs)

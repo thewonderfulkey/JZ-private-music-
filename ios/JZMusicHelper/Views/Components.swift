@@ -490,25 +490,25 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
     }
 }
 
-/// 列表行 / 卡片专用：按下瞬间在落点冒出一颗小亮斑，然后**慢慢**扩到整条、亮起来，松手再慢慢退。
+/// 列表行 / 卡片专用：按下时从落点冒出一颗小亮斑，0.50s 慢慢扩满整条、亮到 30%，松手 0.40s 退掉。
 ///
-/// 第三十五轮（老板："点击反馈还是不及时……按住之后慢慢亮，开始扩散，渐变的时间也慢一些"）：
-/// 系统 `ButtonStyle.isPressed` 在 ScrollView 里会被"延迟触摸"拖一下（UIKit 的
-/// `delaysContentTouches`），所以视觉不能等 `isPressed`——改用 `simultaneousGesture`
-/// 的 `DragGesture(minimumDistance: 0)`：手指一落下就拿到落点，当帧从这一点开始亮。
-/// 但**不是瞬间铺满**：0.50s `easeInOut` 慢慢扩到整条、亮到 30%；松手 0.40s 退掉。
-/// 拖动超过 10pt 视为滚动，立刻收掉且不触发点击。
+/// 第三十六轮（老板真机：**长按后高亮卡住、短按干脆没反馈**）：
+/// 上一版把"亮/灭"交给 DragGesture 的 onChanged/onEnded，结果手势在 ScrollView / Button
+/// 的竞争里会被取消——短按的 onChanged 根本没来、长按的 onEnded 也可能不来，高亮就卡住了。
+/// 现在**亮灭只信 `ButtonStyle.isPressed`**（系统保证按下/松手各一次），
+/// DragGesture 只负责"记下落点"；手势没来就用条目中心兜底。
 ///
-/// 缩放不再参与（老板要的是"高亮扩散"，不是"整条缩一下"）。
+/// 按下：落点亮斑 6% 大小 / 40% 亮度 → 0.50s `easeInOut` 扩满、亮到 30%；
+/// 松手：停 0.08s 再 0.40s 渐隐。缩放不参与（要的是"高亮扩散"）。
 struct RowPressButtonStyle: ButtonStyle {
     var highlight: Double = 0.30
     var cornerRadius: CGFloat = 16
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .modifier(RipplePressModifier(highlight: highlight,
-                                          cornerRadius: cornerRadius,
-                                          action: nil))
+            .modifier(RipplePressModifier(isPressed: configuration.isPressed,
+                                          highlight: highlight,
+                                          cornerRadius: cornerRadius))
     }
 }
 
@@ -519,66 +519,67 @@ extension ButtonStyle where Self == RowPressButtonStyle {
 
 // MARK: - 从落点扩散的高亮
 
-/// 高亮扩散 + 可选点击动作。
-///
-/// - 给 `ButtonStyle` 用：`action` 传 nil，点击仍由 Button 自己触发，这里只画高亮；
-/// - 给 `onTapGesture` 的歌词行用：`.rippleTap { onTap() }`，落点高亮和点击一起接管。
 struct RipplePressModifier: ViewModifier {
 
+    let isPressed: Bool
     var highlight: Double = 0.30
     var cornerRadius: CGFloat = 16
-    var action: (() -> Void)?
 
-    @Environment(\.isEnabled) private var isEnabled
+    /// 手势记下的落点；手势没来时 `activeOrigin` 为 nil，用条目中心兜底
     @State private var origin: CGPoint = .zero
+    @State private var hasOrigin = false
+    @State private var activeOrigin: CGPoint?
     @State private var pressID = 0
     @State private var glow: Double = 0
-    @State private var tracking = false
-    @State private var cancelled = false
+    /// 松手后的延迟淡出；下一次按下要能取消它，否则快速连点会被上一次的淡出拖暗
+    @State private var fadeTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
             .background {
                 GeometryReader { geo in
                     if pressID > 0 {
-                        RippleFill(origin: origin,
+                        RippleFill(origin: activeOrigin,
                                    size: geo.size,
                                    color: Color.primary.opacity(highlight))
                             .id(pressID)
-                            .opacity(cancelled ? 0 : glow)
+                            .opacity(glow)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
             .contentShape(Rectangle())
-            .simultaneousGesture(gesture, including: isEnabled ? .all : .none)
-    }
-
-    private var gesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                if !tracking {
-                    tracking = true
-                    cancelled = false
-                    origin = value.startLocation
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        // 只记落点，不负责亮灭——就算手势在竞争里被取消，高亮也不会卡住
+                        if !hasOrigin {
+                            origin = value.startLocation
+                            hasOrigin = true
+                            // 按压已经开始但当时还没拿到落点：重启一次，让亮斑改从手指处长
+                            if glow > 0, pressID > 0 {
+                                activeOrigin = origin
+                                pressID += 1
+                            }
+                        }
+                    }
+                    .onEnded { _ in hasOrigin = false }
+            )
+            .onChange(of: isPressed) { _, pressed in
+                fadeTask?.cancel()
+                if pressed {
+                    activeOrigin = hasOrigin ? origin : nil
                     pressID += 1
-                    glow = 1                     // 落点当帧就亮，不做淡入等待
-                }
-                if abs(value.translation.width) > 10 || abs(value.translation.height) > 10 {
-                    if !cancelled {
-                        cancelled = true
-                        withAnimation(.easeOut(duration: 0.15)) { glow = 0 }
+                    glow = 1
+                } else {
+                    // 松手后停 0.08s 再淡出；快速连点也能看到亮斑继续长一下。
+                    // 用 Task 而不是 `.delay()`：下一次按下能取消它，不会被上一轮的延迟淡出拖暗。
+                    fadeTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeOut(duration: 0.40)) { glow = 0 }
                     }
                 }
-            }
-            .onEnded { _ in
-                let wasTracking = tracking
-                tracking = false
-                guard wasTracking, !cancelled else { return }
-                // 松手后停 0.08s 再淡出：快速连点时也能看到亮斑继续长一下，
-                // 不会"点一下就没了"；按住的情况则从满亮开始退。
-                withAnimation(.easeOut(duration: 0.40).delay(0.08)) { glow = 0 }
-                action?()
             }
     }
 }
@@ -586,20 +587,22 @@ struct RipplePressModifier: ViewModifier {
 /// 一块从 `origin` 扩到盖住整个 `size` 的圆形亮色；由外层的圆角矩形裁掉。
 private struct RippleFill: View {
 
-    let origin: CGPoint
+    /// nil = 没有落点（手势没来），从条目中心长
+    let origin: CGPoint?
     let size: CGSize
     let color: Color
 
     @State private var expanded = false
 
     var body: some View {
-        let dx = max(origin.x, size.width - origin.x)
-        let dy = max(origin.y, size.height - origin.y)
+        let point = origin ?? CGPoint(x: size.width / 2, y: size.height / 2)
+        let dx = max(point.x, size.width - point.x)
+        let dy = max(point.y, size.height - point.y)
         let radius = max(24, (dx * dx + dy * dy).squareRoot() * 1.02)
         return Circle()
             .fill(color)
             .frame(width: radius * 2, height: radius * 2)
-            .position(origin)
+            .position(point)
             // 起点不是"全亮突然出现"：先是一颗 6% 大小、40% 亮度的亮斑，
             // 0.50s 里一边长大一边变亮，看起来才是"按住之后慢慢亮、开始扩散"。
             .scaleEffect(expanded ? 1 : 0.06)
@@ -608,16 +611,5 @@ private struct RippleFill: View {
                 withAnimation(.easeInOut(duration: 0.50)) { expanded = true }
             }
             .accessibilityHidden(true)
-    }
-}
-
-extension View {
-    /// 给 `onTapGesture` 的条目用：点击落下即从落点扩散高亮，松手后触发动作。
-    func rippleTap(cornerRadius: CGFloat = 12,
-                   highlight: Double = 0.30,
-                   action: @escaping () -> Void) -> some View {
-        modifier(RipplePressModifier(highlight: highlight, cornerRadius: cornerRadius, action: action))
-            // 视觉高亮由手势负责；VoiceOver 激活仍走系统 action
-            .accessibilityAction { action() }
     }
 }
