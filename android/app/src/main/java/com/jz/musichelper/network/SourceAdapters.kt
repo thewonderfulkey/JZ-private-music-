@@ -79,22 +79,23 @@ object StreamVerifier {
             for (k in bytes.indices) if (at(from + k) != bytes[k]) return false
             return true
         }
-        // 标准位置优先
+        // 1) 容器特征串：标准位置 + 任意偏移都算（ID3v2 前缀后面才是真容器）。
+        //    顺序很重要：**先**找真实容器——"ID3" 只说明前面挂了标签，不代表就是 mp3。
         if (has("fLaC")) return "flac"
         if (has("OggS")) return "ogg"
-        if (b.size >= 8 && has("ftyp", 4)) return "m4a"
-        if (b.size >= 3 && has("ID3")) return "mp3"
-        if (b.size >= 2 && at(0) == 0xFF.toByte() &&
-            (at(1) == 0xFB.toByte() || at(1) == 0xF3.toByte() ||
-                at(1) == 0xF2.toByte() || at(1) == 0xFA.toByte())) return "mp3"
         if (has("RIFF")) return "wav"
-        // 偏移 0 认不出：在前面这段里找（ID3v2 头之后才是真容器）
+        if (b.size >= 8 && has("ftyp", 4)) return "m4a"
         for (offset in 1 until b.size) {
             if (has("fLaC", offset)) return "flac"
             if (has("OggS", offset)) return "ogg"
             if (has("RIFF", offset)) return "wav"
             if (has("ftyp", offset)) return "m4a"
         }
+        // 2) 认不出容器才看标签 / 帧同步
+        if (b.size >= 3 && has("ID3")) return "mp3"
+        if (b.size >= 2 && at(0) == 0xFF.toByte() &&
+            (at(1) == 0xFB.toByte() || at(1) == 0xF3.toByte() ||
+                at(1) == 0xF2.toByte() || at(1) == 0xFA.toByte())) return "mp3"
         return "unknown"
     }
 }

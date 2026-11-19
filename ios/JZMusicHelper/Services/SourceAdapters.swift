@@ -115,21 +115,22 @@ enum StreamVerifier {
             return true
         }
 
-        // 1) 标准位置优先（绝大多数文件走这里）
+        // 1) 容器特征串：标准位置 + 任意偏移都算（ID3v2 前缀后面才是真容器）。
+        //    顺序很重要：**先**找真实容器——"ID3" 只说明前面挂了标签，不代表就是 mp3。
         if has("fLaC") { return "flac" }
         if has("OggS") { return "ogg" }
-        if b.count >= 8, has("ftyp", from: 4) { return "m4a" }
-        if b.count >= 3, has("ID3") { return "mp3" }
-        if b.count >= 2, at(0) == 0xFF, [0xFB, 0xF3, 0xF2, 0xFA].contains(at(1)) { return "mp3" }
         if has("RIFF") { return "wav" }
-
-        // 2) 偏移 0 认不出：在前面这段里找特征串（ID3v2 头 + 之后才是真容器）
+        if b.count >= 8, has("ftyp", from: 4) { return "m4a" }
         for offset in 1..<b.count {
             if has("fLaC", from: offset) { return "flac" }
             if has("OggS", from: offset) { return "ogg" }
             if has("RIFF", from: offset) { return "wav" }
             if has("ftyp", from: offset) { return "m4a" }
         }
+
+        // 2) 认不出容器才看标签 / 帧同步
+        if b.count >= 3, has("ID3") { return "mp3" }
+        if b.count >= 2, at(0) == 0xFF, [0xFB, 0xF3, 0xF2, 0xFA].contains(at(1)) { return "mp3" }
         return "unknown"
     }
 }
