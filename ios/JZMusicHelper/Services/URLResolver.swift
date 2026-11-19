@@ -183,6 +183,8 @@ enum SameSongCrossResolver {
         let exacts: [StreamSource]
         /// 每个候选失败的一句话原因（最多 4 条，弹层诊断用）
         var failures: [String] = []
+        /// 候选按平台的分布（"网易2/酷狗3/QQ1"）：排查"搜索没搜到网易"这类问题用
+        var candidateSummary: String = ""
 
         static let empty = CrossOutcome(exact: nil, best: nil, exacts: [], failures: [])
     }
@@ -197,6 +199,8 @@ enum SameSongCrossResolver {
             var best: StreamSource?
             var exacts: [StreamSource] = []
             var failures: [String] = []
+            let byPlatform = Dictionary(grouping: candidates, by: { $0.platform.shortName })
+            let summary = byPlatform.map { "\($0.key)\($0.value.count)" }.sorted().joined(separator: "/")
 
             for batch in candidates.chunked(3) {
                 if exacts.count >= maxExactKeep { break }
@@ -233,7 +237,8 @@ enum SameSongCrossResolver {
                     }
                 }
             }
-            return CrossOutcome(exact: exact, best: best, exacts: exacts, failures: failures)
+            return CrossOutcome(exact: exact, best: best, exacts: exacts,
+                                failures: failures, candidateSummary: summary)
         } ?? .empty
     }
 
@@ -408,7 +413,7 @@ enum DownloadResolver {
             song: song, want: want, triedKeys: tried)
         pool.append(contentsOf: cross.exacts)
         if let best = cross.best { pool.append(best) }
-        notes.append("跨源试 \(tried.count) 条\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
+        notes.append("跨源试 \(tried.count) 条\(cross.candidateSummary.isEmpty ? "" : "（\(cross.candidateSummary)）")\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
         if !cross.failures.isEmpty {
             notes.append("跨源失败（\(cross.failures.prefix(3).joined(separator: "、"))）")
         }

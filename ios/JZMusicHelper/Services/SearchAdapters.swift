@@ -49,6 +49,12 @@ struct QQSearchAdapter: SearchAdapter {
 // MARK: - 网易云音乐
 // 2026-10-31 实测：老接口 /api/search/get/web 已被风控（code=405），改用 /api/search/get
 // 2026-11-16 复测：/api/search/get 正常返回 20 条
+//
+// r123（《연애의 조건》iOS 下载不到无损的真凶）：官方 `/api/search/get` 在**真机上**会对
+// iOS 这侧（UA + TLS 指纹）回"200 但 0 条"或直接 405，于是跨源搜索里**网易候选一个都没有**——
+// 弹层诊断能对上：6 条候选全是 QQ/酷狗，失败原因里根本没有"网易"。
+// 现在补一条兜底：官方搜不到时改用 gdstudio 的 `types=search&source=netease`
+// （和取流同一个域名，官方被风控时它通常还通），映射成同样的 Song。
 struct NeteaseSearchAdapter: SearchAdapter {
     let platform: MusicPlatform = .netease
 
@@ -57,11 +63,24 @@ struct NeteaseSearchAdapter: SearchAdapter {
         let offset = max(0, page - 1) * limit
         let url = "https://music.163.com/api/search/get"
             + "?s=\(APIClient.encode(keyword))&type=1&offset=\(offset)&limit=\(limit)"
-        let json = try await APIClient.shared.getJSON(url, headers: ["Referer": "https://music.163.com/"])
-        if (json["code"] as? Int) != 200 { return [] }
-        guard let list = json.nested(["result", "songs"]) as? [[String: Any]] else {
-            throw APIError.parse("网易搜索结果结构异常")
+        // 真机上官方接口可能是"卡住不回"而不是快速报错：给它 4s，把剩下的预算留给 gdstudio 兜底
+        // （整个平台在 searchAll 里只有 8s，官方一卡就把兜底也一起饿死了——r123 的真凶之一）
+        if let json = try? await APIClient.shared.getJSON(
+            url, headers: ["Referer": "https://music.163.com/"], timeout: 4),
+           (json["code"] as? Int) == 200,
+           let list = json.nested(["result", "songs"]) as? [[String: Any]] {
+            let songs = Self.songs(fromOfficial: list)
+            if !songs.isEmpty {
+                return await Self.fillCovers(songs)
+            }
         }
+        // 官方没给结果（被风控 / 空结果）→ gdstudio 搜索兜底
+        let fallback = await Self.gdstudioSearch(keyword: keyword, limit: limit, page: page)
+        if !fallback.isEmpty { return fallback }
+        return []
+    }
+
+    static func songs(fromOfficial list: [[String: Any]]) -> [Song] {
         var songs: [Song] = []
         for item in list {
             guard let id = item["id"] as? Int, id > 0,
@@ -75,7 +94,49 @@ struct NeteaseSearchAdapter: SearchAdapter {
                               singer: artists, album: album,
                               duration: Double(durMs / 1000), picURL: nil))
         }
-        return await Self.fillCovers(songs)
+        return songs
+    }
+
+    /// gdstudio 搜索 → Song 列表（纯函数，CI 断言可直接喂字典）
+    ///
+    /// gdstudio 不返回时长（选曲侧只用于"找 id"），`duration` 记 0：
+    /// `sameSong` 的时长闸门会跳过，`DownloadResolver` 也会退回档位桶比较。
+    /// 取流那一侧用接口自报的 `br`/`size` 兜底定档，所以时长缺不影响"是不是无损"。
+    static func songs(fromGdstudio items: [[String: Any]]) -> [Song] {
+        var seen = Set<String>()
+        var songs: [Song] = []
+        for item in items {
+            let id: String
+            if let n = item["id"] as? Int { id = String(n) }
+            else if let s = item["id"] as? String, !s.isEmpty { id = s }
+            else { continue }
+            guard !id.isEmpty, seen.insert(id).inserted else { continue }
+            let name = (item["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let artists: String
+            if let arr = item["artist"] as? [String] {
+                artists = arr.joined(separator: "/")
+            } else if let s = item["artist"] as? String {
+                artists = s
+            } else {
+                artists = ""
+            }
+            let album = item["album"] as? String ?? ""
+            songs.append(Song.make(platform: .netease, platformID: id, name: name,
+                              singer: artists, album: album, duration: 0, picURL: nil))
+        }
+        return songs
+    }
+
+    /// gdstudio 搜索（官方 /api/search/get 被风控时的兜底）
+    static func gdstudioSearch(keyword: String, limit: Int, page: Int = 1) async -> [Song] {
+        let url = "https://music-api.gdstudio.xyz/api.php"
+            + "?types=search&source=netease&name=\(APIClient.encode(keyword))"
+            + "&count=\(max(1, min(limit, 30)))&pages=\(max(1, page))"
+        guard let raw = try? await APIClient.shared.getJSONArray(
+            url, headers: ["User-Agent": "LX-Music-Mobile"], timeout: 10) else { return [] }
+        let items = raw.compactMap { $0 as? [String: Any] }
+        return songs(fromGdstudio: items)
     }
 
     /// v2.1.94：/api/search/get 只回 picId 不回 picUrl，用 /api/song/detail 批量补（20 首一次）
@@ -84,7 +145,7 @@ struct NeteaseSearchAdapter: SearchAdapter {
         let ids = songs.prefix(20).map(\.platformID).joined(separator: ",")
         let url = "https://music.163.com/api/song/detail?ids=[\(ids)]"
         guard let json = try? await APIClient.shared.getJSON(
-            url, headers: ["Referer": "https://music.163.com/"]),
+            url, headers: ["Referer": "https://music.163.com/"], timeout: 3),
               let arr = json["songs"] as? [[String: Any]] else { return songs }
         var pics: [String: String] = [:]
         for o in arr {

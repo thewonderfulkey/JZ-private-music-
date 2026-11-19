@@ -267,8 +267,7 @@ enum QualityFacts {
         let kb = kbps(facts.totalBytes, durationSec)
         // 容器认不出但码率已经是无损量级（CDN 把容器头改了 / 前面挂 ID3）：按无损标，
         // 和 `matches` 同一个口径；算不出码率时仍宁可往低标
-        if kb >= losslessFloorKbps { return (.lossless, ext) }
-        return (highBandKbps.contains(kb) ? .high : .standard, ext)
+        return (quality(container: facts.container, kbps: kb), ext)
     }
 
     static func extOf(_ container: String) -> String {
@@ -284,6 +283,13 @@ enum QualityFacts {
     static func kbps(_ totalBytes: Int64, _ durationSec: Int) -> Int64 {
         guard durationSec > 0, totalBytes > 0 else { return 0 }
         return totalBytes * 8 / Int64(durationSec) / 1000
+    }
+
+    /// 由「容器 + 码率」定档（`of()` 与"接口自报兜底"共用）
+    static func quality(container: String, kbps kb: Int64) -> QualityLevel {
+        if container == "flac" || container == "wav" { return .lossless }
+        if kb >= losslessFloorKbps { return .lossless }
+        return highBandKbps.contains(kb) ? .high : .standard
     }
 
     /// 目标档校验：三档共用唯一口径。无损看容器或无损量级码率，320k/128k 看码率区间。
@@ -371,14 +377,26 @@ struct GdstudioNeteaseAdapter: StreamSourceAdapter {
             throw APIError.parse("gdstudio 未返回 URL")
         }
         let stream = UrlNormalizer.upgraded(raw)
-        guard let facts = await StreamVerifier.inspect(stream) else {
-            throw APIError.httpStatus(0)
-        }
-        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+
+        // r123：gdstudio 的响应自带 `br`（实测 740 档回 1086~1095）与 `size`。
+        // 真机上探测偶尔还会失败（CDN 风控/超时），这时**不能整条后端判死**——
+        // 有这两个字段就能定档：容器认不出就用码率，时长未知（gdstudio 搜索不返回时长）就用 br。
+        let apiBr = (json["br"] as? Int) ?? ((json["br"] as? NSNumber)?.intValue ?? 0)
+        let apiSize = Int64((json["size"] as? Int) ?? ((json["size"] as? NSNumber)?.intValue ?? 0))
+
+        let facts = await StreamVerifier.inspect(stream)
+        let total = facts?.totalBytes ?? apiSize
+        let container = facts?.container ?? "unknown"
+        let calcKbps = QualityFacts.kbps(total, song.durationSec)
+        let kb = calcKbps > 0 ? calcKbps : Int64(apiBr)
+        guard total > 0 || kb > 0 else { throw APIError.httpStatus(0) }
+
+        let q = QualityFacts.quality(container: container, kbps: kb)
+        let fmt = QualityFacts.extOf(container)
+        let note = facts == nil ? "VIP 全量（探测失败，按接口自报 br=\(apiBr)）" : "VIP 全量 mp3/FLAC（实测标注）"
         return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
-                            format: fmt, note: "VIP 全量 mp3/FLAC（实测标注）", directId: true,
-                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes)
+                            format: fmt, note: note, directId: true,
+                            kbps: kb, totalBytes: total)
     }
 }
 

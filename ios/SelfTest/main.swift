@@ -304,6 +304,29 @@ do {
     check("QQ 域用 QQ Referer",
           StreamVerifier.referer(forHost: "isure.stream.qqmusic.qq.com") == "https://y.qq.com/")
 
+    // r123：gdstudio 搜索兜底（官方 /api/search/get 在真机上对 iOS 回空/卡死）
+    // 映射的纯函数部分钉死，避免"兜底看着有代码、实际映射不出候选"
+    let gdItems: [[String: Any]] = [
+        ["id": "27867073", "name": "연애의 조건 (Love Options)",
+         "artist": ["BESTie"], "album": "연애의 조건 (Love Options)"],
+        ["id": 28850832, "name": "연애의 조건", "artist": "BESTie", "album": "Hot Baby"],
+        ["id": "27867073", "name": "重复 id 要去重", "artist": ["BESTie"], "album": ""],
+        ["name": "没有 id 的行要丢掉", "artist": ["X"], "album": ""],
+    ]
+    let mapped = NeteaseSearchAdapter.songs(fromGdstudio: gdItems)
+    check("gdstudio 兜底映射出 2 条（去重 + 丢无 id）", mapped.count == 2, "got=\(mapped.count)")
+    check("兜底候选平台是网易", mapped.allSatisfy { $0.platform == .netease })
+    check("兜底候选 id 正确", mapped.first?.platformID == "27867073")
+    check("artist 数组拼成 /", mapped.first?.singer == "BESTie")
+    check("artist 字符串直接用", mapped.count == 2 && mapped[1].singer == "BESTie")
+    check("兜底候选没有时长（让 sameSong 跳过时长闸门）", mapped.allSatisfy { $0.durationSec == 0 })
+
+    // 时长未知时靠接口自报 br 定档：1086kbps 必须判无损
+    check("接口自报 1086kbps → 无损",
+          QualityFacts.quality(container: "unknown", kbps: 1086) == .lossless)
+    check("接口自报 320kbps → 高品",
+          QualityFacts.quality(container: "unknown", kbps: 320) == .high)
+
     // MARK: r120《연애의 조건》事故的两条根因
     // ① 126.net 的部分 fLaC 前面挂了一段 ID3v2，旧实现只看偏移 0 → 把真无损判成 mp3
     let id3PrefixedFlac: [UInt8] = Array("ID3".utf8) + [4, 0, 0, 0, 0, 0, 0] + Array("fLaC".utf8)
