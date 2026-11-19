@@ -262,6 +262,49 @@ do {
           "got=\(NameMatch.versionClass("연애의 조건 (Love Options) (Inst.)"))")
 }
 
+// MARK: - 3.2 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
+
+section("下载链排名与下载前校验")
+
+do {
+    let ref = song(.qq, "연애의 조건 (恋爱的条件) (LOVE OPTIONS)", "BESTie (베스티)",
+                   album: "Love Options", dur: 194, id: "rank_src")
+    let yaohu = StreamSource(
+        url: "https://car-er.kuwo.cn/f87a92b84349e3053de1f8aee39e552d/6afe7625/resource/1307392909/trackmedia/F000001DUfbk2K0Pzn.flac",
+        backendName: "妖狐酷我", platform: .kuwo, quality: .lossless, format: "flac",
+        note: "官方直链", directId: false, kbps: 1082, totalBytes: 26_251_814, rangeOK: true)
+    let cyapi = StreamSource(
+        url: "https://isure6.stream.qqmusic.qq.com/C4000019zbpu0R3ppO.m4a",
+        backendName: "cyapi QQ", platform: .qq, quality: .standard, format: "m4a",
+        note: "VIP 全量", directId: true, kbps: 97, totalBytes: 2_359_755, rangeOK: true)
+
+    let sY = DownloadResolver.score(of: yaohu, song: ref, ref: ref, ms: 1500)
+    let sC = DownloadResolver.score(of: cyapi, song: ref, ref: ref, ms: 800)
+    check("档位优先于速度：无损 FLAC 排在 97kbps m4a 之前", sY > sC,
+          "妖狐=\(sY.short) cyapi=\(sC.short)")
+    check("妖狐 → 无损档 (1000)", DownloadResolver.tierOf(yaohu) == 1000)
+    check("cyapi 97kbps → 标准档 (200)", DownloadResolver.tierOf(cyapi) == 200)
+
+    check("26MB 的无损过下载前校验",
+          DownloadPreflight.check(yaohu, want: .lossless, durationSec: 194).ok)
+    let tiny = StreamSource(url: "https://x/y.flac", backendName: "t", platform: .qq,
+                            quality: .lossless, format: "flac", note: "", directId: false,
+                            kbps: 1082, totalBytes: 2_400_000, rangeOK: true)
+    check("2.4MB 的「无损」校验不过",
+          !DownloadPreflight.check(tiny, want: .lossless, durationSec: 194).ok)
+    let fakeFlac = StreamSource(url: "https://x/y.flac", backendName: "t", platform: .qq,
+                                quality: .lossless, format: "mp3", note: "", directId: false,
+                                kbps: 1000, totalBytes: 26_000_000, rangeOK: true)
+    check("后缀 .flac 里装 mp3 → 校验不过",
+          !DownloadPreflight.check(fakeFlac, want: .lossless, durationSec: 194).ok)
+
+    let yk = NameMatch.yaohuSearchKey(name: "연애의 조건 (恋爱的条件) (LOVE OPTIONS)",
+                                      singer: "BESTie (베스티)")
+    check("妖狐搜索串 = 核心歌名 + 主歌手", yk == "연애의 조건BESTie", "got=\(yk)")
+    check("妖狐搜索串：晴天/周杰伦",
+          NameMatch.yaohuSearchKey(name: "晴天", singer: "周杰伦") == "晴天周杰伦")
+}
+
 // MARK: - 4 音质判定（QualityFacts + SniffHead）
 
 section("音质探测与档位判定")

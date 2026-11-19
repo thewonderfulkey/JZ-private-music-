@@ -14,6 +14,9 @@ struct StreamSource: Identifiable, Codable, Hashable, Sendable {
     var directId: Bool = false
     var kbps: Int64 = 0
     var totalBytes: Int64 = 0
+    /// 取流探测时服务端是否支持 Range（206 或带 Content-Range）。
+    /// nil = 老数据/没探测（解码兼容：Optional 缺键不报错）。
+    var rangeOK: Bool? = nil
 
     var id: String { "\(platform.rawValue)_\(backendName)_\(quality.rawValue)" }
 

@@ -259,8 +259,8 @@ enum SameSongCrossResolver {
         } ?? .empty
     }
 
-    private static func candidateList(song: Song, quality: QualityLevel,
-                                      triedKeys: TriedKeys, forDownload: Bool) async -> CandidateSet {
+    static func candidateList(song: Song, quality: QualityLevel,
+                              triedKeys: TriedKeys, forDownload: Bool) async -> CandidateSet {
         let kw = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
         guard !kw.isEmpty else { return CandidateSet() }
         let results = await SearchService.shared.searchAll(keyword: kw, limit: 30)
@@ -378,139 +378,321 @@ enum SameSongCrossResolver {
     }
 }
 
-// MARK: - 下载取源编排
-/// 与 Android `DownloadResolver` 同口径：三档共用同一条换源链，产出「核实就是目标档」的候选清单，
-/// 外加一条「最高可得档」兜底。不这样做，"选了无损却拿到 128k"就是必然。
+// MARK: - 下载取源编排（老板 2026-11-19 口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
+//
+// 旧实现是"谁先回来用谁"：本平台先解析 → 跨源分三批 → 攒够 3 条目标档就 break。
+// 对《연애의 조건》这类歌，QQ·cyapi 的 97kbps m4a 往往第一个回来，就被当成了结果。
+//
+// 现在的固定顺序（**只用于下载链**；播放链是另一套"先粗后精"窗口策略，见 `quickPick`）：
+//   ① 收集：本平台后端 + 妖狐 + 跨源候选（网易/酷狗/QQ）全部发出去，总预算 15s，到期用已收到的；
+//   ② 身份闸（淘汰制）：歌手交集 / 时长 ≤4s / 版本类一致——不过的直接淘汰，不参与排名；
+//   ③ 打分：档位 > 版本 > 时长贴近 > 来源可靠性 > 响应速度（只在同分时用）；
+//   ④ 取第一，下载前校验（体积 / 容器 / 码率量级）；
+//   ⑤ 校验不过退第二名——仍然只能是被身份闸放行的同曲同版本，绝不降到别人的歌。
 enum DownloadResolver {
+
+    // MARK: 打分（顺序不可反，改权重可以，改顺序不行）
+    struct Score: Sendable, Comparable {
+        /// ① 音质档位：无损(FLAC/≥800k) > 320k > 256k > 128k
+        let tier: Int
+        /// ② 版本匹配度：原唱 > 官方 Live > 其它
+        let version: Int
+        /// ③ 时长贴近度（越大越贴近）
+        let duration: Int
+        /// ④ 来源可靠性：实测有体积/码率、Range 正常、官方 CDN 直链优先
+        let reliable: Int
+        /// ⑤ 响应速度：**只在同分时**用（越小越前）
+        let ms: Int
+
+        static func < (a: Score, b: Score) -> Bool {
+            if a.tier != b.tier { return a.tier < b.tier }
+            if a.version != b.version { return a.version < b.version }
+            if a.duration != b.duration { return a.duration < b.duration }
+            if a.reliable != b.reliable { return a.reliable < b.reliable }
+            return a.ms > b.ms
+        }
+
+        /// 诊断里那串 "1000/300/100/110"（档/版/时/可靠）
+        var short: String { "\(tier)/\(version)/\(duration)/\(reliable)" }
+    }
+
+    struct Candidate: Sendable {
+        let song: Song
+        let source: StreamSource
+        let elapsedMs: Int
+        let score: Score
+    }
 
     struct Plan: Sendable {
         let want: QualityLevel
-        let exact: [StreamSource]
+        /// 排名第一且**通过下载前校验**的目标档候选
+        let picked: Candidate?
+        /// 全部通过身份闸的候选（已按分数降序），诊断/验收用的完整排名表
+        let ranked: [Candidate]
+        /// 目标档一个都不可用时的最高可得档（仍需用户点头才下）
         let fallback: StreamSource?
         let switched: Bool
-        let crossTried: Int
-        /// 这一次取源各阶段的实况（本平台几条 / 跨源试了几条 / 妖狐结果），降级时写进弹层说清原因
         let notes: [String]
-        /// 逐条留痕（**不截断**，弹层单列一块）：源曲元数据 / 网易实际请求 URL / 网易响应前 3 条 / 妖狐结果。
-        /// 为什么单列：r122–r125 三轮都因为"200 字截断 + 只记条数不记内容"而在猜，这一次把证据摆出来。
         let debug: [String]
 
-        var empty: Bool { exact.isEmpty && fallback == nil }
-
-        /// 降级时那句人话：只说"没有 X、最高 Y"。
-        /// 细节不塞这里了——旧实现把 notes 拼进来再截 240 字，真机上正好把"妖狐那轮的结果"切掉，
-        /// 结果看了三轮都没人知道妖狐到底回没回。细节走 `debug`，一行一条。
+        var exact: [StreamSource] { picked.map { [$0.source] } ?? [] }
+        var empty: Bool { picked == nil && fallback == nil }
         var fallbackReason: String {
             let best = fallback?.quality.displayName ?? "—"
             return "没有\(want.displayName)，最高可得\(best)"
         }
     }
 
-    static let genericTimeout: TimeInterval = 20
-    static let maxExact = 3
+    /// 收集总预算（到期就用已收到的候选；不再"谁先回用谁"）
+    static let collectDeadline: TimeInterval = 15
+    /// 单个后端上限
+    static let perBackend: TimeInterval = 12
+    /// 播放链质量窗口（先粗后精；窗口内挑最高分，超时先起播）
+    static let playWindow: TimeInterval = 1.8
 
-    static func plan(song: Song, want: QualityLevel) async -> Plan {
-        let duration = song.durationSec
-        var pool: [StreamSource] = []
+    // MARK: 主流程
+
+    static func plan(song: Song, want: QualityLevel,
+                     deadline: TimeInterval = collectDeadline) async -> Plan {
+        let start = Date()
         var notes: [String] = []
         var debug: [String] = []
         debug.append("源曲 \(song.name) | \(song.singer) | \(song.durationSec)s | \(song.platform.shortName)")
 
-        // 第一轮：本平台自己的后端
-        let local = await URLResolver.shared.resolveResult(song: song, quality: want, timeout: 18)
-        pool.append(contentsOf: local.sources)
-        notes.append("本平台 \(local.sources.count) 条\(local.sources.isEmpty ? "" : "（\(qualitySummary(local.sources))）")")
-        if !local.failed.isEmpty {
-            // 真机诊断用：哪个后端、什么原因（超时 / 解析失败 / HTTP 403 …）
-            let reasons = local.failed.map { "\($0.key):\($0.value)" }.sorted().joined(separator: "、")
-            notes.append("本平台后端失败（\(reasons)）")
-        }
+        // ① 收集：两条线并发
+        //    A. 本平台后端 + 妖狐（不需要搜索，最快出结果）
+        //    B. 搜索同曲候选（含网易专用检索），拿到后逐个解析
+        //    A 从 t=0 开始；B 的解析受剩余预算约束。总耗时 ≈ max(A, 搜索 + B)。
+        async let primaryTask = collect(jobs: primaryJobs(for: song), want: want, deadline: deadline)
+        let found = await SameSongCrossResolver.candidateList(
+            song: song, quality: want, triedKeys: TriedKeys(), forDownload: true)
+        let left = max(4, deadline - Date().timeIntervalSince(start))
+        async let crossTask = collect(jobs: crossJobs(for: found.songs), want: want, deadline: left)
+        let primary = await primaryTask
+        let cross = await crossTask
 
-        // 第二轮：跨源换源（同曲判定 = 歌手优先 + 时长 ≤4s + 歌名只做辅助）
-        // 排序已经在 `candidateList` 里按"能出目标档的平台"优先（网易/酷我先解析）
-        let tried = TriedKeys()
-        let cross = await SameSongCrossResolver.resolveForDownload(
-            song: song, want: want, triedKeys: tried)
-        pool.append(contentsOf: cross.exacts)
-        if let best = cross.best { pool.append(best) }
-        if !cross.neteaseDebug.isEmpty { notes.append("网易检索 \(cross.neteaseDebug)") }
-        notes.append("跨源试 \(tried.count) 条\(cross.candidateSummary.isEmpty ? "" : "（\(cross.candidateSummary)）")\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
-        if !cross.failures.isEmpty {
-            notes.append("跨源失败（\(cross.failures.prefix(3).joined(separator: "、"))）")
-        }
-        // 网易检索留痕：实际请求 URL（解码后）+ 响应前 3 条。这两行是下一版真机定案的关键，
-        // 所以单列、不截断（弹层里按行渲染）。
-        if !cross.neteaseURL.isEmpty {
-            debug.append("网易URL \(cross.neteaseURL)")
-            debug.append("网易响应 \(cross.neteaseTop.isEmpty ? "（0 条）" : cross.neteaseTop.joined(separator: " / "))")
-        }
-
-        // 第三轮：通用搜索式后端（妖狐酷我，与歌来自哪个平台无关）
-        // 无损档照打（妖狐恒给无损）；320k/128k 只在"一条源都没有"时才打，否则白等 20s
-        let hasExact = pool.contains { isExact($0, want: want, durationSec: duration) }
-        let hasAny = pool.contains { !$0.url.isEmpty }
-        if !hasExact && song.platform != .kuwo && (want == .lossless || !hasAny) {
-            do {
-                let generic = try await withTimeoutThrowing(genericTimeout) {
-                    try await YaohuKuwoAdapter().resolve(song: song, quality: .lossless)
-                }
-                pool.append(generic)
-                notes.append("妖狐 \(generic.quality.displayName)")
-                debug.append("妖狐 命中 \(generic.format.uppercased()) · \(generic.kbps)kbps · \(generic.totalBytes)B")
-            } catch {
-                notes.append("妖狐失败(\(Int(genericTimeout))s)")
-                debug.append("妖狐 失败：\(URLResolver.shortError(error))")
+        // ② 身份闸（淘汰制，不是打分）
+        var gated: [RawCandidate] = []
+        var gateDropped: [String] = []
+        for r in primary + cross {
+            if r.song.id == song.id { gated.append(r); continue }          // 本歌自己的源＝参照，直接过
+            if NameMatch.sameRecording(src: song, cand: r.song) {
+                gated.append(r)
+            } else if gateDropped.count < 3 {
+                gateDropped.append("\(r.song.name.prefix(14))|\(r.song.singer.prefix(8))|\(r.song.durationSec)s")
             }
-        } else if hasExact {
-            debug.append("妖狐 跳过（已有目标档）")
         }
 
-        var seen = Set<String>()
-        let uniq = pool.filter { !$0.url.isEmpty && seen.insert($0.url).inserted }
+        // ③ 打分 + 同 URL 去重（保留分高的那条）
+        var byURL: [String: Candidate] = [:]
+        for r in gated {
+            let c = Candidate(song: r.song, source: r.source, elapsedMs: r.elapsedMs,
+                              score: score(of: r.source, song: r.song, ref: song, ms: r.elapsedMs))
+            if let old = byURL[r.source.url], old.score >= c.score { continue }
+            byURL[r.source.url] = c
+        }
+        let ranked = byURL.values.sorted { $0.score > $1.score }
 
-        let exact = uniq
-            .filter { isExact($0, want: want, durationSec: duration) }
-            .sorted { a, b in
-                let pa = a.platform == song.platform ? 0 : 1
-                let pb = b.platform == song.platform ? 0 : 1
-                if pa != pb { return pa < pb }
-                if a.directId != b.directId { return a.directId && !b.directId }
-                return a.kbps > b.kbps
+        // ④ 排名表（验收要看的就是这几行）
+        debug.append("候选 \(ranked.count) 条" + (gateDropped.isEmpty ? "" : "（身份闸淘汰 \(gateDropped.count)+：\(gateDropped.joined(separator: "；"))）"))
+        for (i, c) in ranked.prefix(6).enumerated() {
+            debug.append("第\(i + 1)名 \(c.source.backendName) \(c.source.format.uppercased()) \(c.source.kbps)kbps \(c.source.totalBytes)B 分[\(c.score.short)] \(c.source.quality.displayName)")
+        }
+        if !found.neteaseURL.isEmpty {
+            debug.append("网易URL \(found.neteaseURL)")
+            debug.append("网易响应 \(found.neteaseTop.isEmpty ? "（0 条）" : found.neteaseTop.joined(separator: " / "))")
+        }
+
+        // ⑤ 取第一 + 下载前校验，不过就退下一条（仍然是被身份闸放行的同曲同版本）
+        var picked: Candidate?
+        var pickedRank = 0
+        var fallback: StreamSource?
+        var fallbackRank = 0
+        for (i, c) in ranked.enumerated() {
+            let v = DownloadPreflight.check(c.source, want: want, durationSec: song.durationSec)
+            if !v.ok {
+                debug.append("第\(i + 1)名 校验不过：\(v.reason)")
+                continue
             }
-            .prefix(maxExact)
-            .map { $0 }
+            if fallback == nil { fallback = c.source; fallbackRank = i + 1 }
+            if picked == nil, c.source.quality == want { picked = c; pickedRank = i + 1 }
+        }
 
-        let fallback = uniq
-            .filter { s in !exact.contains(where: { $0.url == s.url }) }
-            .max { a, b in
-                if a.quality.sortOrder != b.quality.sortOrder {
-                    return a.quality.sortOrder < b.quality.sortOrder
-                }
-                if a.kbps != b.kbps { return a.kbps < b.kbps }
-                return (a.directId ? 1 : 0) < (b.directId ? 1 : 0)
-            }
+        if let p = picked {
+            debug.append("选中 第\(pickedRank)名（校验通过）")
+            notes.append("第\(pickedRank)/\(ranked.count)名 \(p.source.backendName)")
+        } else if !ranked.isEmpty {
+            debug.append("没有\(want.displayName) → 兜底 第\(fallbackRank)名 \(fallback?.quality.displayName ?? "—")")
+            notes.append("无目标档，兜底第\(fallbackRank)/\(ranked.count)名")
+        } else {
+            debug.append("没有可用候选")
+        }
 
-        let switched = (exact + [fallback].compactMap { $0 }).contains { $0.platform != song.platform }
-        return Plan(want: want, exact: exact, fallback: fallback,
-                    switched: switched, crossTried: tried.count, notes: notes, debug: debug)
+        let switched = picked.map { $0.source.platform != song.platform } ?? false
+        return Plan(want: want, picked: picked, ranked: ranked, fallback: fallback,
+                    switched: switched, notes: notes, debug: debug)
     }
 
-    /// 「3 条：网易·无损 / QQ·标准」这种一句话摘要（只给降级提示用）
-    static func qualitySummary(_ sources: [StreamSource]) -> String {
+    // MARK: 播放链：质量窗口（先粗后精）
+
+    /// 本平台 + 妖狐 并发，`window` 秒内收到的候选里取分最高的先起播。
+    /// 窗口内一条都没有 → 返回 nil，由调用方去等完整排名。
+    static func quickPick(song: Song, want: QualityLevel,
+                          window: TimeInterval = playWindow) async -> Candidate? {
+        let raw = await collect(jobs: primaryJobs(for: song), want: want, deadline: window)
+        guard !raw.isEmpty else { return nil }
+        return raw
+            .map { r in
+                Candidate(song: r.song, source: r.source, elapsedMs: r.elapsedMs,
+                          score: score(of: r.source, song: r.song, ref: song, ms: r.elapsedMs))
+            }
+            .max { $0.score < $1.score }
+    }
+
+    /// 后台换源判据：新源档位更高（或同档但码率明显更高）才换，避免来回横跳。
+    static func isBetter(_ a: StreamSource, than b: StreamSource?) -> Bool {
+        guard let b else { return true }
+        if tierOf(a) != tierOf(b) { return tierOf(a) > tierOf(b) }
+        return a.kbps > b.kbps + 50
+    }
+
+    /// 档位分值（打分与"播放链是否值得换"共用同一个口径）
+    static func tierOf(_ s: StreamSource) -> Int {
+        if s.format == "flac" || s.format == "wav" || s.kbps >= 800 { return 1000 }
+        if s.kbps >= 300 { return 700 }
+        if s.kbps >= 240 { return 500 }
+        return 200
+    }
+
+    /// 后端可靠性分级：官方 CDN 直链 > 聚合接口。
+    /// 依据：r123–r125 三轮故障全出在聚合接口（gdstudio / oiapi / cyapi）被风控、降档、回错歌；
+    /// 酷我妖狐与酷狗官方 playInfo 给的是平台自己的 CDN 直链，一直是稳的。
+    static func backendTrust(_ name: String) -> Int {
+        if name.contains("妖狐") { return 20 }
+        if name.contains("酷狗官方") { return 20 }
+        return 0
+    }
+
+    static func score(of src: StreamSource, song: Song, ref: Song, ms: Int) -> Score {
+        let version: Int
+        let refVer = NameMatch.versionClass(ref.name)
+        let candVer = NameMatch.versionClass(song.name)
+        if candVer.isEmpty { version = 300 }
+        else if candVer == refVer { version = 200 }
+        else { version = 100 }
+
+        let diff = abs(song.durationSec - ref.durationSec)
+        let duration = max(0, 100 - diff * 10)
+
+        var reliable = 0
+        if src.totalBytes > 0 { reliable += 40 }
+        if src.kbps > 0 { reliable += 30 }
+        if src.rangeOK == true { reliable += 20 }
+        reliable += backendTrust(src.backendName)
+
+        return Score(tier: tierOf(src), version: version, duration: duration,
+                     reliable: reliable, ms: ms)
+    }
+
+    // MARK: 收集
+
+    private struct Job: Sendable {
+        let song: Song
+        let adapter: StreamSourceAdapter
+    }
+
+    private struct RawCandidate: Sendable {
+        let song: Song
+        let source: StreamSource
+        let elapsedMs: Int
+    }
+
+    /// 本平台后端 + 妖狐（都按"这首歌自己的 ID/歌名"取流，不依赖搜索）
+    private static func primaryJobs(for song: Song) -> [Job] {
+        var jobs = SourceRegistry.adapters(for: song).map { Job(song: song, adapter: $0) }
+        if song.platform != .kuwo { jobs.append(Job(song: song, adapter: YaohuKuwoAdapter())) }
+        return jobs
+    }
+
+    /// 跨源候选：按候选自己平台的取流后端解析（网易 → gdstudio/oiapi；酷狗 → playInfo；QQ → cyapi）
+    private static func crossJobs(for cands: [Song]) -> [Job] {
+        var jobs: [Job] = []
         var seen = Set<String>()
-        var parts: [String] = []
-        for s in sources {
-            let key = "\(s.platform.rawValue)|\(s.quality.rawValue)"
+        for c in cands {
+            let key = "\(c.platform.rawValue)_\(c.platformID)"
             guard seen.insert(key).inserted else { continue }
-            parts.append("\(s.platform.shortName)·\(s.quality.displayName)")
+            for a in SourceRegistry.adapters(for: c) { jobs.append(Job(song: c, adapter: a)) }
         }
-        return parts.prefix(3).joined(separator: " / ")
+        return jobs
     }
 
-    /// 目标档判定：容器 + 码率都由取流阶段实测得到；时长未知时退回"档位桶"这一层近似
-    static func isExact(_ src: StreamSource, want: QualityLevel, durationSec: Int) -> Bool {
-        if durationSec <= 0 || src.kbps <= 0 { return src.quality == want }
-        return QualityFacts.matches(want, container: src.format, kbps: src.kbps)
+    /// 并发跑一批后端，每个任务按**剩余预算**单独超时；到点返回已收到的（不丢部分结果）。
+    private static func collect(jobs: [Job], want: QualityLevel,
+                                deadline: TimeInterval) async -> [RawCandidate] {
+        guard !jobs.isEmpty else { return [] }
+        let start = Date()
+        return await withTaskGroup(of: RawCandidate?.self) { group in
+            for job in jobs {
+                group.addTask {
+                    let left = max(1, deadline - Date().timeIntervalSince(start))
+                    let t0 = Date()
+                    let src = await withTimeoutOrNil(left) {
+                        try await job.adapter.resolve(song: job.song, quality: want)
+                    }
+                    guard let src else { return nil }
+                    return RawCandidate(song: job.song, source: src,
+                                        elapsedMs: Int(Date().timeIntervalSince(t0) * 1000))
+                }
+            }
+            var out: [RawCandidate] = []
+            for await r in group { if let r { out.append(r) } }
+            return out
+        }
+    }
+}
+
+// MARK: - 下载前校验（排名第一也要过这一关）
+//
+// 校验的是"这条 URL 下下来是不是一个正常文件"，不是音质判定（音质在探测层已经做完）。
+// 老板口径：Content-Length > 0、容器与后缀一致、体积量级对得上；不过就退第二名。
+enum DownloadPreflight {
+
+    struct Verdict: Sendable {
+        let ok: Bool
+        let reason: String
+    }
+
+    static func check(_ src: StreamSource, want: QualityLevel, durationSec: Int) -> Verdict {
+        if src.url.isEmpty { return Verdict(ok: false, reason: "没有 URL") }
+        if src.totalBytes <= 0 {
+            return Verdict(ok: false, reason: "拿不到体积（Content-Length / Content-Range 都缺）")
+        }
+
+        // 后缀与实测容器必须一致（"后缀 .flac 里装 mp3"是历史事故）
+        let ext = (src.url as NSString).pathExtension.lowercased()
+        if ext == "flac" && src.format != "flac" {
+            return Verdict(ok: false, reason: "后缀 .flac 但实测容器是 \(src.format)")
+        }
+
+        if want == .lossless {
+            if src.totalBytes < 3_000_000 {
+                return Verdict(ok: false, reason: "体积只有 \(src.totalBytes / 1_048_576)MB，不可能是无损")
+            }
+            if durationSec >= 120 && src.totalBytes < 15_000_000 {
+                return Verdict(ok: false,
+                               reason: "无损只有 \(src.totalBytes / 1_048_576)MB（\(durationSec)s 的歌应 ≥15MB）")
+            }
+            let isLosslessContainer = src.format == "flac" || src.format == "wav"
+            if !isLosslessContainer && src.kbps < 800 {
+                return Verdict(ok: false, reason: "档位不成立：容器 \(src.format) / \(src.kbps)kbps")
+            }
+        }
+
+        if src.kbps <= 0 && src.format != "flac" && src.format != "wav" {
+            return Verdict(ok: false, reason: "算不出码率，无法确认档位")
+        }
+
+        return Verdict(ok: true, reason: "")
     }
 }
 

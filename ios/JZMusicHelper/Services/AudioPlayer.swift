@@ -21,6 +21,10 @@ final class PlayerEngine {
     private(set) var currentSong: Song?
     private(set) var source: StreamSource?
 
+    /// 起播后台换源（先粗后精）：同一首只换一次，换曲时取消
+    private var upgradeTask: Task<Void, Never>?
+    private var upgradedSongID: String?
+
     private(set) var isPlaying = false
     private(set) var isResolving = false
     /// 状态行（解析中 / 音源信息 / 跳歌提示）
@@ -437,6 +441,8 @@ final class PlayerEngine {
     ///
     /// 只暂停、不 `replaceCurrentItem`：保留当前 item 和进度，用户在解析期间点播放键还能继续听这首。
     private func stopCurrentForSwitch() {
+        upgradeTask?.cancel()
+        upgradeTask = nil
         guard PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: player.currentItem != nil) else { return }
         player.pause()
         isPlaying = false
@@ -506,11 +512,11 @@ final class PlayerEngine {
         flushSnapshot()
     }
 
-    /// 三级取流 + 可配置重试（与 Android `AppState.resolveAndPlayIfNeeded` 同口径：
-    /// 本平台后端 → 同曲跨平台补位 → 间隔 2s / 2.5s / 3s 再试）
-    ///
-    /// 第四十轮：这两个开关不再是设置项——老板口径"无源自动换源 / 跨平台补源都是默认行为，
-    /// 不用摆出来给人关"。所以这里恒按最完整的链路走：3 轮重试 + 跨平台补源。
+    /// 三级取流（老板 2026-11-19 口径：**播放链允许"先粗后精"**，下载链不允许）：
+    ///   ① 本平台 + 妖狐 并发，质量窗口 1.8s 内取分最高的先起播（起播速度优先）；
+    ///   ② 窗口内一条都没有 → 等下载链的完整排名（全收集 + 打分）；
+    ///   ③ 起播后后台继续跑排名，出现更高档的源就替换（保留进度）；
+    ///   ④ 仍然没有才走"跨源补位"并按 2s / 2.5s / 3s 重试。
     private func resolveStream(for song: Song) async -> StreamSource? {
         let attempts = 3
         let triedCandidates = TriedKeys()
@@ -520,10 +526,16 @@ final class PlayerEngine {
                 let delay = delays[min(attempt - 1, delays.count - 1)]
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
-            let local = await URLResolver.shared.resolveResult(song: song, quality: quality)
-            if let pick = SourcePicker.pick(local.sources, want: quality),
-               !rejectedSourceURLs.contains(pick.url) {
-                return pick
+            if attempt == 0,
+               let quick = await DownloadResolver.quickPick(song: song, want: quality),
+               !rejectedSourceURLs.contains(quick.source.url) {
+                scheduleQualityUpgrade(for: song)
+                return quick.source
+            }
+            let plan = await DownloadResolver.plan(song: song, want: quality)
+            if let picked = plan.picked, !rejectedSourceURLs.contains(picked.source.url) {
+                scheduleQualityUpgrade(for: song)
+                return picked.source
             }
             if let cross = await SameSongCrossResolver.resolve(
                 song: song, quality: quality, triedKeys: triedCandidates),
@@ -532,6 +544,35 @@ final class PlayerEngine {
             }
         }
         return nil
+    }
+
+    // MARK: 后台换更高档（先粗后精的"后精"）
+
+    /// 起播后按下载链的排名再找一次；只有"档位更高"才换，避免来回横跳。
+    /// 当前已经是无损（tier 1000）就不启动，省掉一轮 15s 的收集。
+    private func scheduleQualityUpgrade(for song: Song) {
+        guard let cur = source, DownloadResolver.tierOf(cur) < 1000 else { return }
+        guard upgradedSongID != song.id else { return }
+        upgradeTask?.cancel()
+        upgradeTask = Task { [weak self] in
+            guard let self else { return }
+            let plan = await DownloadResolver.plan(song: song, want: self.quality)
+            guard !Task.isCancelled else { return }
+            guard self.currentSong?.id == song.id else { return }
+            guard let better = plan.picked?.source,
+                  DownloadResolver.isBetter(better, than: self.source) else { return }
+            self.upgradedSongID = song.id
+            self.swapToBetterSource(better)
+        }
+    }
+
+    private func swapToBetterSource(_ src: StreamSource) {
+        guard let url = URL(string: src.url), let song = currentSong else { return }
+        let pos = player.currentTime().seconds
+        // 换源保留进度：ready 之后由 pendingRestoreSeconds 归位（见 wire(item:)）
+        pendingRestoreSeconds = (pos.isFinite && pos > 1) ? pos : nil
+        statusText = "换源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
+        start(item: AVPlayerItem(url: url), song: song, source: src)
     }
 
     // MARK: 播放项装配

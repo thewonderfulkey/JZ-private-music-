@@ -150,6 +150,29 @@ enum NameMatch {
         return titleMatches(src.name, cand.name)
     }
 
+    /// 主歌手（按分隔符取第一个，去掉括号说明）。
+    /// 妖狐这类"搜索式"通道只要一个主歌手，别把「谭晶/陈奕迅」整串塞进去。
+    static func primarySinger(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+        s = bracket.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
+        let head = s.split(whereSeparator: { "/&、,，;； ".contains($0) }).first.map(String.init) ?? ""
+        return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 妖狐酷我通道的搜索串：**核心歌名 + 主歌手**（无空格，接口要求）。
+    ///
+    /// 2026-11-19 实测：原样拼「연애의 조건 (恋爱的条件) (LOVE OPTIONS)BESTie (베스티)」
+    /// 妖狐先命中 `(INST)` 伴奏版（23,473,944 B）；只留「연애의 조건BESTie」时返回的是
+    /// **原唱无损**（26,251,814 B，与 QQ 搜索里的 sizeFlac 一字节不差）。
+    static func yaohuSearchKey(name: String, singer: String) -> String {
+        let core = StudioPick.coreName(name)
+        let artist = primarySinger(singer)
+        let key = (core + artist).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty { return key }
+        return (name + singer).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 妖狐酷我返回的 songtitle 形如 "歌名 — 歌手 * 专辑"，取短横线/星号前的歌名段
     static func yaohuTitle(_ raw: String) -> String {
         let normalized = raw

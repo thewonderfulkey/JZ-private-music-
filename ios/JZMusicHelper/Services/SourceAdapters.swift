@@ -26,6 +26,9 @@ enum StreamVerifier {
         let container: String
         /// 总字节数（服务端没给 Content-Range / Content-Length 时为 0）
         let totalBytes: Int64
+        /// 服务端是否支持 Range（206 或回了 Content-Range）。
+        /// 下载链的"来源可靠性"评分和播放 seek 都看它；200 全量也无所谓，但要知道。
+        var rangeOK: Bool = false
     }
 
     /// 探测一条直链的真实容器与体积。
@@ -117,7 +120,8 @@ enum StreamVerifier {
             || container != "unknown"
             || (total > 0 && code == 206)
         guard looksAudio else { return nil }
-        return AudioFacts(container: container, totalBytes: total)
+        return AudioFacts(container: container, totalBytes: total,
+                          rangeOK: code == 206 || !contentRange.isEmpty)
     }
     static func isAudio(_ urlString: String, timeout: TimeInterval = 8) async -> Bool {
         await inspect(urlString, timeout: timeout) != nil
@@ -351,7 +355,7 @@ struct CyapiQQAdapter: StreamSourceAdapter {
         return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
                             format: fmt, note: "VIP 全量 \(fmt)（实测标注）", directId: true,
                             kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes)
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
     }
 }
 
@@ -396,7 +400,7 @@ struct GdstudioNeteaseAdapter: StreamSourceAdapter {
         let note = facts == nil ? "VIP 全量（探测失败，按接口自报 br=\(apiBr)）" : "VIP 全量 mp3/FLAC（实测标注）"
         return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
                             format: fmt, note: note, directId: true,
-                            kbps: kb, totalBytes: total)
+                            kbps: kb, totalBytes: total, rangeOK: facts?.rangeOK ?? false)
     }
 }
 
@@ -427,7 +431,7 @@ struct OiapiNeteaseAdapter: StreamSourceAdapter {
         return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
                             format: fmt, note: "ID 直查（溯音 key 版，实测标注）", directId: true,
                             kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes)
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
     }
 }
 
@@ -439,7 +443,9 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
     let platform: MusicPlatform = .kuwo
 
     func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
-        let searchKey = song.searchKeywordCompact
+        // 2026-11-19 实测：把「歌名+歌手」原样拼（含 (恋爱的条件)(LOVE OPTIONS)）会先命中 (INST) 伴奏版；
+        // 只留「核心歌名 + 主歌手」时同一通道返回的是**原唱无损**（26,251,814 B / 1082kbps）。
+        let searchKey = NameMatch.yaohuSearchKey(name: song.name, singer: song.singer)
         guard !searchKey.isEmpty else { throw APIError.parse("妖狐酷我：无歌名") }
         let url = "https://api.yaohud.cn/api/music/kuwo"
             + "?key=nvgKtvzw7CFSNFrDhA6&action=search&msg=\(APIClient.encode(searchKey))&n=1"
@@ -458,9 +464,12 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
               NameMatch.singerMatches(song.singer, respSinger) else {
             throw APIError.parse("妖狐酷我结果不匹配：\(respSong)/\(respSinger)")
         }
-        // 版本防线：歌名段不是裸名就当场拒绝——宁可不下，也不把别人的现场版当原唱
-        guard StudioPick.isCleanTitle(titlePart) else {
-            throw APIError.parse("妖狐酷我返回变体版本：\(titlePart)")
+        // 版本防线（2026-11-19 修正口径）：只拦**版本类**（live/伴奏/inst/remix/翻唱/纯音乐…），
+        // 不拦官方副标题/译名。旧实现用 `isCleanTitle` 要求"裸名"，把
+        // 「연애의 조건 (LOVE OPTIONS)」这种带官方英文副标题的原唱也判成变体丢掉了。
+        let candVer = NameMatch.versionClass(titlePart)
+        if !candVer.isSubset(of: NameMatch.versionClass(song.name)) {
+            throw APIError.parse("妖狐酷我返回版本变体：\(titlePart)")
         }
         guard let vm = data["vipmusic"] as? [String: Any],
               let rawStream = vm["url"] as? String, !rawStream.isEmpty else {
@@ -476,7 +485,7 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
                             format: fmt, note: "官方直链（按歌名搜索，自报 \(declared)）",
                             directId: false,
                             kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes)
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
     }
 }
 
@@ -505,7 +514,7 @@ struct KugouPlayInfoAdapter: StreamSourceAdapter {
         return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
                             format: fmt, note: "酷狗官方 playInfo（hash 直查）", directId: false,
                             kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes)
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
     }
 }
 
