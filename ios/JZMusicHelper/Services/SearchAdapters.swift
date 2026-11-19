@@ -199,68 +199,90 @@ struct NeteaseSearchAdapter: SearchAdapter {
 //
 // r124：《연애의 조건》在真机上候选分布是「QQ3/酷狗3」——**网易 0**，连 gdstudio 兜底也没出结果。
 // 而 `searchAll` 给每个平台的预算是 8s，官方的 `music.163.com` 在手机上解析/连接一慢就把整个平台饿死。
-// 下载换源不需要"搜索页"的语义，只需要"这首歌在网易的 id"——所以这里单开一条链，
-// 三个源各自独立超时，谁先给结果就用谁，并把每个源的结果数写进诊断。
+// 下载换源不需要"搜索页"的语义，只需要"这首歌在网易的 id"——所以这里单开一条链。
+//
+// r126（2026-11-19 老板追问，重新定案）：
+//   ① 旧实现**把"返回非空"当成功**：真机上官方回了 10 条别的歌（爱情转移/富士山下），
+//      于是 `if !official.isEmpty { return }` 直接短路，gdstudio / meting 两条兜底一次都没跑。
+//      现在的验收标准是「至少 1 条通过 NameMatch.sameRecording」，不通过就继续跑下一个源。
+//   ② 旧诊断只记"返回几条"，看不出回的是不是这首歌；现在把**实际请求 URL（解码后）**和
+//      **响应前 3 条 name|singer|时长**带出去，弹层单列一行，不再被 240 字截断。
 enum NeteaseLookup {
 
     struct Outcome {
         let songs: [Song]
-        /// "官方0/gdstudio0/meting6"——降级弹层直接显示，能看出哪条路通
+        /// "官方10/收0(237ms) → gdstudio10/收3(512ms)"：每个源"返回几条 / 收下几条 / 耗时"
         let debug: String
+        /// 官方检索**实际请求的 URL（已解码）**：`s` 被拼空/拼坏时一眼可见
+        let url: String
+        /// 官方响应前 3 条 "歌名|歌手|时长s"
+        let top: [String]
     }
 
-    static func lookup(keyword: String, limit: Int = 10) async -> Outcome {
+    static func lookup(keyword: String, src: Song, limit: Int = 10) async -> Outcome {
+        var accepted: [Song] = []
         var debug: [String] = []
+        var seen = Set<String>()
+        var top: [String] = []
 
-        func stamp(_ label: String, _ count: Int, _ started: Date) -> String {
-            "\(label)\(count)(\(Int(Date().timeIntervalSince(started) * 1000))ms)"
+        /// 收下通过同曲判定的候选（按 key 去重），返回这个源收了几条
+        func absorb(_ songs: [Song], _ label: String, _ started: Date) -> Int {
+            var kept = 0
+            for c in songs {
+                let key = "\(c.platform.rawValue)_\(c.platformID)"
+                guard seen.insert(key).inserted else { continue }
+                if NameMatch.sameRecording(src: src, cand: c) {
+                    accepted.append(c)
+                    kept += 1
+                }
+            }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            debug.append("\(label)\(songs.count)/收\(kept)(\(ms)ms)")
+            return kept
         }
 
-        // ① 官方 /api/search/get（4s）
+        // ① 官方 /api/search/get（4s）——"成功"= 至少 1 条通过同曲判定，不再看"非空"
         var t0 = Date()
-        let official = await official(keyword: keyword, limit: limit)
-        debug.append(stamp("官方", official.count, t0))
-        if !official.isEmpty {
-            return Outcome(songs: official, debug: debug.joined(separator: "/"))
+        let url = NeteaseLookup.officialURL(keyword: keyword, limit: limit)
+        let official = await NeteaseLookup.official(keyword: keyword, limit: limit)
+        top = official.prefix(3).map { "\($0.name)|\($0.singer)|\($0.durationSec)s" }
+        let keptOfficial = absorb(official, "官方", t0)
+
+        // ② gdstudio 搜索（6s）——官方一条都没收下才跑，收下了就不白等第二个域名
+        if keptOfficial == 0 {
+            t0 = Date()
+            let gd = await NeteaseSearchAdapter.gdstudioSearch(keyword: keyword, limit: limit)
+            if absorb(gd, "gdstudio", t0) == 0 {
+                // ③ meting 搜索（6s，第三个独立域名）——前两个源都收不下才跑最后一条
+                t0 = Date()
+                let meting = await NeteaseSearchAdapter.metingSearch(keyword: keyword, limit: limit)
+                _ = absorb(meting, "meting", t0)
+            }
         }
 
-        // ② gdstudio 搜索（6s）
-        t0 = Date()
-        let gd = await NeteaseSearchAdapter.gdstudioSearch(keyword: keyword, limit: limit)
-        debug.append(stamp("gdstudio", gd.count, t0))
-        if !gd.isEmpty {
-            return Outcome(songs: gd, debug: debug.joined(separator: "/"))
-        }
-
-        // ③ meting 搜索（6s，第三个独立域名）
-        t0 = Date()
-        let meting = await NeteaseSearchAdapter.metingSearch(keyword: keyword, limit: limit)
-        debug.append(stamp("meting", meting.count, t0))
-        return Outcome(songs: meting, debug: debug.joined(separator: "/"))
+        return Outcome(songs: accepted,
+                       debug: debug.joined(separator: " → "),
+                       url: url.removingPercentEncoding ?? url,
+                       top: top)
     }
 
-    /// 「专用检索」候选的放宽同曲判定：歌名归一化后必须相同（或只差 2 字且互相包含），
-    /// 歌手只要 token 有交集、或候选没歌手信息就放过。
-    ///
-    /// 为什么需要：2.4.22 真机里检索明明返回 10 条（官方10(431ms)），候选里网易却是 0——
-    /// `sameSong` 的身份校验把跨平台条目全拦了。专用检索本身就是拿"歌名 + 歌手"去搜的，
-    /// 放宽这一档不会放进 DJ/翻唱（歌名必须归一化相同）。
-    static func relaxedSame(src: Song, cand: Song) -> Bool {
-        if src.platform == cand.platform && src.platformID == cand.platformID { return false }
-        let xs = NameMatch.normTitle(src.name)
-        let ys = NameMatch.normTitle(cand.name)
-        guard !xs.isEmpty, !ys.isEmpty else { return false }
-        guard xs == ys || (abs(xs.count - ys.count) <= 2 && (xs.contains(ys) || ys.contains(xs))) else {
-            return false
-        }
-        if NameMatch.singerMatches(src.singer, cand.singer) { return true }
-        return NameMatch.singerTokens(cand.singer).isEmpty
-    }
-    private static func official(keyword: String, limit: Int) async -> [Song] {
-        let url = "https://music.163.com/api/search/get"
+    /// 官方检索 URL（纯函数）：诊断里展示的 URL 必须与真正请求的是同一条，
+    /// 否则又会出现"看的是一回事、打的是另一回事"。
+    static func officialURL(keyword: String, limit: Int) -> String {
+        "https://music.163.com/api/search/get"
             + "?s=\(APIClient.encode(keyword))&type=1&offset=0&limit=\(max(1, min(limit, 30)))"
+    }
+
+    /// 同曲判定：**不再单开一套"放宽"规则**，与全局口径完全一致（歌手优先 + 时长 ≤4s + 歌名只做辅助）。
+    /// 旧实现要求"歌名归一化相等或差 ≤2 字"，把《恋爱的条件》与《연애의 조건 (Love Options)》判死。
+    static func relaxedSame(src: Song, cand: Song) -> Bool {
+        NameMatch.sameRecording(src: src, cand: cand)
+    }
+
+    private static func official(keyword: String, limit: Int) async -> [Song] {
         guard let json = try? await APIClient.shared.getJSON(
-            url, headers: ["Referer": "https://music.163.com/"], timeout: 4),
+            officialURL(keyword: keyword, limit: limit),
+            headers: ["Referer": "https://music.163.com/"], timeout: 4),
               (json["code"] as? Int) == 200,
               let list = json.nested(["result", "songs"]) as? [[String: Any]] else { return [] }
         return NeteaseSearchAdapter.songs(fromOfficial: list)

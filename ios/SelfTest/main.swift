@@ -222,6 +222,46 @@ do {
           "got=\(NameMatch.yaohuTitle("晴天 - 周杰伦 * 叶惠美"))")
 }
 
+// MARK: - 3.1 同曲判定（2026-11-19 老板口径：歌手优先 + 时长 ≤4s + 歌名只做辅助）
+
+section("同曲判定（译名不同也算同一首）")
+
+do {
+    let src = song(.qq, "恋爱的条件", "BESTie (베스티)", album: "Love Options", dur: 194, id: "sim_src")
+    check("译名不同但同歌手同时长 → 判为同一首",
+          NameMatch.sameRecording(src: src,
+                                  cand: song(.netease, "연애의 조건 (Love Options)", "BESTie",
+                                             dur: 194, id: "sim_ne")))
+    check("(Inst.) 伴奏版 → 拒",
+          !NameMatch.sameRecording(src: src,
+                                   cand: song(.netease, "연애의 조건 (Love Options) (Inst.)", "BESTie",
+                                              dur: 192, id: "sim_inst")))
+    check("别的歌 + 别的歌手 → 拒",
+          !NameMatch.sameRecording(src: src,
+                                   cand: song(.netease, "爱情转移", "陈奕迅", dur: 259, id: "sim_other")))
+    check("同歌手但时长差 11s → 拒",
+          !NameMatch.sameRecording(src: src,
+                                   cand: song(.netease, "恋爱条件", "BESTie", dur: 205, id: "sim_long")))
+    check("同歌手同时长、歌名完全不同 → 通过（老板口径：歌名只做辅助）",
+          NameMatch.sameRecording(src: src,
+                                  cand: song(.qq, "LOVE OPTIONS", "BESTie", dur: 194, id: "sim_en")))
+
+    let frx = song(.qq, "发如雪", "周杰伦", album: "十一月的萧邦", dur: 300, id: "frx_src")
+    check("发如雪 vs 发如雪(粤语版)/常颖杰 → 拒",
+          !NameMatch.sameRecording(src: frx,
+                                   cand: song(.kuwo, "发如雪 (粤语版)", "常颖杰", dur: 299, id: "frx_canto")))
+    check("发如雪 vs 发如雪/周杰伦（另一平台，差 1s）→ 通过",
+          NameMatch.sameRecording(src: frx,
+                                  cand: song(.netease, "发如雪", "周杰伦", dur: 301, id: "frx_ne")))
+
+    check("副标题不是版本：versionClass(LOVE OPTIONS) 为空",
+          NameMatch.versionClass("연애의 조건 (LOVE OPTIONS)").isEmpty,
+          "got=\(NameMatch.versionClass("연애의 조건 (LOVE OPTIONS)"))")
+    check("(Inst.) 识别为版本类 inst",
+          NameMatch.versionClass("연애의 조건 (Love Options) (Inst.)") == ["inst"],
+          "got=\(NameMatch.versionClass("연애의 조건 (Love Options) (Inst.)"))")
+}
+
 // MARK: - 4 音质判定（QualityFacts + SniffHead）
 
 section("音质探测与档位判定")

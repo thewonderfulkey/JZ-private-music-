@@ -153,10 +153,22 @@ final class APIClient {
 
     /// 与 Android `urlEncode` 等价：百分号编码，空格 → %20（不用 `+`）
     /// 只保留 ASCII 字母数字与 `-._~`，中文/全角一律编码（CharacterSet.alphanumerics 会把汉字当字母放过，不能用）
+    ///
+    /// r126：旧实现 `?? s` 是**危险兜底**——万一编码失败就把未编码原文塞进 URL，
+    /// `URL(string:)` 解析失败后整个请求变成"0 条"，日志里完全看不出是编码问题。
+    /// 现在退化为逐字节百分号编码，保证返回的一定是合法 ASCII 查询串。
     static func encode(_ s: String) -> String {
         let allowed = CharacterSet(charactersIn:
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
+        if let out = s.addingPercentEncoding(withAllowedCharacters: allowed) { return out }
+        var out = ""
+        for b in s.utf8 {
+            let plain = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+                || b == 45 || b == 46 || b == 95 || b == 126
+            if plain { out.append(Character(UnicodeScalar(b))) }
+            else { out.append(String(format: "%%%02X", b)) }
+        }
+        return out
     }
 }
 

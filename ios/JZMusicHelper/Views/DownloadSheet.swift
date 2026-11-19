@@ -174,6 +174,13 @@ struct DownloadSheet: View {
 
                 facts(offer.source)
 
+                // r126：取源留痕。老板口径——「不要再靠猜」：
+                // 网易实际请求 URL（解码后）+ 响应前 3 条 + 妖狐结果，一行一条，**不截断**。
+                // 上一版把这些塞进一句 240 字的 note 里，正好把妖狐那轮切掉，三轮都没定案。
+                if !offer.debug.isEmpty {
+                    diagnostics(offer.debug)
+                }
+
                 Button {
                     flow.confirm()
                 } label: {
@@ -232,6 +239,30 @@ struct DownloadSheet: View {
         }
         .padding(.horizontal, Tokens.Spacing.s)
         .padding(.vertical, 10)
+    }
+
+    /// 取源诊断（不截断，可长按复制）。
+    /// 内容：源曲元数据 / 网易实际请求 URL（解码后）/ 网易响应前 3 条 / 妖狐结果。
+    private func diagnostics(_ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            Text("取源诊断")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            ForEach(lines.indices, id: \.self) { i in
+                Text(lines[i])
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(Tokens.Spacing.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .fill(Tokens.Palette.paperElevated)
+        )
     }
 
     private var startedView: some View {

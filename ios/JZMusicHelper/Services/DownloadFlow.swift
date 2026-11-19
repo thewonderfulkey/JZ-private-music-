@@ -79,6 +79,8 @@ final class DownloadFlow {
         /// true = 就是用户选的那一档；false = 降级兜底（必须显式告知）
         let isExact: Bool
         let note: String
+        /// 取源留痕（源曲元数据 / 网易实际 URL / 网易响应前 3 条 / 妖狐结果），弹层单列、不截断
+        let debug: [String]
     }
 
     private(set) var stage: Stage = .choosing
@@ -136,7 +138,8 @@ final class DownloadFlow {
             let offer = Offer(quality: exact.quality,
                               source: exact,
                               isExact: true,
-                              note: plan.switched ? "本平台无源，已换到 \(exact.platform.shortName)" : "")
+                              note: plan.switched ? "本平台无源，已换到 \(exact.platform.shortName)" : "",
+                              debug: plan.debug)
             self.offer = offer
             // 实测就是用户要的那一档 → 直接开下，不再要求点第二遍「开始下载」
             start(offer)
@@ -144,7 +147,8 @@ final class DownloadFlow {
             offer = Offer(quality: fallback.quality,
                           source: fallback,
                           isExact: false,
-                          note: plan.fallbackReason)
+                          note: plan.fallbackReason,
+                          debug: plan.debug)
             stage = .offer
         } else {
             message = "这首歌四家都取不到音源。换一首，或稍后再试。"

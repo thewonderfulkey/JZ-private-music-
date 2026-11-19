@@ -149,7 +149,6 @@ enum SameSongCrossResolver {
     static let maxCandidates = 8
     static let maxExactKeep = 3
     static let totalTimeout: TimeInterval = 45
-    static let maxDurationDiffSec = 12
 
     /// 播放用：拿到一条可用源就返回
     static func resolve(song: Song, quality: QualityLevel,
@@ -187,8 +186,20 @@ enum SameSongCrossResolver {
         var candidateSummary: String = ""
         /// 网易专用检索的实况（"官方0/gdstudio0/meting6"）
         var neteaseDebug: String = ""
+        /// 网易官方检索**实际请求的 URL（已解码）**——`s` 被拼坏时一眼可见
+        var neteaseURL: String = ""
+        /// 网易官方检索**响应的前 3 条** "歌名|歌手|时长s"
+        var neteaseTop: [String] = []
 
         static let empty = CrossOutcome(exact: nil, best: nil, exacts: [], failures: [])
+    }
+
+    /// 一轮候选检索的全部产出（候选 + 网易检索的留痕，供弹层诊断）
+    struct CandidateSet: Sendable {
+        var songs: [Song] = []
+        var neteaseDebug: String = ""
+        var neteaseURL: String = ""
+        var neteaseTop: [String] = []
     }
 
     /// 下载用：一次遍历同时求「目标档」与「最高可得档」
@@ -242,44 +253,31 @@ enum SameSongCrossResolver {
             }
             return CrossOutcome(exact: exact, best: best, exacts: exacts,
                                 failures: failures, candidateSummary: summary,
-                                neteaseDebug: found.neteaseDebug)
+                                neteaseDebug: found.neteaseDebug,
+                                neteaseURL: found.neteaseURL,
+                                neteaseTop: found.neteaseTop)
         } ?? .empty
     }
 
     private static func candidateList(song: Song, quality: QualityLevel,
-                                      triedKeys: TriedKeys, forDownload: Bool) async -> (songs: [Song], neteaseDebug: String) {
+                                      triedKeys: TriedKeys, forDownload: Bool) async -> CandidateSet {
         let kw = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !kw.isEmpty else { return ([], "") }
+        guard !kw.isEmpty else { return CandidateSet() }
         let results = await SearchService.shared.searchAll(keyword: kw, limit: 30)
         var cands = results.flatMap { $0.songs }
+        var out = CandidateSet()
 
-        // r124：下载换源额外跑一遍「网易 id 专用检索」（官方 → gdstudio → meting，各自独立超时）。
-        // searchAll 给每个平台的预算只有 8s，官方的 music.163.com 在手机上解析一慢，网易整平台就被判空——
-        // 真机诊断正是「QQ3/酷狗3」、网易 0。这里不受那 8s 约束。
-        //
-        // r125（2.4.22 真机）：检索**成功了**（官方10(431ms)），但候选里网易仍是 0 —— 说明结果全被
-        // `sameSong` 的身份校验拦掉了。这里对"专用检索"的候选放宽一档（歌名归一化相同 + 歌手 token 有交集
-        // 或候选人无歌手信息），并把被丢掉的候选连同源曲元数据写进诊断，免得再盲猜。
-        var neteaseDebug = ""
+        // r124：下载换源额外跑一遍「网易 id 专用检索」。
+        // r126（2026-11-19 老板口径）：检索**不再以"返回条数 > 0"判成功**——真机上官方回了 10 条
+        // 与我歌无关的热门歌（爱情转移/富士山下），旧实现直接 return，gdstudio/meting 两条兜底
+        // 一次都没跑。现在由 `NeteaseLookup.lookup` 自己用 `NameMatch.sameRecording` 验收，
+        // 只有"至少 1 条真是这首歌"才算成功，并把实际请求 URL 与响应前 3 条带出来做留痕。
         if forDownload {
-            let lookup = await NeteaseLookup.lookup(keyword: kw)
-            var dropped: [String] = []
-            var accepted = 0
-            for c in lookup.songs {
-                if sameSong(src: song, cand: c) || NeteaseLookup.relaxedSame(src: song, cand: c) {
-                    cands.append(c)
-                    accepted += 1
-                } else if dropped.count < 3 {
-                    let t = NameMatch.titleMatches(song.name, c.name) ? "T" : "t"
-                    let s = NameMatch.singerMatches(song.singer, c.singer) ? "S" : "s"
-                    dropped.append("\(c.name.prefix(18))|\(c.singer.prefix(10))|\(t)\(s)|\(c.durationSec)")
-                }
-            }
-            let srcInfo = "源:\(song.name.prefix(18))|\(song.singer.prefix(10))|\(song.durationSec)"
-            neteaseDebug = lookup.debug
-            if !dropped.isEmpty {
-                neteaseDebug += " 收\(accepted)丢\(dropped.count)：\(dropped.joined(separator: "；")) \(srcInfo)"
-            }
+            let lookup = await NeteaseLookup.lookup(keyword: kw, src: song)
+            cands.append(contentsOf: lookup.songs)
+            out.neteaseDebug = lookup.debug
+            out.neteaseURL = lookup.url
+            out.neteaseTop = lookup.top
         }
 
         cands = cands.filter { sameSong(src: song, cand: $0) }
@@ -332,7 +330,8 @@ enum SameSongCrossResolver {
             unique.append(c)
         }
         for c in unique { triedKeys.insert(candKey(c)) }
-        return (unique, neteaseDebug)
+        out.songs = unique
+        return out
     }
 
     static func candKey(_ s: Song) -> String { "\(s.platform.rawValue)_\(s.platformID)" }
@@ -369,35 +368,13 @@ enum SameSongCrossResolver {
         }
     }
 
-    /// 同曲判定：歌名匹配 + 歌手匹配 + 时长不差一个版本
+    /// 同曲判定：统一走 `NameMatch.sameRecording`（歌手优先 + 时长 ≤4s + 歌名只做辅助）。
+    ///
+    /// 2026-11-19 老板口径重写：旧口径要求「歌名归一化相等」，把《恋爱的条件》与
+    /// 《연애의 조건 (Love Options)》判成两首歌，于是译名不同的真无损候选全被挡在门外。
+    /// 现在歌名只在「时长未知」时兜底，不再是否决项；版本类标记仍然拦（见 `NameMatch.versionClass`）。
     static func sameSong(src: Song, cand: Song) -> Bool {
-        if src.platform == cand.platform && src.platformID == cand.platformID { return false }
-        if !NameMatch.titleMatches(src.name, cand.name) { return false }
-        if !NameMatch.singerMatches(src.singer, cand.singer) { return false }
-
-        let sd = src.durationSec
-        let cd = cand.durationSec
-        guard sd > 0 && cd > 0 else { return true }
-        let diff = abs(sd - cd)
-
-        // 版本防线（第三十四轮，青花瓷事故）：
-        // 源是干净原唱时，跨源候选**必须也是干净原唱**——不能再拿"时长差不多"放行。
-        // 酷狗的《青花瓷 (DJ Wave版)》242s 与原唱 239s 只差 3s，旧口径（diff > 3 才拒）正好放它过去，
-        // 结果 UI 仍显示"青花瓷 / 周杰伦"，耳朵里放的是 DJ 版。
-        let srcIsClean = StudioPick.isCleanTitle(src.name) && !StudioPick.isLiveAlbum(src.album)
-        let candIsClean = StudioPick.isCleanTitle(cand.name) && !StudioPick.isLiveAlbum(cand.album)
-        if srcIsClean && !candIsClean { return false }
-
-        if diff > maxDurationDiffSec {
-            // 源本身是现场/节目变体，候选是干净录音室条目（裸名 + 正式专辑 + 更长）→ 视为同一首
-            let srcIsVariant = !StudioPick.isCleanTitle(src.name)
-            let candIsStudio = StudioPick.isCleanTitle(cand.name)
-                && !cand.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !StudioPick.isLiveAlbum(cand.album)
-                && cd > sd
-            if !(srcIsVariant && candIsStudio) { return false }
-        }
-        return true
+        NameMatch.sameRecording(src: src, cand: cand)
     }
 }
 
@@ -414,15 +391,18 @@ enum DownloadResolver {
         let crossTried: Int
         /// 这一次取源各阶段的实况（本平台几条 / 跨源试了几条 / 妖狐结果），降级时写进弹层说清原因
         let notes: [String]
+        /// 逐条留痕（**不截断**，弹层单列一块）：源曲元数据 / 网易实际请求 URL / 网易响应前 3 条 / 妖狐结果。
+        /// 为什么单列：r122–r125 三轮都因为"200 字截断 + 只记条数不记内容"而在猜，这一次把证据摆出来。
+        let debug: [String]
 
         var empty: Bool { exact.isEmpty && fallback == nil }
 
-        /// 降级时那句人话：最高可得档 + 各阶段实况（截断到 160 字，弹层里一行放得下）
+        /// 降级时那句人话：只说"没有 X、最高 Y"。
+        /// 细节不塞这里了——旧实现把 notes 拼进来再截 240 字，真机上正好把"妖狐那轮的结果"切掉，
+        /// 结果看了三轮都没人知道妖狐到底回没回。细节走 `debug`，一行一条。
         var fallbackReason: String {
             let best = fallback?.quality.displayName ?? "—"
-            guard !notes.isEmpty else { return "没有\(want.displayName)，最高可得\(best)" }
-            let detail = String(notes.joined(separator: " · ").prefix(240))
-            return "没有\(want.displayName)，最高可得\(best)（\(detail)）"
+            return "没有\(want.displayName)，最高可得\(best)"
         }
     }
 
@@ -433,6 +413,8 @@ enum DownloadResolver {
         let duration = song.durationSec
         var pool: [StreamSource] = []
         var notes: [String] = []
+        var debug: [String] = []
+        debug.append("源曲 \(song.name) | \(song.singer) | \(song.durationSec)s | \(song.platform.shortName)")
 
         // 第一轮：本平台自己的后端
         let local = await URLResolver.shared.resolveResult(song: song, quality: want, timeout: 18)
@@ -444,7 +426,7 @@ enum DownloadResolver {
             notes.append("本平台后端失败（\(reasons)）")
         }
 
-        // 第二轮：跨源换源（同歌名 + 同歌手，StudioPick 排掉 live/节目版）
+        // 第二轮：跨源换源（同曲判定 = 歌手优先 + 时长 ≤4s + 歌名只做辅助）
         // 排序已经在 `candidateList` 里按"能出目标档的平台"优先（网易/酷我先解析）
         let tried = TriedKeys()
         let cross = await SameSongCrossResolver.resolveForDownload(
@@ -456,21 +438,31 @@ enum DownloadResolver {
         if !cross.failures.isEmpty {
             notes.append("跨源失败（\(cross.failures.prefix(3).joined(separator: "、"))）")
         }
+        // 网易检索留痕：实际请求 URL（解码后）+ 响应前 3 条。这两行是下一版真机定案的关键，
+        // 所以单列、不截断（弹层里按行渲染）。
+        if !cross.neteaseURL.isEmpty {
+            debug.append("网易URL \(cross.neteaseURL)")
+            debug.append("网易响应 \(cross.neteaseTop.isEmpty ? "（0 条）" : cross.neteaseTop.joined(separator: " / "))")
+        }
 
         // 第三轮：通用搜索式后端（妖狐酷我，与歌来自哪个平台无关）
-        // 无损档照打（妖狐恒给无损）；320k/128k 只在"一条源都没有"时才打，否则白等 12s
+        // 无损档照打（妖狐恒给无损）；320k/128k 只在"一条源都没有"时才打，否则白等 20s
         let hasExact = pool.contains { isExact($0, want: want, durationSec: duration) }
         let hasAny = pool.contains { !$0.url.isEmpty }
         if !hasExact && song.platform != .kuwo && (want == .lossless || !hasAny) {
-            let generic = await withTimeoutOrNil(genericTimeout) {
-                try await YaohuKuwoAdapter().resolve(song: song, quality: .lossless)
-            }
-            if let generic {
+            do {
+                let generic = try await withTimeoutThrowing(genericTimeout) {
+                    try await YaohuKuwoAdapter().resolve(song: song, quality: .lossless)
+                }
                 pool.append(generic)
                 notes.append("妖狐 \(generic.quality.displayName)")
-            } else {
+                debug.append("妖狐 命中 \(generic.format.uppercased()) · \(generic.kbps)kbps · \(generic.totalBytes)B")
+            } catch {
                 notes.append("妖狐失败(\(Int(genericTimeout))s)")
+                debug.append("妖狐 失败：\(URLResolver.shortError(error))")
             }
+        } else if hasExact {
+            debug.append("妖狐 跳过（已有目标档）")
         }
 
         var seen = Set<String>()
@@ -500,7 +492,7 @@ enum DownloadResolver {
 
         let switched = (exact + [fallback].compactMap { $0 }).contains { $0.platform != song.platform }
         return Plan(want: want, exact: exact, fallback: fallback,
-                    switched: switched, crossTried: tried.count, notes: notes)
+                    switched: switched, crossTried: tried.count, notes: notes, debug: debug)
     }
 
     /// 「3 条：网易·无损 / QQ·标准」这种一句话摘要（只给降级提示用）
