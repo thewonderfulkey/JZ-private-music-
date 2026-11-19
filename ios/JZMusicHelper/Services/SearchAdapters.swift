@@ -239,6 +239,23 @@ enum NeteaseLookup {
         return Outcome(songs: meting, debug: debug.joined(separator: "/"))
     }
 
+    /// 「专用检索」候选的放宽同曲判定：歌名归一化后必须相同（或只差 2 字且互相包含），
+    /// 歌手只要 token 有交集、或候选没歌手信息就放过。
+    ///
+    /// 为什么需要：2.4.22 真机里检索明明返回 10 条（官方10(431ms)），候选里网易却是 0——
+    /// `sameSong` 的身份校验把跨平台条目全拦了。专用检索本身就是拿"歌名 + 歌手"去搜的，
+    /// 放宽这一档不会放进 DJ/翻唱（歌名必须归一化相同）。
+    static func relaxedSame(src: Song, cand: Song) -> Bool {
+        if src.platform == cand.platform && src.platformID == cand.platformID { return false }
+        let xs = NameMatch.normTitle(src.name)
+        let ys = NameMatch.normTitle(cand.name)
+        guard !xs.isEmpty, !ys.isEmpty else { return false }
+        guard xs == ys || (abs(xs.count - ys.count) <= 2 && (xs.contains(ys) || ys.contains(xs))) else {
+            return false
+        }
+        if NameMatch.singerMatches(src.singer, cand.singer) { return true }
+        return NameMatch.singerTokens(cand.singer).isEmpty
+    }
     private static func official(keyword: String, limit: Int) async -> [Song] {
         let url = "https://music.163.com/api/search/get"
             + "?s=\(APIClient.encode(keyword))&type=1&offset=0&limit=\(max(1, min(limit, 30)))"

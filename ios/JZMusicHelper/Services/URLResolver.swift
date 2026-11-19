@@ -256,11 +256,30 @@ enum SameSongCrossResolver {
         // r124：下载换源额外跑一遍「网易 id 专用检索」（官方 → gdstudio → meting，各自独立超时）。
         // searchAll 给每个平台的预算只有 8s，官方的 music.163.com 在手机上解析一慢，网易整平台就被判空——
         // 真机诊断正是「QQ3/酷狗3」、网易 0。这里不受那 8s 约束。
+        //
+        // r125（2.4.22 真机）：检索**成功了**（官方10(431ms)），但候选里网易仍是 0 —— 说明结果全被
+        // `sameSong` 的身份校验拦掉了。这里对"专用检索"的候选放宽一档（歌名归一化相同 + 歌手 token 有交集
+        // 或候选人无歌手信息），并把被丢掉的候选连同源曲元数据写进诊断，免得再盲猜。
         var neteaseDebug = ""
         if forDownload {
             let lookup = await NeteaseLookup.lookup(keyword: kw)
+            var dropped: [String] = []
+            var accepted = 0
+            for c in lookup.songs {
+                if sameSong(src: song, cand: c) || NeteaseLookup.relaxedSame(src: song, cand: c) {
+                    cands.append(c)
+                    accepted += 1
+                } else if dropped.count < 3 {
+                    let t = NameMatch.titleMatches(song.name, c.name) ? "T" : "t"
+                    let s = NameMatch.singerMatches(song.singer, c.singer) ? "S" : "s"
+                    dropped.append("\(c.name.prefix(18))|\(c.singer.prefix(10))|\(t)\(s)|\(c.durationSec)")
+                }
+            }
+            let srcInfo = "源:\(song.name.prefix(18))|\(song.singer.prefix(10))|\(song.durationSec)"
             neteaseDebug = lookup.debug
-            cands.append(contentsOf: lookup.songs)
+            if !dropped.isEmpty {
+                neteaseDebug += " 收\(accepted)丢\(dropped.count)：\(dropped.joined(separator: "；")) \(srcInfo)"
+            }
         }
 
         cands = cands.filter { sameSong(src: song, cand: $0) }
@@ -402,7 +421,7 @@ enum DownloadResolver {
         var fallbackReason: String {
             let best = fallback?.quality.displayName ?? "—"
             guard !notes.isEmpty else { return "没有\(want.displayName)，最高可得\(best)" }
-            let detail = String(notes.joined(separator: " · ").prefix(160))
+            let detail = String(notes.joined(separator: " · ").prefix(240))
             return "没有\(want.displayName)，最高可得\(best)（\(detail)）"
         }
     }

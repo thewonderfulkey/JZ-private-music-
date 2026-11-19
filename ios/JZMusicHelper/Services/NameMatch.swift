@@ -17,7 +17,11 @@ enum NameMatch {
 
     /// 纯歌名归一化：去版本括号 + 去标点空白
     static func normTitle(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // r125：统一 Unicode 规范化再比。韩文/日文歌名在两端可能一边 NFC 一边 NFD
+        // （"연애의 조건" 的 NFD 是 ᄋᆢᆫ애…），字节不同但人看着一样——不归一化就会把同曲判成不同曲。
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
         s = bracket.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
         s = punct.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
         return s
@@ -33,7 +37,9 @@ enum NameMatch {
 
     /// 歌手拆分为单人 token（去括号说明，按 / & 、 ， 空格 拆）
     static func singerTokens(_ raw: String) -> Set<String> {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
         s = bracket.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
         let parts = singerSep.stringByReplacingMatches(in: s, range: full(s), withTemplate: "\u{1}")
             .split(separator: "\u{1}", omittingEmptySubsequences: true)

@@ -345,6 +345,35 @@ do {
         ["name": "别的平台", "artist": "X",
          "url": "https://api.qijieya.cn/meting/?server=tencent&type=url&id=999"],
     ]
+    // r125：韩文歌名 NFC/NFD 混用时，同曲判定必须仍然通过（2.4.22 真机上检索到 10 条却全被丢）
+    let nfcName = "연애의 조건 (Love Options)".precomposedStringWithCanonicalMapping
+    let nfdName = nfcName.decomposedStringWithCanonicalMapping
+    check("NFC/NFD 混用的歌名判为同一首", NameMatch.titleMatches(nfdName, nfcName))
+    check("归一化后歌名相同", NameMatch.normTitle(nfdName) == NameMatch.normTitle(nfcName))
+
+    let srcSong = Song.make(platform: .qq, platformID: "0008rnAh3oSbcW",
+                            name: nfdName, singer: "BESTie (베스티)",
+                            album: "", duration: 194, picURL: nil)
+    let neSong = Song.make(platform: .netease, platformID: "27867073",
+                           name: nfcName, singer: "BESTie",
+                           album: "연애의 조건 (Love Options)", duration: 194, picURL: nil)
+    check("专用检索的放宽判定接受跨平台同曲",
+          NeteaseLookup.relaxedSame(src: srcSong, cand: neSong))
+    check("放宽判定不放行不同歌名",
+          !NeteaseLookup.relaxedSame(
+            src: srcSong,
+            cand: Song.make(platform: .netease, platformID: "1", name: "晴天", singer: "周杰伦",
+                            album: "", duration: 194, picURL: nil)))
+    check("放宽判定不放行同歌名但歌手完全不同的",
+          !NeteaseLookup.relaxedSame(
+            src: srcSong,
+            cand: Song.make(platform: .netease, platformID: "2", name: "연애의 조건",
+                            singer: "DJ铁叔", album: "", duration: 206, picURL: nil)))
+    check("放宽判定接受候选人无歌手信息的",
+          NeteaseLookup.relaxedSame(
+            src: srcSong,
+            cand: Song.make(platform: .netease, platformID: "3", name: "연애의 조건 (Love Options)",
+                            singer: "", album: "", duration: 0, picURL: nil)))
     let metingSongs = NeteaseSearchAdapter.songs(fromMeting: metingItems)
     check("meting 映射：只留网易 + 按 id 去重", metingSongs.count == 1
             && metingSongs.first?.platformID == "27867073", "got=\(metingSongs.count)")
