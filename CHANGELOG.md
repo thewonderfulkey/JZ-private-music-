@@ -1,3 +1,29 @@
+## iOS + Android v2.4.21（199） · 2026-11-19（网易候选搜不到 → gdstudio 搜索兜底）
+
+**2.4.20 弹层给的线索**：「跨源失败（酷狗·酷狗官方:解析失败(errcode 10) ×3）」——失败列表里**没有网易**。
+6 条跨源候选全来自 QQ/酷狗，说明问题不在取流，而在**搜索根本没搜到网易条目**。
+
+**根因**：跨源找网易 id 靠官方 `music.163.com/api/search/get`。它在真机上对 iOS 这侧会回空 / 405 / 卡住；
+而 `searchAll` 给每个平台的预算只有 8s，官方一卡，网易整平台被判空，任何兜底都来不及跑。
+
+**改法**
+
+- 官方搜索超时 15s→4s、补封面 3s（把 8s 预算留给兜底）
+- 官方没结果 → `NeteaseSearchAdapter.gdstudioSearch`（`types=search&source=netease`，与取流同域）
+- gdstudio 搜索不返回时长 → 候选 `duration=0`（`sameSong` 跳过时长闸门）；取流侧用接口自报
+  `br`/`size` 定档（新增 `QualityFacts.quality(container:kbps:)`，探测失败也不再整条后端判死）
+- 诊断增强：降级弹层写候选分布「跨源试 8 条（QQ1/网易4/酷狗3）」
+- SelfTest：兜底映射（去重 / 丢无 id / artist 归一 / duration=0）、接口自报码率定档
+
+**本机验证**（真实网络）：兜底搜索拿到 10 条（含 BESTie 27867073 / 29027620）；`duration=0` 取流仍判
+`q=lossless / fmt=flac / 1086kbps`；完整 plan 拿到 3 条网易无损。
+
+| 平台 | 文件 | sha256 |
+|---|---|---|
+| iPhone | `JZ-Music-v2.4.21-9b74c39-r122-ios-unsigned.ipa`（2,319,132 B） | `19aa097d…30f09f2a` |
+| Android | `JZ-Music-v2.4.21.apk`（29,875,517 B） | `5ee188ad…ec53caa3` |
+
+CI **#122 / `9b74c39` / 795 条断言全绿**。
 ## iOS + Android v2.4.20（198） · 2026-11-19（真机探测链修复：2.4.19 仍只能 128k）
 
 **老板反馈**：装 2.4.19 后《연애의 조건》还是找不到 flac。新弹层自带的诊断给了关键信息——

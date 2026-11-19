@@ -25,13 +25,14 @@
 - **未签名**：自签分发（Sideloadly / AltStore），个人签名 7 天有效，AltStore 可自动续签。仓库不保存签名证书。
 - 文件名里的 `sha7-rNN` 是构建戳（`rNN` 是 Actions 运行号），**装之前核对**，别装回旧包。
 - 本目录只留**最新一份** IPA；旧包不入库（每轮产物都在飞书群里，Release 里留最新）。
-- 当前：`JZ-Music-v2.4.20-4d6af59-r121-ios-unsigned.ipa`（2.3 MB，版本 2.4.20 / 198）。
+- 当前：`JZ-Music-v2.4.21-9b74c39-r122-ios-unsigned.ipa`（2.3 MB，版本 2.4.21 / 199）。
 
 ## 版本表
 
 | 版本 | versionCode | 主题 | APK |
 |---|---|---|---|
-| v2.4.20 | 198 | 真机探测改 DataDelegate peek + HEAD 兜底（修 iOS 上读不到 126.net 字节 → 整条后端判没源）+ 按域名 Referer；两端同版本 | `JZ-Music-v2.4.20.apk` |
+| v2.4.21 | 199 | 网易搜索兜底（官方被风控时走 gdstudio 搜索）+ 候选分布诊断 | `JZ-Music-v2.4.21.apk` |
+| v2.4.20 | 198 | 真机探测改 DataDelegate peek + HEAD 兜底（修 iOS 上读不到 126.net 字节 → 整条后端判没源）+ 按域名 Referer；两端同版本 | `JZ-Music-v2.4.20.apk`（archive） |
 | v2.4.17 | 195 | 版本号与 iOS 对齐；修设置页「高品 320k 320k」重复；`assembleDebug` 可用 | archive |
 | v2.1.95 | 153 | 四个界面细节：识曲列表贴底/去平台并发/酷我时长/结果行对齐 | `JZ音乐助手-v2.1.95.apk` |
 | v2.1.94 | 152 | 六项修复（原唱/酷我解析/酷狗/封面/闸门/提示） | archive |
