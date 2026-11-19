@@ -564,6 +564,13 @@ enum DownloadResolver {
         return 200
     }
 
+    /// 目标档判定：容器 + 码率都由取流阶段实测得到；时长未知时退回"档位桶"这一层近似。
+    /// （排名引擎不再用它选源，但它是"这条源到底是不是用户要的档"的唯一口径，SelfTest 也钉着。）
+    static func isExact(_ src: StreamSource, want: QualityLevel, durationSec: Int) -> Bool {
+        if durationSec <= 0 || src.kbps <= 0 { return src.quality == want }
+        return QualityFacts.matches(want, container: src.format, kbps: src.kbps)
+    }
+
     /// 后端可靠性分级：官方 CDN 直链 > 聚合接口。
     /// 依据：r123–r125 三轮故障全出在聚合接口（gdstudio / oiapi / cyapi）被风控、降档、回错歌；
     /// 酷我妖狐与酷狗官方 playInfo 给的是平台自己的 CDN 直链，一直是稳的。
