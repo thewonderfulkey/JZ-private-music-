@@ -34,7 +34,7 @@ iPhone 版还能**把别家的歌单直接导进来**（QQ 音乐 / 网易云 / 
 > 三个平台的包和源码都在 [最新发布 v2.4.32](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)：
 > iPhone 是这一轮的新包；Windows 仍是 **2.1.95**（Windows 端本轮未改）；Android 用当前源码重新打了包、
 > 版本号随仓库升到 **2.4.32**（Android 代码与 2.4.23 相同，本轮未改）。
-> 同一发布里还有 `JZ-Music-v2.4.32-source.zip`（源码，不含旧安装包），以及 GitHub 自动生成的 Source code (zip / tar.gz)。
+> 源码用页面里的 Source code (zip / tar.gz)（GitHub 按 tag 自动生成）。
 
 三个平台共用同一套「搜索 → 换源 → 取流 → 歌词」逻辑，所以同一首歌在哪一端都能放；
 差别在**界面版式**和**各平台特性**（下面分开写）。
@@ -284,7 +284,7 @@ A：不会。收藏、最近播放、搜索历史、识曲历史都只存在本�
 | iPhone | **2.4.32（210）** | 未签名 IPA，自签安装 |
 
 三个平台的安装包和源码都在 [最新发布 v2.4.32](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)，
-源码文件是 `JZ-Music-v2.4.32-source.zip`（GitHub 另外自动生成 Source code zip / tar.gz）。
+源码用页面里的 Source code (zip / tar.gz)（GitHub 按 tag 自动生成）。
 
 2.4.32 这一轮只动了 iPhone（导入歌单 / 我的歌单 / 心动模式吃歌单 / 猜你喜欢显隐 / 歌词取词）；
 Windows 与 Android 代码没改（Windows 仍是 2.1.95；Android 用当前源码重打包、版本号随仓库到 2.4.32）。
