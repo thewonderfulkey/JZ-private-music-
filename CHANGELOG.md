@@ -1,3 +1,61 @@
+## iOS + Android v2.4.19（197） · 2026-11-19（下载音质不误降级 + 热门音乐换榜）
+
+> 这一版把上一版（2.4.18，仅 iOS 下载修复）也含在内；两端同为 2.4.19（197）。
+
+### ① 下载音质：《연애의 조건》有无损却被判"只能 128k"
+
+**老板真机**：安卓能下网易无损（26MB `.flac`），iOS 弹层写"没有无损 FLAC，最高可得标准 128k"，来源 QQ·cyapi·97kbps。
+
+**先确认上游**：直接拉 `kbangserver / gdstudio`，网易对这首确实给真 fLaC（25.1MB，br=740 与 999 都是），
+iOS 的解析代码也能解析出 `pub`/100 首——问题在我们自己的判定与换源顺序。
+
+**两条根因**
+
+1. `QualityFacts.of()`（显示成哪一档）只认容器；`matches()`（算不算命中）却认「码率≥600 也算无损」。
+   126.net 的部分 fLaC 前面挂了 ID3v2，`sniffHead` 只看偏移 0 的 `fLaC` → 判成 unknown/mp3 → 档位掉 320k。
+2. 下载换源的候选排序里，无损档按「同平台优先」：QQ 三条 128k 先解析，网易真无损排在后面，
+   真机预算一紧就"还没轮到就收工"。
+
+**改法**
+
+- `StreamVerifier.sniffHead`：头 16 字节内**任意位置**找 fLaC/OggS/RIFF/ftyp；ID3/帧同步只在认不出容器时才当 mp3
+- `QualityFacts`：`of()` 与 `matches()` 共用 `losslessFloorKbps=601` / `highBandKbps=256...600` / `standardBandKbps=48...255`
+- `StreamVerifier.inspect`：Range 请求最多试两次；两次都读不到容器头但体积已知 → 交给码率反推（不再整条后端判死）
+- `SameSongCrossResolver.downloadPlatformRank`：下载换源按平台能力排序（无损 网易→酷我→酷狗→QQ；320k/128k 网易优先）
+- `DownloadResolver.Plan.notes`：降级弹层写明各阶段实况（本平台几条 / 跨源试几条 / 妖狐结果）
+- Android 同步：`sniffHead` 前缀识别、`of()` 601kbps 无损门槛、下载换源平台排序
+
+**实测**（本机真实网络）：改前 18s、只有 320k/128k；改后 **6s 拿到 3 条网易无损**（1087~1095kbps / 26MB），`fallback` 为空。
+
+### ② 热门音乐停在 11-17 不动（今天 19 号）
+
+**先确认上游**：`ksong.s?type=bang&id=16` 现在返回 `pub=2026-11-19`、100 首、首条《慌啥子嘛 (赵本山版)》；
+iOS 解析路径跑通（`DiscoverRules.hotModuleSongs` 取到 21 首），`latestPublishedDate` 也是 2026-11-19。
+**所以不是接口没更新，是客户端没去核对。**
+
+**根因**：换榜核对是「每个进程只查一次」（`didRevalidateHot`）。iOS App 可以在后台挂好几天，
+发现页 Tab 又是保活的（`RootTabView` 只建一次，`DiscoverView.task` 不会重跑）→ 进程不重启就永远不核对。
+
+**改法**
+
+- `DiscoverRules.needsHotRevalidate`（纯函数）：跨本地日必查；同一天最多每 600s 查一次
+- `DiscoverFeed` 用 `lastHotRevalidateAt / lastHotRevalidateDay` 取代 `didRevalidateHot`
+- `RootTabView` 在 `scenePhase == .active` 时补一次 `loadHotIfNeeded()`（回前台就能换榜）
+- `refreshHot` 失败时若手上已有榜单内容则保留，不再被"种子词兜底"覆盖（避免网络抖一下真榜变混排）
+
+**产物**
+
+| 平台 | 文件 | 版本 | sha256 |
+|---|---|---|---|
+| iPhone | `JZ-Music-v2.4.19-9fe66f5-r120-ios-unsigned.ipa`（2,300,363 B） | 2.4.19 / 197 | `fabe7440…f17c956e8` |
+| Android | `JZ-Music-v2.4.19.apk`（29,875,521 B） | 2.4.19 / 197 | `f59f3b3c…7161fe72` |
+
+两个包都已挂到 [最新 Release](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)，
+旧的 2.4.17 包已移除。CI **#120 / `9fe66f5` / 780 条断言全绿**（2.4.18 是 #119 / 775 条）。
+
+## iOS v2.4.18（196） · 2026-11-19（下载音质修复，已被 2.4.19 取代）
+
+- 只含上面 ①（下载音质）的 iOS 部分；Android 与 ② 在 2.4.19 里。
 ## Android v2.4.17（195） · 2026-11-19（版本号与 iOS 对齐 + 两处修正）
 
 **为什么发这一版**：iOS 线已经走到 2.4.17（195），而 Release 里 Android 还是 2.1.95（153）。

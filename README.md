@@ -27,8 +27,8 @@
 | 平台 | 系统要求 | 安装包 | 体积 | 装法 |
 |---|---|---|---|---|
 | **Windows** | Windows 10 / 11（64 位） | `JZ-Music-v2.1.95-windows-x64.exe` | 约 139 MB | 免安装单文件，双击即用 |
-| **Android** | Android 8.0 及以上 | `JZ-Music-v2.4.17.apk` | 约 29 MB | 覆盖安装即可 |
-| **iPhone** | iOS 17.0 及以上 | `JZ-Music-v2.4.17-cad8b4a-r117-ios-unsigned.ipa` | 约 2.2 MB | **未签名**，需自己签一次（Sideloadly / AltStore） |
+| **Android** | Android 8.0 及以上 | `JZ-Music-v2.4.19.apk` | 约 29 MB | 覆盖安装即可 |
+| **iPhone** | iOS 17.0 及以上 | `JZ-Music-v2.4.19-9fe66f5-r120-ios-unsigned.ipa` | 约 2.2 MB | **未签名**，需自己签一次（Sideloadly / AltStore） |
 
 三个平台共用同一套「搜索 → 换源 → 取流 → 歌词」逻辑，所以同一首歌在哪一端都能放；
 差别在**界面版式**和**各平台特性**（下面分开写）。
@@ -124,7 +124,7 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ### 安装
 
-1. 下载 `JZ-Music-v2.4.17.apk`。
+1. 下载 `JZ-Music-v2.4.19.apk`。
 2. 点开安装；系统会提示"未知来源"，允许本文件安装即可（Android 8.0 及以上）。
 3. 首次启动按提示给权限：**通知**（下载完成提示、通知栏控制）、**麦克风**（识曲）、**悬浮窗**（桌面歌词，可后续再给）。
 4. 升级直接覆盖安装，收藏与下载不会丢（签名与历次版本一致，**不要装其它渠道改签过的包**）。
@@ -142,7 +142,7 @@ iPhone 用户、要"上车就响"和干干净净的设置页 → iOS。
 
 ![iPhone 界面：发现 / 正在播放 / 下载 / 听歌识曲 / 我的收藏 / 设置](docs/images/ios-ui.jpg)
 
-> iPhone 真机截图（iOS 17，v2.4.17）：下载页已按 `Download › Music / Lyrics / Cover` 分目录；
+> iPhone 真机截图（iOS 17，v2.4.17 时截的）：下载页已按 `Download › Music / Lyrics / Cover` 分目录；
 > 设置页只剩外观 / 车载自动播放 / 歌词字号 / 可缓存歌曲数量 / 识曲 / 下载 / 数据 / 关于。
 
 ### 特色
@@ -228,8 +228,8 @@ A：不会。收藏、最近播放、搜索历史、识曲历史都只存在本�
 | 平台 | 当前版本 | 说明 |
 |---|---|---|
 | Windows | 2.1.95 | 免安装单文件（139 MB） |
-| Android | 2.4.17（195） | 覆盖安装 |
-| iPhone | 2.4.17（195） | 未签名 IPA，自签安装 |
+| Android | 2.4.19（197） | 覆盖安装 |
+| iPhone | 2.4.19（197） | 未签名 IPA，自签安装 |
 
 安装包都在 [最新发布（Releases）](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)；
 每一轮的改动记在 [CHANGELOG.md](CHANGELOG.md)。
