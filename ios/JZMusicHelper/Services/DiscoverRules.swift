@@ -25,6 +25,27 @@ enum DiscoverRules {
     /// 热门音乐模块只放 21 首（3 行 × 7 页，与这一轮之前的口径一致——老板要求"保持那个页数"）
     static let hotModuleLimit = 21
 
+    /// 向酷我核对「热歌榜换没换」的最小间隔（秒）。
+    ///
+    /// r121（老板："今天 19 号了，热门音乐还是 11-17 的内容"）：旧口径是"每个进程只查一次"，
+    /// 而 iOS App 可以在后台挂好几天——进程不重启就永远不核对，榜单一直停在旧日期。
+    /// 现在：跨本地日必查；同一天内最多 10 分钟查一次（探测请求只有 ~1.5KB，很便宜）。
+    static let hotRevalidateIntervalSec: TimeInterval = 600
+
+    /// 现在要不要向酷我核对「热歌榜换没换」（纯函数，`DiscoverFeed` 与本机断言共用）
+    ///
+    /// - Parameters:
+    ///   - lastCheckAt: 上次核对的时间（nil = 本次进程还没查过）
+    ///   - lastCheckDay: 上次核对时的本地日序号
+    ///   - today: 今天的本地日序号（`DiscoverRules.today`）
+    static func needsHotRevalidate(lastCheckAt: Date?, lastCheckDay: Int, today: Int,
+                                   now: Date = Date(),
+                                   interval: TimeInterval = hotRevalidateIntervalSec) -> Bool {
+        if lastCheckDay != today { return true }
+        guard let lastCheckAt else { return true }
+        return now.timeIntervalSince(lastCheckAt) >= interval
+    }
+
     /// 猜你喜欢放 12 首（3 行 × **4 页**）。
     ///
     /// 老板 r85："猜你喜欢页数也增加几页，可以不用像热门音乐那么多"。热门是 7 页（21 首），

@@ -35,8 +35,13 @@ final class DiscoverFeed {
     private var hotDay: Int = -1
     /// 榜单数据对应的**服务端 `pub` 日期**（这才是"换榜"的信号）
     private var hotChartDate: String?
-    /// 每次启动只按服务端日期核对一次，避免每次回发现页都打一次探测请求
-    private var didRevalidateHot = false
+    /// 上次向酷我核对「榜换没换」的时间与本地日。
+    ///
+    /// r121（老板："今天都 19 号了，热门音乐还是 11-17 的内容"）：以前是"每次启动只查一次"，
+    /// 但 iOS App 可以在后台活好几天——进程不重启就永远不再核对，于是榜单一直停在旧日期。
+    /// 现在改成：**最多每 `hotRevalidateIntervalSec` 查一次 + 跨本地日必查 + App 回前台也查一次**。
+    private var lastHotRevalidateAt: Date?
+    private var lastHotRevalidateDay: Int = -1
 
     /// 最新单曲：一页 100 首，模块只露前 `DiscoverRules.newSongsModuleLimit` 张卡，
     /// 「查看全部」进整页。「当天只拉一次」的判据是 `newDay`（本地日），不是服务端日期
@@ -192,14 +197,21 @@ final class DiscoverFeed {
         await refreshHot()
     }
 
-    /// 按服务端的换榜日期核对一次（每次启动只查一次；探测请求 rn=1 仅约 1.5 KB）。
+    /// 按服务端的换榜日期核对（探测请求 rn=1 仅约 1.5 KB）。
     ///
     /// 榜单没换（`pub` 与本地记录一致）→ **一个整页请求都不发**；
     /// 换了 → 重取 100 首（`refreshHot` 会顺带写回新的 `chartDate`）。
+    ///
+    /// 节流口径（r121）：跨本地日必查；同一天内最多每 `DiscoverRules.hotRevalidateIntervalSec` 查一次。
+    /// 不再"每个进程只查一次"——App 在后台挂两天也不会自己发现换榜。
     private func revalidateHotIfNeeded() async {
-        guard !didRevalidateHot else { return }
-        didRevalidateHot = true
         guard hotFromChart else { return }
+        let now = Date()
+        guard DiscoverRules.needsHotRevalidate(lastCheckAt: lastHotRevalidateAt,
+                                              lastCheckDay: lastHotRevalidateDay,
+                                              today: day, now: now) else { return }
+        lastHotRevalidateAt = now
+        lastHotRevalidateDay = day
         guard let latest = await KuwoChart.latestPublishedDate(.hot) else { return }
         if latest != hotChartDate {
             await refreshHot()
@@ -218,6 +230,13 @@ final class DiscoverFeed {
             hotChartDate = page.publishedDate
             hotState = .loaded
             saveHot(songs, fromChart: true, chartDate: page.publishedDate)
+            return
+        }
+
+        // ①.5 拉失败但手上本来就有一份**榜单**内容：保留它，别用种子词把它换掉。
+        // 网络抖一下就把"昨天的真榜"换成"兜底混排"，看起来就像"榜单没更新/乱了一下"（r121）
+        if hotFromChart, !hotSongs.isEmpty {
+            hotState = .loaded
             return
         }
 

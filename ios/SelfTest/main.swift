@@ -812,6 +812,21 @@ do {
     check("take 超过池子按池子长度", DiscoverRules.rotate(pool, day: 0, take: 99).count == 10)
     check("空池子返回空", DiscoverRules.rotate([Int](), day: 3, take: 5).isEmpty)
 
+    // ①.5 热歌榜换榜核对（r121：老板"19 号了还显示 11-17 的内容"）
+    // 旧口径"每个进程只查一次"在 App 后台挂几天时永远不核对，所以这里钉住新的节流规则
+    check("从没查过 → 要查", DiscoverRules.needsHotRevalidate(lastCheckAt: nil, lastCheckDay: -1,
+                                                          today: 100, now: Date()))
+    check("跨本地日 → 必查（哪怕 1 秒前刚查过）",
+          DiscoverRules.needsHotRevalidate(lastCheckAt: Date(), lastCheckDay: 99,
+                                           today: 100, now: Date()))
+    check("同一天、刚查过 → 不查",
+          !DiscoverRules.needsHotRevalidate(lastCheckAt: Date(), lastCheckDay: 100,
+                                            today: 100, now: Date()))
+    check("同一天、超过间隔 → 再查",
+          DiscoverRules.needsHotRevalidate(lastCheckAt: Date().addingTimeInterval(-601),
+                                           lastCheckDay: 100, today: 100, now: Date()))
+    check("核对间隔是 10 分钟", DiscoverRules.hotRevalidateIntervalSec == 600)
+
     // ② 原版判定
     check("去括号版本", DiscoverRules.coreName("晴天 (Live)") == "晴天",
           DiscoverRules.coreName("晴天 (Live)"))

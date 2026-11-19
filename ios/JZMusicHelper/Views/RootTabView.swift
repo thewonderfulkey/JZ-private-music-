@@ -85,7 +85,13 @@ struct RootTabView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
-            if phase == .active { drainIntents() }
+            if phase == .active {
+                drainIntents()
+                // r121：回前台顺便核对一下热歌榜换没换。
+                // 发现页的 Tab 是保活的（`RootTabView` 只建一次），`DiscoverView.task` 不会再跑，
+                // 所以"App 在后台挂了两天"时榜单会一直停在旧日期——这里补一次（内部有 10 分钟节流）。
+                Task { await discoverFeed.loadHotIfNeeded() }
+            }
             // 退到后台先落一次播放断点：这时进程随时可能被系统收走，
             // 下次车载连上要靠它"接着上次没播完的接着放"。
             if phase == .background { player.flushSnapshot(force: true) }
