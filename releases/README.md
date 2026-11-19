@@ -25,13 +25,14 @@
 - **未签名**：自签分发（Sideloadly / AltStore），个人签名 7 天有效，AltStore 可自动续签。仓库不保存签名证书。
 - 文件名里的 `sha7-rNN` 是构建戳（`rNN` 是 Actions 运行号），**装之前核对**，别装回旧包。
 - 本目录只留**最新一份** IPA；旧包不入库（每轮产物都在飞书群里，Release 里留最新）。
-- 当前：`JZ-Music-v2.4.22-43c9844-r124-ios-unsigned.ipa`（2.3 MB，版本 2.4.22 / 200）。
+- 当前：`JZ-Music-v2.4.23-c19f31d-r125-ios-unsigned.ipa`（2.3 MB，版本 2.4.23 / 201）。
 
 ## 版本表
 
 | 版本 | versionCode | 主题 | APK |
 |---|---|---|---|
-| v2.4.22 | 200 | 网易检索独立成链（官方/gdstudio/meting，带耗时诊断）| `JZ-Music-v2.4.22.apk` |
+| v2.4.23 | 201 | 同曲判定放宽 + Unicode NFC 归一（修"检索到 10 条却全被拦")| `JZ-Music-v2.4.23.apk` |
+| v2.4.22 | 200 | 网易检索独立成链（官方/gdstudio/meting，带耗时诊断）| `JZ-Music-v2.4.22.apk`（archive）|
 | v2.4.21 | 199 | 网易搜索兜底（官方被风控时走 gdstudio 搜索）+ 候选分布诊断 | `JZ-Music-v2.4.21.apk`（archive）|
 | v2.4.20 | 198 | 真机探测改 DataDelegate peek + HEAD 兜底（修 iOS 上读不到 126.net 字节 → 整条后端判没源）+ 按域名 Referer；两端同版本 | `JZ-Music-v2.4.20.apk`（archive） |
 | v2.4.17 | 195 | 版本号与 iOS 对齐；修设置页「高品 320k 320k」重复；`assembleDebug` 可用 | archive |
