@@ -8,9 +8,10 @@ import UIKit
 //   ② 歌单广场：横滑封面卡（热门歌单，132×132 + 播放量角标）
 //   ③ 歌手大全：横滑圆头像（5 个 64，名字 + 粉丝）
 //   ④ 最近播放：小封面横排（有播放记录才出现）
-//   ⑤ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
-//   ⑥ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
-//   ⑦ 热门音乐：同一套分页，行内带名次
+//   ⑤ 我的歌单：**导入过歌单才出现**（设置 → 导入歌单），横滑宽卡；无导入时这里什么都没有
+//   ⑥ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
+//   ⑦ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
+//   ⑧ 热门音乐：同一套分页，行内带名次
 //
 // 第二十九轮起所有数据链都是真数据；第三十轮把「编辑精选」（本地池 + 逐首解析）下线，
 // 换成歌单广场 / 歌手大全——点开即播，不再有"占位行 → 正式行"的等待。
@@ -21,6 +22,8 @@ struct DiscoverView: View {
     @Environment(DiscoverFeed.self) private var feed
     @Environment(SquareFeed.self) private var squareFeed
     @Environment(ArtistFeed.self) private var artistFeed
+    /// 导入进来的歌单（本地快照）。没有导入时这一整块不渲染，最近播放直接接最新单曲。
+    @Environment(MyPlaylistStore.self) private var myPlaylists
     @Environment(AppRouter.self) private var router
     /// 回到前台时按本地日核对一次（见 body 里的 `.onChange(of: scenePhase)`）
     @Environment(\.scenePhase) private var scenePhase
@@ -36,6 +39,7 @@ struct DiscoverView: View {
                 searchEntry
                 artistSection
                 recentSection
+                myPlaylistsSection
                 newSongsSection
                 guessSection
                 hotSection
@@ -275,6 +279,47 @@ struct DiscoverView: View {
                         }
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
+                }
+            }
+        }
+    }
+
+    // MARK: 我的歌单（导入过才有；版式对齐「最新单曲」的横滑宽卡）
+    //
+    // 老板 2026-11-19：模块**只在导入过歌单以后存在**。没导入时这里返回 EmptyView，
+    // 最近播放下面直接就是最新单曲——不占位、不留标题、不加"去导入"的引导条。
+    // 入口在设置页（`ImportPlaylistView`），发现页自己不提供导入按钮。
+    @ViewBuilder
+    private var myPlaylistsSection: some View {
+        if !myPlaylists.playlists.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                HStack(spacing: Tokens.Spacing.xs) {
+                    Text("我的歌单")
+                        .font(FontRole.sectionTitle)
+                    Text("\(myPlaylists.playlists.count) 个")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: Tokens.Spacing.xxs)
+                    NavigationLink("查看全部") { MyPlaylistsView() }
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: Tokens.Spacing.s) {
+                        // 点歌单是"进去看"，不是"立刻播"——播放动作在详情页的「播放全部」/行点击上
+                        ForEach(myPlaylists.playlists) { playlist in
+                            NavigationLink {
+                                MyPlaylistDetailView(playlistID: playlist.id)
+                            } label: {
+                                MyPlaylistCard(playlist: playlist)
+                            }
+                            .buttonStyle(.pressSubtle)
+                        }
+                    }
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                    .padding(.vertical, 2)
                 }
             }
         }

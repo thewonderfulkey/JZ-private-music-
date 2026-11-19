@@ -90,6 +90,7 @@ jobs:
             ios/JZMusicHelper/Services/DownloadCompanion.swift \
             ios/JZMusicHelper/Services/KuwoChart.swift \
             ios/JZMusicHelper/Services/KuwoPlaylist.swift \
+            ios/JZMusicHelper/Services/PlaylistImport.swift \
             ios/JZMusicHelper/Services/KuwoArtist.swift \
             ios/JZMusicHelper/Services/ITunesCover.swift \
             ios/JZMusicHelper/Services/CoverResolver.swift \

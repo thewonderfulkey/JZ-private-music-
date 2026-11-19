@@ -11,6 +11,8 @@ struct JZMusicHelperApp: App {
     @State private var player = MainActor.assumeIsolated { PlayerEngine() }
     @State private var library = LibraryStore.shared
     @State private var settings = SettingsStore.shared
+    /// 导入进来的歌单（本地快照；发现页「我的歌单」与设置页「导入歌单」共用）
+    @State private var myPlaylists = MyPlaylistStore.shared
     @State private var downloadFlow = MainActor.assumeIsolated { DownloadFlow() }
     @State private var discoverFeed = MainActor.assumeIsolated { DiscoverFeed() }
     @State private var squareFeed = MainActor.assumeIsolated { SquareFeed() }
@@ -35,6 +37,7 @@ struct JZMusicHelperApp: App {
                     .environment(player)
                     .environment(library)
                     .environment(settings)
+                    .environment(myPlaylists)
                     .environment(downloadFlow)
                     .environment(discoverFeed)
                     .environment(squareFeed)

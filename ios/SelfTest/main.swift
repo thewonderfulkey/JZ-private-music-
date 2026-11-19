@@ -3197,6 +3197,215 @@ do {
             && DownloadPathRules.sanitizedFolderName("..") == nil)
 }
 
+// MARK: - 第四十二轮：导入歌单（QQ / 网易 / 酷我 / 酷狗）
+
+section("导入歌单：链接识别")
+
+// 老板给的那条 QQ 分享链接（带 hosteuin / ADTAG 这些分享参数，id 才是歌单号）
+let qqShare = "https://i2.y.qq.com/n3/other/pages/details/playlist.html"
+    + "?hosteuin=ow4iNeckoiSl7v**&id=8887675900&appversion=200908&ADTAG=wxfshare&appshare=iphone_wx"
+check("QQ i2 分享链接 → disstid",
+      PlaylistImport.detect(qqShare) == PlaylistImport.Link(platform: .qq, sourceID: "8887675900"),
+      String(describing: PlaylistImport.detect(qqShare)))
+check("微信分享文案里夹着链接也能认（前后文字忽略）",
+      PlaylistImport.detect("【QQ音乐】2001-2010 \(qqShare) 复制打开")?.sourceID == "8887675900")
+check("QQ 网页版路径 /n/ryqq/playlist/<id>",
+      PlaylistImport.detect("https://y.qq.com/n/ryqq/playlist/8887675900")
+        == PlaylistImport.Link(platform: .qq, sourceID: "8887675900"))
+check("网易网页版 query ?id=",
+      PlaylistImport.detect("https://music.163.com/playlist?id=3778678")
+        == PlaylistImport.Link(platform: .netease, sourceID: "3778678"))
+check("网易网页版 #/playlist?id=（参数在井号后面）",
+      PlaylistImport.detect("https://music.163.com/#/playlist?id=3778678")
+        == PlaylistImport.Link(platform: .netease, sourceID: "3778678"))
+check("网易 App 分享 y.music.163.com/m/playlist?id=",
+      PlaylistImport.detect("https://y.music.163.com/m/playlist?id=3778678&userid=123")
+        == PlaylistImport.Link(platform: .netease, sourceID: "3778678"))
+check("酷我 playlist_detail/<pid>",
+      PlaylistImport.detect("https://www.kuwo.cn/playlist_detail/1082685104")
+        == PlaylistImport.Link(platform: .kuwo, sourceID: "1082685104"))
+check("酷我移动版 newh5app/playlist_detail/<pid>",
+      PlaylistImport.detect("https://m.kuwo.cn/newh5app/playlist_detail/1082685104?f=wx")
+        == PlaylistImport.Link(platform: .kuwo, sourceID: "1082685104"))
+check("酷狗新版 gcid 链接",
+      PlaylistImport.detect("https://m.kugou.com/songlist/gcid_3z9vj1svz2yz0c4/?src_cid=3z9vj1svz2yz0c4")
+        == PlaylistImport.Link(platform: .kugou, sourceID: "gcid_3z9vj1svz2yz0c4"))
+check("酷狗老版 /yy/special/single/<id>.html",
+      PlaylistImport.detect("https://www.kugou.com/yy/special/single/5988470.html")
+        == PlaylistImport.Link(platform: .kugou, sourceID: "5988470"))
+check("不是歌单链接（单曲页）→ 认不出",
+      PlaylistImport.detect("https://y.qq.com/n/ryqq/songDetail/003UkWuI0E8U0l") == nil)
+check("短链（不带 id）→ detect 返回 nil，交给 resolve 跟 302",
+      PlaylistImport.detect("https://c6.y.qq.com/base/fcgi-bin/u?__=abcdEF") == nil)
+check("纯文字 / 空串 → nil",
+      PlaylistImport.detect("   ") == nil && PlaylistImport.detect("今天天气不错") == nil)
+check("句末英文标点会被切掉",
+      PlaylistImport.detect("看这个 https://music.163.com/playlist?id=3778678.")
+        == PlaylistImport.Link(platform: .netease, sourceID: "3778678"))
+
+section("导入歌单：四家解析（纯函数）")
+
+// QQ：真响应裁成 4 条，覆盖「正常 / 缺 mid / 缺歌名 / 重复 mid」四种情况
+let qqImportFixture: [String: Any] = [
+    "code": 0,
+    "cdlist": [[
+        "dissname": "2001-2010",
+        "nickname": "Roma",
+        "logo": "http://y.gtimg.cn/music/photo_new/T002R300x300M000003ivCBx1uljWi.jpg?n=1",
+        "songnum": 4,
+        "songlist": [
+            [
+                "mid": "003f8Gqc32Unpb",
+                "name": "呼吸决定",
+                "interval": 251,
+                "singer": [["name": "姚晓棠"], ["name": "张星特"]] as [[String: Any]],
+                "album": ["name": "天赐的声音第七季 第10期", "mid": "003ivCBx1uljWi"] as [String: Any]
+            ],
+            [
+                "mid": "",
+                "name": "没有 mid 的歌"
+            ],
+            [
+                "mid": "001qqq",
+                "name": "",
+                "singer": [] as [[String: Any]],
+                "album": [:] as [String: Any]
+            ],
+            [
+                "mid": "003f8Gqc32Unpb",
+                "name": "呼吸决定（重复条目）",
+                "interval": 251,
+                "singer": [] as [[String: Any]],
+                "album": ["name": ""] as [String: Any]
+            ]
+        ] as [[String: Any]]
+    ] as [String: Any]]
+]
+
+if let qq = PlaylistImport.parseQQ(qqImportFixture, sourceID: "8887675900") {
+    check("QQ：歌单名 / 创建者 / 封面（http → https）",
+          qq.name == "2001-2010" && qq.creator == "Roma"
+            && qq.cover.hasPrefix("https://y.gtimg.cn/"),
+          "\(qq.name) / \(qq.creator) / \(qq.cover)")
+    check("QQ：平台 id 用 mid，缺 mid / 缺歌名 / 重复 mid 都被丢掉", qq.songs.count == 1,
+          "\(qq.songs.count)")
+    check("QQ：多位歌手用 / 连接、专辑进 album、曲长取 interval",
+          qq.songs.first?.singer == "姚晓棠/张星特"
+            && qq.songs.first?.album == "天赐的声音第七季 第10期"
+            && qq.songs.first?.durationSec == 251,
+          "\(String(describing: qq.songs.first?.singer))")
+    check("QQ：封面用 album.mid 拼官方 T002R300x300M000",
+          qq.songs.first?.picURL == "https://y.gtimg.cn/music/photo_new/T002R300x300M000003ivCBx1uljWi.jpg")
+    check("QQ：id 里带平台前缀（去重/收藏都靠它）", qq.songs.first?.id == "qq_003f8Gqc32Unpb")
+} else {
+    check("QQ 歌单解析", false, "parseQQ 返回 nil")
+}
+
+// 网易：id=0 / 缺歌名的脏条目丢掉；时长是毫秒；封面 http 升 https
+let neteaseImportFixture: [String: Any] = [
+    "code": 200,
+    "playlist": [
+        "name": "热歌榜",
+        "coverImgUrl": "http://p1.music.126.net/x.jpg",
+        "creator": ["nickname": "网易云音乐"] as [String: Any],
+        "trackCount": 3,
+        "tracks": [
+            [
+                "id": 3460493895,
+                "name": "冬天又来临",
+                "dt": 169384,
+                "ar": [["name": "罗言"]] as [[String: Any]],
+                "al": ["name": "冬天又来临", "picUrl": "http://p3.music.126.net/x.jpg"] as [String: Any]
+            ],
+            [
+                "id": 0,
+                "name": "没有 id 的歌"
+            ],
+            [
+                "id": 123,
+                "name": "老歌",
+                "dt": 200000,
+                "ar": [["name": "A"], ["name": "B"]] as [[String: Any]],
+                "al": ["name": ""] as [String: Any]
+            ]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+if let ne = PlaylistImport.parseNetease(neteaseImportFixture, sourceID: "3778678") {
+    check("网易：歌单名 / 创建者 / 封面（http → https）",
+          ne.name == "热歌榜" && ne.creator == "网易云音乐"
+            && ne.cover == "https://p1.music.126.net/x.jpg",
+          "\(ne.name) / \(ne.creator) / \(ne.cover)")
+    check("网易：id=0 的条目被丢掉", ne.songs.count == 2, "\(ne.songs.count)")
+    check("网易：毫秒 → 秒、多位歌手用 / 连接",
+          ne.songs.first?.durationSec == 169 && ne.songs.first?.singer == "罗言",
+          "\(String(describing: ne.songs.first?.durationSec))")
+    check("网易：专辑图 http 升 https",
+          ne.songs.first?.picURL == "https://p3.music.126.net/x.jpg")
+} else {
+    check("网易歌单解析", false, "parseNetease 返回 nil")
+}
+
+check("歌单不存在（code=404）判失败",
+      PlaylistImport.parseNetease(["code": 404, "playlist": [:]], sourceID: "1") == nil)
+check("空 tracks 判失败",
+      PlaylistImport.parseNetease(["code": 200, "playlist": ["name": "x", "tracks": []]],
+                                  sourceID: "1") == nil)
+
+// 酷狗：filename 是「歌手 - 歌名」一整条；封面模板要换 size 并升 https
+check("酷狗 filename：歌手 - 歌名",
+      PlaylistImport.splitKugouFilename("队长 - NUNA") == (name: "NUNA", artist: "队长"),
+      "\(PlaylistImport.splitKugouFilename("队长 - NUNA"))")
+check("酷狗 filename：没有分隔符就整条当歌名",
+      PlaylistImport.splitKugouFilename("没有分隔符") == (name: "没有分隔符", artist: ""))
+check("酷狗 filename：歌名里还有 - 时只切第一个",
+      PlaylistImport.splitKugouFilename("A - B - C") == (name: "B - C", artist: "A"))
+check("酷狗封面：{size} → 400 且 http 升 https",
+      PlaylistImport.kugouCover("http://imge.kugou.com/stdmusic/{size}/a.jpg")
+        == "https://imge.kugou.com/stdmusic/400/a.jpg",
+      PlaylistImport.kugouCover("http://imge.kugou.com/stdmusic/{size}/a.jpg"))
+
+let kugouImportItems: [[String: Any]] = [
+    [
+        "hash": "AFCCB65173AB3ED8E10C9792F1E85ED5",
+        "filename": "队长 - NUNA",
+        "duration": 222,
+        "trans_param": ["union_cover": "http://imge.kugou.com/stdmusic/{size}/20250311/a.jpg"] as [String: Any]
+    ],
+    [
+        "hash": "",
+        "filename": "没有 hash 的歌"
+    ]
+]
+let kugouSongs = PlaylistImport.parseKugouSongs(kugouImportItems)
+check("酷狗：hash 进 platformID、歌名/歌手拆开、封面见 union_cover",
+      kugouSongs.count == 1
+        && kugouSongs.first?.platformID == "AFCCB65173AB3ED8E10C9792F1E85ED5"
+        && kugouSongs.first?.name == "NUNA"
+        && kugouSongs.first?.singer == "队长"
+        && kugouSongs.first?.durationSec == 222
+        && kugouSongs.first?.picURL == "https://imge.kugou.com/stdmusic/400/20250311/a.jpg",
+      "\(kugouSongs)")
+
+check("跨条目去重：同一个 id 只留第一次",
+      PlaylistImport.dedupe([
+        song(.qq, "晴天", "周杰伦", id: "q1"),
+        song(.qq, "晴天（重复）", "周杰伦", id: "q1"),
+        song(.kuwo, "晴天", "周杰伦", id: "q1")
+      ]).count == 2)
+check("导入上限 1000 首（和网易 n=1000 同一口径）",
+      PlaylistImport.maxSongs == 1000 && PlaylistImport.pageSize == 100,
+      "\(PlaylistImport.maxSongs)/\(PlaylistImport.pageSize)")
+check("QQ 请求串带 disstid",
+      PlaylistImport.qqURL("8887675900").contains("disstid=8887675900"))
+check("网易请求串带 id 与 n=1000",
+      PlaylistImport.neteaseURL("3778678").contains("id=3778678")
+        && PlaylistImport.neteaseURL("3778678").contains("n=1000"))
+check("酷狗请求串带 specialid 与页码",
+      PlaylistImport.kugouSongsURL("5988470", page: 2).contains("specialid=5988470")
+        && PlaylistImport.kugouSongsURL("5988470", page: 2).contains("page=2"))
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

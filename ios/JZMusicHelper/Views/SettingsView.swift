@@ -20,6 +20,8 @@ struct SettingsView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
+    /// 导入进来的歌单：这里只做入口与计数，歌单本身的展示在发现页「我的歌单」（老板 2026-11-19）
+    @Environment(MyPlaylistStore.self) private var myPlaylists
     @EnvironmentObject private var downloads: DownloadManager
 
     @State private var lyricsCacheCount = 0
@@ -43,6 +45,25 @@ struct SettingsView: View {
                 Text("连上车载蓝牙或车机后自动开始放：上次没播完的从断开的地方接着放，没有就放热门歌单。App 被系统杀掉之后需要先打开一次。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            // 导入歌单（老板 2026-11-19）：入口只放设置页。导入过以后发现页才会出现「我的歌单」模块，
+            // 没导入时发现页一个像素都不多。歌单整份落盘，之后不再联网。
+            Section("歌单") {
+                NavigationLink {
+                    ImportPlaylistView()
+                } label: {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        Text("导入歌单")
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: Tokens.Spacing.xs)
+                        Text(myPlaylists.isEmpty
+                             ? "QQ / 网易 / 酷我 / 酷狗"
+                             : "已导入 \(myPlaylists.playlists.count) 个")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
             }
 
             // 心动模式（第四十一轮）：只暴露"用户真的想调"的那一个量——新旧比例。
