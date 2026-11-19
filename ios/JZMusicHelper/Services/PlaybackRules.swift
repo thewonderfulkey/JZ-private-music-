@@ -2,37 +2,45 @@ import Foundation
 
 // MARK: - 播放模式
 //
-// 与 Android `PlayMode` 同口径，三态循环顺序一致：单曲循环 → 列表循环 → 随机播放 → 单曲循环。
+// 与 Android `PlayMode` 同口径，循环顺序：单曲循环 → 列表循环 → 随机播放 → **心动模式** → 单曲循环。
 // 注意 SINGLE_LOOP 不是"放完停"，是**循环重播当前曲**。
+//
+// 心动模式（heartbeat，第四十一轮）：`queue` 变成"本次心动的会话队列"
+// （已播 + 当前 + 即将播放），下一首由 `HeartbeatEngine` 按用户数据算出来再追加进去，
+// 所以它的 next/previous 就是 **index ± 1**，不做取模、也不随机。
 enum PlayMode: String, Codable, CaseIterable, Sendable {
     case singleLoop
     case listLoop
     case shuffle
+    case heartbeat
 
-    /// 界面文案（与 Android 一致）
+    /// 界面文案
     var displayName: String {
         switch self {
         case .singleLoop: return "单曲循环"
         case .listLoop: return "列表循环"
         case .shuffle: return "随机播放"
+        case .heartbeat: return "心动模式"
         }
     }
 
-    /// SF Symbols（设计稿 §7.1）
+    /// SF Symbols
     var symbolName: String {
         switch self {
         case .singleLoop: return "repeat.1"
         case .listLoop: return "repeat"
         case .shuffle: return "shuffle"
+        case .heartbeat: return "sparkles"
         }
     }
 
-    /// 点一下换到下一档（Android：SINGLE_LOOP → LIST_LOOP → SHUFFLE → SINGLE_LOOP）
+    /// 点一下换到下一档（单曲 → 列表 → 随机 → 心动 → 单曲）
     func cycled() -> PlayMode {
         switch self {
         case .singleLoop: return .listLoop
         case .listLoop: return .shuffle
-        case .shuffle: return .singleLoop
+        case .shuffle: return .heartbeat
+        case .heartbeat: return .singleLoop
         }
     }
 }
@@ -59,6 +67,8 @@ enum PlaybackRules {
     /// - 单曲循环：还是当前这首
     /// - 列表循环：顺序取模，最后一首回到第 0 首
     /// - 随机：随机到一个**不等于当前**的索引（只有一首时就是它自己）
+    /// - 心动：会话队列里已经排好了下一首（`HeartbeatEngine` 追加的），按 index+1 前进；
+    ///   后面没有就是 nil（等引擎算出来再追加，绝不取模回到开头）
     ///
     /// `randomIn` 由调用方注入（测试里给确定性实现），范围语义同 `Int.random(in:)`。
     static func nextIndex(count: Int,
@@ -80,6 +90,9 @@ enum PlaybackRules {
                 pick = (pick + 1) % count
             }
             return pick
+        case .heartbeat:
+            let next = current + 1
+            return next < count ? next : nil
         }
     }
 
@@ -97,6 +110,9 @@ enum PlaybackRules {
             return (current - 1 + count) % count
         case .shuffle:
             return nextIndex(count: count, current: current, mode: .shuffle, randomIn: randomIn)
+        case .heartbeat:
+            let prev = current - 1
+            return prev >= 0 ? prev : nil
         }
     }
 

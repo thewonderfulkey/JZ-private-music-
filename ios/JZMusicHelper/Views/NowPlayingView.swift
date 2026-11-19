@@ -186,6 +186,8 @@ struct NowPlayingView: View {
                     coverStage(width: w, side: coverSide)
                     Spacer(minLength: gap)
                     titleStage(width: w)
+                    heartbeatStrip(width: w)
+                        .padding(.top, Tokens.Spacing.xxs)
                     Spacer(minLength: gap)
                     quickRow(width: w)
                     Spacer(minLength: gap)
@@ -323,6 +325,13 @@ struct NowPlayingView: View {
                     }
                 }
             }
+            if player.mode == .heartbeat, player.currentSong != nil {
+                Button(role: .destructive) {
+                    player.dislikeCurrentSong()
+                } label: {
+                    Label("不感兴趣", systemImage: "hand.thumbsdown")
+                }
+            }
             Button {
                 showSourceDetail = true
             } label: {
@@ -423,6 +432,52 @@ struct NowPlayingView: View {
         }
         .frame(width: width - Tokens.Spacing.xl * 2)
         .padding(.top, Tokens.Spacing.m)
+    }
+
+    // MARK: 心动模式（推荐理由 + 不感兴趣）
+
+    /// 只在心动模式出现：一句"为什么是这首"，右边一个「不感兴趣」。
+    ///
+    /// 为什么值得占一行：算法推的歌如果不说理由，用户只会觉得"怎么放了首没听过的"；
+    /// 说清"你下载过 X 的歌"，同一首歌的观感就完全不同（网易云心动模式的核心也是这个）。
+    @ViewBuilder
+    private func heartbeatStrip(width: CGFloat) -> some View {
+        if player.mode == .heartbeat {
+            HStack(spacing: Tokens.Spacing.xxs + 2) {
+                Image(systemName: "sparkles")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Tokens.Palette.vermilion)
+                Text(player.heartbeatNotice
+                     ?? (player.heartbeatReason.isEmpty ? "心动模式" : player.heartbeatReason))
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if player.isHeartbeatPlanning {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.white.opacity(0.55))
+                        .accessibilityLabel("正在选下一首")
+                }
+                Spacer(minLength: Tokens.Spacing.xxs)
+                Button {
+                    Haptics.trackChange()
+                    player.dislikeCurrentSong()
+                } label: {
+                    Text("不感兴趣")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.press)
+                .accessibilityLabel("不感兴趣")
+                .accessibilityHint("减少这首歌和这位歌手的推荐，并跳到下一首")
+            }
+            .frame(width: width - Tokens.Spacing.xl * 2)
+        }
     }
 
     /// 音质事实（参考截屏那一排小胶囊）：容器 / 码率 / 平台 / 是否已下载
@@ -1263,6 +1318,11 @@ struct PlayerQueueSheet: View {
         VStack(spacing: 0) {
             header
 
+            // 心动模式：先给"即将播放"——黑盒连播会让人不信任，看到下一首才敢放着不管
+            if player.mode == .heartbeat, !player.heartbeatUpcoming.isEmpty {
+                upcomingSection
+            }
+
             if player.queue.isEmpty {
                 emptyState
             } else {
@@ -1324,6 +1384,67 @@ struct PlayerQueueSheet: View {
             parts.append("约 \(Int((total / 60).rounded())) 分钟")
         }
         return parts.joined(separator: " · ")
+    }
+
+    // MARK: 即将播放（心动模式）
+
+    /// 心动模式算好的下一两首：点播放键=现在切过去，点 ✕=不感兴趣（会立刻重排）。
+    private var upcomingSection: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            Text("即将播放 · 心动模式")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, Tokens.Spacing.m)
+
+            ForEach(player.heartbeatUpcoming, id: \.song.id) { pick in
+                HStack(spacing: Tokens.Spacing.s) {
+                    SongArtwork(song: pick.song, size: 36, radius: Tokens.Radius.artworkSmall)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(pick.song.name)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Text(pick.reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: Tokens.Spacing.xs)
+
+                    Button {
+                        player.playUpcoming(id: pick.song.id)
+                        dismiss()
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Tokens.Palette.vermilion)
+                            .frame(width: Tokens.Spacing.minTapTarget,
+                                   height: Tokens.Spacing.minTapTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.press)
+                    .accessibilityLabel("现在播放 \(pick.song.name)")
+
+                    Button {
+                        Haptics.trackChange()
+                        player.heartbeat.dislike(pick.song)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: Tokens.Spacing.minTapTarget,
+                                   height: Tokens.Spacing.minTapTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.press)
+                    .accessibilityLabel("不感兴趣：\(pick.song.name)")
+                }
+                .padding(.horizontal, Tokens.Spacing.m)
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(.bottom, Tokens.Spacing.xs)
     }
 
     // MARK: 行

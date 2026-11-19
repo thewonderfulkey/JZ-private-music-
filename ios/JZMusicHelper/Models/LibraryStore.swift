@@ -24,10 +24,19 @@ final class LibraryStore {
     private(set) var searchHistory: [String] = []
     private(set) var recognizeHistory: [Song] = []
 
+    /// 收藏时间 / 搜索时间（`Song.id` / 关键词 → 时间）。
+    ///
+    /// 心动模式的画像要按"多久以前"衰减：收藏 45 天半衰、搜索 10 天半衰。
+    /// 单独存一份映射而不是改 `favorites.json` 的结构——旧数组格式不动，升级不丢收藏。
+    private(set) var favoriteDates: [String: Date] = [:]
+    private(set) var searchDates: [String: Date] = [:]
+
     private let favoritesURL = LibraryStore.docURL("favorites.json")
     private let recentURL = LibraryStore.docURL("recent_songs.json")
     private let searchURL = LibraryStore.docURL("search_history.json")
     private let recognizeURL = LibraryStore.docURL("recognize_history.json")
+    private let favoriteDatesURL = LibraryStore.docURL("favorite_dates.json")
+    private let searchDatesURL = LibraryStore.docURL("search_dates.json")
 
     private init() {
         load()
@@ -43,17 +52,23 @@ final class LibraryStore {
     func toggleFavorite(_ song: Song) -> Bool {
         if let idx = favorites.firstIndex(where: { $0.id == song.id }) {
             favorites.remove(at: idx)
+            favoriteDates.removeValue(forKey: song.id)
             save(favorites, to: favoritesURL)
+            save(favoriteDates, to: favoriteDatesURL)
             return false
         }
         favorites.insert(song, at: 0)
+        favoriteDates[song.id] = Date()
         save(favorites, to: favoritesURL)
+        save(favoriteDates, to: favoriteDatesURL)
         return true
     }
 
     func removeFavorite(_ song: Song) {
         favorites.removeAll { $0.id == song.id }
+        favoriteDates.removeValue(forKey: song.id)
         save(favorites, to: favoritesURL)
+        save(favoriteDates, to: favoriteDatesURL)
     }
 
     // MARK: 最近播放
@@ -82,12 +97,16 @@ final class LibraryStore {
         if searchHistory.count > Limits.search {
             searchHistory = Array(searchHistory.prefix(Limits.search))
         }
+        searchDates[trimmed] = Date()
         save(searchHistory, to: searchURL)
+        save(searchDates, to: searchDatesURL)
     }
 
     func clearSearchHistory() {
         searchHistory.removeAll()
+        searchDates.removeAll()
         save(searchHistory, to: searchURL)
+        save(searchDates, to: searchDatesURL)
     }
 
     // MARK: 识曲历史
@@ -139,5 +158,32 @@ final class LibraryStore {
            let list = try? JSONDecoder().decode([Song].self, from: data) {
             recognizeHistory = Array(list.prefix(Limits.recognize))
         }
+        if let data = try? Data(contentsOf: favoriteDatesURL),
+           let map = try? JSONDecoder().decode([String: Date].self, from: data) {
+            favoriteDates = map
+        }
+        if let data = try? Data(contentsOf: searchDatesURL),
+           let map = try? JSONDecoder().decode([String: Date].self, from: data) {
+            searchDates = map
+        }
+        backfillMissingDates()
+    }
+
+    /// 老用户升级上来时没有时间戳：按"列表顺序 = 由新到旧"补一个**近似**时间。
+    ///
+    /// 不补的话这些收藏会被当成"从没收藏过"（画像里等于不存在），
+    /// 心动模式的旧爱池会突然变空。每往后一条推 3 天，30 条之后一律按 90 天算。
+    private func backfillMissingDates() {
+        let now = Date()
+        for (index, song) in favorites.enumerated() where favoriteDates[song.id] == nil {
+            let days = min(90.0, Double(index) * 3.0)
+            favoriteDates[song.id] = now.addingTimeInterval(-days * 86_400)
+        }
+        for (index, keyword) in searchHistory.enumerated() where searchDates[keyword] == nil {
+            let days = min(30.0, Double(index) * 1.5)
+            searchDates[keyword] = now.addingTimeInterval(-days * 86_400)
+        }
+        if !favoriteDates.isEmpty { save(favoriteDates, to: favoriteDatesURL) }
+        if !searchDates.isEmpty { save(searchDates, to: searchDatesURL) }
     }
 }

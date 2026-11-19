@@ -12,18 +12,20 @@
                      │                                     │
                      │                                     ├─▶ 锁屏/控制中心（NowPlayingCenter）
                      │                                     └─▶ 耳机键 / AirPods（MPRemoteCommandCenter）
-                     ├─▶ 播完推进（单曲循环 / 列表 / 随机）
+                     ├─▶ 播完推进（单曲循环 / 列表 / 随机 / **心动**）
                      ├─▶ 时长防线（差 >5s 判坏源）
                      └─▶ 无源跳歌（连跳 3 首停）
 ```
 
 | 文件 | 职责 |
 |---|---|
-| [PlaybackRules.swift](ios/JZMusicHelper/Services/PlaybackRules.swift) | **纯函数**：`PlayMode` 三态、下一首/上一首索引、时长校验、连跳上限、模式循环顺序。不依赖 AVFoundation，所以 CI 能直接断言 |
+| [PlaybackRules.swift](ios/JZMusicHelper/Services/PlaybackRules.swift) | **纯函数**：`PlayMode` 四态、下一首/上一首索引、时长校验、连跳上限、模式循环顺序。不依赖 AVFoundation，所以 CI 能直接断言 |
+| [HeartbeatRules.swift](ios/JZMusicHelper/Services/HeartbeatRules.swift) | **纯函数**：心动模式的画像（四通道加权 / 饱和 / 衰减）、打分与惩罚、MMR 多样性、新旧比例调度。CI 有断言，见 [IOS-HEARTBEAT.md](IOS-HEARTBEAT.md) |
+| [HeartbeatEngine.swift](ios/JZMusicHelper/Services/HeartbeatEngine.swift) | 心动模式的编排：召回（种子歌手 / 画像歌手 / 搜索词 / 旧爱池）→ 排序 → 预取整首落盘 → 交给播放器；播放事件与「不感兴趣」的持久化 |
 | [AudioPlayer.swift](ios/JZMusicHelper/Services/AudioPlayer.swift) | `PlayerEngine`（`@Observable`）：队列、播放/暂停、上一首/下一首、seek、模式切换、取流（3 轮重试 + 坏源黑名单）、进度与缓冲、播完推进、坏源拒播、无源跳过 |
 | [NowPlayingCenter.swift](ios/JZMusicHelper/Services/NowPlayingCenter.swift) | 音频会话（`.playback` + 后台）、锁屏/控制中心信息（含异步封面）、远程命令、打断恢复、拔耳机暂停 |
 | [MiniPlayerBar.swift](ios/JZMusicHelper/Views/MiniPlayerBar.swift) | 迷你条（56pt、材质、进度细线） |
-| [NowPlayingView.swift](ios/JZMusicHelper/Views/NowPlayingView.swift) | 播放页（封面 / 题名 / 进度含缓冲带 / 三态循环 / 上一首-播放-下一首 / 状态行 / 音源行） |
+| [NowPlayingView.swift](ios/JZMusicHelper/Views/NowPlayingView.swift) | 播放页（封面 / 题名 / 进度含缓冲带 / 四态循环 / 心动理由条与「不感兴趣」/ 上一首-播放-下一首 / 状态行 / 音源行 / 播放列表含「即将播放」） |
 
 接入点：`MainTabView` 注入引擎、`safeAreaInset` 挂迷你条、`sheet` 打开播放页；`SearchView` 的行改成「点一下就播，队列 = 当前结果整列」（与 Android 一致）。
 
@@ -33,7 +35,7 @@
 
 | 能力 | Android | iOS | 是否等价 |
 |---|---|---|---|
-| 播放模式 | `SINGLE_LOOP / LIST_LOOP / SHUFFLE`，点一下循环切换 | 同名三态，`cycled()` 同顺序 | ✅ |
+| 播放模式 | `SINGLE_LOOP / LIST_LOOP / SHUFFLE`，点一下循环切换 | `SINGLE_LOOP / LIST_LOOP / SHUFFLE / HEARTBEAT`，`cycled()` 同顺序；心动模式为 iOS 独有，见 [IOS-HEARTBEAT.md](IOS-HEARTBEAT.md) | ➕ |
 | 播完推进 | 单曲循环重播 / 列表取模 / 随机不重复当前 | 同；单曲循环是 `seek(0)+play`，**不重新取流**（省 1–12s） | ✅（更快） |
 | 上一首 | 随机模式下也是重随机 | 同 | ✅ |
 | 时长防线 | 实际与曲目差 >5s → 拒播换源 | 同，且把该 URL 记进坏源名单，换源时跳过 | ✅ |
@@ -46,7 +48,7 @@
 | 音量 | 无应用内音量（系统媒体音量） | 同 | ✅ |
 | 倍速 / 均衡器 / 睡眠定时 | 都没有 | 都没有 | ✅ |
 | 播放队列页 | 内部有队列、无页面 | 内部有队列、暂无页面（设计稿 §3.12，随 P0/P5 的 UI 一起做） | 等价 |
-| 下一首预取 | 预取 3 首落盘 | 未做（AVPlayer 边下边播；省流优先，后续按需加） | 部分 |
+| 下一首预取 | 预取 3 首落盘 | 心动模式预取 1-2 首并整首落盘（切歌读本地文件）；其余模式仍是边下边播 | 部分 |
 
 ---
 

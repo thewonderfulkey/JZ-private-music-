@@ -246,7 +246,7 @@
 | Tab · 资料库 | `square.stack.fill` / `square.stack` |
 | 播放 | `play.fill` / `pause.fill` |
 | 上一首 / 下一首 | `backward.fill` / `forward.fill` |
-| 循环三态 | `repeat`（列表循环）/ `repeat.1`（单曲循环）/ `shuffle`（随机） |
+| 循环四态 | `repeat`（列表循环）/ `repeat.1`（单曲循环）/ `shuffle`（随机）/ `sparkles`（心动模式） |
 | 收藏 | `heart` / `heart.fill` |
 | 下载 | `arrow.down.circle`、`arrow.down.circle.fill`（已完成） |
 | 更多 | `ellipsis` |

@@ -19,6 +19,7 @@ struct SettingsView: View {
 
     @Environment(SettingsStore.self) private var settings
     @Environment(LibraryStore.self) private var library
+    @Environment(PlayerEngine.self) private var player
     @EnvironmentObject private var downloads: DownloadManager
 
     @State private var lyricsCacheCount = 0
@@ -42,6 +43,32 @@ struct SettingsView: View {
                 Text("连上车载蓝牙或车机后自动开始放：上次没播完的从断开的地方接着放，没有就放热门歌单。App 被系统杀掉之后需要先打开一次。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            // 心动模式（第四十一轮）：只暴露"用户真的想调"的那一个量——新旧比例。
+            // 四通道权重（下载 > 收藏 > 搜索 > 播放）是产品口径，不给用户拧。
+            Section("心动模式") {
+                VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        Text("熟悉度")
+                        Spacer(minLength: 0)
+                        Text(familiarityText)
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $settings.heartbeatOldShare,
+                           in: HeartbeatRules.minOldShare...HeartbeatRules.maxOldShare,
+                           step: 0.05)
+                        .accessibilityLabel("心动模式熟悉度")
+                        .accessibilityValue(familiarityText)
+                }
+                Text("向左更多没听过的新歌，向右更多你收藏 / 下载过的歌。播放页把模式切到「心动模式」后生效，按你的下载、收藏、搜索与播放历史逐首挑歌。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("不感兴趣", value: "\(player.heartbeat.dislikedCount) 首")
+                Button("恢复被减少推荐的歌") {
+                    player.heartbeat.clearDislikes()
+                }
+                .disabled(player.heartbeat.dislikedCount == 0)
             }
 
             Section("歌词") {
@@ -145,5 +172,13 @@ struct SettingsView: View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         return "\(version) (\(build))"
+    }
+
+    /// 把 0~0.6 的旧歌占比翻译成"三首里一首旧"——百分比没人算得过来
+    private var familiarityText: String {
+        let share = settings.heartbeatOldShare
+        if share <= 0.001 { return "全是新歌" }
+        let per = max(2, Int((1.0 / share).rounded()))
+        return "约 \(per) 首里 1 首旧"
     }
 }

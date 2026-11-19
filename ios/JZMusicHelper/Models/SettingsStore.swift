@@ -75,6 +75,8 @@ final class SettingsStore {
         static let lyricsCacheLimit = LyricsCacheRules.key
         /// 车载（车机 / 车载蓝牙）连上就自动播
         static let carAutoPlay = "car_auto_play"
+        /// 心动模式「熟悉度」：旧爱（收藏 / 下载过）在连播里的占比
+        static let heartbeatOldShare = "heartbeat_old_share"
         /// 下载保存位置：安全书签（Data）+ 显示名（键定义在 `DownloadLocation`，
         /// 因为下载落盘在 URLSession 的 delegate 队列上，那边不能读 @Observable 的 store）
         static let downloadBookmark = DownloadLocation.bookmarkKey
@@ -120,6 +122,18 @@ final class SettingsStore {
     /// 有上次没播完的从那句接着放，没有就放热门。
     var carAutoPlay: Bool {
         didSet { defaults.set(carAutoPlay, forKey: Key.carAutoPlay) }
+    }
+
+    /// 心动模式「熟悉度」：下一次心动连播里，"旧爱（收藏 / 下载过）"占多少。
+    ///
+    /// 0 = 全推没听过的新歌；默认 1/3（三首里两首新、一首旧）；上限 0.6。
+    /// 再高就退化成"随机播放收藏"了——那是另一种模式，不是心动。
+    var heartbeatOldShare: Double {
+        didSet {
+            let clamped = HeartbeatRules.clampOldShare(heartbeatOldShare)
+            if clamped != heartbeatOldShare { heartbeatOldShare = clamped }
+            defaults.set(clamped, forKey: Key.heartbeatOldShare)
+        }
     }
 
     /// 自选下载文件夹的安全书签（nil = 用 App 自己的「文件 › JZ 音乐 › 音乐」）
@@ -203,6 +217,10 @@ final class SettingsStore {
                                           : LyricsCacheRules.defaultLimit
 
         carAutoPlay = d.object(forKey: Key.carAutoPlay) as? Bool ?? true
+
+        let savedShare = d.object(forKey: Key.heartbeatOldShare) as? Double
+        heartbeatOldShare = savedShare.map(HeartbeatRules.clampOldShare)
+            ?? HeartbeatRules.defaultOldShare
 
         downloadFolderBookmark = d.data(forKey: Key.downloadBookmark)
         downloadFolderName = d.string(forKey: Key.downloadFolderName)

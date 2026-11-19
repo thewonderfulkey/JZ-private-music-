@@ -644,12 +644,130 @@ do {
     check("连跳 3 首停下", PlaybackRules.shouldStopAfterSkips(3))
     check("停下的提示是完整句子", PlaybackRules.skipMessage(3).contains("3"))
 
-    // 三态循环顺序：单曲 → 列表 → 随机 → 单曲
+    // 四态循环顺序：单曲 → 列表 → 随机 → 心动 → 单曲
     check("模式循环顺序",
           PlayMode.singleLoop.cycled() == .listLoop
           && PlayMode.listLoop.cycled() == .shuffle
-          && PlayMode.shuffle.cycled() == .singleLoop)
-    check("三种模式都有文案", PlayMode.allCases.allSatisfy { !$0.displayName.isEmpty })
+          && PlayMode.shuffle.cycled() == .heartbeat
+          && PlayMode.heartbeat.cycled() == .singleLoop)
+    check("四种模式都有文案", PlayMode.allCases.allSatisfy { !$0.displayName.isEmpty })
+
+    // 心动模式的队列口径：index+1，末尾是 nil（绝不取模回到开头）
+    check("心动：下一首是 index+1",
+          PlaybackRules.nextIndex(count: 5, current: 1, mode: .heartbeat, randomIn: { _ in 0 }) == 2)
+    check("心动：最后一首没有下一首",
+          PlaybackRules.nextIndex(count: 5, current: 4, mode: .heartbeat, randomIn: { _ in 0 }) == nil)
+    check("心动：上一首是 index-1",
+          PlaybackRules.previousIndex(count: 5, current: 3, mode: .heartbeat, randomIn: { _ in 0 }) == 2)
+    check("心动：第一首没有上一首",
+          PlaybackRules.previousIndex(count: 5, current: 0, mode: .heartbeat, randomIn: { _ in 0 }) == nil)
+}
+
+// MARK: - 9.5 心动模式（画像 / 排序 / 新旧调度）
+
+section("心动模式四通道与调度")
+
+do {
+    check("权重顺序 下载 > 收藏 > 搜索 > 播放",
+          HeartbeatRules.wDownload > HeartbeatRules.wFavorite
+          && HeartbeatRules.wFavorite > HeartbeatRules.wSearch
+          && HeartbeatRules.wSearch > HeartbeatRules.wPlay)
+
+    // 1/3 旧 → 新 新 旧 循环；第 1 首永远是新的（刚切进来先给新歌）
+    let pattern = (1...6).map { HeartbeatRules.wantsOld(position: $0, oldShare: 1.0 / 3.0) }
+    check("1/3 旧 → 新新新旧新新", pattern == [false, false, true, false, false, true], "\(pattern)")
+    check("0 旧 → 永远新",
+          (1...8).allSatisfy { !HeartbeatRules.wantsOld(position: $0, oldShare: 0) })
+    check("0.6 旧 → 第一首仍是新歌",
+          !HeartbeatRules.wantsOld(position: 1, oldShare: 0.6))
+    check("旧歌占比被夹到 0.6", HeartbeatRules.clampOldShare(0.9) == 0.6)
+    check("负数夹到 0", HeartbeatRules.clampOldShare(-1) == 0)
+}
+
+do {
+    let now = Date()
+    // 条数差 10 倍：30 次播放（周杰伦） vs 3 次下载（林俊杰）
+    // 直接按条数加权的话播放一定赢；饱和之后下载通道上限 1.0、播放 0.4，应当是下载赢。
+    var plays: [HeartbeatPlayEvent] = []
+    for i in 0..<30 {
+        plays.append(HeartbeatPlayEvent(
+            song: song(.qq, "周杰伦第\(i)首", "周杰伦", id: "jp\(i)"),
+            startedAt: now.addingTimeInterval(-Double(i) * 3600),
+            listenedSec: 250,
+            completed: true))
+    }
+    let downloads: [(song: Song, at: Date)] = (0..<3).map { i -> (song: Song, at: Date) in
+        let s = song(.qq, "林俊杰第\(i)首", "林俊杰", id: "ll\(i)")
+        return (song: s, at: now.addingTimeInterval(-Double(i) * 86_400))
+    }
+    let profile = HeartbeatRules.buildProfile(downloads: downloads,
+                                              favorites: [],
+                                              searches: [],
+                                              plays: plays,
+                                              now: now)
+    let dl = profile.artist["林俊杰"] ?? 0
+    let pl = profile.artist["周杰伦"] ?? 0
+    check("下载通道压过 10 倍数量的播放通道", dl > pl, "下载=\(dl) 播放=\(pl)")
+    check("近 7 天听过的进 seen7d", profile.seen7d.contains("qq_jp0"))
+    check("top 歌手非空", !profile.topArtists.isEmpty)
+}
+
+do {
+    check("半衰期：60 天前 = 0.5", abs(HeartbeatRules.decay(ageDays: 60, halfLife: 60) - 0.5) < 0.001)
+    check("未来的事件当 0 天算（不放大）", HeartbeatRules.decay(ageDays: -10, halfLife: 60) == 1)
+
+    let a = HeartbeatRules.features(song(.qq, "晴天", "周杰伦", id: "f1"))
+    let b = HeartbeatRules.features(song(.netease, "七里香", "周杰伦", id: "f2"))
+    let c = HeartbeatRules.features(song(.qq, "Rolling in the Deep", "Adele", id: "f3"))
+    check("同歌手 + 同风格 → 余弦高", HeartbeatRules.cosine(a, b) > 0.5)
+    check("跨语种 → 余弦低", HeartbeatRules.cosine(a, c) < 0.3)
+
+    check("从没听过 → 满额怀旧加成", HeartbeatRules.stalenessBonus(lastPlayed: nil) == 18)
+    check("刚听过 → 几乎没有加成", HeartbeatRules.stalenessBonus(lastPlayed: Date()) < 1)
+    let short = HeartbeatPlayEvent(song: song(.qq, "半首", "某人", id: "q1"),
+                                   startedAt: Date(), listenedSec: 5, completed: false)
+    check("5 秒切掉的质量下限 0.3", abs(HeartbeatRules.playQuality(short) - 0.3) < 0.001)
+    check("30 秒的广告被挡在候选之外",
+          !HeartbeatRules.isPlayableCandidate(song(.qq, "广告", "某人", dur: 30)))
+}
+
+do {
+    let target = song(.qq, "夜曲", "周杰伦", id: "t1")
+    check("本会话放过 = 硬过滤",
+          HeartbeatRules.penalty(song: target, sessionKeys: ["qq_t1"], seen7d: [],
+                                 recentSongs: [], recentArtists: [], recentTags: [],
+                                 dislikedKeys: [], dislikedArtists: []) == 0)
+    check("不感兴趣 = 硬过滤",
+          HeartbeatRules.penalty(song: target, sessionKeys: [], seen7d: [],
+                                 recentSongs: [], recentArtists: [], recentTags: [],
+                                 dislikedKeys: ["qq_t1"], dislikedArtists: []) == 0)
+    let sameArtist = HeartbeatRules.penalty(song: target, sessionKeys: [], seen7d: [],
+                                            recentSongs: [], recentArtists: ["周杰伦"],
+                                            recentTags: [], dislikedKeys: [], dislikedArtists: [])
+    check("同歌手连着来 → 降权到 0.3", abs(sameArtist - 0.3) < 0.001, "\(sameArtist)")
+}
+
+do {
+    // MMR：同款（同歌手）分数更高，也要让位给"不像的那首"
+    let recent = [song(.qq, "最近这首", "周杰伦", id: "r1")]
+    let same = HeartbeatScored(song: song(.qq, "同款", "周杰伦", id: "a1"),
+                               score: 90, reason: .artist, detail: "周杰伦")
+    let diff = HeartbeatScored(song: song(.qq, "别款", "陈奕迅", id: "b1"),
+                               score: 88, reason: .artist, detail: "陈奕迅")
+    let picked = HeartbeatRules.diversify([same, diff], limit: 1, recent: recent)
+    check("MMR：分数略低但不像的优先", picked.first?.song.id == "qq_b1",
+          picked.first?.song.id ?? "nil")
+
+    check("下载理由带歌手",
+          HeartbeatRules.reasonText(.download, detail: "林俊杰").contains("林俊杰"))
+    check("搜索理由带关键词",
+          HeartbeatRules.reasonText(.search, detail: "晴天").contains("晴天"))
+    check("探索理由是兜底文案",
+          HeartbeatRules.reasonText(.explore, detail: "") == "为你探索")
+    check("热门兜底带榜上名次",
+          HeartbeatRules.reasonText(.hot, detail: "3").contains("3"),
+          HeartbeatRules.reasonText(.hot, detail: "3"))
+    check("热歌榜池上限是 20 首", HeartbeatRules.hotPoolLimit == 20)
 }
 
 // MARK: - 10 歌词：清洗、LRC、逐字解密

@@ -128,8 +128,14 @@ final class PlayerEngine {
     private(set) var bufferedTime: Double = 0
 
     /// 播放模式（持久化，键名与 Android 一致：`play_mode`）
+    ///
+    /// 切换统一走 `didSet`：进/出心动模式必须同步给引擎（否则从收藏页点「随机播放」
+    /// 这种直接赋值的路径会绕过 `setMode`，心动规划在后台继续跑）。
     var mode: PlayMode {
-        didSet { defaults.set(mode.rawValue, forKey: Self.keyMode) }
+        didSet {
+            defaults.set(mode.rawValue, forKey: Self.keyMode)
+            if oldValue != mode { syncHeartbeatMode() }
+        }
     }
 
     /// 音质偏好（持久化，键名 `quality`）。
@@ -144,6 +150,18 @@ final class PlayerEngine {
     // MARK: 内部
 
     private let player = AVPlayer()
+
+    /// 心动模式（选歌 + 预取 + 负反馈）。播放器只负责"放"，它只负责"选"。
+    /// 放在 init 里显式建（而不是属性默认值）：`@MainActor` 类型在属性默认值里初始化，
+    /// 在部分 Swift 版本会被判成"nonisolated 上下文里初始化主线程隔离类型"。
+    let heartbeat: HeartbeatEngine
+
+    /// 播放页要显示的心动状态（透传，避免视图直接摸引擎内部）
+    var heartbeatReason: String { heartbeat.reason }
+    var heartbeatNotice: String? { heartbeat.notice }
+    var isHeartbeatPlanning: Bool { heartbeat.isPlanning }
+    var heartbeatUpcoming: [HeartbeatEngine.Pick] { heartbeat.upcoming }
+
     private let defaults = UserDefaults.standard
     private static let keyMode = "play_mode"
     private static let keyQuality = "quality"
@@ -162,6 +180,16 @@ final class PlayerEngine {
     /// 续播断点：等这一条播放项 ready 之后再 seek（见 `play(queue:startAt:positionSeconds:)`）
     private var pendingRestoreSeconds: Double?
 
+    /// 心动模式预取下来的本地文件（切歌那一秒直接用，不再走网络）
+    private var pendingLocal: (songID: String, url: URL)?
+
+    /// 心动模式已经解析好的流地址（没来得及下载时用，省掉再解析一遍的 1-8 秒）
+    private var pendingStream: (songID: String, url: String)?
+
+    /// 进入心动模式时的队列下标：它之后的才是"心动自己追加的歌"。
+    /// 「上一首」之后再按「下一首」要靠它回到刚才那首，而不是在旧歌单里往下走。
+    private var heartbeatStartIndex = -1
+
     var hasCurrentSong: Bool { currentSong != nil }
     var progress: Double {
         guard duration > 0 else { return 0 }
@@ -179,6 +207,7 @@ final class PlayerEngine {
         // 第四十轮：音质不再是设置项。恒从最高档起取，拿不到由取流器逐级下降
         // （老用户存过的低档值一并忽略，不再把"以前调过 128k"带着走）。
         quality = .lossless
+        heartbeat = HeartbeatEngine()
     }
 
     private var systemAttached = false
@@ -215,6 +244,8 @@ final class PlayerEngine {
             adoptQueue(songs, at: target)
             return
         }
+        // 上一首到此为止：把"听了多久"结算掉（心动模式的负反馈与质量分都靠它）
+        heartbeat.trackEnded(listened: preciseTime, completed: false)
         stopCurrentForSwitch()
         queue = songs
         index = target
@@ -223,7 +254,20 @@ final class PlayerEngine {
         consecutiveSkips = 0
         resetProgress()
         prepareLyrics(for: songs[target])
+        syncHeartbeatSeed(songs[target])
         Task { await loadCurrent() }
+    }
+
+    /// 心动模式下用户手点了别的歌：种子跟着换（网易云同款），待播重排。
+    private func syncHeartbeatSeed(_ song: Song) {
+        guard mode == .heartbeat else { return }
+        // 换了一整列歌：从这一列的最后一个下标之后才算"心动自己追加的"
+        heartbeatStartIndex = queue.count - 1
+        if heartbeat.isActive {
+            heartbeat.adoptSeed(song)
+        } else {
+            heartbeat.activate(seed: song)
+        }
     }
 
     /// 从"上次断点"续播（车载自动播放用）：队列 + 起始位置一起给。
@@ -234,6 +278,7 @@ final class PlayerEngine {
         guard !songs.isEmpty else { return }
         attachSystemIfNeeded()
         let target = min(max(start, 0), songs.count - 1)
+        heartbeat.trackEnded(listened: preciseTime, completed: false)
         stopCurrentForSwitch()
         queue = songs
         index = target
@@ -243,6 +288,7 @@ final class PlayerEngine {
         resetProgress()
         pendingRestoreSeconds = positionSeconds.isFinite ? max(0, positionSeconds) : 0
         prepareLyrics(for: songs[target])
+        syncHeartbeatSeed(songs[target])
         Task { await loadCurrent() }
     }
 
@@ -298,6 +344,22 @@ final class PlayerEngine {
     /// 下一首（用户点的，或播完自动推进）
     func nextTrack() {
         guard !queue.isEmpty else { return }
+        if mode == .heartbeat {
+            // 用户按的"下一首"= 一次"跳过"，<30 秒算负反馈（写进事件，画像自己会用）
+            heartbeat.trackEnded(listened: preciseTime, completed: false)
+            // 回来过（上一首 → 下一首）就走心动自己追加过的那一首，而不是再算一首新的
+            let queuedNext = index + 1
+            if queuedNext < queue.count, queuedNext > heartbeatStartIndex {
+                goTo(queuedNext)
+                return
+            }
+            if let pick = heartbeat.takeNext() {
+                playHeartbeat(pick: pick)
+            } else {
+                planAndPlayHeartbeat()
+            }
+            return
+        }
         guard let next = PlaybackRules.nextIndex(
             count: queue.count, current: index, mode: mode,
             randomIn: { Int.random(in: $0) }) else { return }
@@ -323,6 +385,18 @@ final class PlayerEngine {
         mode = newMode
         statusText = newMode.displayName
         updateNowPlaying()
+    }
+
+    /// 进/出心动模式：进去就以当前这首为种子排下一首，出来就停掉规划。
+    private func syncHeartbeatMode() {
+        if mode == .heartbeat {
+            // 原有队列的最后一个下标：它之后才是心动自己追加的歌
+            heartbeatStartIndex = queue.count - 1
+            heartbeat.activate(seed: currentSong)
+        } else {
+            heartbeatStartIndex = -1
+            heartbeat.deactivate()
+        }
     }
 
     /// 绝对位置跳转（秒）。所有跳转（进度条拖动 / 点歌词 / 无障碍调整）都走这里，
@@ -422,8 +496,19 @@ final class PlayerEngine {
 
     // MARK: 内部流程
 
-    private func goTo(_ newIndex: Int) {
+    private func goTo(_ newIndex: Int, localURL: URL? = nil, streamURL: String? = nil) {
         guard queue.indices.contains(newIndex) else { return }
+        heartbeat.trackEnded(listened: preciseTime, completed: false)
+        if let localURL {
+            pendingLocal = (songID: queue[newIndex].id, url: localURL)
+        } else {
+            pendingLocal = nil
+        }
+        if let streamURL {
+            pendingStream = (songID: queue[newIndex].id, url: streamURL)
+        } else {
+            pendingStream = nil
+        }
         stopCurrentForSwitch()
         index = newIndex
         currentSong = queue[newIndex]
@@ -480,6 +565,43 @@ final class PlayerEngine {
             return
         }
 
+        // 心动模式预取下来的那一首：直接本地起播（这就是"切歌无缝"的关键）
+        if let pending = pendingLocal, pending.songID == song.id {
+            pendingLocal = nil
+            pendingStream = nil
+            if FileManager.default.fileExists(atPath: pending.url.path) {
+                let local = StreamSource(url: pending.url.absoluteString,
+                                         backendName: "心动缓存",
+                                         platform: song.platform,
+                                         quality: .high,
+                                         format: pending.url.pathExtension.lowercased(),
+                                         note: "播放中预取")
+                statusText = "心动缓存 · \(pending.url.lastPathComponent)"
+                start(item: AVPlayerItem(url: pending.url), song: song, source: local)
+                // 起播后按在线源继续升档（与在线起播同一条链，不牺牲音质）
+                scheduleQualityUpgrade(for: song)
+                return
+            }
+        }
+        pendingLocal = nil
+
+        // 心动模式现场解析好的流地址：直接用，省掉再走一遍取流链
+        if let pending = pendingStream, pending.songID == song.id,
+           let url = URL(string: pending.url) {
+            pendingStream = nil
+            let src = StreamSource(url: pending.url,
+                                   backendName: "心动解析",
+                                   platform: song.platform,
+                                   quality: .high,
+                                   format: url.pathExtension.lowercased(),
+                                   note: "播放中解析")
+            statusText = "心动解析 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
+            start(item: AVPlayerItem(url: url), song: song, source: src)
+            scheduleQualityUpgrade(for: song)
+            return
+        }
+        pendingStream = nil
+
         isResolving = true
         statusText = "正在解析音源…"
 
@@ -507,6 +629,13 @@ final class PlayerEngine {
         player.replaceCurrentItem(with: item)
         player.play()
         isPlaying = true
+        // 冷启动续播（快照/车载）走的不是 play(queue:)，这里补一次激活，否则心动引擎是"关着"的
+        if mode == .heartbeat, !heartbeat.isActive {
+            heartbeatStartIndex = queue.count - 1
+            heartbeat.activate(seed: song)
+        }
+        // 每首真正起播都记一次事件（不限心动模式）：画像是靠全部播放历史学的
+        heartbeat.trackStarted(song)
         updateNowPlaying()
         // 起播就记一次（位置 0）：万一进程在这儿被杀，下次车载连上也知道"上一首是它"
         flushSnapshot()
@@ -647,7 +776,104 @@ final class PlayerEngine {
                 count: queue.count, current: index, mode: mode,
                 randomIn: { Int.random(in: $0) }) else { return }
             goTo(next)
+        case .heartbeat:
+            // 播完这首才算"听完"（负反馈只看 userSkipped/nextTrack 那条路径）
+            heartbeat.trackEnded(listened: duration > 0 ? duration : currentTime, completed: true)
+            if let pick = heartbeat.takeNext() {
+                playHeartbeat(pick: pick)
+            } else {
+                // 预取还没来得及（弱网/刚切进来）：现场算一首，算不出来就停在这里，不静默跳走
+                planAndPlayHeartbeat()
+            }
         }
+    }
+
+    // MARK: 心动模式
+
+    /// 把引擎选的下一首接进队列并起播。
+    ///
+    /// 队列语义：心动模式下的 `queue` 就是"本次心动的会话队列"（已播 + 当前 + 即将），
+    /// 所以新歌追加在后面，`index` 跟过去；上一首/播放列表因此天然可用。
+    private func playHeartbeat(pick: HeartbeatEngine.Pick) {
+        if let existing = queue.firstIndex(where: { $0.id == pick.song.id }) {
+            guard existing != index else { return }
+            goTo(existing, localURL: pick.localURL, streamURL: pick.streamURL)
+            return
+        }
+        queue.append(pick.song)
+        goTo(queue.count - 1, localURL: pick.localURL, streamURL: pick.streamURL)
+    }
+
+    /// 待播空了：现场算一首（最多等一次解析）。算不出来就停住并给一句人话。
+    private func planAndPlayHeartbeat() {
+        guard !isResolving else { return }
+        isResolving = true
+        statusText = "心动模式正在选下一首…"
+        Task { [weak self] in
+            guard let self else { return }
+            // 预取可能正在跑：先等它（最多 10 秒），别在"快好了"的时候判死刑
+            for _ in 0..<20 {
+                if let pick = self.heartbeat.takeNext() {
+                    self.isResolving = false
+                    self.statusText = nil
+                    self.playHeartbeat(pick: pick)
+                    return
+                }
+                if !self.heartbeat.isPlanning { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            let pick = await self.heartbeat.planOneNow()
+            self.isResolving = false
+            if let pick {
+                self.statusText = nil
+                self.heartbeat.setNotice(nil)
+                self.playHeartbeat(pick: pick)
+            } else {
+                self.fallbackFromQueue()
+            }
+        }
+    }
+
+    /// 心动模式四级梯子全空时的最后一手：**退回队列顺序**，绝不静默停在这里。
+    ///
+    /// - 队列里还有别的歌 → 按列表循环继续（"先别停"，不是把模式改掉）；
+    /// - 队列只有这一首 → 重播这首。
+    /// 一首可播的都没有（外面已经连跳 3 次）才会真停。
+    private func fallbackFromQueue() {
+        guard !queue.isEmpty, let song = currentSong else {
+            isPlaying = false
+            errorText = "心动模式暂时选不出下一首（没有可用数据与歌源），点播放再试一次。"
+            return
+        }
+        errorText = nil
+        if queue.count > 1 {
+            heartbeat.setNotice("暂无新歌，先按列表继续")
+            goTo((index + 1) % queue.count)
+        } else {
+            heartbeat.setNotice("暂无新歌，先重播这首")
+            heartbeat.trackEnded(listened: duration > 0 ? duration : currentTime, completed: true)
+            player.seek(to: .zero)
+            player.play()
+            isPlaying = true
+            currentTime = 0
+            heartbeat.trackStarted(song)
+            updateNowPlaying()
+        }
+    }
+
+    /// 「不感兴趣」：这首歌不再出现、同歌手降权，并立刻跳过当前这首。
+    func dislikeCurrentSong() {
+        guard let song = currentSong else { return }
+        heartbeat.dislike(song)
+        statusText = "已减少《\(song.name)》这类推荐"
+        if mode == .heartbeat { nextTrack() }
+    }
+
+    /// 播放列表里点"即将播放"的某一首（心动模式）
+    func playUpcoming(id: String) {
+        guard let pick = heartbeat.removeUpcoming(id: id) else { return }
+        heartbeat.trackEnded(listened: preciseTime, completed: false)
+        playHeartbeat(pick: pick)
     }
 
     /// 连跳上限：第四十轮起不再是设置项，恒为 `PlaybackRules.autoSkipLimit`（3 首）。
@@ -700,10 +926,7 @@ final class PlayerEngine {
             return
         }
         // 还有余量：换下一首（同一首的其它源会在 loadCurrent 里被重新解析）
-        guard let next = PlaybackRules.nextIndex(
-            count: queue.count, current: index, mode: mode,
-            randomIn: { Int.random(in: $0) }) else { return }
-        goTo(next)
+        advanceAfterFailure()
     }
 
     private func handleNoSource() {
@@ -712,6 +935,19 @@ final class PlayerEngine {
         errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
         isPlaying = false
         if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) { return }
+        advanceAfterFailure()
+    }
+
+    /// 这首放不出来时往哪走：普通模式按队列规则；心动模式换引擎里的下一首（或现场算）。
+    private func advanceAfterFailure() {
+        if mode == .heartbeat {
+            if let pick = heartbeat.takeNext() {
+                playHeartbeat(pick: pick)
+            } else {
+                planAndPlayHeartbeat()
+            }
+            return
+        }
         guard let next = PlaybackRules.nextIndex(
             count: queue.count, current: index, mode: mode,
             randomIn: { Int.random(in: $0) }) else { return }
