@@ -1,3 +1,35 @@
+## iOS + Android v2.4.20（198） · 2026-11-19（真机探测链修复：2.4.19 仍只能 128k）
+
+**老板反馈**：装 2.4.19 后《연애의 조건》还是找不到 flac。新弹层自带的诊断给了关键信息——
+「本平台 1 条（QQ·标准 128k）· 跨源试 6 条 · 妖狐失败」：跨源确实打了，但网易/酷我这两路
+（都要经过 `StreamVerifier.inspect` 探测直链）在真机上全灭；只有一次性 GET 的 cyapi QQ 成功。
+
+**根因**：iOS 的 `URLSession.bytes(for:)` 对着 126.net / 酷我 CDN 会"连接成功但读不到字节"，
+`inspect` 返回 nil → 适配器抛错 → 整条后端被判"没源"。本机/WSL 有自己的 Foundation 桩，跑不出这个现象，
+所以 2.4.19 的修复（容器识别 + 档位口径 + 换源顺序）虽然都是真问题，却没修到这一层。
+
+**改法（三条独立路径，任一条通就能定档）**
+
+| 路径 | 做法 |
+|---|---|
+| ① peek | 自己接 `URLSessionDataDelegate`，收到 ≥16 字节立刻 cancel（不拉整首 25MB，也不依赖 bytes(for:)） |
+| ② 再 peek | 换一次连接，覆盖边缘节点抖动；外面再套硬超时，delegate 不回调也不会挂住流程 |
+| ③ HEAD | 只读 `Content-Length` + `Content-Type`，容器认不出也能靠码率反推档位 |
+
+- Referer 按域名给：126.net→music.163.com、酷我→kuwo.cn、酷狗→m.kugou.com、QQ→y.qq.com（以前一律 music.qq.com，部分 CDN 会 403）
+- `inspect` 超时 12s→5s；下载侧单后端 18s、整轮 45s（接口取 URL 的时间要留出来）
+- `resolveResult` 记录每个后端失败原因（超时 / 解析失败 / HTTP 403），降级弹层直接列出「本平台后端失败（…）· 跨源失败（…）」
+- Android 同步按域名 Referer
+
+**本机验证**（真实网络，同一首）：5s 拿到 3 条网易无损，容器识别为 **flac**（2.4.19 时代是 unknown/mp3）——
+说明 peek 这条路径真的读到了容器头。
+
+| 平台 | 文件 | sha256 |
+|---|---|---|
+| iPhone | `JZ-Music-v2.4.20-4d6af59-r121-ios-unsigned.ipa`（2,313,963 B） | `14548d5d…bfcbfe819` |
+| Android | `JZ-Music-v2.4.20.apk`（29,875,521 B） | `f3007ed1…8dbeba549e` |
+
+CI **#121 / `4d6af59` / 787 条断言全绿**。
 ## iOS + Android v2.4.19（197） · 2026-11-19（下载音质不误降级 + 热门音乐换榜）
 
 > 这一版把上一版（2.4.18，仅 iOS 下载修复）也含在内；两端同为 2.4.19（197）。
