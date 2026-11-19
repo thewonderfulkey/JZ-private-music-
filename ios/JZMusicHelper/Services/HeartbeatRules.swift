@@ -401,8 +401,10 @@ enum HeartbeatRules {
         let hint = bestSearchHint(song, hints: profile.searchHints)
         let searchHit = min(1.0, (hint?.weight ?? 0) * 2.5) * 100
 
-        let total = 0.30 * content + 0.22 * seedSim + 0.18 * artistAff
-            + 0.12 * known + 0.06 * prior + 0.06 * fresh + 0.06 * searchHit
+        // 种子只占 0.06：老板 2026-11-19 反馈——"当前这首很可能是随便选的，不该有这么大权重"。
+        // 原来 0.22 排第二，会出现"随便点了一首，后面十首都被它带偏"。
+        let total = 0.34 * content + 0.06 * seedSim + 0.26 * artistAff
+            + 0.12 * known + 0.08 * prior + 0.08 * fresh + 0.06 * searchHit
 
         let singer = primarySinger(song)
         let reason: HeartbeatReason
@@ -416,12 +418,13 @@ enum HeartbeatRules {
         } else if let hint, hint.weight >= 0.12 {
             reason = .search
             detail = hint.keyword
-        } else if seedSim >= 55 {
-            reason = .seed
-            detail = seed?.name ?? ""
         } else if artistAff >= 35 {
             reason = .artist
             detail = singer
+        } else if seedSim >= 70 {
+            // 只有"几乎同一首歌/同一位歌手"才拿种子当理由，门槛比原来高
+            reason = .seed
+            detail = seed?.name ?? ""
         } else {
             reason = .explore
             detail = ""

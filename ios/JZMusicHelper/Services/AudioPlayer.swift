@@ -186,6 +186,10 @@ final class PlayerEngine {
     /// 心动模式已经解析好的流地址（没来得及下载时用，省掉再解析一遍的 1-8 秒）
     private var pendingStream: (songID: String, url: String)?
 
+    /// 最近一次主动切歌的时间：切歌后 1.2 秒内收到的"播完"一定是上一首的迟到通知，必须忽略。
+    /// （老板录屏：「淋雨一直走」刚起播就被切走，就是旧 item 的 didPlayToEnd 迟到了）
+    private var lastAdvanceAt = Date.distantPast
+
     /// 进入心动模式时的队列下标：它之后的才是"心动自己追加的歌"。
     /// 「上一首」之后再按「下一首」要靠它回到刚才那首，而不是在旧歌单里往下走。
     private var heartbeatStartIndex = -1
@@ -498,6 +502,7 @@ final class PlayerEngine {
 
     private func goTo(_ newIndex: Int, localURL: URL? = nil, streamURL: String? = nil) {
         guard queue.indices.contains(newIndex) else { return }
+        lastAdvanceAt = Date()
         heartbeat.trackEnded(listened: preciseTime, completed: false)
         if let localURL {
             pendingLocal = (songID: queue[newIndex].id, url: localURL)
@@ -578,14 +583,16 @@ final class PlayerEngine {
                                          note: "播放中预取")
                 statusText = "心动缓存 · \(pending.url.lastPathComponent)"
                 start(item: AVPlayerItem(url: pending.url), song: song, source: local)
-                // 起播后按在线源继续升档（与在线起播同一条链，不牺牲音质）
-                scheduleQualityUpgrade(for: song)
+                // 这里**不做后台升档**（老板 2026-11-19 反馈：切下一首卡 10 秒、还被自动切走）。
+                // 原因：升档会 replaceCurrentItem 换成远端流，新 item 缓冲期间进度停在 0:00；
+                // 一旦那条远端源失败/时长对不上就会走 rejectSource → 自动跳歌。
+                // 心动模式优先"不断"，320k 缓存起播即可；音质升档只留给普通起播路径。
                 return
             }
         }
         pendingLocal = nil
 
-        // 心动模式现场解析好的流地址：直接用，省掉再走一遍取流链
+        // 心动模式现场解析好的流地址：直接用，省掉再走一遍取流链（同样不升档）
         if let pending = pendingStream, pending.songID == song.id,
            let url = URL(string: pending.url) {
             pendingStream = nil
@@ -597,7 +604,6 @@ final class PlayerEngine {
                                    note: "播放中解析")
             statusText = "心动解析 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
             start(item: AVPlayerItem(url: url), song: song, source: src)
-            scheduleQualityUpgrade(for: song)
             return
         }
         pendingStream = nil
@@ -730,7 +736,12 @@ final class PlayerEngine {
                         self.seek(toSeconds: restore)
                     }
                     // 时长防线：与曲目时长差 >25s 就是"标着这首歌、给的是别的版本"
-                    if PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
+                    //
+                    // 本地文件豁免：这首歌就是本地那份音频，"曲目时长"只是接口元数据，
+                    // 拿它判本地文件会把好好的歌判成坏源 → 换源 → 跳歌（录屏里被自动切走的一类）。
+                    let isLocalSource = source.backendName == "本地文件" || source.backendName == "心动缓存"
+                    if !isLocalSource,
+                       PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
                         self.rejectSource(source, reason: "拿到的音频时长 \(Int(actual))s 与曲目 \(Int(song.duration))s 不符（±\(Int(PlaybackRules.durationToleranceSec))s），已换源")
                     }
                     self.updateNowPlaying()
@@ -745,8 +756,18 @@ final class PlayerEngine {
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: item, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.handleTrackFinished() }
+        ) { [weak self] note in
+            Task { @MainActor in
+                guard let self else { return }
+                // 只有"当前装着的这个 item"放完才算数：
+                // 切歌那一瞬间旧 item 的迟到通知会把刚起播的新歌再切走（老板录屏里的那次"我没动它自己跳了"）
+                guard let finished = note.object as? AVPlayerItem,
+                      finished === self.player.currentItem else {
+                    self.statusText = "忽略上一首的迟到结束通知"
+                    return
+                }
+                self.handleTrackFinished()
+            }
         }
 
         failedObserver = NotificationCenter.default.addObserver(
@@ -760,6 +781,11 @@ final class PlayerEngine {
     }
 
     private func handleTrackFinished() {
+        // 刚切过歌（<1.2s）又收到"播完"：一定是上一首的迟到通知——再切一次就是"我没动它自己跳了"
+        guard Date().timeIntervalSince(lastAdvanceAt) > 1.2 else {
+            statusText = "忽略切歌瞬间的迟到结束通知"
+            return
+        }
         // 播到真结尾了：这时 currentTime 就是这条音频的真实长度，覆盖掉容器/元数据那份
         if currentTime > duration { duration = currentTime }
         // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门

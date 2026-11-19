@@ -46,11 +46,8 @@ final class HeartbeatEngine {
         let reason: String
         var localURL: URL?
         var streamURL: String?
-    }
-
-    private struct Prefetched {
-        let localURL: URL?
-        let streamURL: String?
+        /// 取流容器（mp3/flac…），下载落盘时决定后缀
+        var streamFormat: String = ""
     }
 
     private let defaults = UserDefaults.standard
@@ -90,6 +87,8 @@ final class HeartbeatEngine {
     private var openEvent: HeartbeatPlayEvent?
     private var planTask: Task<Void, Never>?
     private var planning = false
+    /// 后台整首落盘的任务（按歌曲 id 去重）
+    private var prefetchTasks: [String: Task<Void, Never>] = [:]
 
     /// 预取目录（Caches/Heartbeat，系统空间紧张时会被回收，正好）
     private let cacheDir: URL
@@ -116,7 +115,9 @@ final class HeartbeatEngine {
             .filter { !$0.isEmpty }
         plannedCount = 0
         upcoming.removeAll()
-        reason = song.map { "以《\($0.name)》为种子" } ?? "根据你的口味为你选歌"
+        // 中性文案：不再写"以《X》为种子"——种子只占 0.06，写成那样会让人以为它主导推荐
+        reason = "正在按你的口味选歌…"
+        notice = nil
         schedulePlan(delay: 1.5)
     }
 
@@ -127,13 +128,16 @@ final class HeartbeatEngine {
         planTask = nil
         planning = false
         isPlanning = false
+        for (_, task) in prefetchTasks { task.cancel() }
+        prefetchTasks.removeAll()
         upcoming.removeAll()
     }
 
-    /// 用户手点了别的歌：种子跟随（网易云同款行为），待播重排
+    /// 用户手点了别的歌：种子跟着换（只影响极少量打分），待播重排
     func adoptSeed(_ song: Song) {
         seed = song
-        reason = "以《\(song.name)》为种子"
+        reason = "正在按你的口味选歌…"
+        notice = nil
         if active {
             upcoming.removeAll()
             schedulePlan(delay: 1.5)
@@ -184,6 +188,8 @@ final class HeartbeatEngine {
     func takeNext() -> Pick? {
         guard !upcoming.isEmpty else { return nil }
         let pick = upcoming.removeFirst()
+        // 已经要放了，后台那份"整首下载"没意义了（放完也不会再用同一条）
+        cancelPrefetch(pick.song.id)
         reason = pick.reason
         notice = nil
         return pick
@@ -203,7 +209,7 @@ final class HeartbeatEngine {
         guard !planning else { return nil }
         planning = true
         defer { planning = false }
-        let pick = await makePick(position: plannedCount + 1, prefetchLocal: false)
+        let pick = await makePick(position: plannedCount + 1)
         if let pick {
             plannedCount += 1
             reason = pick.reason
@@ -247,18 +253,18 @@ final class HeartbeatEngine {
               Date() < deadline {
             attempts += 1
             let position = plannedCount + 1
+            // 只解析、不等下载：2-4 秒内就能有一首"随时可切"的候选。
+            // 下载在后台继续，落盘后回填 localURL（两段式，切歌不再等整首下完）。
             guard let pick = await makePick(position: position) else { break }
             guard !Task.isCancelled, active else { return }
             plannedCount += 1
             upcoming.append(pick)
+            startPrefetch(pick)
             prunePrefetch()
         }
     }
 
-    /// 选一首：先定"这次该出新歌还是旧爱"，再召回 → 打分 → 挑选 → 预取。
-    ///
-    /// - Parameter prefetchLocal: true 时把整首下到本地（正常路径）；false 时只解析出流地址
-    ///   （播完才发现没预取的兜底路径，不能让用户干等下载）。
+    /// 选一首：先定"这次该出新歌还是旧爱"，再召回 → 打分 → 挑选 → 解析。
     ///
     /// 选歌是**四级梯子**，一级空/一级取不到流就往下一级走（详见 IOS-HEARTBEAT.md §2.6）：
     ///   ① 个性化（新歌 / 旧爱，冷启动时先试种子歌手）
@@ -266,11 +272,14 @@ final class HeartbeatEngine {
     ///   ③ 放宽的自家资料库（允许重播——宁可重播，也别停）
     ///   ④ 内置精选池（榜单与搜索都不稳时，人工池兜底）
     /// 四级全空才返回 nil，播放器那边还有"退回队列顺序"的最后一手。
-    private func makePick(position: Int, prefetchLocal: Bool = true) async -> Pick? {
+    ///
+    /// 这里**只解析、不下载**：拿到流地址就算"可切"，整首落盘由 `startPrefetch` 在后台做。
+    /// （老板 2026-11-19：切下一首卡 10 秒——就是原来非要等整首下完才肯返回。）
+    private func makePick(position: Int) async -> Pick? {
         let profile = currentProfile()
         let exclude = Set(sessionKeys + upcoming.map { $0.song.id })
         // 梯子要有时间上限：每级最多试 3 首，整体不超过 20 秒（否则"选歌"会变成"卡住"）
-        let deadline = Date().addingTimeInterval(prefetchLocal ? 20 : 12)
+        let deadline = Date().addingTimeInterval(20)
 
         // ① 个性化
         var primary: [HeartbeatScored]
@@ -293,33 +302,26 @@ final class HeartbeatEngine {
                     : oldCandidates(profile: profile, exclude: exclude)
             }
         }
-        if let pick = await pickFrom(primary, prefetchLocal: prefetchLocal, deadline: deadline) {
-            return pick
-        }
+        if let pick = await pickFrom(primary, deadline: deadline) { return pick }
 
         // ② 热歌榜
         let hot = await hotCandidates(profile: profile, exclude: exclude)
-        if let pick = await pickFrom(hot, prefetchLocal: prefetchLocal, deadline: deadline) {
-            return pick
-        }
+        if let pick = await pickFrom(hot, deadline: deadline) { return pick }
 
         // ③ 自家资料库（放宽：允许重播，只排除当前这首与不感兴趣）
-        if let pick = await pickFrom(libraryCandidates(profile: profile),
-                                     prefetchLocal: prefetchLocal, deadline: deadline) {
+        if let pick = await pickFrom(libraryCandidates(profile: profile), deadline: deadline) {
             return pick
         }
 
         // ④ 内置精选池（人工兜底，最后一级）
         let catalog = await catalogCandidates()
-        return await pickFrom(catalog, prefetchLocal: prefetchLocal, deadline: deadline)
+        return await pickFrom(catalog, deadline: deadline)
     }
 
-    /// 从一批候选里挑：MMR → 逐个尝试解析/预取，第一个成功的就是它。
+    /// 从一批候选里挑：MMR → 逐个解析出流地址，第一个成功的就是它。
     ///
     /// 每级只试 3 首：4 级 × 3 首 × 单首最长 8 秒会拖成分钟级，必须夹住。
-    private func pickFrom(_ candidates: [HeartbeatScored],
-                          prefetchLocal: Bool,
-                          deadline: Date) async -> Pick? {
+    private func pickFrom(_ candidates: [HeartbeatScored], deadline: Date) async -> Pick? {
         guard !candidates.isEmpty else { return nil }
         let shortlist = HeartbeatRules.diversify(
             Array(candidates.prefix(14)),
@@ -328,18 +330,12 @@ final class HeartbeatEngine {
 
         for scored in shortlist {
             guard !Task.isCancelled, Date() < deadline else { return nil }
-            if prefetchLocal {
-                guard let fetched = await prefetch(scored.song) else { continue }
-                return Pick(song: scored.song,
-                            reason: HeartbeatRules.reasonText(scored.reason, detail: scored.detail),
-                            localURL: fetched.localURL,
-                            streamURL: fetched.streamURL)
-            }
             guard let source = await resolveSource(scored.song) else { continue }
             return Pick(song: scored.song,
                         reason: HeartbeatRules.reasonText(scored.reason, detail: scored.detail),
                         localURL: nil,
-                        streamURL: source.url)
+                        streamURL: source.url,
+                        streamFormat: source.format)
         }
         return nil
     }
@@ -384,7 +380,10 @@ final class HeartbeatEngine {
     /// 新歌通道：种子歌手 + 画像 top 歌手 + 一条搜索关键词，并发搜索后择优。
     private func recall(profile: HeartbeatProfile, exclude: Set<String>) async -> [HeartbeatScored] {
         var queries: [String] = []
-        if let seed {
+        // 种子只在"画像什么都没有"时参与召回（冷启动兜底）。
+        // 有画像就以画像为准——当前这首很可能是随手点的，不该把它当查询词
+        // （老板 2026-11-19：录屏里从 BESTie 一路带偏，就是种子歌手进了召回）。
+        if profile.topArtists.isEmpty, let seed {
             let singer = HeartbeatRules.primarySinger(seed)
             if !singer.isEmpty { queries.append(singer) }
         }
@@ -637,14 +636,32 @@ final class HeartbeatEngine {
         return out
     }
 
-    // MARK: 预取（解析 + 整首落盘）
+    // MARK: 预取（后台整首落盘）
 
-    /// 320k 而不是无损：预取要在几十秒内落完，而且只用于"切歌那一秒"，
-    /// 起播后 `PlayerEngine` 的后台升档仍会把音质抬回无损（与在线起播同一条链）。
-    private func prefetch(_ song: Song) async -> Prefetched? {
-        guard let source = await resolveSource(song) else { return nil }
-        let local = await downloadToCache(urlString: source.url, format: source.format, song: song)
-        return Prefetched(localURL: local, streamURL: source.url)
+    /// 把已解析好的一首整首下到本地，落盘后回填 `upcoming` 里那条的 `localURL`。
+    ///
+    /// 两段式的意义：解析完（≈2-4s）就"随时能切"，下载完（≈10-30s）才变成"本地秒切"。
+    /// 用户提前按下一首时走 `streamURL` 直连——不再等整首下完（老板 2026-11-19：切歌卡 10 秒）。
+    private func startPrefetch(_ pick: Pick) {
+        guard let url = pick.streamURL, prefetchTasks[pick.song.id] == nil else { return }
+        let song = pick.song
+        let format = pick.streamFormat
+        prefetchTasks[song.id] = Task { [weak self] in
+            guard let self else { return }
+            let local = await self.downloadToCache(urlString: url, format: format, song: song)
+            guard !Task.isCancelled else { return }
+            if let local, let idx = self.upcoming.firstIndex(where: { $0.song.id == song.id }) {
+                self.upcoming[idx].localURL = local
+            }
+            self.prefetchTasks[song.id] = nil
+            self.prunePrefetch()
+        }
+    }
+
+    /// 播放器已经取走这首（开始放了）：预取没意义了，取消省流量
+    private func cancelPrefetch(_ songID: String) {
+        prefetchTasks[songID]?.cancel()
+        prefetchTasks[songID] = nil
     }
 
     /// 只解析出可播的流地址（不下载）。「先粗后精」与播放链同口径：快速窗口优先，失败再等完整排名。
@@ -707,16 +724,24 @@ final class HeartbeatEngine {
         }
     }
 
-    /// 只留"当前 + 待播"的缓存文件（最多 6 个），其余删掉——预取目录不该无限长
+    /// 只留"当前 + 待播 + 最近 3 首"的缓存文件，其余删掉——预取目录不该无限长。
+    ///
+    /// **10 分钟内的文件一律不动**：切歌那一瞬间"即将播放"的那首可能刚被取走、
+    /// 正在被 `AVPlayer` 打开，删掉它会直接播放失败 → 自动跳歌（录屏里"淋雨一直走被切走"的一类）。
     private func prunePrefetch() {
         let keepPrefixes = upcoming.map { cachedFilePrefix(for: $0.song) }
             + [openEvent.map { cachedFilePrefix(for: $0.song) }].compactMap { $0 }
+            + recentSongs.suffix(3).map { cachedFilePrefix(for: $0) }
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: cacheDir, includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]) else { return }
+        let now = Date()
         for file in files {
             let name = file.lastPathComponent
             if keepPrefixes.contains(where: { name.hasPrefix($0 + ".") }) { continue }
+            let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate) ?? now
+            if now.timeIntervalSince(mtime) < 600 { continue }
             try? FileManager.default.removeItem(at: file)
         }
     }
@@ -728,6 +753,7 @@ final class HeartbeatEngine {
         let singer = HeartbeatRules.primarySinger(song)
         if !singer.isEmpty { dislikedArtists.insert(singer) }
         persistDislikes()
+        cancelPrefetch(song.id)
         upcoming.removeAll { $0.song.id == song.id }
         if active { schedulePlan(delay: 0.5) }
     }
