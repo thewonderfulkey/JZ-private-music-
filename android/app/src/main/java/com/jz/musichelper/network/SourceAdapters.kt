@@ -23,7 +23,7 @@ object StreamVerifier {
                     .url(urlString)
                     .header("Range", "bytes=0-4095")
                     .header("User-Agent", ApiClient.MOBILE_UA)
-                    .header("Referer", "https://music.qq.com/")
+                    .header("Referer", refererFor(urlString))
                     .build()
                 ApiClient.client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful && resp.code != 206) return@withContext null
@@ -48,6 +48,21 @@ object StreamVerifier {
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    /**
+     * r122：按域名给 Referer——以前所有源都发 music.qq.com，126.net / 酷我 CDN 偶尔因此回 403。
+     * iOS 侧同名实现见 StreamVerifier.referer(forHost:)。
+     */
+    fun refererFor(urlString: String): String {
+        val host = runCatching { java.net.URI(urlString).host?.lowercase() ?: "" }.getOrDefault("")
+        return when {
+            host.contains("126.net") || host.contains("163.com") -> "https://music.163.com/"
+            host.contains("kuwo") -> "https://www.kuwo.cn/"
+            host.contains("kugou") -> "https://m.kugou.com/"
+            host.contains("qq.com") || host.contains("gtimg") -> "https://y.qq.com/"
+            else -> "https://music.qq.com/"
         }
     }
 

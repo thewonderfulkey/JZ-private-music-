@@ -37,28 +37,50 @@ final class URLResolver {
         await resolveResult(song: song, quality: quality).sources
     }
 
-    func resolveResult(song: Song, quality: QualityLevel) async -> ResolveResult {
+    func resolveResult(song: Song, quality: QualityLevel,
+                       timeout: TimeInterval? = nil) async -> ResolveResult {
         let adapters = SourceRegistry.adapters(for: song)
-        let timeout = perBackendTimeout
-        let outcomes = await withTaskGroup(of: (String, StreamSource?).self) { group in
+        let limit = timeout ?? perBackendTimeout
+        let outcomes = await withTaskGroup(of: (String, StreamSource?, String).self) { group in
             for adapter in adapters {
                 group.addTask {
-                    let src = await withTimeoutOrNil(timeout) {
-                        try await adapter.resolve(song: song, quality: quality)
+                    do {
+                        let src = try await withTimeoutThrowing(limit) {
+                            try await adapter.resolve(song: song, quality: quality)
+                        }
+                        return (adapter.name, src, "")
+                    } catch {
+                        return (adapter.name, nil, Self.shortError(error))
                     }
-                    return (adapter.name, src)
                 }
             }
-            var out: [(String, StreamSource?)] = []
+            var out: [(String, StreamSource?, String)] = []
             for await o in group { out.append(o) }
             return out
         }
         var sources: [StreamSource] = []
         var failed: [String: String] = [:]
-        for (name, src) in outcomes {
-            if let src { sources.append(src) } else { failed[name] = "失败或超时" }
+        for (name, src, reason) in outcomes {
+            if let src { sources.append(src) } else { failed[name] = reason.isEmpty ? "失败或超时" : reason }
         }
         return ResolveResult(sources: sources, failed: failed)
+    }
+
+    /// 错误压成一句能塞进弹层诊断的短语（超时 / 解析 / 没拿到 URL / 探测失败…）
+    static func shortError(_ error: Error) -> String {
+        if let api = error as? APIError {
+            switch api {
+            case .timeout: return "超时"
+            case .parse(let m): return "解析失败(\(m.prefix(20)))"
+            case .httpStatus(let code): return "HTTP \(code)"
+            case .invalidURL: return "URL 无效"
+            case .invalidResponse: return "响应无效"
+            case .notJSON: return "非 JSON"
+            }
+        }
+        let text = "\(error)"
+        if text.contains("timed out") || text.contains("超时") { return "超时" }
+        return String(text.prefix(24))
     }
 
     /// 流式解析（UI 用：后端逐个点亮）
@@ -126,7 +148,7 @@ enum SameSongCrossResolver {
 
     static let maxCandidates = 8
     static let maxExactKeep = 3
-    static let totalTimeout: TimeInterval = 40
+    static let totalTimeout: TimeInterval = 45
     static let maxDurationDiffSec = 12
 
     /// 播放用：拿到一条可用源就返回
@@ -159,8 +181,10 @@ enum SameSongCrossResolver {
         let exact: StreamSource?
         let best: StreamSource?
         let exacts: [StreamSource]
+        /// 每个候选失败的一句话原因（最多 4 条，弹层诊断用）
+        var failures: [String] = []
 
-        static let empty = CrossOutcome(exact: nil, best: nil, exacts: [])
+        static let empty = CrossOutcome(exact: nil, best: nil, exacts: [], failures: [])
     }
 
     /// 下载用：一次遍历同时求「目标档」与「最高可得档」
@@ -172,34 +196,44 @@ enum SameSongCrossResolver {
             var exact: StreamSource?
             var best: StreamSource?
             var exacts: [StreamSource] = []
+            var failures: [String] = []
 
             for batch in candidates.chunked(3) {
                 if exacts.count >= maxExactKeep { break }
-                let got = await withTaskGroup(of: StreamSource?.self) { group in
+                let got = await withTaskGroup(of: (StreamSource?, String).self) { group in
                     for c in batch {
                         group.addTask {
-                            let r = await URLResolver.shared.resolveResult(song: c, quality: want)
-                            return SourcePicker.pick(r.sources, want: want)
+                            let r = await URLResolver.shared.resolveResult(song: c, quality: want, timeout: 18)
+                            if let s = SourcePicker.pick(r.sources, want: want) {
+                                return (s, "")
+                            }
+                            // 失败原因（弹层诊断用）："网易·gdstudio 网易:超时" 这种
+                            let reason = r.failed.map { "\($0.key):\($0.value)" }
+                                .joined(separator: "/")
+                            return (nil, "\(c.platform.shortName)·\(reason.isEmpty ? "无源" : reason)")
                         }
                     }
-                    var out: [StreamSource?] = []
-                    for await s in group { out.append(s) }
+                    var out: [(StreamSource?, String)] = []
+                    for await o in group { out.append(o) }
                     return out
                 }
-                for s in got {
-                    guard let s else { continue }
-                    if s.quality == want {
-                        if exact == nil { exact = s }
-                        if !exacts.contains(where: { $0.url == s.url }) { exacts.append(s) }
-                    }
-                    if let cur = best {
-                        if s.quality.sortOrder > cur.quality.sortOrder { best = s }
-                    } else {
-                        best = s
+                for (s, reason) in got {
+                    if let s {
+                        if s.quality == want {
+                            if exact == nil { exact = s }
+                            if !exacts.contains(where: { $0.url == s.url }) { exacts.append(s) }
+                        }
+                        if let cur = best {
+                            if s.quality.sortOrder > cur.quality.sortOrder { best = s }
+                        } else {
+                            best = s
+                        }
+                    } else if !reason.isEmpty, failures.count < 4 {
+                        failures.append(reason)
                     }
                 }
             }
-            return CrossOutcome(exact: exact, best: best, exacts: exacts)
+            return CrossOutcome(exact: exact, best: best, exacts: exacts, failures: failures)
         } ?? .empty
     }
 
@@ -340,11 +374,12 @@ enum DownloadResolver {
 
         var empty: Bool { exact.isEmpty && fallback == nil }
 
-        /// 降级时那句人话：最高可得档 + 各阶段实况
+        /// 降级时那句人话：最高可得档 + 各阶段实况（截断到 160 字，弹层里一行放得下）
         var fallbackReason: String {
             let best = fallback?.quality.displayName ?? "—"
             guard !notes.isEmpty else { return "没有\(want.displayName)，最高可得\(best)" }
-            return "没有\(want.displayName)，最高可得\(best)（\(notes.joined(separator: " · "))）"
+            let detail = String(notes.joined(separator: " · ").prefix(160))
+            return "没有\(want.displayName)，最高可得\(best)（\(detail)）"
         }
     }
 
@@ -357,9 +392,14 @@ enum DownloadResolver {
         var notes: [String] = []
 
         // 第一轮：本平台自己的后端
-        let local = await URLResolver.shared.resolveResult(song: song, quality: want)
+        let local = await URLResolver.shared.resolveResult(song: song, quality: want, timeout: 18)
         pool.append(contentsOf: local.sources)
         notes.append("本平台 \(local.sources.count) 条\(local.sources.isEmpty ? "" : "（\(qualitySummary(local.sources))）")")
+        if !local.failed.isEmpty {
+            // 真机诊断用：哪个后端、什么原因（超时 / 解析失败 / HTTP 403 …）
+            let reasons = local.failed.map { "\($0.key):\($0.value)" }.sorted().joined(separator: "、")
+            notes.append("本平台后端失败（\(reasons)）")
+        }
 
         // 第二轮：跨源换源（同歌名 + 同歌手，StudioPick 排掉 live/节目版）
         // 排序已经在 `candidateList` 里按"能出目标档的平台"优先（网易/酷我先解析）
@@ -369,6 +409,9 @@ enum DownloadResolver {
         pool.append(contentsOf: cross.exacts)
         if let best = cross.best { pool.append(best) }
         notes.append("跨源试 \(tried.count) 条\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
+        if !cross.failures.isEmpty {
+            notes.append("跨源失败（\(cross.failures.prefix(3).joined(separator: "、"))）")
+        }
 
         // 第三轮：通用搜索式后端（妖狐酷我，与歌来自哪个平台无关）
         // 无损档照打（妖狐恒给无损）；320k/128k 只在"一条源都没有"时才打，否则白等 12s

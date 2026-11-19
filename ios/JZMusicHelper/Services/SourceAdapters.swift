@@ -28,72 +28,97 @@ enum StreamVerifier {
         let totalBytes: Int64
     }
 
-    static func inspect(_ urlString: String, timeout: TimeInterval = 8) async -> AudioFacts? {
+    /// 探测一条直链的真实容器与体积。
+    ///
+    /// 真机事故（r122，《연애의 조건》）：iOS 上 `URLSession.bytes(for:)` 对着 126.net / 酷我 CDN
+    /// 会"连接成功但一个字节都读不到"（HTTP/2 流被重置、或 Range 请求走到不认的边缘节点），
+    /// 于是整条后端被判"没源"——网易明明有真无损，iOS 只剩 QQ 的 128k。
+    ///
+    /// 现在三道路，任何一条通就能定档：
+    ///   ① peek：自己接 `URLSessionDataDelegate`，拿到 ≥16 字节就取消任务（不拉整首 25MB）；
+    ///   ② 再 peek 一次（换一次连接，覆盖边缘节点抖动）；
+    ///   ③ **HEAD**：不读 body，只拿 Content-Length + Content-Type——容器认不出也能用码率反推档位。
+    /// 超时压到 5s/4s：`URLResolver` 给单个后端的预算是 12s，还得留出"接口取 URL"的时间。
+    static func inspect(_ urlString: String, timeout: TimeInterval = 5) async -> AudioFacts? {
         guard let url = URL(string: urlString) else { return nil }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
-        request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
+        let referer = referer(forHost: url.host)
 
-        // 真机上 `URLSession.bytes(for:)` 偶发"连接成功但一个字节都读不到"（HTTP/2 流被 CDN 重置、
-        // 或者 Range 请求走了另一条边缘节点）。以前这种情况直接返回 nil → 这条后端被当成"没源"，
-        // 于是"网易明明有无损，iOS 却只剩 128k"（《연애의 조건》r120）。
-        // 现在最多试两次；两次都读不到头时，只要**体积已知**就仍然返回 unknown 容器，
-        // 交给 `QualityFacts` 用码率反推档位（≥601kbps 即无损），不再整条后端判死。
-        for attempt in 0..<2 {
-            if attempt > 0 {
-                try? await Task.sleep(nanoseconds: 350_000_000)
-            }
-            if let facts = await inspectOnce(request) {
-                if facts.container != "unknown" || facts.totalBytes > 0 { return facts }
-            }
+        var get = URLRequest(url: url)
+        get.timeoutInterval = timeout
+        get.cachePolicy = .reloadIgnoringLocalCacheData
+        get.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
+        get.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        get.setValue(referer, forHTTPHeaderField: "Referer")
+
+        // 每道 peek 再套一层硬超时：delegate 万一没回调，也不会把整条下载流程挂住
+        if let peeked = (await withTimeoutOrNil(timeout + 1, { await peek(get) }) ?? nil),
+           let facts = facts(from: peeked.0, head: peeked.1),
+           facts.container != "unknown" || facts.totalBytes > 0 {
+            return facts
+        }
+
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        if let peeked = (await withTimeoutOrNil(timeout + 1, { await peek(get) }) ?? nil),
+           let facts = facts(from: peeked.0, head: peeked.1),
+           facts.container != "unknown" || facts.totalBytes > 0 {
+            return facts
+        }
+
+        // ③ HEAD：最省的一条路（有些 CDN 的 GET 会被风控，HEAD 反而正常）
+        var head = URLRequest(url: url)
+        head.httpMethod = "HEAD"
+        head.timeoutInterval = 4
+        head.cachePolicy = .reloadIgnoringLocalCacheData
+        head.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        head.setValue(referer, forHTTPHeaderField: "Referer")
+        if let (_, response) = try? await URLSession.shared.data(for: head),
+           let resp = response as? HTTPURLResponse,
+           let facts = facts(from: resp, head: Data()), facts.totalBytes > 0 {
+            return facts
         }
         return nil
     }
 
-    /// 一次 Range GET：读 HTTP 头 + 最多 16 字节容器头
-    private static func inspectOnce(_ request: URLRequest) async -> AudioFacts? {
-        do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse else { return nil }
-            let code = http.statusCode
-            guard (200..<300).contains(code) || code == 206 else { return nil }
-
-            let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-            // 服务端忽略 Range 直接回 200 时没有 Content-Range，此时 Content-Length 就是总长。
-            // 少了这一步 totalBytes 恒为 0 → kbps 恒为 0 → 一律被判成 128k。
-            var total: Int64 = 0
-            let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? ""
-            if let slash = contentRange.lastIndex(of: "/") {
-                total = Int64(contentRange[contentRange.index(after: slash)...]) ?? 0
-            }
-            if total == 0, let len = http.value(forHTTPHeaderField: "Content-Length") {
-                total = Int64(len) ?? 0
-            }
-
-            // 只读容器头 16 字节：服务端若忽略 Range 回 200，读全量会拖到超时、把"有无损"误判成"没源"
-            var head: [UInt8] = []
-            head.reserveCapacity(16)
-            for try await byte in bytes {
-                head.append(byte)
-                if head.count >= 16 { break }
-            }
-
-            let container = sniffHead(head)
-            // 判断"这是不是音频"：容器头认得、或 Content-Type 像音频、或这是一段 206 分片（只有音频 CDN 会这么回）
-            let looksAudio = contentType.hasPrefix("audio/")
-                || contentType.contains("octet-stream")
-                || container != "unknown"
-                || (total > 0 && code == 206)
-            guard looksAudio else { return nil }
-            return AudioFacts(container: container, totalBytes: total)
-        } catch {
-            return nil
-        }
+    /// 按域名给 Referer：以前所有源都发 music.qq.com，126.net/酷我 CDN 偶尔因此回 403
+    static func referer(forHost host: String?) -> String {
+        let h = (host ?? "").lowercased()
+        if h.contains("126.net") || h.contains("163.com") { return "https://music.163.com/" }
+        if h.contains("kuwo") { return "https://www.kuwo.cn/" }
+        if h.contains("kugou") { return "https://m.kugou.com/" }
+        if h.contains("qq.com") || h.contains("gtimg") || h.contains("stream.qqmusic") { return "https://y.qq.com/" }
+        return "https://music.qq.com/"
     }
 
+    /// 一次 peek：收到 ≥16 字节就取消，最多等 `timeout`（见 `PeekDelegate`）
+    private static func peek(_ request: URLRequest) async -> (HTTPURLResponse, Data)? {
+        let delegate = PeekDelegate()
+        let result = await delegate.run(request)
+        delegate.cleanup()
+        return result
+    }
+
+    /// HTTP 头 + 头 16 字节 → 容器与总长（纯函数，便于断言）
+    static func facts(from http: HTTPURLResponse, head: Data) -> AudioFacts? {
+        let code = http.statusCode
+        guard (200..<300).contains(code) || code == 206 else { return nil }
+        var total: Int64 = 0
+        let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? ""
+        if let slash = contentRange.lastIndex(of: "/") {
+            total = Int64(contentRange[contentRange.index(after: slash)...]) ?? 0
+        }
+        if total == 0, let len = http.value(forHTTPHeaderField: "Content-Length") {
+            total = Int64(len) ?? 0
+        }
+        let container = sniffHead([UInt8](head.prefix(16)))
+        let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        // 是不是音频：容器头认得、Content-Type 像音频、或这是 206 分片（只有音频 CDN 会这么回）
+        let looksAudio = contentType.hasPrefix("audio/")
+            || contentType.contains("octet-stream")
+            || container != "unknown"
+            || (total > 0 && code == 206)
+        guard looksAudio else { return nil }
+        return AudioFacts(container: container, totalBytes: total)
+    }
     static func isAudio(_ urlString: String, timeout: TimeInterval = 8) async -> Bool {
         await inspect(urlString, timeout: timeout) != nil
     }
@@ -132,6 +157,90 @@ enum StreamVerifier {
         if b.count >= 3, has("ID3") { return "mp3" }
         if b.count >= 2, at(0) == 0xFF, [0xFB, 0xF3, 0xF2, 0xFA].contains(at(1)) { return "mp3" }
         return "unknown"
+    }
+}
+
+// MARK: - 只读"头 16 字节"的 peek（替代 URLSession.bytes）
+//
+// 为什么不用 `bytes(for:)`：真机上它对 126.net / 酷我 CDN 会"连接成功但读不到字节"，
+// 于是整条后端被判"没源"（《연애의 조건》r122：网易明明有真无损、iOS 只剩 QQ 128k）。
+// 这里自己接 `URLSessionDataDelegate`：拿到响应就记下头，收到 ≥16 字节立刻取消任务——
+// 既不下载整首 25MB，也不依赖 AsyncBytes 的实现细节。
+private final class PeekDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+
+    private let lock = NSLock()
+    private var head = Data()
+    private var http: HTTPURLResponse?
+    private var task: URLSessionDataTask?
+    private var continuation: CheckedContinuation<(HTTPURLResponse, Data)?, Never>?
+    private var finished = false
+
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+
+    func run(_ request: URLRequest) async -> (HTTPURLResponse, Data)? {
+        await withCheckedContinuation { continuation in
+            let task = session.dataTask(with: request)
+            lock.lock()
+            self.continuation = continuation
+            self.task = task
+            lock.unlock()
+            task.resume()
+        }
+    }
+
+    /// 结束后清理（不 resume；`run` 已经返回）
+    func cleanup() {
+        lock.lock()
+        finished = true
+        let task = self.task
+        continuation = nil
+        lock.unlock()
+        task?.cancel()
+        session.invalidateAndCancel()
+    }
+
+    private func complete() {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        let cont = continuation
+        continuation = nil
+        let result: (HTTPURLResponse, Data)? = http.map { ($0, head) }
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
+        cont?.resume(returning: result)
+    }
+
+    // MARK: URLSessionDataDelegate
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        lock.lock()
+        http = response as? HTTPURLResponse
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        head.append(data)
+        let enough = head.count >= 16
+        lock.unlock()
+        if enough { complete() }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        if http == nil { http = task.response as? HTTPURLResponse }
+        lock.unlock()
+        complete()
     }
 }
 
@@ -257,7 +366,7 @@ struct GdstudioNeteaseAdapter: StreamSourceAdapter {
             + "?use_xbridge3=true&loader_name=forest&need_sec_link=1&sec_link_scene=im&theme=light"
             + "&types=url&source=netease&id=\(song.platformID)&br=\(br)"
         let json = try await APIClient.shared.getJSON(
-            url, headers: ["User-Agent": "LX-Music-Mobile"], timeout: 12)
+            url, headers: ["User-Agent": "LX-Music-Mobile"], timeout: 8)
         guard let raw = json["url"] as? String, !raw.isEmpty else {
             throw APIError.parse("gdstudio 未返回 URL")
         }

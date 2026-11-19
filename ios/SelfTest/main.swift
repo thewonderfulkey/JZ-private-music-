@@ -273,6 +273,37 @@ do {
     check("600kbps 命中高品上界", QualityFacts.matches(.high, container: "mp3", kbps: 600))
     check("601kbps 不算高品", !QualityFacts.matches(.high, container: "mp3", kbps: 601))
 
+    // r122：探测链（peek 的纯函数部分）与按域名 Referer
+    // 真机上 bytes(for:) 读不到 126.net 的字节，导致整条后端被判"没源"；这里钉住 peek 的判定口径
+    let flacResp = HTTPURLResponse(url: URL(string: "https://m801.music.126.net/x.flac")!,
+                                   statusCode: 206, httpVersion: "HTTP/2",
+                                   headerFields: ["Content-Range": "bytes 0-4095/26281333",
+                                                  "Content-Type": "audio/mpeg"])!
+    let flacFacts = StreamVerifier.facts(from: flacResp, head: Data(Array("fLaC".utf8)))
+    check("206 + Content-Range → 总长与容器都对", flacFacts?.totalBytes == 26_281_333
+            && flacFacts?.container == "flac")
+    check("这条 206 源按码率算就是无损",
+          flacFacts.map { QualityFacts.of($0, durationSec: 194).0 == .lossless } ?? false)
+
+    let mp3Resp = HTTPURLResponse(url: URL(string: "https://x/y.mp3")!,
+                                  statusCode: 200, httpVersion: "HTTP/1.1",
+                                  headerFields: ["Content-Length": "2414756",
+                                                 "Content-Type": "audio/mpeg"])!
+    let mp3Facts = StreamVerifier.facts(from: mp3Resp, head: Data(Array("ID3".utf8)))
+    check("200 + Content-Length → 标准 128k",
+          mp3Facts.map { QualityFacts.of($0, durationSec: 194).0 == .standard } ?? false)
+
+    let htmlResp = HTTPURLResponse(url: URL(string: "https://x/y")!,
+                                   statusCode: 403, httpVersion: "HTTP/1.1", headerFields: [:])!
+    check("403 直接判不可用", StreamVerifier.facts(from: htmlResp, head: Data()) == nil)
+
+    check("126.net 用网易 Referer",
+          StreamVerifier.referer(forHost: "m801.music.126.net") == "https://music.163.com/")
+    check("酷我域用酷我 Referer",
+          StreamVerifier.referer(forHost: "car-lw.kuwo.cn") == "https://www.kuwo.cn/")
+    check("QQ 域用 QQ Referer",
+          StreamVerifier.referer(forHost: "isure.stream.qqmusic.qq.com") == "https://y.qq.com/")
+
     // MARK: r120《연애의 조건》事故的两条根因
     // ① 126.net 的部分 fLaC 前面挂了一段 ID3v2，旧实现只看偏移 0 → 把真无损判成 mp3
     let id3PrefixedFlac: [UInt8] = Array("ID3".utf8) + [4, 0, 0, 0, 0, 0, 0] + Array("fLaC".utf8)

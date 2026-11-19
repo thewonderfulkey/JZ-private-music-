@@ -201,6 +201,22 @@ func withTimeoutOrNil<T: Sendable>(_ seconds: TimeInterval,
     }
 }
 
+/// 带原因的版本：超时抛 `APIError.timeout`，其它错误原样上抛。
+/// 下载诊断要用它（弹层里写"超时"还是"解析失败"完全不是一回事）。
+func withTimeoutThrowing<T: Sendable>(_ seconds: TimeInterval,
+                                     _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await op() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(max(0.05, seconds) * 1_000_000_000))
+            throw APIError.timeout
+        }
+        guard let first = try await group.next() else { throw APIError.timeout }
+        group.cancelAll()
+        return first
+    }
+}
+
 // MARK: - JSON 取值小工具
 
 extension Dictionary where Key == String {
