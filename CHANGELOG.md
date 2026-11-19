@@ -1,3 +1,29 @@
+## iOS + Android v2.4.22（200） · 2026-11-19（网易检索单独成链 + 耗时诊断）
+
+**2.4.21 弹层给的线索**：候选分布「QQ3/酷狗 3」——网易 **0**；连 gdstudio 兜底也没出候选。
+
+**按老板要求反查了 APK**：把 `JZ-Music-v2.4.21.apk` 的 dex 拆出来提取全部接口串，
+和 iOS 侧逐条对照——`gdstudio / oiapi / cyapi / music.163.com / search.kuwo.cn / getSongInfo / yaohud`
+**完全一致，没有 iOS 缺的隐藏通道**。所以"照搬 APK"拿不到新东西：两端逻辑本来同源，
+差的是运行时（手机上搜索/取流这层跑不通，落到了 8s 平台预算上）。
+
+**改法**
+
+- 新增 `NeteaseLookup`：下载换源单独跑「网易 id 检索」，三源各自独立超时
+  ① 官方 `/api/search/get`（4s）② gdstudio 搜索（6s）③ meting 搜索 `api.qijieya.cn`（6s）
+- meting 返回项没有 id，只有 url → 新增纯函数 `neteaseId(fromMetingURL:)` 从 query 抠 id
+- `candidateList` 把检索结果并入候选（按 key 去重），`candidateSummary` 会显示网易条数
+- 诊断带耗时：「网易检索 官方7(1331ms)/gdstudio0(6002ms)/meting0(6001ms)」——能区分超时与 0 条
+- 妖狐（酷我通用兜底）预算 12s→20s
+
+**本机验证**：网易检索「官方7」1.3s；plan 仍拿到 3 条网易无损；候选分布「QQ1/网易4/酷狗3」。
+
+| 平台 | 文件 | sha256 |
+|---|---|---|
+| iPhone | `JZ-Music-v2.4.22-43c9844-r124-ios-unsigned.ipa`（2,325,703 B） | `3aefaf6e…bce232de` |
+| Android | `JZ-Music-v2.4.22.apk`（29,875,517 B） | `cc43d34c…bffcd4df` |
+
+CI **#124 / `43c9844` / 799 条断言全绿**。
 ## iOS + Android v2.4.21（199） · 2026-11-19（网易候选搜不到 → gdstudio 搜索兜底）
 
 **2.4.20 弹层给的线索**：「跨源失败（酷狗·酷狗官方:解析失败(errcode 10) ×3）」——失败列表里**没有网易**。
