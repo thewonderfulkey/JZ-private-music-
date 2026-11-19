@@ -303,9 +303,28 @@ enum PlaylistImport {
     }
 
     // MARK: 网易云
+    //
+    // 两个坑，都是 2026-11-19 导入真机反馈的「我喜欢的音乐」（729 首只进来 6 首）踩出来的：
+    //
+    //   ① `api/v6/playlist/detail` 的 `tracks` **不是全量**。普通歌单（热歌榜 200 首）按 `n` 给全；
+    //      但 `specialType == 5` 的「我喜欢的音乐」匿名访问只回 **6 首**——实测 729 首的歌单：
+    //      `trackCount=729`、`trackIds=729`、`tracks=6`。不是我们解析丢歌，是接口只给 6 首试听。
+    //      所以"没登录也导入成功、只是数量不对"是预期内的：歌单本身是公开的，被截断的是详情里的歌曲数组。
+    //   ② 真正全的是 `playlist.trackIds`（顺序与歌单一致）。`tracks` 不够时按 id 批量补
+    //      `api/song/detail?ids=[...]`：实测一次 200 个 id 正常（约 620 KB / 4s），500 个会回空，
+    //      所以一页 200。补回来的单曲字段是 `artists / album / duration(ms)`，和详情里的 `ar / al / dt` 不同名。
+
+    /// 补歌时一次带多少个 id（500 个服务端会回空数组）
+    static let neteaseSongBatch = 200
 
     static func neteaseURL(_ id: String) -> String {
         "https://music.163.com/api/v6/playlist/detail?id=\(id)&n=\(maxSongs)&s=8"
+    }
+
+    /// 按 id 批量取单曲（`ids=[1,2,3]` 要百分号编码方括号）
+    static func neteaseSongsURL(_ ids: [String]) -> String {
+        "https://music.163.com/api/song/detail?ids="
+            + APIClient.encode("[\(ids.joined(separator: ","))]")
     }
 
     static func fetchNetease(_ id: String) async throws -> ImportedPlaylist {
@@ -314,40 +333,123 @@ enum PlaylistImport {
             headers: ["Referer": "https://music.163.com/"],
             timeout: 25
         )
-        guard let playlist = parseNetease(json, sourceID: id) else {
-            throw PlaylistImportError.empty
+        guard let meta = parseNeteaseMeta(json) else {
+            throw PlaylistImportError.blocked("网易云歌单打不开（私密歌单或链接已失效）")
         }
-        return playlist
+        let primary = parseNeteaseSongs(playlistTracks(json))
+        let trackIDs = Array(neteaseTrackIDs(json).prefix(maxSongs))
+
+        // tracks 被接口截断（"我喜欢的音乐"只回 6 首）时，按 trackIds 把剩下的补回来
+        var fetched: [Song] = []
+        if trackIDs.count > primary.count {
+            let known = Set(primary.map(\.platformID))
+            for chunk in trackIDs.filter({ !known.contains($0) }).chunked(neteaseSongBatch) {
+                if let songs = try? await fetchNeteaseSongs(ids: chunk) {
+                    fetched.append(contentsOf: songs)
+                }
+            }
+        }
+
+        let songs = mergeNetease(trackIDs: trackIDs, primary: primary, fetched: fetched)
+        guard !songs.isEmpty else { throw PlaylistImportError.empty }
+        return ImportedPlaylist(
+            platform: .netease,
+            sourceID: id,
+            name: meta.name,
+            creator: meta.creator,
+            cover: meta.cover,
+            songs: songs,
+            importedAt: Date()
+        )
     }
 
-    /// 网易歌单解析（纯函数）。`tracks` 受 `n` 限制（上限 1000），`trackCount` 是真实总数。
-    static func parseNetease(_ json: [String: Any], sourceID: String) -> ImportedPlaylist? {
+    /// 一页单曲详情（`ids` 由调用方按 `neteaseSongBatch` 分批）
+    static func fetchNeteaseSongs(ids: [String]) async throws -> [Song] {
+        let json = try await APIClient.shared.getJSON(
+            neteaseSongsURL(ids),
+            headers: ["Referer": "https://music.163.com/"],
+            timeout: 25
+        )
+        return parseNeteaseSongs(json["songs"] as? [[String: Any]] ?? [])
+    }
+
+    /// 详情响应里的 `playlist.tracks`（可能被截断，见上面的坑 ①）
+    static func playlistTracks(_ json: [String: Any]) -> [[String: Any]] {
+        (json["playlist"] as? [String: Any])?["tracks"] as? [[String: Any]] ?? []
+    }
+
+    /// 歌单里全部歌曲 id（顺序即歌单顺序；`tracks` 被截断时靠它补齐）
+    static func neteaseTrackIDs(_ json: [String: Any]) -> [String] {
+        guard let pl = json["playlist"] as? [String: Any],
+              let list = pl["trackIds"] as? [[String: Any]] else { return [] }
+        return list.compactMap { item -> String? in
+            guard let id = text(item["id"]), !id.isEmpty, id != "0" else { return nil }
+            return id
+        }
+    }
+
+    /// 歌单元信息（`code != 200` / 没有 playlist → nil）
+    static func parseNeteaseMeta(_ json: [String: Any]) -> (name: String, creator: String, cover: String)? {
         if let code = number(json["code"]), code != 200 { return nil }
         guard let pl = json["playlist"] as? [String: Any] else { return nil }
-        let tracks = pl["tracks"] as? [[String: Any]] ?? []
-        let songs: [Song] = tracks.compactMap { item -> Song? in
-            guard let songID = text(item["id"]), !songID.isEmpty, songID != "0",
-                  let name = text(item["name"]), !name.isEmpty else { return nil }
-            let singers = (item["ar"] as? [[String: Any]] ?? [])
-                .compactMap { $0["name"] as? String }
-                .joined(separator: "/")
-            let album = item["al"] as? [String: Any]
-            let albumName = text(album?["name"]) ?? ""
-            let pic: String? = text(album?["picUrl"]).map { httpsURL($0) }
-            let duration = Double(number(item["dt"]) ?? 0) / 1000.0
-            return Song.make(platform: .netease, platformID: songID, name: name, singer: singers,
-                             album: albumName, duration: duration, picURL: pic)
-        }
-        let unique = dedupe(songs)
-        guard !unique.isEmpty else { return nil }
         let creator = (pl["creator"] as? [String: Any]).flatMap { text($0["nickname"]) } ?? ""
+        return (
+            name: TextClean.text(text(pl["name"]) ?? "网易云歌单"),
+            creator: TextClean.text(creator),
+            cover: httpsURL(text(pl["coverImgUrl"]) ?? "")
+        )
+    }
+
+    /// 单曲字典 → Song：详情里是 `ar / al / dt`，`api/song/detail` 里是 `artists / album / duration`，两种都认。
+    static func neteaseSong(from item: [String: Any]) -> Song? {
+        guard let songID = text(item["id"]), !songID.isEmpty, songID != "0",
+              let name = text(item["name"]), !name.isEmpty else { return nil }
+        let artistItems = (item["ar"] as? [[String: Any]])
+            ?? (item["artists"] as? [[String: Any]])
+            ?? []
+        let singers = artistItems.compactMap { $0["name"] as? String }.joined(separator: "/")
+        let album = (item["al"] as? [String: Any]) ?? (item["album"] as? [String: Any])
+        let albumName = text(album?["name"]) ?? ""
+        let pic: String? = text(album?["picUrl"]).map { httpsURL($0) }
+        let ms = number(item["dt"]) ?? number(item["duration"]) ?? 0
+        return Song.make(platform: .netease, platformID: songID, name: name, singer: singers,
+                         album: albumName, duration: Double(ms) / 1000.0, picURL: pic)
+    }
+
+    static func parseNeteaseSongs(_ list: [[String: Any]]) -> [Song] {
+        dedupe(list.compactMap { neteaseSong(from: $0) })
+    }
+
+    /// 按**歌单顺序**合并「详情已给的」与「按 id 补回来的」。
+    /// `trackIDs` 为空（老响应 / 没给 trackIds）时退回 primary 原序，保证不丢歌。
+    static func mergeNetease(trackIDs: [String], primary: [Song], fetched: [Song]) -> [Song] {
+        guard !trackIDs.isEmpty else { return Array(dedupe(primary).prefix(maxSongs)) }
+        var byID: [String: Song] = [:]
+        for song in primary { byID[song.platformID] = song }
+        for song in fetched where byID[song.platformID] == nil { byID[song.platformID] = song }
+        var seen = Set<String>()
+        var out: [Song] = []
+        for id in trackIDs {
+            guard out.count < maxSongs, seen.insert(id).inserted, let song = byID[id] else { continue }
+            out.append(song)
+        }
+        return out
+    }
+
+    /// 兼容入口（SelfTest 用它验证纯解析）：只用详情里的 `tracks`，不补歌。
+    static func parseNetease(_ json: [String: Any], sourceID: String) -> ImportedPlaylist? {
+        guard let meta = parseNeteaseMeta(json) else { return nil }
+        let songs = mergeNetease(trackIDs: neteaseTrackIDs(json),
+                                 primary: parseNeteaseSongs(playlistTracks(json)),
+                                 fetched: [])
+        guard !songs.isEmpty else { return nil }
         return ImportedPlaylist(
             platform: .netease,
             sourceID: sourceID,
-            name: TextClean.text(text(pl["name"]) ?? "网易云歌单"),
-            creator: TextClean.text(creator),
-            cover: httpsURL(text(pl["coverImgUrl"]) ?? ""),
-            songs: unique,
+            name: meta.name,
+            creator: meta.creator,
+            cover: meta.cover,
+            songs: songs,
             importedAt: Date()
         )
     }

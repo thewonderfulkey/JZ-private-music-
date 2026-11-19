@@ -3353,6 +3353,82 @@ check("空 tracks 判失败",
       PlaylistImport.parseNetease(["code": 200, "playlist": ["name": "x", "tracks": []]],
                                   sourceID: "1") == nil)
 
+// 2026-11-19 真机反馈：网易「我喜欢的音乐」729 首只进来 6 首。
+// 根因在接口：详情里的 `tracks` 只回 6 首（trackCount=729 / trackIds=729 / tracks=6），
+// 真正全的是 `trackIds`。这里钉住：trackIds 能读全、补回来的歌按歌单顺序合并。
+let likedFixture: [String: Any] = [
+    "code": 200,
+    "playlist": [
+        "name": "我喜欢的音乐",
+        "coverImgUrl": "http://p1.music.126.net/liked.jpg",
+        "creator": ["nickname": "顺斌"] as [String: Any],
+        "trackCount": 729,
+        "tracks": [
+            [
+                "id": 1956462195,
+                "name": "Like A Star (Piano Version)",
+                "dt": 283626,
+                "ar": [["name": "Youngso Kim"]] as [[String: Any]],
+                "al": ["name": "Like A Star", "picUrl": "http://p3.music.126.net/a.jpg"] as [String: Any]
+            ]
+        ] as [[String: Any]],
+        "trackIds": [
+            ["id": 1956462195],
+            ["id": 3388509025],
+            ["id": 1990154664]
+        ] as [[String: Any]]
+    ] as [String: Any]
+]
+
+check("网易 trackIds 能读到全部 id（详情 tracks 被截断时靠它）",
+      PlaylistImport.neteaseTrackIDs(likedFixture) == ["1956462195", "3388509025", "1990154664"],
+      "\(PlaylistImport.neteaseTrackIDs(likedFixture))")
+check("网易：只有 tracks 时按 tracks 出歌（补歌由网络层 fetch 负责）",
+      PlaylistImport.parseNetease(likedFixture, sourceID: "7547299268")?.songs.count == 1,
+      "\(String(describing: PlaylistImport.parseNetease(likedFixture, sourceID: "7547299268")?.songs.count))")
+
+// 补歌走 `api/song/detail`，字段名和歌单详情不一样：artists / album / duration(ms)
+let neteaseSongDetailFixture: [String: Any] = [
+    "id": 3388509025,
+    "name": "12.31",
+    "duration": 254117,
+    "artists": [["name": "郑润泽"]] as [[String: Any]],
+    "album": ["name": "12.31", "picUrl": "http://p4.music.126.net/b.jpg"] as [String: Any]
+]
+if let detailSong = PlaylistImport.neteaseSong(from: neteaseSongDetailFixture) {
+    check("网易补歌：artists / album / duration 也能解析",
+          detailSong.platformID == "3388509025" && detailSong.singer == "郑润泽"
+            && detailSong.durationSec == 254 && detailSong.album == "12.31"
+            && detailSong.picURL == "https://p4.music.126.net/b.jpg",
+          "\(detailSong.name) / \(detailSong.singer) / \(detailSong.durationSec)")
+} else {
+    check("网易补歌解析", false, "neteaseSong 返回 nil")
+}
+
+let likedPrimary = PlaylistImport.parseNeteaseSongs(PlaylistImport.playlistTracks(likedFixture))
+let likedFetched = PlaylistImport.parseNeteaseSongs([
+    ["id": 1990154664, "name": "Running In The Dark", "duration": 220533,
+     "artists": [["name": "MONKEY MAJIK"]] as [[String: Any]]] as [String: Any],
+    ["id": 3388509025, "name": "12.31", "duration": 254117,
+     "artists": [["name": "郑润泽"]] as [[String: Any]]] as [String: Any]
+])
+let likedMerged = PlaylistImport.mergeNetease(
+    trackIDs: ["1956462195", "3388509025", "1990154664"],
+    primary: likedPrimary,
+    fetched: likedFetched)
+check("网易：按 trackIds 顺序合并（补回来的插回原位，不丢歌）",
+      likedMerged.map(\.platformID) == ["1956462195", "3388509025", "1990154664"],
+      "\(likedMerged.map(\.platformID))")
+check("网易：trackIds 里取不到的 id 直接跳过，不占位",
+      PlaylistImport.mergeNetease(
+        trackIDs: ["1956462195", "999999", "3388509025"],
+        primary: likedPrimary, fetched: likedFetched).count == 2)
+check("网易：补歌一页 200 个 id，方括号/逗号都做百分号编码",
+      PlaylistImport.neteaseSongBatch == 200
+        && PlaylistImport.neteaseSongsURL(["1", "2"]) ==
+            "https://music.163.com/api/song/detail?ids=%5B1%2C2%5D",
+      PlaylistImport.neteaseSongsURL(["1", "2"]))
+
 // 酷狗：filename 是「歌手 - 歌名」一整条；封面模板要换 size 并升 https
 check("酷狗 filename：歌手 - 歌名",
       PlaylistImport.splitKugouFilename("队长 - NUNA") == (name: "NUNA", artist: "队长"),

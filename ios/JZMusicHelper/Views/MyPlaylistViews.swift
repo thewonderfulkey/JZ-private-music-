@@ -369,6 +369,10 @@ struct ImportPlaylistView: View {
                     }
                     .disabled(trimmedLink.isEmpty || importing)
                 }
+                if importing {
+                    // 网易「我喜欢的音乐」这类歌单要按 id 补齐（详情只回 6 首），700 首约十几秒
+                    StatusLine(kind: .progress("正在读取歌单…大歌单要十几秒"))
+                }
                 if let errorText {
                     StatusLine(kind: .error(errorText))
                 }

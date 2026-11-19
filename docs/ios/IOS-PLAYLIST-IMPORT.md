@@ -15,7 +15,7 @@
 | 平台 | 用到的接口 | 实测结果 | 备注 |
 |---|---|---|---|
 | QQ 音乐 | `GET c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&format=json&disstid=<id>` | 老板给的 `8887675900`（《2001-2010》）返回 **102 首**，`cdlist[0].dissname/nickname/logo` + `songlist[]` 全量 | **必须带 `Referer: https://y.qq.com/`**，否则回 `code=0, subcode=1, msg=invalid referer` |
-| 网易云音乐 | `GET music.163.com/api/v6/playlist/detail?id=<id>&n=1000&s=8` | 热歌榜 `3778678` 回 200 首；`name/coverImgUrl/creator.nickname/tracks[]`（`id/name/ar/al/dt`） | `n` = 本次最多回多少首（上限 1000）；**私密歌单 / 别人「我喜欢的音乐」没登录读不到**（404 或空 tracks） |
+| 网易云音乐 | `GET music.163.com/api/v6/playlist/detail?id=<id>&n=1000&s=8` | 热歌榜 `3778678` 回 200 首；`name/coverImgUrl/creator.nickname/tracks[]`（`id/name/ar/al/dt`） | `n` = 本次最多回多少首（上限 1000）；**`tracks` 对「我喜欢的音乐」只回 6 首**（见 §5.1），要靠 `trackIds` 补；私密歌单没登录读不到 |
 | 酷我音乐 | 复用现有 `KuwoPlaylist`（`wapi.kuwo.cn/api/www/playlist/playListInfo`，pid + 分页 100） | `1082685104`「每日最新单曲推荐」回 310 首中的第一页 100 首，往后翻页可读满 | 和发现页「最新单曲」「歌单广场」同一接口，零新增风险 |
 | 酷狗音乐 | `GET mobiles.kugou.com/api/v3/special/info?specialid=<id>` + `.../special/song?specialid=<id>&page=N&pagesize=100` | 老链接 `yy/special/single/5988470` → 83 首；`special/info` 给名字/作者/封面 | 新版分享链接是 `m.kugou.com/songlist/gcid_xxx/`（没有数字 id）：取这个 H5 页，从内联 state 里抠 `"specialid":数字`（唯一一处读页面） |
 
@@ -68,7 +68,7 @@ platform / sourceID / name / creator / cover / songs[Song] / importedAt
 - QQ：`platformID = songlist[].mid`；歌手像搜索一样用 `/` 连接；封面用 `album.mid` 拼
   `T002R300x300M000{mid}.jpg`；缺 `mid` / 缺歌名 / 重复 `mid` 的条目丢掉。
 - 网易：`platformID = tracks[].id`；时长 `dt` 毫秒 → 秒；专辑图 `al.picUrl` 升 https；
-  `id=0` 的条目丢掉；`code != 200` 或空 tracks 判失败。
+  `id=0` 的条目丢掉；`code != 200` 判失败；`tracks` 不满 `trackIds` 时按 `trackIds` 顺序合并补回来的歌。
 - 酷我：直接用 `KuwoPlaylist.Release`（`rid` 去 `MUSIC_` 前缀、封面、时长认 mm:ss 的既有口径）。
 - 酷狗：`platformID = hash`；`filename` 是 `"歌手 - 歌名"` 一整条，只切**第一个** ` - `；
   封面 `trans_param.union_cover` 的 `{size}` → 400 并升 https。
@@ -77,10 +77,11 @@ platform / sourceID / name / creator / cover / songs[Song] / importedAt
 
 ## 5 已知取舍与边界
 
-1. **私密歌单读不到**：QQ/网易的私密歌单、别人「我喜欢的音乐」需要登录态；App 不做登录，
+1. **私密歌单读不到**：QQ/网易的私密歌单（`privacy != 0`）需要登录态；App 不做登录，
    导入时会以"歌单里没读到歌曲（可能是私密歌单，或链接已失效）"收尾，不会假装成功。
-2. **网易 > 1000 首只导前 1000 首**：接口 `n` 上限 1000。要导完得再按 `trackIds` 分批补
-   `/api/song/detail`，目前不做（自用歌单基本到不了这个量）。
+   **公开的「我喜欢的音乐」不在此列**——它是公开的，只是详情接口截断了歌曲数组，见 §5.1。
+2. **网易 > 1000 首只导前 1000 首**：接口 `n` 上限 1000，`trackIds` 再长也只取前 1000 个
+   （补歌上限同 `maxSongs`）。要导完得放开上限并继续分批，目前不做。
 3. **不跟随平台变化，导入后就是历史快照**：这是老板明确要的语义（"写死，往后不再加载"）。
    想更新就重新导入一次同一个链接（覆盖旧快照）。
 4. **酷狗 gcid 链接依赖 H5 页面结构**：数字 id 的老链接走纯 JSON；gcid 链接要从页面内联 state 抠
@@ -90,8 +91,31 @@ platform / sourceID / name / creator / cover / songs[Song] / importedAt
 6. **取流仍走原有适配器**：导入只负责"把歌列出来"，真正播放还是 `URLResolver` 按平台适配器取流，
    失败跨平台补位——VIP 独占曲目可能取不到源，这是既有的、与本次无关的边界。
 
+### 5.1 「我喜欢的音乐」729 首只进来 6 首（2026-11-19 真机反馈，已修）
+
+**现象**：导入 `分享歌单: 我喜欢的音乐 https://163cn.tv/blnw8qCg` 显示成功，但只有 6 首。
+
+**定位**：短链跟 302 后落到 `y.music.163.com/m/playlist?id=7547299268&userid=7953262700`，
+id 取得对；再请求详情接口，返回：
+
+```text
+name=我喜欢的音乐  specialType=5  privacy=0  trackCount=729  tracks=6  trackIds=729
+```
+
+也就是说：**歌单是公开的（privacy=0），元信息和 `trackIds`（729 个）都拿得到，
+唯独 `tracks` 数组被接口截成了 6 首**（匿名访问「我喜欢的音乐」时只给试听预览）。
+出问题的环节是**网易接口层**，不是链接识别、也不是我们的解析：旧代码只读 `tracks`，
+接口给 6 首就只导入 6 首。这和"没登录"没有矛盾——公开歌单不登录也能读，
+只是这个类型（`specialType=5`）的歌曲数组被服务端截断。
+
+**修法**：详情里的 `tracks` 不满 `trackIds` 时，按 `trackIds` 里缺的 id 批量补
+`api/song/detail?ids=[...]`（实测一次 200 个 id 正常、约 620 KB/4 s；500 个会回空数组），
+再按歌单顺序合并。补回来的单曲字段是 `artists / album / duration(ms)`，与详情的 `ar / al / dt`
+不同名，解析层两种都认。729 首 ≈ 4 个请求、十几秒；导入页会显示"正在读取歌单…大歌单要十几秒"。
+
 ## 6 验证
 
-- 纯逻辑：`ios/SelfTest/main.swift` 新增约 30 条断言（链接识别 14 条 + 四家解析/去重/请求串 14 条）。
+- 纯逻辑：`ios/SelfTest/main.swift` 新增约 37 条断言（链接识别 14 条 + 四家解析/去重/请求串 20 余条 +
+  网易「我喜欢的音乐」按 `trackIds` 补歌/合并且 5 条）。
 - 装机：设置 → 导入歌单 → 粘一条分享链接 → 发现页「最近播放」下面应出现「我的歌单」；
   点歌单进详情；退出 App 重开，模块与歌曲仍在（本地快照，不联网）。
