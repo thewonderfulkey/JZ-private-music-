@@ -156,7 +156,7 @@ enum SameSongCrossResolver {
                         triedKeys: TriedKeys) async -> StreamSource? {
         await withTimeoutOrNil(totalTimeout) {
             let candidates = await candidateList(
-                song: song, quality: quality, triedKeys: triedKeys, forDownload: false)
+                song: song, quality: quality, triedKeys: triedKeys, forDownload: false).songs
             var picked: StreamSource?
             for batch in candidates.chunked(3) {
                 if picked != nil { break }
@@ -185,6 +185,8 @@ enum SameSongCrossResolver {
         var failures: [String] = []
         /// 候选按平台的分布（"网易2/酷狗3/QQ1"）：排查"搜索没搜到网易"这类问题用
         var candidateSummary: String = ""
+        /// 网易专用检索的实况（"官方0/gdstudio0/meting6"）
+        var neteaseDebug: String = ""
 
         static let empty = CrossOutcome(exact: nil, best: nil, exacts: [], failures: [])
     }
@@ -193,8 +195,9 @@ enum SameSongCrossResolver {
     static func resolveForDownload(song: Song, want: QualityLevel,
                                    triedKeys: TriedKeys) async -> CrossOutcome {
         await withTimeoutOrNil(totalTimeout) {
-            let candidates = await candidateList(
+            let found = await candidateList(
                 song: song, quality: want, triedKeys: triedKeys, forDownload: true)
+            let candidates = found.songs
             var exact: StreamSource?
             var best: StreamSource?
             var exacts: [StreamSource] = []
@@ -238,16 +241,32 @@ enum SameSongCrossResolver {
                 }
             }
             return CrossOutcome(exact: exact, best: best, exacts: exacts,
-                                failures: failures, candidateSummary: summary)
+                                failures: failures, candidateSummary: summary,
+                                neteaseDebug: found.neteaseDebug)
         } ?? .empty
     }
 
     private static func candidateList(song: Song, quality: QualityLevel,
-                                      triedKeys: TriedKeys, forDownload: Bool) async -> [Song] {
+                                      triedKeys: TriedKeys, forDownload: Bool) async -> (songs: [Song], neteaseDebug: String) {
         let kw = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !kw.isEmpty else { return [] }
+        guard !kw.isEmpty else { return ([], "") }
         let results = await SearchService.shared.searchAll(keyword: kw, limit: 30)
-        var cands = results.flatMap { $0.songs }.filter { sameSong(src: song, cand: $0) }
+        var cands = results.flatMap { $0.songs }
+
+        // r124：下载换源额外跑一遍「网易 id 专用检索」（官方 → gdstudio → meting，各自独立超时）。
+        // searchAll 给每个平台的预算只有 8s，官方的 music.163.com 在手机上解析一慢，网易整平台就被判空——
+        // 真机诊断正是「QQ3/酷狗3」、网易 0。这里不受那 8s 约束。
+        var neteaseDebug = ""
+        if forDownload {
+            let lookup = await NeteaseLookup.lookup(keyword: kw)
+            neteaseDebug = lookup.debug
+            cands.append(contentsOf: lookup.songs)
+        }
+
+        cands = cands.filter { sameSong(src: song, cand: $0) }
+        // 按 key 去重（同曲可能在多个源里都出现），保留先出现的
+        var seenKeys = Set<String>()
+        cands = cands.filter { seenKeys.insert(candKey($0)).inserted }
         cands = cands.filter { !triedKeys.contains(candKey($0)) }
 
         // 排序（第三十四轮 + r120）：**先挑"能出目标档"的平台**，再"干净原唱永远优先"，最后才看同平台/时长。
@@ -294,7 +313,7 @@ enum SameSongCrossResolver {
             unique.append(c)
         }
         for c in unique { triedKeys.insert(candKey(c)) }
-        return unique
+        return (unique, neteaseDebug)
     }
 
     static func candKey(_ s: Song) -> String { "\(s.platform.rawValue)_\(s.platformID)" }
@@ -413,6 +432,7 @@ enum DownloadResolver {
             song: song, want: want, triedKeys: tried)
         pool.append(contentsOf: cross.exacts)
         if let best = cross.best { pool.append(best) }
+        if !cross.neteaseDebug.isEmpty { notes.append("网易检索 \(cross.neteaseDebug)") }
         notes.append("跨源试 \(tried.count) 条\(cross.candidateSummary.isEmpty ? "" : "（\(cross.candidateSummary)）")\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
         if !cross.failures.isEmpty {
             notes.append("跨源失败（\(cross.failures.prefix(3).joined(separator: "、"))）")

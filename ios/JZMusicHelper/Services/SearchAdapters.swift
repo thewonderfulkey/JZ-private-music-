@@ -128,6 +128,38 @@ struct NeteaseSearchAdapter: SearchAdapter {
         return songs
     }
 
+    /// Meting 搜索（第三个源，纯 HTTPS、无签名）：返回项里没有 id，只有
+    /// `url = https://api.qijieya.cn/meting/?server=netease&type=url&id=27867073`，
+    /// 所以 id 得从 url 的 query 里取（`neteaseId(fromMetingURL:)` 是纯函数，可断言）。
+    static func songs(fromMeting items: [[String: Any]]) -> [Song] {
+        var seen = Set<String>()
+        var songs: [Song] = []
+        for item in items {
+            guard let url = item["url"] as? String,
+                  let id = neteaseId(fromMetingURL: url), seen.insert(id).inserted else { continue }
+            let name = (item["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let artist = item["artist"] as? String ?? ""
+            songs.append(Song.make(platform: .netease, platformID: id, name: name,
+                                   singer: artist, album: "", duration: 0, picURL: nil))
+        }
+        return songs
+    }
+
+    /// 从 meting 的 url 里取网易 id（只认 netease server 的 url）
+    static func neteaseId(fromMetingURL url: String) -> String? {
+        guard url.contains("server=netease"), let range = url.range(of: "id=") else { return nil }
+        let tail = url[range.upperBound...]
+        let digits = tail.prefix { $0.isNumber }
+        return digits.isEmpty ? nil : String(digits)
+    }
+
+    static func metingSearch(keyword: String, limit: Int = 10) async -> [Song] {
+        let url = "https://api.qijieya.cn/meting/?type=search&id=\(APIClient.encode(keyword))"
+        guard let raw = try? await APIClient.shared.getJSONArray(url, timeout: 6) else { return [] }
+        let items = raw.compactMap { $0 as? [String: Any] }
+        return songs(fromMeting: Array(items.prefix(max(1, limit))))
+    }
     /// gdstudio 搜索（官方 /api/search/get 被风控时的兜底）
     static func gdstudioSearch(keyword: String, limit: Int, page: Int = 1) async -> [Song] {
         let url = "https://music-api.gdstudio.xyz/api.php"
@@ -163,6 +195,53 @@ struct NeteaseSearchAdapter: SearchAdapter {
     }
 }
 
+// MARK: - 网易 id 专用检索（下载换源用，绕开 SearchService 的 8s 平台预算）
+//
+// r124：《연애의 조건》在真机上候选分布是「QQ3/酷狗3」——**网易 0**，连 gdstudio 兜底也没出结果。
+// 而 `searchAll` 给每个平台的预算是 8s，官方的 `music.163.com` 在手机上解析/连接一慢就把整个平台饿死。
+// 下载换源不需要"搜索页"的语义，只需要"这首歌在网易的 id"——所以这里单开一条链，
+// 三个源各自独立超时，谁先给结果就用谁，并把每个源的结果数写进诊断。
+enum NeteaseLookup {
+
+    struct Outcome {
+        let songs: [Song]
+        /// "官方0/gdstudio0/meting6"——降级弹层直接显示，能看出哪条路通
+        let debug: String
+    }
+
+    static func lookup(keyword: String, limit: Int = 10) async -> Outcome {
+        var debug: [String] = []
+
+        // ① 官方 /api/search/get（4s）
+        let official = await official(keyword: keyword, limit: limit)
+        debug.append("官方\(official.count)")
+        if !official.isEmpty {
+            return Outcome(songs: official, debug: debug.joined(separator: "/"))
+        }
+
+        // ② gdstudio 搜索（6s）
+        let gd = await NeteaseSearchAdapter.gdstudioSearch(keyword: keyword, limit: limit)
+        debug.append("gdstudio\(gd.count)")
+        if !gd.isEmpty {
+            return Outcome(songs: gd, debug: debug.joined(separator: "/"))
+        }
+
+        // ③ meting 搜索（6s，第三个独立域名）
+        let meting = await NeteaseSearchAdapter.metingSearch(keyword: keyword, limit: limit)
+        debug.append("meting\(meting.count)")
+        return Outcome(songs: meting, debug: debug.joined(separator: "/"))
+    }
+
+    private static func official(keyword: String, limit: Int) async -> [Song] {
+        let url = "https://music.163.com/api/search/get"
+            + "?s=\(APIClient.encode(keyword))&type=1&offset=0&limit=\(max(1, min(limit, 30)))"
+        guard let json = try? await APIClient.shared.getJSON(
+            url, headers: ["Referer": "https://music.163.com/"], timeout: 4),
+              (json["code"] as? Int) == 200,
+              let list = json.nested(["result", "songs"]) as? [[String: Any]] else { return [] }
+        return NeteaseSearchAdapter.songs(fromOfficial: list)
+    }
+}
 // MARK: - 酷我音乐
 // 必须带老客户端参数 vipver=MUSIC_8.7.8.0_WX：不带时对歌手查询返回集为 UGC 翻唱/节目/DJ
 // 返回的是 Python 风格单引号文本，解析与相关性过滤都在 KuwoParser 里（有单测）

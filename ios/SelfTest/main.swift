@@ -327,6 +327,28 @@ do {
     check("接口自报 320kbps → 高品",
           QualityFacts.quality(container: "unknown", kbps: 320) == .high)
 
+    // r124：Meting 搜索结果里没有 id，得从 url 的 query 里抠（第三兜底源）
+    check("meting url 抠出网易 id",
+          NeteaseSearchAdapter.neteaseId(fromMetingURL:
+            "https://api.qijieya.cn/meting/?server=netease&type=url&id=27867073") == "27867073")
+    check("非 netease 的 url 不认",
+          NeteaseSearchAdapter.neteaseId(fromMetingURL:
+            "https://api.qijieya.cn/meting/?server=tencent&type=url&id=123") == nil)
+    check("没有 id 的不认",
+          NeteaseSearchAdapter.neteaseId(fromMetingURL: "https://api.qijieya.cn/meting/?type=url") == nil)
+
+    let metingItems: [[String: Any]] = [
+        ["name": "연애의 조건 (Love Options)", "artist": "BESTie",
+         "url": "https://api.qijieya.cn/meting/?server=netease&type=url&id=27867073"],
+        ["name": "重复", "artist": "BESTie",
+         "url": "https://api.qijieya.cn/meting/?server=netease&type=url&id=27867073"],
+        ["name": "别的平台", "artist": "X",
+         "url": "https://api.qijieya.cn/meting/?server=tencent&type=url&id=999"],
+    ]
+    let metingSongs = NeteaseSearchAdapter.songs(fromMeting: metingItems)
+    check("meting 映射：只留网易 + 按 id 去重", metingSongs.count == 1
+            && metingSongs.first?.platformID == "27867073", "got=\(metingSongs.count)")
+
     // MARK: r120《연애의 조건》事故的两条根因
     // ① 126.net 的部分 fLaC 前面挂了一段 ID3v2，旧实现只看偏移 0 → 把真无损判成 mp3
     let id3PrefixedFlac: [UInt8] = Array("ID3".utf8) + [4, 0, 0, 0, 0, 0, 0] + Array("fLaC".utf8)
