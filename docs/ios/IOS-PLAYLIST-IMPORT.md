@@ -48,7 +48,15 @@ platform / sourceID / name / creator / cover / songs[Song] / importedAt
   之后进详情页、播放、下载都只用本地数据，不再请求任何歌单接口——老板要的"加载一次后写死"。
 - 落盘：`Documents/my_playlists.json`（`MyPlaylistStore`，原子写；和收藏/最近播放同一套文件存储）。
   一个 300 首的歌单约 100~200 KB，不进 UserDefaults，避免拖慢启动。
-- 同一家的同一个 `sourceID` 重复导入 = **覆盖**（不产生两条）。
+- 同一家的同一个 `sourceID` 重复导入 = **替换旧快照**（不产生两条）。规则抽成纯函数
+  `PlaylistImport.replacing(_:with:)`，`MyPlaylistStore.add` 调它，CI 有断言。
+  判定只看 `ImportedPlaylist.id`（平台 + 歌单号），而歌单号来自链接、与歌单内容无关：
+  实测 `163cn.tv/blnw8qCg` 两次都落到 `id=7547299268`，所以**歌单更新后重新导入同一条链接，
+  是"用新快照替换旧的"，不是新增**；不同入口（短链 / 网页 / App 分享）解析出同一个号，同样替换。
+  替换后该歌单排到最前，`importedAt` 也换新（心动模式里导入歌单通道的权重会按新时间重算）。
+  - 已知边界：**酷狗**新版 `gcid_xxx` 链接把 gcid 当 `sourceID`、老版数字链接把数字当 `sourceID`，
+    同一张酷狗歌单用**两种不同形态**的链接各导一次会被当成两条（同一形态重复导入仍是替换）。
+    网易 / QQ / 酷我都不存在这个问题（链接里就是稳定的数字歌单号）。
 - 上限：一次最多 1000 首 / 10 页（`PlaylistImport.maxSongs` / `maxPages`），与网易 `n=1000` 同口径。
 
 ## 3 UI：三处界面 + 一个入口

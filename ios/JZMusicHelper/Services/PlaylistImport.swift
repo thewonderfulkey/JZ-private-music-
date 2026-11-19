@@ -604,6 +604,21 @@ enum PlaylistImport {
         return songs.filter { seen.insert($0.id).inserted }
     }
 
+    // MARK: 重新导入（歌单更新后的替换口径）
+
+    /// 导入一张歌单时怎么并入已有列表：**同一家的同一个歌单号 = 用新快照替换旧的**，
+    /// 不是再添一条（老板 2026-11-19 验证项：歌单更新后重新导入，不能出现两个同名歌单）。
+    ///
+    /// 判定只用 `ImportedPlaylist.id`（平台 + 歌单号）：网易短链 / 网页链接 / App 分享链接
+    /// 都能解析出同一个数字 id（实测 `163cn.tv/blnw8qCg` 两次都落到 `id=7547299268`），
+    /// 所以"换个入口再导入"也是替换。替换后按最近导入排在最前。
+    static func replacing(_ existing: [ImportedPlaylist],
+                          with fresh: ImportedPlaylist) -> [ImportedPlaylist] {
+        var list = existing.filter { $0.id != fresh.id }
+        list.insert(fresh, at: 0)
+        return list
+    }
+
     /// 接口偶尔给 `http://`（封面全是）。ATS 严格，统一升 https。
     static func httpsURL(_ raw: String) -> String {
         guard raw.hasPrefix("http://") else { return raw }

@@ -3545,6 +3545,42 @@ check("酷狗请求串带 specialid 与页码",
       PlaylistImport.kugouSongsURL("5988470", page: 2).contains("specialid=5988470")
         && PlaylistImport.kugouSongsURL("5988470", page: 2).contains("page=2"))
 
+// 重新导入：同一个歌单号 = 替换旧快照（老板 2026-11-19 验证项：歌单更新后重新导入不能变成两条）
+section("导入歌单：重新导入 = 替换")
+
+do {
+    let oldDate = Date().addingTimeInterval(-86_400)
+    let oldSongs = [song(.netease, "旧快照第一首", "A", id: "old1")]
+    let newSongs = [
+        song(.netease, "新快照第一首", "A", id: "new1"),
+        song(.netease, "新快照第二首", "B", id: "new2")
+    ]
+    let old = ImportedPlaylist(platform: .netease, sourceID: "7547299268", name: "我喜欢的音乐",
+                               creator: "顺斌", cover: "", songs: oldSongs, importedAt: oldDate)
+    let fresh = ImportedPlaylist(platform: .netease, sourceID: "7547299268", name: "我喜欢的音乐",
+                                 creator: "顺斌", cover: "", songs: newSongs, importedAt: Date())
+
+    check("同一条链接两次导入 → id 相同（平台 + 歌单号）",
+          old.id == fresh.id && old.id == "netease_7547299268", fresh.id)
+    let merged = PlaylistImport.replacing([old], with: fresh)
+    check("重新导入同一个歌单 = 替换，不是新增", merged.count == 1, "\(merged.count)")
+    check("替换后留下的是新快照（歌曲与导入时间都换新）",
+          merged.first?.songs.map(\.platformID) == ["new1", "new2"]
+            && merged.first?.importedAt == fresh.importedAt,
+          "\(String(describing: merged.first?.songs.map(\.platformID)))")
+
+    let other = ImportedPlaylist(platform: .netease, sourceID: "123456", name: "另一张歌单",
+                                 creator: "", cover: "", songs: oldSongs, importedAt: Date())
+    let two = PlaylistImport.replacing([old], with: other)
+    check("不同歌单号照常各占一条（新的排最前）",
+          two.count == 2 && two.first?.sourceID == "123456", "\(two.count)")
+
+    let fromQQ = ImportedPlaylist(platform: .qq, sourceID: "7547299268", name: "同号不同平台",
+                                  creator: "", cover: "", songs: oldSongs, importedAt: Date())
+    check("同一个歌单号在不同平台 = 两条（id 带平台前缀）",
+          PlaylistImport.replacing([old], with: fromQQ).count == 2)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

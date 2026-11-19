@@ -54,10 +54,9 @@ final class MyPlaylistStore {
         return playlist
     }
 
-    /// 同一家的同一个歌单重复导入 = 覆盖（不产生两条）
+    /// 同一家的同一个歌单重复导入 = 替换旧快照（不是再添一条，规则见 `PlaylistImport.replacing`）
     func add(_ playlist: ImportedPlaylist) {
-        playlists.removeAll { $0.id == playlist.id }
-        playlists.insert(playlist, at: 0)
+        playlists = PlaylistImport.replacing(playlists, with: playlist)
         save()
     }
 
