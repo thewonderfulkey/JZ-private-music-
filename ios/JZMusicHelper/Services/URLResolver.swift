@@ -407,7 +407,7 @@ enum DownloadResolver {
         }
     }
 
-    static let genericTimeout: TimeInterval = 12
+    static let genericTimeout: TimeInterval = 20
     static let maxExact = 3
 
     static func plan(song: Song, want: QualityLevel) async -> Plan {
@@ -450,7 +450,7 @@ enum DownloadResolver {
                 pool.append(generic)
                 notes.append("妖狐 \(generic.quality.displayName)")
             } else {
-                notes.append("妖狐失败")
+                notes.append("妖狐失败(\(Int(genericTimeout))s)")
             }
         }
 

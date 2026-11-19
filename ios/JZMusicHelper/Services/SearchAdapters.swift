@@ -212,23 +212,30 @@ enum NeteaseLookup {
     static func lookup(keyword: String, limit: Int = 10) async -> Outcome {
         var debug: [String] = []
 
+        func stamp(_ label: String, _ count: Int, _ started: Date) -> String {
+            "\(label)\(count)(\(Int(Date().timeIntervalSince(started) * 1000))ms)"
+        }
+
         // ① 官方 /api/search/get（4s）
+        var t0 = Date()
         let official = await official(keyword: keyword, limit: limit)
-        debug.append("官方\(official.count)")
+        debug.append(stamp("官方", official.count, t0))
         if !official.isEmpty {
             return Outcome(songs: official, debug: debug.joined(separator: "/"))
         }
 
         // ② gdstudio 搜索（6s）
+        t0 = Date()
         let gd = await NeteaseSearchAdapter.gdstudioSearch(keyword: keyword, limit: limit)
-        debug.append("gdstudio\(gd.count)")
+        debug.append(stamp("gdstudio", gd.count, t0))
         if !gd.isEmpty {
             return Outcome(songs: gd, debug: debug.joined(separator: "/"))
         }
 
         // ③ meting 搜索（6s，第三个独立域名）
+        t0 = Date()
         let meting = await NeteaseSearchAdapter.metingSearch(keyword: keyword, limit: limit)
-        debug.append("meting\(meting.count)")
+        debug.append(stamp("meting", meting.count, t0))
         return Outcome(songs: meting, debug: debug.joined(separator: "/"))
     }
 
