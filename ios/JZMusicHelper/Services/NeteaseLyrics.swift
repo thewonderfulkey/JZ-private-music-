@@ -53,7 +53,7 @@ enum NeteaseLyrics {
         guard !pool.isEmpty else { return nil }
 
         for best in pool.prefix(3) {
-            guard let lines = await lyricLines(platformID: best.platformID),
+            guard let lines = await officialLines(platformID: best.platformID),
                   lines.count >= minLines else { continue }
             // 正文是文案/字幕，或自报是另一个版本 → 换下一个候选
             guard LyricsCleaning.foreignVersionReason(lines: lines, queryTitle: song.name) == nil else {
@@ -97,7 +97,14 @@ enum NeteaseLyrics {
     }
 
     /// `/api/song/lyric` 返回 `lrc.lyric`（标准 LRC 文本），解析成行级歌词
-    static func lyricLines(platformID: String) async -> [LyricLine]? {
+    ///
+    /// r79（2026-11-19）：公开给 `LyricsService` 的「①b 平台官方词」用——
+    /// 播放的本来就是网易云那首（`platformID` 是精确的 songId），直接按 id 问官方，
+    /// 不用像下面 `fallback` 那样按「歌名+歌手」重新搜。
+    /// 为什么必须有这条路：周杰伦的歌 2021 年从网易云**搜索索引**下架，
+    /// `search("青花瓷 周杰伦")` 前 15 条全是翻唱、身份闸全拒，可 `/api/song/lyric?id=185811`
+    /// 仍然留着完整歌词（实测 1462 字）——只按搜索走，④ 对这类歌永远取不到词。
+    static func officialLines(platformID: String) async -> [LyricLine]? {
         guard let id = Int(platformID), id > 0 else { return nil }
         let url = "https://music.163.com/api/song/lyric?id=\(id)&lv=-1&kv=-1&tv=-1"
         guard let json = try? await APIClient.shared.getJSON(

@@ -6,10 +6,14 @@ import Foundation
 //
 //   ① 酷我平台的歌 → **酷我官方 `getlyric`（musicId 精确，1 个请求）**：拿到就返回。
 //      这是对齐安卓、也是"准 + 快"的核心（实测七里香 38 行 / 1268ms，一个请求）。
-//   ② 其余平台，或酷我官方空词 → **酷狗 KG 逐字**，但必须过身份闸：
+//   ①b 网易 / QQ 平台的歌 → **按平台 id 直接问官方词**（网易 `/api/song/lyric?id=`、
+//      QQ `fcg_query_lyric_new?songmid=`，各 1 个请求）。与 ① 同一原则：id 是精确的，不按名字猜。
+//      2026-11-19 加（老板《青花瓷》没词）：④ 网易云兜底是按名字重搜，而周杰伦的歌已从网易云
+//      搜索索引下架，搜出来全是翻唱；可官方歌词接口按 songId 仍有完整词——只靠 ④ 永远取不到。
+//   ② 其余平台，或官方词为空 → **酷狗 KG 逐字**，但必须过身份闸：
 //      歌手 ≥90 分 · 版本类一致（原版↔原版、Live↔Live）· 时长 ≤4s · 词自报 [ti:]/[ar:] 一致。
 //   ③ LRCLIB（公开源，独立兜底）
-//   ④ 网易云
+//   ④ 网易云（按「歌名+歌手」搜候选，只给搜得到的歌兜底）
 //
 // 回退**不许跨歌手、不许跨版本类**；首选失败先重试一次，仍失败就空着并写明原因。
 // 全程 **8 秒硬超时**（对齐安卓 `withTimeoutOrNull(8000)`），到点就空态，绝不拖到几十秒。
@@ -147,7 +151,9 @@ extension LyricsService {
         return result
     }
 
-    /// 实际顺序（①②③④），每条都是"整首同一版"的来源。
+    /// 实际顺序（① → ①b → ② → ③ → ④），每条都是"整首同一版"的来源。
+    /// ①b 是 2026-11-19 在 ① 后面补的**同原则**一步：平台 id 精确时直接问官方词，
+    /// 不改老板 r74 定的 ①②③④ 相对顺序，只是不再让"按名字搜"的 ④ 去猜平台已有的 id。
     ///
     /// r77 改的是**并发结构，不是顺序**（老板 r74 拍板的 ①②③④ 一字不动）：
     ///   · ③④ **提前开跑**：主链失败时它们的结果通常已经在手上，省掉串行的 1~3 秒；
@@ -171,6 +177,24 @@ extension LyricsService {
             noteBox.add("① 酷我官方 \(elapsed())ms 无词")
         } else {
             noteBox.add("① 酷我官方 跳过（非酷我歌）")
+        }
+
+        // ①b 平台官方词（按 id 精确，1 个请求）：网易 / QQ。
+        //
+        // 为什么加（2026-11-19 老板报《青花瓷》没词）：④ 网易云兜底是按「歌名+歌手」**重新搜**，
+        // 而周杰伦的歌 2021 年就从网易云搜索索引下架了——搜出来前 15 条全是翻唱、身份闸全拒；
+        // 可官方歌词接口按 songId 仍然留着完整词（实测 id=185811 有 1462 字）。
+        // 播放的本来就是那一首（platformID 是精确 id），不该再去按名字猜。
+        // QQ 同理：按 songmid 直接问 QQ 官方歌词（`fcg_query_lyric_new`，公开、匿名可用）。
+        switch song.platform {
+        case .netease:
+            if let official = await neteaseOfficial(song) { return official }
+            noteBox.add("①b 网易官方 \(elapsed())ms 无词")
+        case .qq:
+            if let official = await qqOfficial(song) { return official }
+            noteBox.add("①b QQ官方 \(elapsed())ms 无词")
+        default:
+            break
         }
 
         // ② 酷狗逐字（身份闸在 LddcLyrics 里）；5.5 秒预算，超了就止损交给 ③④
@@ -207,10 +231,40 @@ extension LyricsService {
         return alignedResult(lines: lines, declaredMs: 0, song: song, source: "酷我")
     }
 
+    /// 网易云歌曲：`/api/song/lyric?id=` 按 songId 精确取词（不搜索，1 个请求）
+    private static func neteaseOfficial(_ song: Song) async -> LyricsResult? {
+        guard let lines = await NeteaseLyrics.officialLines(platformID: song.platformID),
+              lines.count >= 6 else { return nil }
+        // id 精确 → 不用验"是不是别的版本"；只拦"这不是歌词"（字幕/文案）
+        if let reason = LyricsCleaning.commentaryReason(lines: lines) {
+            await LyricsService.shared.noteFailure("网易云官方词是文案不是歌词：" + reason)
+            return nil
+        }
+        return alignedResult(lines: lines, declaredMs: 0, song: song, source: "网易云官方")
+    }
+
+    /// QQ 歌曲：`fcg_query_lyric_new` 按 songmid 精确取词（公开接口，匿名可用，行级 LRC）
+    private static func qqOfficial(_ song: Song) async -> LyricsResult? {
+        let mid = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !mid.isEmpty else { return nil }
+        let url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
+            + "?songmid=\(APIClient.encode(mid))&format=json&nobase64=1"
+        guard let json = try? await APIClient.shared.getJSON(
+            url, headers: ["Referer": "https://y.qq.com/"], timeout: 5),
+              (json["retcode"] as? Int ?? 0) == 0,
+              let text = json["lyric"] as? String, !text.isEmpty else { return nil }
+        let lines = LyricsCleaning.parseLrc(text)
+        guard lines.count >= 6 else { return nil }
+        if let reason = LyricsCleaning.commentaryReason(lines: lines) {
+            await LyricsService.shared.noteFailure("QQ官方词是文案不是歌词：" + reason)
+            return nil
+        }
+        return alignedResult(lines: lines, declaredMs: 0, song: song, source: "QQ官方")
+    }
+
     /// 统一出口：按音源实际时长对齐，并把比例写进来源标签（播放页顶部那行小字能看到）
     static func alignedResult(lines: [LyricLine], declaredMs: Int, song: Song,
-                              source: String) -> LyricsResult {
-        let aligned = LyricsCleaning.alignedToAudio(lines, declaredMs: declaredMs,
+                              source: String) -> LyricsResult {        let aligned = LyricsCleaning.alignedToAudio(lines, declaredMs: declaredMs,
                                                     audioSec: song.durationSec)
         let label = aligned.ratio > 1.0001
             ? source + "·已对齐 ×" + String(format: "%.2f", aligned.ratio)
