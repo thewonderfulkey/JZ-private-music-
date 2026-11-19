@@ -63,21 +63,39 @@ object StreamVerifier {
         }
     }.getOrDefault("unknown")
 
-    /** 前 16 字节容器头判定真实容器；认不出回 unknown（HTML / JSON 错误页会落到这里） */
+    /**
+     * 前 16 字节容器头判定真实容器；认不出回 unknown（HTML / JSON 错误页会落到这里）。
+     *
+     * r120（iOS《연애의 조건》事故同步修这里）：126.net 的部分 fLaC 前面挂了一段 ID3v2 标签，
+     * 真正的 `fLaC` 不在偏移 0。只认偏移 0 会把它判成 "unknown → mp3"，
+     * 档位跟着掉成 320k、下载弹层显示"没有无损"。现在在整段头里找特征串。
+     */
     fun sniffHead(b: ByteArray): String {
         fun at(i: Int): Byte = if (b.size > i) b[i] else 0.toByte()
         fun eq(c: Char, i: Int): Boolean = at(i) == c.code.toByte()
-        return when {
-            b.size >= 4 && eq('f', 0) && eq('L', 1) && eq('a', 2) && eq('C', 3) -> "flac"
-            b.size >= 4 && eq('O', 0) && eq('g', 1) && eq('g', 2) && eq('S', 3) -> "ogg"
-            b.size >= 8 && eq('f', 4) && eq('t', 5) && eq('y', 6) && eq('p', 7) -> "m4a"
-            b.size >= 3 && eq('I', 0) && eq('D', 1) && eq('3', 2) -> "mp3"
-            b.size >= 2 && at(0) == 0xFF.toByte() &&
-                (at(1) == 0xFB.toByte() || at(1) == 0xF3.toByte() ||
-                    at(1) == 0xF2.toByte() || at(1) == 0xFA.toByte()) -> "mp3"
-            b.size >= 4 && eq('R', 0) && eq('I', 1) && eq('F', 2) && eq('F', 3) -> "wav"
-            else -> "unknown"
+        fun has(s: String, from: Int = 0): Boolean {
+            val bytes = s.toByteArray(Charsets.US_ASCII)
+            if (b.size < from + bytes.size) return false
+            for (k in bytes.indices) if (at(from + k) != bytes[k]) return false
+            return true
         }
+        // 标准位置优先
+        if (has("fLaC")) return "flac"
+        if (has("OggS")) return "ogg"
+        if (b.size >= 8 && has("ftyp", 4)) return "m4a"
+        if (b.size >= 3 && has("ID3")) return "mp3"
+        if (b.size >= 2 && at(0) == 0xFF.toByte() &&
+            (at(1) == 0xFB.toByte() || at(1) == 0xF3.toByte() ||
+                at(1) == 0xF2.toByte() || at(1) == 0xFA.toByte())) return "mp3"
+        if (has("RIFF")) return "wav"
+        // 偏移 0 认不出：在前面这段里找（ID3v2 头之后才是真容器）
+        for (offset in 1 until b.size) {
+            if (has("fLaC", offset)) return "flac"
+            if (has("OggS", offset)) return "ogg"
+            if (has("RIFF", offset)) return "wav"
+            if (has("ftyp", offset)) return "m4a"
+        }
+        return "unknown"
     }
 }
 
@@ -89,6 +107,9 @@ object QualityFacts {
         // 无损容器不需要算码率就能定档
         if (facts.container == "flac" || facts.container == "wav") return QualityLevel.LOSSLESS to ext
         val kbps = kbps(facts.totalBytes, durationSec)
+        // r120：容器认不出但码率已是无损量级（CDN 改容器头 / 前面挂 ID3）→ 按无损标。
+        // 与 matches() 的"无损：容器或 ≥601kbps"同一口径，避免"命中无损、界面显示 320k"。
+        if (kbps >= 601) return QualityLevel.LOSSLESS to ext
         // 算不出码率时宁可往低标——"没有无损却标无损"正是这一版要消灭的问题
         return (if (kbps >= 256) QualityLevel.HIGH else QualityLevel.STANDARD) to ext
     }

@@ -211,18 +211,15 @@ object SameSongCrossResolver {
             .flatMap { it.songs.asSequence() }
             .filter { sameSong(song, it) }
             .filter { candKey(it) !in triedKeys }
-            // v2.1.65：候选排序改为"能出目标档的平台优先"——
-            // 只有网易侧的后端（gdstudio/oiapi）真能给出 320k/128k；QQ 与酷我的候选对这两档不可能命中，
-            // 一旦排在前面只会白耗 12s/条，把 40s 整轮预算吃光，导致能出 320k 的网易候选根本轮不到。
-            // 无损档仍按"同平台优先"（酷我妖狐恒给无损、同平台换源更稳）。
+            // v2.1.65 / r120：候选排序 = "能出目标档的平台优先" ——
+            // 320k/128k 只有网易侧后端（gdstudio/oiapi）真给；QQ 的候选对这两档不可能命中。
+            // 无损档以前按"同平台优先"，结果 QQ 的三条 128k 候选先烧预算，网易那条真无损排在后面，
+            // 真机上经常还没轮到就 40s 超时收工（iOS《연애의 조건》就是这样只剩 128k）。
+            // 现在统一按 downloadPlatformRank：无损 网易 → 酷我 → 酷狗 → QQ。
             .sortedWith(
-                if (want == QualityLevel.LOSSLESS)
-                    compareBy<Song> { if (it.platform == song.platform) 0 else 1 }
-                        .thenByDescending { StudioPick.studioScore(it) }
-                else
-                    compareBy<Song> { if (tierCapable(it.platform, want)) 0 else 1 }
-                        .thenBy { if (it.platform == song.platform) 0 else 1 }
-                        .thenByDescending { StudioPick.studioScore(it) }
+                compareBy<Song> { downloadPlatformRank(it.platform, want) }
+                    .thenBy { if (it.platform == song.platform) 0 else 1 }
+                    .thenByDescending { StudioPick.studioScore(it) }
             )
             .distinctBy { candKey(it) }
             .take(MAX_CANDIDATES)
@@ -265,6 +262,28 @@ object SameSongCrossResolver {
      */
     private fun tierCapable(platform: MusicPlatform, want: QualityLevel): Boolean =
         if (want == QualityLevel.LOSSLESS) true else platform == MusicPlatform.NETEASE
+
+    /**
+     * r120：下载换源时的平台优先次序——**能出目标档的平台排前面**。
+     * 无损：网易（gdstudio 稳定 fLaC）→ 酷我（妖狐常 fLaC）→ 酷狗 → QQ（cyapi 只有 ~97kbps）。
+     * 320k/128k：网易（唯一按 br 给档）→ 酷狗 → 酷我 → QQ。
+     */
+    private fun downloadPlatformRank(platform: MusicPlatform, want: QualityLevel): Int =
+        if (want == QualityLevel.LOSSLESS) {
+            when (platform) {
+                MusicPlatform.NETEASE -> 0
+                MusicPlatform.KUWO -> 1
+                MusicPlatform.KUGOU -> 2
+                MusicPlatform.QQ -> 3
+            }
+        } else {
+            when (platform) {
+                MusicPlatform.NETEASE -> 0
+                MusicPlatform.KUGOU -> 1
+                MusicPlatform.KUWO -> 2
+                MusicPlatform.QQ -> 3
+            }
+        }
 
 
     /** 同曲判定（统一口径见 NameMatch）：歌名匹配 + 歌手匹配 + 时长不差一个版本 */

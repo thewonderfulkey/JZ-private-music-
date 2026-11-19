@@ -272,6 +272,53 @@ do {
     check("256kbps 不算标准", !QualityFacts.matches(.standard, container: "mp3", kbps: 256))
     check("600kbps 命中高品上界", QualityFacts.matches(.high, container: "mp3", kbps: 600))
     check("601kbps 不算高品", !QualityFacts.matches(.high, container: "mp3", kbps: 601))
+
+    // MARK: r120《연애의 조건》事故的两条根因
+    // ① 126.net 的部分 fLaC 前面挂了一段 ID3v2，旧实现只看偏移 0 → 把真无损判成 mp3
+    let id3PrefixedFlac: [UInt8] = Array("ID3".utf8) + [4, 0, 0, 0, 0, 0, 0] + Array("fLaC".utf8)
+    check("ID3v2 前缀 + fLaC（前 16 字节内）→ flac",
+          StreamVerifier.sniffHead(id3PrefixedFlac) == "flac",
+          StreamVerifier.sniffHead(id3PrefixedFlac))
+    check("ID3v2 前缀的 fLaC 命中无损档",
+          QualityFacts.matches(.lossless, container: "flac", kbps: 1087))
+
+    // ② of() 与 matches() 必须同一口径：1087kbps（容器认不出）既算命中无损、也要标成无损
+    let highBitrate = StreamVerifier.AudioFacts(container: "mp3", totalBytes: 26_281_333)
+    let (qHi, extHi) = QualityFacts.of(highBitrate, durationSec: 194)
+    check("1087kbps（容器认不出）→ 无损，不再标 320k", qHi == .lossless, "got=\(qHi.rawValue)")
+    check("1087kbps 命中无损档",
+          QualityFacts.matches(.lossless, container: "mp3", kbps: 1087))
+    check("无损档的容器后缀优先取探测值（此处 mp3，改名时以实测容器为准）",
+          extHi == "mp3", "ext=\(extHi)")
+
+    // 自检不变式：of() 给出的档位，必须能被 matches() 认成同一档
+    for (container, kb) in [("flac", 1647), ("mp3", 1087), ("mp3", 320), ("mp3", 128), ("m4a", 97)] {
+        let facts = StreamVerifier.AudioFacts(container: container,
+                                             totalBytes: Int64(kb) * 194 / 8 * 1000)
+        let (q, _) = QualityFacts.of(facts, durationSec: 194)
+        check("of/matches 口径一致：\(container) \(kb)kbps → \(q.rawValue)",
+              QualityFacts.matches(q, container: container, kbps: Int64(kb)),
+              "of=\(q.rawValue)")
+    }
+}
+
+// MARK: - 4.1 下载换源时的平台优先次序（r120）
+
+section("下载换源平台优先次序")
+
+do {
+    let losslessOrder = MusicPlatform.allCases.map {
+        ($0, SameSongCrossResolver.downloadPlatformRank($0, want: .lossless))
+    }.sorted { $0.1 < $1.1 }.map(\.0)
+    check("无损：网易最先（gdstudio 稳定出 fLaC）", losslessOrder.first == .netease,
+          "\(losslessOrder.map(\.rawValue))")
+    check("无损：酷我第二（妖狐常给 fLaC）",
+          SameSongCrossResolver.downloadPlatformRank(.kuwo, want: .lossless) == 1)
+    check("无损：QQ 最后（cyapi 只有 97kbps）",
+          SameSongCrossResolver.downloadPlatformRank(.qq, want: .lossless) == 3)
+    check("320k：网易最先（唯一按 br 给档）",
+          SameSongCrossResolver.downloadPlatformRank(.netease, want: .high) == 0
+            && SameSongCrossResolver.downloadPlatformRank(.qq, want: .high) == 3)
 }
 
 // MARK: - 5 酷我文本解析

@@ -211,17 +211,19 @@ enum SameSongCrossResolver {
         var cands = results.flatMap { $0.songs }.filter { sameSong(src: song, cand: $0) }
         cands = cands.filter { !triedKeys.contains(candKey($0)) }
 
-        // 排序（第三十四轮）：**干净原唱永远优先**，然后才看平台/档位/时长。
-        // 旧口径把「同平台」排在「原唱」前面，于是酷狗源一失败，同平台的 DJ Wave 版就先被拿去解析，
-        // 跨平台的 QQ 原唱反而排在后面——这是青花瓷放成 DJ 版的直接原因。
-        if forDownload && quality != .lossless {
+        // 排序（第三十四轮 + r120）：**先挑"能出目标档"的平台**，再"干净原唱永远优先"，最后才看同平台/时长。
+        //
+        // r120（《연애의 조건》）：以前「同平台优先」排在最前，QQ 那三条 128k 候选先被逐个解析，
+        // 网易那条真无损排在后面；真机上预算一紧就"还没轮到网易就收工"，弹层于是写着"只有 128k"。
+        // 现在按平台能力排序——无损先网易（gdstudio 稳定出 fLaC），320k/128k 也先网易（唯一按 br 给档的）。
+        if forDownload {
             cands.sort { a, b in
+                let ra = downloadPlatformRank(a.platform, want: quality)
+                let rb = downloadPlatformRank(b.platform, want: quality)
+                if ra != rb { return ra < rb }
                 let ca = StudioPick.isCleanTitle(a.name) && !StudioPick.isLiveAlbum(a.album)
                 let cb = StudioPick.isCleanTitle(b.name) && !StudioPick.isLiveAlbum(b.album)
                 if ca != cb { return ca && !cb }
-                let ta = tierCapable(a.platform, want: quality) ? 0 : 1
-                let tb = tierCapable(b.platform, want: quality) ? 0 : 1
-                if ta != tb { return ta < tb }
                 let pa = a.platform == song.platform ? 0 : 1
                 let pb = b.platform == song.platform ? 0 : 1
                 if pa != pb { return pa < pb }
@@ -261,6 +263,33 @@ enum SameSongCrossResolver {
     /// 这个平台的取流后端还能不能真的产出该档位（实测：320k/128k 只有网易有戏）
     static func tierCapable(_ platform: MusicPlatform, want: QualityLevel) -> Bool {
         want == .lossless ? true : platform == .netease
+    }
+
+    /// 下载换源时的平台优先次序（越小越先解析）：**能出目标档的平台排前面**
+    ///
+    /// 真实能力（2026-11-19 实测）：
+    ///   · 网易 gdstudio：br=740 → 真 fLaC（25MB / 1087kbps），br=320/128 也是真档位；
+    ///   · 酷我 妖狐：经常回 fLaC，但走"搜索式"取流，慢一些；
+    ///   · 酷狗 playInfo：主要是 mp3；
+    ///   · QQ cyapi：固定 ~97kbps 的 m4a，永远出不了 320k/无损。
+    /// 所以以前"同平台 QQ 先解析"等于先烧预算再轮到大鱼，真机上经常没轮到就超时。
+    static func downloadPlatformRank(_ platform: MusicPlatform, want: QualityLevel) -> Int {
+        switch want {
+        case .lossless:
+            switch platform {
+            case .netease: return 0
+            case .kuwo: return 1
+            case .kugou: return 2
+            case .qq: return 3
+            }
+        case .high, .standard:
+            switch platform {
+            case .netease: return 0
+            case .kugou: return 1
+            case .kuwo: return 2
+            case .qq: return 3
+            }
+        }
     }
 
     /// 同曲判定：歌名匹配 + 歌手匹配 + 时长不差一个版本
@@ -306,8 +335,17 @@ enum DownloadResolver {
         let fallback: StreamSource?
         let switched: Bool
         let crossTried: Int
+        /// 这一次取源各阶段的实况（本平台几条 / 跨源试了几条 / 妖狐结果），降级时写进弹层说清原因
+        let notes: [String]
 
         var empty: Bool { exact.isEmpty && fallback == nil }
+
+        /// 降级时那句人话：最高可得档 + 各阶段实况
+        var fallbackReason: String {
+            let best = fallback?.quality.displayName ?? "—"
+            guard !notes.isEmpty else { return "没有\(want.displayName)，最高可得\(best)" }
+            return "没有\(want.displayName)，最高可得\(best)（\(notes.joined(separator: " · "))）"
+        }
     }
 
     static let genericTimeout: TimeInterval = 12
@@ -316,17 +354,21 @@ enum DownloadResolver {
     static func plan(song: Song, want: QualityLevel) async -> Plan {
         let duration = song.durationSec
         var pool: [StreamSource] = []
+        var notes: [String] = []
 
         // 第一轮：本平台自己的后端
         let local = await URLResolver.shared.resolveResult(song: song, quality: want)
         pool.append(contentsOf: local.sources)
+        notes.append("本平台 \(local.sources.count) 条\(local.sources.isEmpty ? "" : "（\(qualitySummary(local.sources))）")")
 
         // 第二轮：跨源换源（同歌名 + 同歌手，StudioPick 排掉 live/节目版）
+        // 排序已经在 `candidateList` 里按"能出目标档的平台"优先（网易/酷我先解析）
         let tried = TriedKeys()
         let cross = await SameSongCrossResolver.resolveForDownload(
             song: song, want: want, triedKeys: tried)
         pool.append(contentsOf: cross.exacts)
         if let best = cross.best { pool.append(best) }
+        notes.append("跨源试 \(tried.count) 条\(cross.exacts.isEmpty && cross.best == nil ? "全落空" : "")")
 
         // 第三轮：通用搜索式后端（妖狐酷我，与歌来自哪个平台无关）
         // 无损档照打（妖狐恒给无损）；320k/128k 只在"一条源都没有"时才打，否则白等 12s
@@ -336,7 +378,12 @@ enum DownloadResolver {
             let generic = await withTimeoutOrNil(genericTimeout) {
                 try await YaohuKuwoAdapter().resolve(song: song, quality: .lossless)
             }
-            if let generic { pool.append(generic) }
+            if let generic {
+                pool.append(generic)
+                notes.append("妖狐 \(generic.quality.displayName)")
+            } else {
+                notes.append("妖狐失败")
+            }
         }
 
         var seen = Set<String>()
@@ -366,7 +413,19 @@ enum DownloadResolver {
 
         let switched = (exact + [fallback].compactMap { $0 }).contains { $0.platform != song.platform }
         return Plan(want: want, exact: exact, fallback: fallback,
-                    switched: switched, crossTried: tried.count)
+                    switched: switched, crossTried: tried.count, notes: notes)
+    }
+
+    /// 「3 条：网易·无损 / QQ·标准」这种一句话摘要（只给降级提示用）
+    static func qualitySummary(_ sources: [StreamSource]) -> String {
+        var seen = Set<String>()
+        var parts: [String] = []
+        for s in sources {
+            let key = "\(s.platform.rawValue)|\(s.quality.rawValue)"
+            guard seen.insert(key).inserted else { continue }
+            parts.append("\(s.platform.shortName)·\(s.quality.displayName)")
+        }
+        return parts.prefix(3).joined(separator: " / ")
     }
 
     /// 目标档判定：容器 + 码率都由取流阶段实测得到；时长未知时退回"档位桶"这一层近似

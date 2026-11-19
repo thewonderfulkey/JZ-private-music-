@@ -144,7 +144,7 @@ final class DownloadFlow {
             offer = Offer(quality: fallback.quality,
                           source: fallback,
                           isExact: false,
-                          note: "没有\(plan.want.displayName)，最高可得\(fallback.quality.displayName)")
+                          note: plan.fallbackReason)
             stage = .offer
         } else {
             message = "这首歌四家都取不到音源。换一首，或稍后再试。"

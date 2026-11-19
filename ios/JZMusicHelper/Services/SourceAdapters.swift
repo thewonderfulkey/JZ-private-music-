@@ -32,9 +32,29 @@ enum StreamVerifier {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
         request.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
+
+        // 真机上 `URLSession.bytes(for:)` 偶发"连接成功但一个字节都读不到"（HTTP/2 流被 CDN 重置、
+        // 或者 Range 请求走了另一条边缘节点）。以前这种情况直接返回 nil → 这条后端被当成"没源"，
+        // 于是"网易明明有无损，iOS 却只剩 128k"（《연애의 조건》r120）。
+        // 现在最多试两次；两次都读不到头时，只要**体积已知**就仍然返回 unknown 容器，
+        // 交给 `QualityFacts` 用码率反推档位（≥601kbps 即无损），不再整条后端判死。
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+            }
+            if let facts = await inspectOnce(request) {
+                if facts.container != "unknown" || facts.totalBytes > 0 { return facts }
+            }
+        }
+        return nil
+    }
+
+    /// 一次 Range GET：读 HTTP 头 + 最多 16 字节容器头
+    private static func inspectOnce(_ request: URLRequest) async -> AudioFacts? {
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
@@ -62,9 +82,11 @@ enum StreamVerifier {
             }
 
             let container = sniffHead(head)
+            // 判断"这是不是音频"：容器头认得、或 Content-Type 像音频、或这是一段 206 分片（只有音频 CDN 会这么回）
             let looksAudio = contentType.hasPrefix("audio/")
                 || contentType.contains("octet-stream")
                 || container != "unknown"
+                || (total > 0 && code == 206)
             guard looksAudio else { return nil }
             return AudioFacts(container: container, totalBytes: total)
         } catch {
@@ -77,17 +99,37 @@ enum StreamVerifier {
     }
 
     /// 前 16 字节容器头判定真实容器；认不出回 unknown（HTML / JSON 错误页会落到这里）
+    ///
+    /// r120（《연애의 조건》事故）：库里那首网易无损的直链，头 4 字节不是 `fLaC`——
+    /// 126.net 给的部分文件前面挂了一段 ID3v2 标签，真正的 `fLaC` 在后面。旧实现只看偏移 0，
+    /// 于是把一条 1087kbps 的真无损判成 "unknown → mp3"，档位跟着掉成 320k，
+    /// 下载弹层就变成"没有无损，最高可得 320k / 128k"。
+    /// 现在在头 16 字节里**任意位置**找特征串，认得出就认。
     static func sniffHead(_ b: [UInt8]) -> String {
+        guard !b.isEmpty else { return "unknown" }
         func at(_ i: Int) -> UInt8 { i < b.count ? b[i] : 0 }
-        func eq(_ c: Character, _ i: Int) -> Bool { at(i) == (c.asciiValue ?? 0) }
+        func has(_ s: String, from: Int = 0) -> Bool {
+            let bytes = Array(s.utf8)
+            guard b.count >= from + bytes.count else { return false }
+            for (k, v) in bytes.enumerated() where at(from + k) != v { return false }
+            return true
+        }
 
-        if b.count >= 4, eq("f", 0), eq("L", 1), eq("a", 2), eq("C", 3) { return "flac" }
-        if b.count >= 4, eq("O", 0), eq("g", 1), eq("g", 2), eq("S", 3) { return "ogg" }
-        if b.count >= 8, eq("f", 4), eq("t", 5), eq("y", 6), eq("p", 7) { return "m4a" }
-        if b.count >= 3, eq("I", 0), eq("D", 1), eq("3", 2) { return "mp3" }
-        if b.count >= 2, at(0) == 0xFF,
-           [0xFB, 0xF3, 0xF2, 0xFA].contains(at(1)) { return "mp3" }
-        if b.count >= 4, eq("R", 0), eq("I", 1), eq("F", 2), eq("F", 3) { return "wav" }
+        // 1) 标准位置优先（绝大多数文件走这里）
+        if has("fLaC") { return "flac" }
+        if has("OggS") { return "ogg" }
+        if b.count >= 8, has("ftyp", from: 4) { return "m4a" }
+        if b.count >= 3, has("ID3") { return "mp3" }
+        if b.count >= 2, at(0) == 0xFF, [0xFB, 0xF3, 0xF2, 0xFA].contains(at(1)) { return "mp3" }
+        if has("RIFF") { return "wav" }
+
+        // 2) 偏移 0 认不出：在前面这段里找特征串（ID3v2 头 + 之后才是真容器）
+        for offset in 1..<b.count {
+            if has("fLaC", from: offset) { return "flac" }
+            if has("OggS", from: offset) { return "ogg" }
+            if has("RIFF", from: offset) { return "wav" }
+            if has("ftyp", from: offset) { return "m4a" }
+        }
         return "unknown"
     }
 }
@@ -96,13 +138,27 @@ enum StreamVerifier {
 // 接口自报的音质一律不信，只认探测到的事实
 enum QualityFacts {
 
+    /// 判定门槛（`of` 与 `matches` **共用同一组常量**，不允许各说各话）
+    ///
+    /// r120：《연애의 조건》那次事故的后半段——`matches(.lossless)` 认「码率 ≥600k 也算无损」，
+    /// 但 `of()` 只认容器，于是同一条 1087kbps 的源在"能不能算命中"里是无损，
+    /// 在"显示成哪一档"里却是 320k：弹层写"只有高品 320k"、文件其实是 FLAC。
+    /// 现在两边都走这里，命中与标注从根上一致。
+    /// 无损与"高品"的分界：601kbps 起算无损（600 仍属高品区间，和 SelfTest 的历史断言一致）
+    static let losslessFloorKbps: Int64 = 601
+    /// 高品区间（256–600）与标准区间（48–255）
+    static let highBandKbps: ClosedRange<Int64> = 256...600
+    static let standardBandKbps: ClosedRange<Int64> = 48...255
+
     /// 真实档位 + 实际容器后缀（下载文件名据此生成，杜绝 ".flac 里装 mp3"）
     static func of(_ facts: StreamVerifier.AudioFacts, durationSec: Int) -> (QualityLevel, String) {
         let ext = extOf(facts.container)
         if facts.container == "flac" || facts.container == "wav" { return (.lossless, ext) }
         let kb = kbps(facts.totalBytes, durationSec)
-        // 算不出码率时宁可往低标——"没有无损却标无损"正是这一层要消灭的问题
-        return (kb >= 256 ? .high : .standard, ext)
+        // 容器认不出但码率已经是无损量级（CDN 把容器头改了 / 前面挂 ID3）：按无损标，
+        // 和 `matches` 同一个口径；算不出码率时仍宁可往低标
+        if kb >= losslessFloorKbps { return (.lossless, ext) }
+        return (highBandKbps.contains(kb) ? .high : .standard, ext)
     }
 
     static func extOf(_ container: String) -> String {
@@ -120,17 +176,20 @@ enum QualityFacts {
         return totalBytes * 8 / Int64(durationSec) / 1000
     }
 
-    /// 目标档校验：三档共用唯一口径。无损看容器，320k/128k 看码率区间。
+    /// 目标档校验：三档共用唯一口径。无损看容器或无损量级码率，320k/128k 看码率区间。
     /// kbps = 0（算不出）→ 一律不算命中，由上层按业务决定降级与否。
+    ///
+    /// 与 `of()` 共用 `losslessFloorKbps` / `highFloorKbps`：命中判定与档位标注必须一致，
+    /// 否则就会出现"命中无损、界面显示 320k"（r120 的事故）。
     static func matches(_ want: QualityLevel, container: String, kbps kb: Int64) -> Bool {
         let isLosslessContainer = container == "flac" || container == "wav"
         switch want {
         case .lossless:
-            return isLosslessContainer || kb >= 600
+            return isLosslessContainer || kb >= losslessFloorKbps
         case .high:
-            return !isLosslessContainer && (256...600).contains(kb)
+            return !isLosslessContainer && highBandKbps.contains(kb)
         case .standard:
-            return !isLosslessContainer && (48...255).contains(kb)
+            return !isLosslessContainer && standardBandKbps.contains(kb)
         }
     }
 }
