@@ -129,6 +129,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # 逻辑自测失败时 build-ipa 根本不会启动，那里面的"失败通知"也就不会跑——
+      # 结果就是群里一片安静，只能靠猜。这里把编译/断言日志的尾巴直接发到飞书。
+      - name: 失败时把编译/断言日志发到飞书
+        if: failure()
+        continue-on-error: true
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_CHAT_ID: ${{ secrets.LARK_CHAT_ID }}
+        run: |
+          set -uo pipefail
+          BODY=$( {
+            echo "--- selftest.log ---"
+            tail -c 1500 build/selftest.log 2>/dev/null || echo "(无)"
+            echo
+            echo "--- 编译错误 ---"
+            grep -E "error:" build/selftest-build.log 2>/dev/null | head -12 || echo "(无 error: 行)"
+            echo
+            echo "--- selftest-build.log 尾巴 ---"
+            tail -c 1200 build/selftest-build.log 2>/dev/null || echo "(无)"
+          } | tail -c 3500 )
+          python3 tools/notify/lark.py --fail --title "iOS 逻辑自测失败" --body "$BODY" || true
+
   build-ipa:
     needs: logic-tests
     name: build unsigned ipa
