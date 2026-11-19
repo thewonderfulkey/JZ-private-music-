@@ -20,7 +20,7 @@
 | 文件 | 职责 |
 |---|---|
 | [PlaybackRules.swift](ios/JZMusicHelper/Services/PlaybackRules.swift) | **纯函数**：`PlayMode` 四态、下一首/上一首索引、时长校验、连跳上限、模式循环顺序。不依赖 AVFoundation，所以 CI 能直接断言 |
-| [HeartbeatRules.swift](ios/JZMusicHelper/Services/HeartbeatRules.swift) | **纯函数**：心动模式的画像（四通道加权 / 饱和 / 衰减）、打分与惩罚、MMR 多样性、新旧比例调度。CI 有断言，见 [IOS-HEARTBEAT.md](IOS-HEARTBEAT.md) |
+| [HeartbeatRules.swift](ios/JZMusicHelper/Services/HeartbeatRules.swift) | **纯函数**：心动模式的画像（五通道加权 / 饱和 / 衰减）、打分与惩罚、MMR 多样性、新旧比例调度。CI 有断言，见 [IOS-HEARTBEAT.md](IOS-HEARTBEAT.md) |
 | [HeartbeatEngine.swift](ios/JZMusicHelper/Services/HeartbeatEngine.swift) | 心动模式的编排：召回（种子歌手 / 画像歌手 / 搜索词 / 旧爱池）→ 排序 → 预取整首落盘 → 交给播放器；播放事件与「不感兴趣」的持久化 |
 | [AudioPlayer.swift](ios/JZMusicHelper/Services/AudioPlayer.swift) | `PlayerEngine`（`@Observable`）：队列、播放/暂停、上一首/下一首、seek、模式切换、取流（3 轮重试 + 坏源黑名单）、进度与缓冲、播完推进、坏源拒播、无源跳过 |
 | [NowPlayingCenter.swift](ios/JZMusicHelper/Services/NowPlayingCenter.swift) | 音频会话（`.playback` + 后台）、锁屏/控制中心信息（含异步封面）、远程命令、打断恢复、拔耳机暂停 |

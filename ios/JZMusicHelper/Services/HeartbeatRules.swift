@@ -8,7 +8,8 @@ import Foundation
 // 而它全是可判定的算术，CI 的 logic-tests 用 `swiftc` 直接把本文件和 `Song.swift` 一起编译断言。
 //
 // 口径（老板 2026-11-19 拍板）：
-//   · 画像四通道权重：**下载 > 收藏 > 搜索 > 播放**
+//   · 画像五通道权重：**下载 > 收藏 > 导入歌单 > 搜索 > 播放**
+//     （五通道是第四十三轮的追加：导入的歌单也是用户主动选进来的口味，见 `wImport`）
 //   · 新旧比例用户可在设置里调（滑杆 → `oldShare`），默认 1/3 旧、2/3 新
 //   · 「不感兴趣」是硬负反馈：这首歌不再出现，同歌手降权
 //
@@ -71,6 +72,8 @@ struct HeartbeatProfile {
 enum HeartbeatReason: String, Sendable {
     case download
     case favorite
+    /// 来自用户导入的歌单（detail = 歌单名）
+    case playlist
     case search
     case seed
     case artist
@@ -91,22 +94,29 @@ struct HeartbeatScored {
 
 enum HeartbeatRules {
 
-    // MARK: 四通道权重（下载 > 收藏 > 搜索 > 播放）
+    // MARK: 五通道权重（下载 > 收藏 > 导入歌单 > 搜索 > 播放）
 
     static let wDownload: Double = 1.00
     static let wFavorite: Double = 0.80
+    /// 导入歌单：用户主动把一整张歌单搬进来，比搜索/播放的"顺手行为"更接近明确口味；
+    /// 但一张歌单几十上百首、不一定首首都爱听，所以排在收藏之后。
+    static let wImport: Double = 0.70
     static let wSearch: Double = 0.60
     static let wPlay: Double = 0.40
 
     /// 软饱和的"膝点"：各通道的自然密度不同（播放远多于下载），用不同的 K 让贡献上限都等于自己的权重。
     static let kneeDownload: Double = 5
     static let kneeFavorite: Double = 8
+    /// 一张导入歌单动辄几百首：膝点给大一点，免得一张大歌单把收藏/搜索全压死
+    static let kneeImport: Double = 120
     static let kneeSearch: Double = 10
     static let kneePlay: Double = 30
 
     /// 时间衰减半衰期（天）：下载/收藏是长期口味，播放/搜索是当下口味
     static let halfLifeDownload: Double = 60
     static let halfLifeFavorite: Double = 45
+    /// 导入歌单按"导入时间"老化：半年不碰的旧歌单不该还和刚导入的一样重
+    static let halfLifeImport: Double = 30
     static let halfLifePlay: Double = 14
     static let halfLifeSearch: Double = 10
 
@@ -129,6 +139,7 @@ enum HeartbeatRules {
                              favorites: [(song: Song, at: Date)],
                              searches: [(keyword: String, at: Date)],
                              plays: [HeartbeatPlayEvent],
+                             imports: [(song: Song, at: Date)] = [],
                              now: Date = Date()) -> HeartbeatProfile {
         var p = HeartbeatProfile()
 
@@ -152,6 +163,11 @@ enum HeartbeatRules {
                        events: favorites.map { ChannelEvent(song: $0.song, at: $0.at, quality: 1.0) },
                        weight: wFavorite, knee: kneeFavorite,
                        halfLife: halfLifeFavorite, now: now)
+        // 导入歌单：事件时间 = 导入时间（歌单是快照，没有逐首的时间戳）
+        addSongChannel(&p,
+                       events: imports.map { ChannelEvent(song: $0.song, at: $0.at, quality: 1.0) },
+                       weight: wImport, knee: kneeImport,
+                       halfLife: halfLifeImport, now: now)
         addSongChannel(&p,
                        events: plays.map {
                            ChannelEvent(song: $0.song,
@@ -385,17 +401,20 @@ enum HeartbeatRules {
     }
 
     /// 候选打分（0~100）。`priorIndex` = 该候选在本轮搜索结果里的名次。
+    /// `playlistName` 非空 = 这首来自用户导入的歌单：给一档"已知曲目"加成，理由也用歌单名。
     static func score(song: Song,
                       profile: HeartbeatProfile,
                       seed: Song?,
                       downloaded: Bool,
                       favorited: Bool,
                       priorIndex: Int,
+                      playlistName: String? = nil,
                       now: Date = Date()) -> HeartbeatScored {
         let content = cosine(profile.vec, features(song)) * 100
         let seedSim = seed.map { cosine(features($0), features(song)) * 100 } ?? 0
         let artistAff = min(1.0, profile.artist[primarySinger(song)] ?? 0) * 100
-        let known = downloaded ? 100.0 : (favorited ? 85.0 : 0.0)
+        // 旧爱档位：下载 100 > 收藏 85 > 导入歌单 72（比收藏弱一档：整张歌单不一定首首都爱听）
+        let known = downloaded ? 100.0 : (favorited ? 85.0 : (playlistName == nil ? 0.0 : 72.0))
         let prior = max(0.0, 60.0 - Double(max(0, priorIndex)) * 6.0)
         let fresh = profile.lastPlayed[song.id] == nil ? 100.0 : 0.0
         let hint = bestSearchHint(song, hints: profile.searchHints)
@@ -415,6 +434,9 @@ enum HeartbeatRules {
         } else if favorited {
             reason = .favorite
             detail = singer
+        } else if let playlistName, !playlistName.isEmpty {
+            reason = .playlist
+            detail = playlistName
         } else if let hint, hint.weight >= 0.12 {
             reason = .search
             detail = hint.keyword
@@ -522,6 +544,8 @@ enum HeartbeatRules {
             return detail.isEmpty ? "你下载过的歌" : "你下载过 \(detail) 的歌"
         case .favorite:
             return detail.isEmpty ? "你收藏过的歌" : "你收藏过 \(detail)"
+        case .playlist:
+            return detail.isEmpty ? "来自你导入的歌单" : "来自你导入的《\(detail)》"
         case .search:
             return "搜过「\(detail)」"
         case .seed:

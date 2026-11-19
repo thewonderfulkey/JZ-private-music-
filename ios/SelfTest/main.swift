@@ -665,12 +665,13 @@ do {
 
 // MARK: - 9.5 心动模式（画像 / 排序 / 新旧调度）
 
-section("心动模式四通道与调度")
+section("心动模式五通道与调度")
 
 do {
-    check("权重顺序 下载 > 收藏 > 搜索 > 播放",
+    check("权重顺序 下载 > 收藏 > 导入歌单 > 搜索 > 播放",
           HeartbeatRules.wDownload > HeartbeatRules.wFavorite
-          && HeartbeatRules.wFavorite > HeartbeatRules.wSearch
+          && HeartbeatRules.wFavorite > HeartbeatRules.wImport
+          && HeartbeatRules.wImport > HeartbeatRules.wSearch
           && HeartbeatRules.wSearch > HeartbeatRules.wPlay)
 
     // 1/3 旧 → 新 新 旧 循环；第 1 首永远是新的（刚切进来先给新歌）
@@ -768,6 +769,68 @@ do {
           HeartbeatRules.reasonText(.hot, detail: "3").contains("3"),
           HeartbeatRules.reasonText(.hot, detail: "3"))
     check("热歌榜池上限是 20 首", HeartbeatRules.hotPoolLimit == 20)
+}
+
+// 第四十三轮：导入歌单作为第五通道（老板："心动模式加一个权重，也可以根据用户导入的歌单推荐"）
+do {
+    let now = Date()
+    let imports: [(song: Song, at: Date)] = [
+        (song: song(.qq, "晴天", "周杰伦", id: "im1"), at: now),
+        (song: song(.qq, "七里香", "周杰伦", id: "im2"), at: now),
+        (song: song(.qq, "Rolling in the Deep", "Adele", id: "im3"), at: now)
+    ]
+    let imported = HeartbeatRules.buildProfile(downloads: [], favorites: [], searches: [],
+                                               plays: [], imports: imports, now: now)
+    check("导入歌单进画像：口味向量与歌手亲和都有值",
+          !imported.vec.isEmpty && (imported.artist["周杰伦"] ?? 0) > 0)
+    check("导入歌单能撑起 top 歌手（新歌召回有词可用）",
+          imported.topArtists.contains("周杰伦"), "\(imported.topArtists)")
+    let empty = HeartbeatRules.buildProfile(downloads: [], favorites: [], searches: [], plays: [], now: now)
+    check("没有导入歌单时画像仍为空", empty.isEmpty)
+
+    // 一个下载 vs 两张歌单里的两首：权重顺序 1.00 > 0.70，下载仍应更亲
+    let downloaded = [(song: song(.qq, "江南", "林俊杰", id: "dl1"), at: now)]
+    let mixed = HeartbeatRules.buildProfile(downloads: downloaded, favorites: [], searches: [],
+                                            plays: [], imports: imports, now: now)
+    let dl = mixed.artist["林俊杰"] ?? 0
+    let im = mixed.artist["周杰伦"] ?? 0
+    check("下载权重仍压过导入歌单", dl > im, "下载=\(dl) 导入=\(im)")
+
+    let fromPlaylist = HeartbeatRules.score(song: song(.qq, "晴天", "周杰伦", id: "im1"),
+                                            profile: imported,
+                                            seed: nil,
+                                            downloaded: false,
+                                            favorited: false,
+                                            priorIndex: 0,
+                                            playlistName: "我喜欢的音乐",
+                                            now: now)
+    check("导入歌单候选的理由写歌单名",
+          fromPlaylist.reason == .playlist
+            && HeartbeatRules.reasonText(.playlist, detail: fromPlaylist.detail)
+                == "来自你导入的《我喜欢的音乐》",
+          fromPlaylist.detail)
+    let plain = HeartbeatRules.score(song: song(.qq, "晴天", "周杰伦", id: "im1"),
+                                     profile: imported,
+                                     seed: nil,
+                                     downloaded: false,
+                                     favorited: false,
+                                     priorIndex: 0,
+                                     now: now)
+    check("来自导入歌单的候选有「已知曲目」加成（72 档）",
+          fromPlaylist.score > plain.score,
+          "\(fromPlaylist.score) vs \(plain.score)")
+    let alsoDownloaded = HeartbeatRules.score(song: song(.qq, "晴天", "周杰伦", id: "im1"),
+                                              profile: imported,
+                                              seed: nil,
+                                              downloaded: true,
+                                              favorited: false,
+                                              priorIndex: 0,
+                                              playlistName: "我喜欢的音乐",
+                                              now: now)
+    check("下载过的歌仍报「下载」理由（证据优先级不被歌单盖掉）",
+          alsoDownloaded.reason == .download)
+    check("歌单名缺失时不写空书名号",
+          HeartbeatRules.reasonText(.playlist, detail: "") == "来自你导入的歌单")
 }
 
 // MARK: - 10 歌词：清洗、LRC、逐字解密

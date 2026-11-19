@@ -67,7 +67,7 @@ struct SettingsView: View {
             }
 
             // 心动模式（第四十一轮）：只暴露"用户真的想调"的那一个量——新旧比例。
-            // 四通道权重（下载 > 收藏 > 搜索 > 播放）是产品口径，不给用户拧。
+            // 五通道权重（下载 > 收藏 > 导入歌单 > 搜索 > 播放）是产品口径，不给用户拧。
             Section("心动模式") {
                 VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
                     HStack(spacing: Tokens.Spacing.xs) {

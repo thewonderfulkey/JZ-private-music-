@@ -10,7 +10,8 @@ import UIKit
 //   ④ 最近播放：小封面横排（有播放记录才出现）
 //   ⑤ 我的歌单：**导入过歌单才出现**（设置 → 导入歌单），横滑宽卡；无导入时这里什么都没有
 //   ⑥ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
-//   ⑦ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）
+//   ⑦ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）；
+//      **没有播放记录时整块隐藏**（和「我的歌单」同一套显示逻辑），听了歌再自动出现
 //   ⑧ 热门音乐：同一套分页，行内带名次
 //
 // 第二十九轮起所有数据链都是真数据；第三十轮把「编辑精选」（本地池 + 逐首解析）下线，
@@ -89,6 +90,12 @@ struct DiscoverView: View {
             }
         }
         .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
+        // 新用户第一次听完一首歌：猜你喜欢从"整块隐藏"变成"该出现了"——立刻算第一轮，
+        // 否则要等下次进发现页才长出来（`root` 的 Tab 是保活的，`.task` 不会重跑）。
+        .onChange(of: library.recentSongs.isEmpty) { _, isEmpty in
+            guard !isEmpty else { return }
+            Task { await feed.refreshGuessIfStale(recent: library.recentSongs) }
+        }
     }
 
     /// 首屏这一趟：热门 + 最新单曲（`feed`）+ 歌单广场 + 歌手大全，四块并发
@@ -399,46 +406,51 @@ struct DiscoverView: View {
     }
 
     // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
-
+    //
+    // 第四十三轮（老板 2026-11-19）：显示逻辑对齐「我的歌单」——**新用户没有历史数据时整块隐藏**，
+    // 不占位、不留标题、也不再给"多听几首会长出来"的空态条；有了播放记录再自动出现。
+    // 判断依据就是 `recentSongs`：猜你喜欢的输入（歌手关键词）只从最近播放里抽，
+    // 没有最近播放就注定一条也长不出来。
+    @ViewBuilder
     private var guessSection: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-            DiscoverSectionHeader(
-                title: "猜你喜欢",
-                meta: library.recentSongs.isEmpty ? nil : "根据你的播放",
-                actionTitle: (library.recentSongs.isEmpty || feed.guessState == .loading) ? nil : "换一批",
-                action: {
-                    Haptics.refresh()
-                    Task {
-                        await feed.nextGuessRound(recent: library.recentSongs)
-                        flash("猜你喜欢已换一批")
-                    }
-                })
+        if !library.recentSongs.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                DiscoverSectionHeader(
+                    title: "猜你喜欢",
+                    meta: "根据你的播放",
+                    actionTitle: feed.guessState == .loading ? nil : "换一批",
+                    action: {
+                        Haptics.refresh()
+                        Task {
+                            await feed.nextGuessRound(recent: library.recentSongs)
+                            flash("猜你喜欢已换一批")
+                        }
+                    })
 
-            Group {
-                if library.recentSongs.isEmpty {
-                    GuessEmptyGuide()
-                } else if feed.guessState == .loading {
-                    SkeletonRows(count: 3)
-                } else if feed.guessState == .failed || feed.guessSongs.isEmpty {
-                    if feed.guessState == .failed {
+                Group {
+                    if feed.guessState == .loading {
+                        SkeletonRows(count: 3)
+                    } else if feed.guessState == .failed {
                         retryBlock("推荐暂时取不到，稍后再试") {
                             Task { await feed.refreshGuess(recent: library.recentSongs) }
                         }
+                    } else if feed.guessSongs.isEmpty {
+                        // 有历史但这一轮没挑出歌（搜索全失败）：给一句实话，不显示空态引导
+                        StatusLine(kind: .info("暂时没有合适的推荐"))
+                            .padding(.horizontal, Tokens.Spacing.pageMargin)
                     } else {
-                        GuessEmptyGuide()
-                    }
-                } else {
-                    songListCard(count: feed.guessSongs.count) { index in
-                        let song = feed.guessSongs[index]
-                        Button {
-                            play(feed.guessSongs, at: index)
-                        } label: {
-                            DiscoverSongRow(song: song,
-                                            reason: guessReason(for: song),
-                                            showReason: true,
-                                            rank: nil)
+                        songListCard(count: feed.guessSongs.count) { index in
+                            let song = feed.guessSongs[index]
+                            Button {
+                                play(feed.guessSongs, at: index)
+                            } label: {
+                                DiscoverSongRow(song: song,
+                                                reason: guessReason(for: song),
+                                                showReason: true,
+                                                rank: nil)
+                            }
+                            .buttonStyle(.press)
                         }
-                        .buttonStyle(.press)
                     }
                 }
             }
@@ -874,25 +886,6 @@ struct PagedRows<Content: View>: View {
         .padding(.bottom, 2)
         .animation(.easeInOut(duration: 0.2), value: page)
         .accessibilityHidden(true)
-    }
-}
-
-// MARK: - 猜你喜欢空态（纯新用户）
-
-struct GuessEmptyGuide: View {
-    var body: some View {
-        VStack(spacing: Tokens.Spacing.xxs) {
-            Text("猜你喜欢")
-                .font(.subheadline.weight(.semibold))
-            Text("多听几首，这里会根据你的播放记录长出来")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(Tokens.Spacing.m)
-        // r79：空态也不再套纸卡底（同"模块就是纯色背景"）
-        .padding(.horizontal, Tokens.Spacing.pageMargin)
     }
 }
 

@@ -291,7 +291,9 @@ final class HeartbeatEngine {
                 position: position,
                 oldShare: SettingsStore.shared.heartbeatOldShare)
             if wantOld {
+                // 旧爱位 = 收藏/下载 + 导入的歌单（第四十三轮：导入歌单也是"已知曲目"）
                 primary = oldCandidates(profile: profile, exclude: exclude)
+                    + playlistCandidates(profile: profile, exclude: exclude)
             } else {
                 primary = await recall(profile: profile, exclude: exclude)
             }
@@ -300,6 +302,7 @@ final class HeartbeatEngine {
                 primary = wantOld
                     ? await recall(profile: profile, exclude: exclude)
                     : oldCandidates(profile: profile, exclude: exclude)
+                        + playlistCandidates(profile: profile, exclude: exclude)
             }
         }
         if let pick = await pickFrom(primary, deadline: deadline) { return pick }
@@ -362,10 +365,22 @@ final class HeartbeatEngine {
             (keyword: keyword, at: searchDates[keyword] ?? now.addingTimeInterval(-7 * 86_400))
         }
 
+        // 导入歌单（第四十三轮）：一整张歌单是用户主动搬进来的口味，作为第五通道进画像。
+        // 歌单是快照，没有逐首时间戳，事件时间统一用 `importedAt`（30 天半衰期，见 HeartbeatRules）。
+        // 跨歌单重复的歌只算一次：同一首出现在三张歌单里不该被三倍加权。
+        var importSeen = Set<String>()
+        var importPairs: [(song: Song, at: Date)] = []
+        for playlist in MyPlaylistStore.shared.playlists {
+            for song in playlist.songs where importSeen.insert(song.id).inserted {
+                importPairs.append((song: song, at: playlist.importedAt))
+            }
+        }
+
         return HeartbeatRules.buildProfile(downloads: downloadPairs,
                                            favorites: favoritePairs,
                                            searches: searchPairs,
                                            plays: events,
+                                           imports: importPairs,
                                            now: now)
     }
 
@@ -464,6 +479,48 @@ final class HeartbeatEngine {
                                           detail: base.detail))
         }
         return scored.sorted { $0.score > $1.score }
+    }
+
+    /// 导入歌单候选：把用户导入的歌单当成"旧爱池"的另一支（第四十三轮）。
+    ///
+    /// 与 `oldCandidates` 的区别：
+    ///   · 数据源是 `MyPlaylistStore` 的本地快照（零网络；歌本身带平台 id，能直接解析取流）；
+    ///   · 理由用**歌单名**（「来自你导入的《我喜欢的音乐》」），比"你收藏过 X"更具体；
+    ///   · 48 小时内听过的不进（与收藏/下载同一口径：旧爱位不炒冷饭）；
+    ///   · 同一首同时出现在多张歌单里只算一次（按最近导入那张歌单写理由）。
+    private func playlistCandidates(profile: HeartbeatProfile, exclude: Set<String>) -> [HeartbeatScored] {
+        let playlists = MyPlaylistStore.shared.playlists
+        guard !playlists.isEmpty else { return [] }
+
+        let now = Date()
+        let session = Set(sessionKeys)
+        let downloaded = Set(downloadSongs().map(\.id))
+        let favorited = Set(LibraryStore.shared.favorites.map(\.id))
+
+        var seen = Set<String>()
+        var out: [HeartbeatScored] = []
+        for playlist in playlists {
+            for song in playlist.songs {
+                guard seen.insert(song.id).inserted else { continue }
+                guard !exclude.contains(song.id), !session.contains(song.id) else { continue }
+                guard !dislikedKeys.contains(song.id) else { continue }
+                guard HeartbeatRules.isPlayableCandidate(song) else { continue }
+                if let last = profile.lastPlayed[song.id],
+                   now.timeIntervalSince(last) < HeartbeatRules.oldChannelFreshnessHours * 3600 {
+                    continue
+                }
+                out.append(HeartbeatRules.score(
+                    song: song,
+                    profile: profile,
+                    seed: seed,
+                    downloaded: downloaded.contains(song.id),
+                    favorited: favorited.contains(song.id),
+                    priorIndex: 0,
+                    playlistName: playlist.name,
+                    now: now))
+            }
+        }
+        return out.sorted { $0.score > $1.score }
     }
 
     private func scoreAll(_ songs: [Song],
