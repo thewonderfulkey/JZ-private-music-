@@ -49,6 +49,21 @@
 Android / Windows 的取流层**还没镜像**这条后端（下一轮补）。`android/app/build.gradle.kts` 的
 `versionName`/`versionCode` 同步到 2.4.36 / 214 只是因为 **iOS 的包名版本是从 Android 的 versionName 读的**
 （见 `ios-ipa.yml` L223 的注释）——不同步的话会打出「文件名 v2.4.35、包里是 2.4.36」的包。
+
+### 出包
+
+| 端 | 产物 | 体积 | 校验 |
+|---|---|---|---|
+| iPhone | `JZ-Music-v2.4.36-4ede6b7-r143-ios-unsigned.ipa`（CI #143，双 job 全绿） | 2,731,679 B | sha256 `c5896e96…6b824c`；包内 `2.4.36 (214)` / minOS 17.0 / 1 个 appex |
+| Android | 本轮未出包（功能未镜像） | — | `versionName 2.4.36` / versionCode 214 仅作版本线同步 |
+| Windows | 本轮未出包（功能未镜像） | — | 桌面版仍是 2.1.95 版本线 |
+
+逻辑自测 **964 条断言 / 0 失败**（CI `logic-tests`；v2.4.35 是 952，本轮新增 12 条）。
+飞书群已收到包，包也留档在 `releases/`。本轮未发 GitHub Release（与 r140 / r141 同口径）。
+
+> 过程记录：第一次推的是 `896b9c3`（CI #142），包名仍写成 `v2.4.35`——当时只改了 iOS 的
+> `MARKETING_VERSION`，没注意包名取的是 Android 的 `versionName`。`4ede6b7` 补上 Android 侧版本号后
+> 重新出包（#143）才是本版正式产物。
 ## iOS v2.4.35（213）· Android · Windows · 2026-11-20（连点歌不再乱抢：只播最后点的那一首）
 
 老板 2026-11-20：「快速点了歌 A、歌 B、歌 C，最终所有歌都在请求，封面和歌词显示的是歌 C，
