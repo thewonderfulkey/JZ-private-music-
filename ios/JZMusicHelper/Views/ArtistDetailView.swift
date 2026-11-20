@@ -15,57 +15,74 @@ struct ArtistDetailView: View {
     @State private var releases: [KuwoPlaylist.Release] = []
     @State private var loading = false
     @State private var failed = false
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
 
     private var songs: [Song] { releases.map(\.song) }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                header
-                if releases.isEmpty {
-                    if loading {
-                        SkeletonRows(count: 8)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    header
+                    if releases.isEmpty {
+                        if loading {
+                            SkeletonRows(count: 8)
+                                .padding(.top, Tokens.Spacing.s)
+                        } else if failed {
+                            EmptyStateView(title: "歌手的歌暂时取不到",
+                                           systemImage: "person.crop.circle",
+                                           description: "换个网络或稍后再试",
+                                           actionTitle: "重试") {
+                                Task { await load() }
+                            }
+                            .padding(.top, Tokens.Spacing.xl)
+                        }
+                    } else {
+                        Text("热门歌曲")
+                            .font(FontRole.sectionTitle)
+                            .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
-                    } else if failed {
-                        EmptyStateView(title: "歌手的歌暂时取不到",
-                                       systemImage: "person.crop.circle",
-                                       description: "换个网络或稍后再试",
-                                       actionTitle: "重试") {
-                            Task { await load() }
+                            .padding(.bottom, Tokens.Spacing.xs)
+                        ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
+                            Button {
+                                play(songs, at: index)
+                            } label: {
+                                SongRow(song: release.song,
+                                        showsFavorite: true,
+                                        isFavorite: library.isFavorite(release.song),
+                                        onFavorite: {
+                                            Haptics.favorite()
+                                            withAnimation(Tokens.Motion.favorite) {
+                                                library.toggleFavorite(release.song)
+                                            }
+                                        })
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .buttonStyle(.rowPress)
+                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                            .id(release.song.id)
+                            .locatedFlash(active: locator.isHighlighted(release.song))
+                            .accessibilityHint("点一下以这位歌手的歌为队列播放")
                         }
-                        .padding(.top, Tokens.Spacing.xl)
                     }
-                } else {
-                    Text("热门歌曲")
-                        .font(FontRole.sectionTitle)
-                        .padding(.horizontal, Tokens.Spacing.pageMargin)
-                        .padding(.top, Tokens.Spacing.s)
-                        .padding(.bottom, Tokens.Spacing.xs)
-                    ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
-                        Button {
-                            play(songs, at: index)
-                        } label: {
-                            SongRow(song: release.song,
-                                    showsFavorite: true,
-                                    isFavorite: library.isFavorite(release.song),
-                                    onFavorite: {
-                                        Haptics.favorite()
-                                        withAnimation(Tokens.Motion.favorite) {
-                                            library.toggleFavorite(release.song)
-                                        }
-                                    })
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
-                        }
-                        .buttonStyle(.rowPress)
-                        .accessibilityHint("点一下以这位歌手的歌为队列播放")
+                    MiniPlayerSpacer()
+                }
+                .padding(.top, Tokens.Spacing.xs)
+                .readableWidth()
+            }
+            .scrollIndicators(.hidden)
+            .locateToast(locator.toast)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LocateNowPlayingButton {
+                        locator.locate(current: player.currentSong,
+                                       songs: songs,
+                                       proxy: proxy)
                     }
                 }
-                MiniPlayerSpacer()
             }
-            .padding(.top, Tokens.Spacing.xs)
-            .readableWidth()
         }
-        .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle(artist.name)
         .navigationBarTitleDisplayMode(.inline)

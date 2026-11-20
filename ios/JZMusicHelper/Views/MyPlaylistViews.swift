@@ -233,45 +233,63 @@ struct MyPlaylistDetailView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
 
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
+
     private var playlist: ImportedPlaylist? { store.playlist(id: playlistID) }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if let playlist {
-                    header(playlist)
-                    ForEach(Array(playlist.songs.enumerated()), id: \.element.id) { index, song in
-                        Button {
-                            play(playlist.songs, at: index)
-                        } label: {
-                            SongRow(song: song,
-                                    showsFavorite: true,
-                                    isFavorite: library.isFavorite(song),
-                                    onFavorite: {
-                                        Haptics.favorite()
-                                        withAnimation(Tokens.Motion.favorite) {
-                                            library.toggleFavorite(song)
-                                        }
-                                    },
-                                    leadingRank: index + 1)
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let playlist {
+                        header(playlist)
+                        ForEach(Array(playlist.songs.enumerated()), id: \.element.id) { index, song in
+                            Button {
+                                play(playlist.songs, at: index)
+                            } label: {
+                                SongRow(song: song,
+                                        showsFavorite: true,
+                                        isFavorite: library.isFavorite(song),
+                                        onFavorite: {
+                                            Haptics.favorite()
+                                            withAnimation(Tokens.Motion.favorite) {
+                                                library.toggleFavorite(song)
+                                            }
+                                        },
+                                        leadingRank: index + 1)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .buttonStyle(.rowPress)
+                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                            .id(song.id)
+                            .locatedFlash(active: locator.isHighlighted(song))
+                            .accessibilityHint("点一下以整张歌单为队列播放")
                         }
-                        .buttonStyle(.rowPress)
-                        .accessibilityHint("点一下以整张歌单为队列播放")
+                        MiniPlayerSpacer()
+                    } else {
+                        // 详情页开着的时候在设置里把这个歌单删了：给一句实话，不留空白页
+                        EmptyStateView(title: "这个歌单已经不在了",
+                                       systemImage: "music.note.list",
+                                       description: "回设置里重新导入一次")
+                            .padding(.top, Tokens.Spacing.xl)
                     }
-                    MiniPlayerSpacer()
-                } else {
-                    // 详情页开着的时候在设置里把这个歌单删了：给一句实话，不留空白页
-                    EmptyStateView(title: "这个歌单已经不在了",
-                                   systemImage: "music.note.list",
-                                   description: "回设置里重新导入一次")
-                        .padding(.top, Tokens.Spacing.xl)
+                }
+                .padding(.top, Tokens.Spacing.xs)
+                .readableWidth()
+            }
+            .scrollIndicators(.hidden)
+            .locateToast(locator.toast)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LocateNowPlayingButton {
+                        locator.locate(current: player.currentSong,
+                                       songs: playlist?.songs ?? [],
+                                       proxy: proxy)
+                    }
                 }
             }
-            .padding(.top, Tokens.Spacing.xs)
-            .readableWidth()
         }
-        .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.inline)

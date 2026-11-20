@@ -22,6 +22,8 @@ struct SearchView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var showHidden = false
     @FocusState private var fieldFocused: Bool
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
 
     // r65（老板反馈 ⑦）：搜索只回第一页，底部要能「查看更多结果」。
     // 翻页时按 `SearchRanker.dedupeKey` 跟已经显示的做去重，翻到"这一页没有新的"就收口。
@@ -188,56 +190,71 @@ struct SearchView: View {
                 .padding(.top, Tokens.Spacing.xxs)
                 .padding(.bottom, Tokens.Spacing.xxs)
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
-                        Button {
-                            // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
-                            RowTap.afterHighlight {
-                                player.play(queue: visibleSongs, startAt: index)
-                                library.recordPlayed(song)
-                                router.showPlayer = true
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
+                            Button {
+                                // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+                                RowTap.afterHighlight {
+                                    player.play(queue: visibleSongs, startAt: index)
+                                    library.recordPlayed(song)
+                                    router.showPlayer = true
+                                }
+                            } label: {
+                                SongRow(song: song,
+                                        showsFavorite: true,
+                                        isFavorite: library.isFavorite(song),
+                                        onFavorite: { library.toggleFavorite(song) })
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
-                        } label: {
-                            SongRow(song: song,
-                                    showsFavorite: true,
-                                    isFavorite: library.isFavorite(song),
-                                    onFavorite: { library.toggleFavorite(song) })
+                            .buttonStyle(.rowPress)
+                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                            .id(song.id)
+                            .locatedFlash(active: locator.isHighlighted(song))
+                            .contextMenu {
+                                Button {
+                                    downloadFlow.start(song: song, want: player.quality)
+                                } label: {
+                                    Label("下载…", systemImage: "arrow.down.circle")
+                                }
+                                Button {
+                                    library.toggleFavorite(song)
+                                } label: {
+                                    Label(library.isFavorite(song) ? "取消收藏" : "收藏",
+                                          systemImage: library.isFavorite(song) ? "heart.slash" : "heart")
+                                }
+                            }
+                        }
+
+                        if !hiddenSongs.isEmpty {
+                            hiddenFooter
+                        }
+
+                        if player.isResolving {
+                            StatusLine(kind: .progress("正在解析音源…"))
                                 .padding(.horizontal, Tokens.Spacing.pageMargin)
+                                .padding(.top, Tokens.Spacing.s)
                         }
-                        .buttonStyle(.rowPress)
-                        .contextMenu {
-                            Button {
-                                downloadFlow.start(song: song, want: player.quality)
-                            } label: {
-                                Label("下载…", systemImage: "arrow.down.circle")
-                            }
-                            Button {
-                                library.toggleFavorite(song)
-                            } label: {
-                                Label(library.isFavorite(song) ? "取消收藏" : "收藏",
-                                      systemImage: library.isFavorite(song) ? "heart.slash" : "heart")
-                            }
-                        }
+
+                        moreResultsFooter
+
+                        MiniPlayerSpacer()
                     }
-
-                    if !hiddenSongs.isEmpty {
-                        hiddenFooter
-                    }
-
-                    if player.isResolving {
-                        StatusLine(kind: .progress("正在解析音源…"))
-                            .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            .padding(.top, Tokens.Spacing.s)
-                    }
-
-                    moreResultsFooter
-
-                    MiniPlayerSpacer()
+                    .readableWidth()
                 }
-                .readableWidth()
+                .scrollIndicators(.hidden)
+                .locateToast(locator.toast)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        LocateNowPlayingButton {
+                            locator.locate(current: player.currentSong,
+                                           songs: visibleSongs,
+                                           proxy: proxy)
+                        }
+                    }
+                }
             }
-            .scrollIndicators(.hidden)
         }
     }
 

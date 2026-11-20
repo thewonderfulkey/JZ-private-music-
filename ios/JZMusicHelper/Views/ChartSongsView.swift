@@ -21,55 +21,72 @@ struct ChartSongsView: View {
     @State private var pageDay: Int = -1
     @State private var loading = false
     @State private var failed = false
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if let page {
-                    header(page)
-                    ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
-                        // 第二十轮（老板："榜单页太丑、太细了"）：不再用 `DiscoverSongRow`（那是发现页
-                        // 的紧凑行，副行只有歌手、没有专辑/平台/时长），改回**全 App 统一行样式** `SongRow`：
-                        // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
-                        // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
-                        Button {
-                            play(page.songs, at: index)
-                        } label: {
-                            SongRow(song: song,
-                                    showsFavorite: true,
-                                    isFavorite: library.isFavorite(song),
-                                    onFavorite: {
-                                        Haptics.favorite()
-                                        withAnimation(Tokens.Motion.favorite) {
-                                            library.toggleFavorite(song)
-                                        }
-                                    },
-                                    leadingRank: index + 1)
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let page {
+                        header(page)
+                        ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
+                            // 第二十轮（老板："榜单页太丑、太细了"）：不再用 `DiscoverSongRow`（那是发现页
+                            // 的紧凑行，副行只有歌手、没有专辑/平台/时长），改回**全 App 统一行样式** `SongRow`：
+                            // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
+                            // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
+                            Button {
+                                play(page.songs, at: index)
+                            } label: {
+                                SongRow(song: song,
+                                        showsFavorite: true,
+                                        isFavorite: library.isFavorite(song),
+                                        onFavorite: {
+                                            Haptics.favorite()
+                                            withAnimation(Tokens.Motion.favorite) {
+                                                library.toggleFavorite(song)
+                                            }
+                                        },
+                                        leadingRank: index + 1)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .buttonStyle(.rowPress)
+                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                            .id(song.id)
+                            .locatedFlash(active: locator.isHighlighted(song))
+                            .accessibilityLabel("第 \(index + 1) 名，\(song.name)，\(song.singer)")
+                            .accessibilityHint("点一下以整榜为队列播放")
                         }
-                        .buttonStyle(.rowPress)
-                        .accessibilityLabel("第 \(index + 1) 名，\(song.name)，\(song.singer)")
-                        .accessibilityHint("点一下以整榜为队列播放")
+                        // 迷你条是浮层：末尾让出高度（第五轮反馈 ⑨）
+                        MiniPlayerSpacer()
+                    } else if loading {
+                        SkeletonRows(count: 10)
+                            .padding(.top, Tokens.Spacing.xs)
+                    } else if failed {
+                        EmptyStateView(title: "榜单暂时取不到",
+                                       systemImage: "chart.bar",
+                                       description: "换个网络或稍后再试",
+                                       actionTitle: "重试") {
+                            Task { await load(force: true) }
+                        }
+                        .padding(.top, Tokens.Spacing.xl)
                     }
-                    // 迷你条是浮层：末尾让出高度（第五轮反馈 ⑨）
-                    MiniPlayerSpacer()
-                } else if loading {
-                    SkeletonRows(count: 10)
-                        .padding(.top, Tokens.Spacing.xs)
-                } else if failed {
-                    EmptyStateView(title: "榜单暂时取不到",
-                                   systemImage: "chart.bar",
-                                   description: "换个网络或稍后再试",
-                                   actionTitle: "重试") {
-                        Task { await load(force: true) }
+                }
+                .padding(.top, Tokens.Spacing.xs)
+                .readableWidth()
+            }
+            .scrollIndicators(.hidden)
+            .locateToast(locator.toast)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LocateNowPlayingButton {
+                        locator.locate(current: player.currentSong,
+                                       songs: page?.songs ?? [],
+                                       proxy: proxy)
                     }
-                    .padding(.top, Tokens.Spacing.xl)
                 }
             }
-            .padding(.top, Tokens.Spacing.xs)
-            .readableWidth()
         }
-        .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle(chart.name)
         .navigationBarTitleDisplayMode(.inline)

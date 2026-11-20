@@ -3681,6 +3681,66 @@ do {
                                         isResolving: false, mode: .listLoop))
 }
 
+// MARK: - 44 ListLocate 列表页「定位到正在播放」（第四十四轮）
+
+section("ListLocate 定位口径")
+
+do {
+    let qing = song(.qq, "晴天", "周杰伦", album: "叶惠美", dur: 269, id: "q1")
+    let list = [
+        song(.kuwo, "夜曲", "周杰伦", dur: 226, id: "k0"),
+        qing,
+        song(.netease, "稻香", "周杰伦", dur: 223, id: "n1"),
+    ]
+    check("同一条数据按 id 精确命中", ListLocate.index(of: qing, in: list) == 1,
+          "index=\(String(describing: ListLocate.index(of: qing, in: list)))")
+
+    let dup = [qing, list[2], qing]
+    check("同一首出现两遍取第一处", ListLocate.index(of: qing, in: dup) == 0,
+          "index=\(String(describing: ListLocate.index(of: qing, in: dup)))")
+
+    check("没在播放 → nil", ListLocate.index(of: nil, in: list) == nil)
+    check("空列表 → nil", ListLocate.index(of: qing, in: []) == nil)
+
+    // 跨平台同一条录音：id 不同，靠 版本类 + 歌名 + 歌手 + 时长
+    let playing = song(.netease, "晴天", "周杰伦", album: "叶惠美", dur: 269, id: "nq")
+    let kuwoSame = song(.kuwo, "晴天", "周杰伦", album: "叶惠美", dur: 270, id: "kq")
+    check("跨平台同曲（时长差 1s）能定位",
+          ListLocate.index(of: playing, in: [list[0], kuwoSame]) == 1,
+          "index=\(String(describing: ListLocate.index(of: playing, in: [list[0], kuwoSame])))")
+
+    // 版本闸门：原唱与 Live 是两条录音，互相都不定位
+    let live = song(.kuwo, "晴天 (Live)", "周杰伦", dur: 269, id: "klive")
+    check("原唱不会定位到 Live 版", ListLocate.index(of: playing, in: [live]) == nil)
+    check("Live 版也不会定位到原唱", ListLocate.index(of: live, in: [kuwoSame]) == nil)
+    // 两边都是 Live（版本类相等）就可以认：跨平台翻录的 Live 也常差 1–2 秒
+    let liveOther = song(.qq, "晴天 (Live)", "周杰伦", dur: 268, id: "qlive")
+    check("两边都是 Live 版能认", ListLocate.index(of: live, in: [liveOther]) == 0,
+          "index=\(String(describing: ListLocate.index(of: live, in: [liveOther])))")
+
+    // 时长闸门：同名同歌手但差 11s，不是同一条录音
+    let longer = song(.kuwo, "晴天", "周杰伦", dur: 280, id: "kq2")
+    check("时长差 11s 不认", ListLocate.index(of: playing, in: [longer]) == nil)
+
+    // 歌名闸门：同歌手 + 时长碰巧一样（《七里香》269s），不能被误认
+    let other = song(.kuwo, "七里香", "周杰伦", dur: 269, id: "kqx")
+    check("同歌手同时长的另一首歌不会误认", ListLocate.index(of: playing, in: [other]) == nil)
+
+    // 歌手闸门：同名但换了人（翻唱）
+    let cover = song(.qq, "晴天", "某翻唱歌手", dur: 269, id: "qc")
+    check("同名不同歌手不认", ListLocate.index(of: playing, in: [cover]) == nil)
+
+    // 接口偶尔不给歌手：这时靠歌名 + 时长命中（与 NameMatch 同口径：任一方没歌手就不拦）
+    let noSinger = song(.qq, "晴天", "", dur: 269, id: "qns")
+    check("列表缺歌手时靠歌名 + 时长命中", ListLocate.index(of: playing, in: [noSinger]) == 0)
+
+    // 译名不同的同一首（《연애의 조건》/《恋爱的条件》）：定位**不认**——
+    // 定位比换源保守：宁可提示"不在此列表"，也不能跳到另一行去。
+    let kr = song(.qq, "연애의 조건 (Love Options)", "BESTie", dur: 212, id: "b1")
+    let krPlaying = song(.netease, "恋爱的条件", "BESTie", dur: 212, id: "b2")
+    check("译名不同不认（宁可不定位，也不跳错行）", ListLocate.index(of: krPlaying, in: [kr]) == nil)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -14,54 +14,72 @@ struct FavoritesView: View {
     @Environment(DownloadFlow.self) private var downloadFlow
     @Environment(AppRouter.self) private var router
 
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
+
     var body: some View {
         Group {
             if library.favorites.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        header
-                        ForEach(Array(library.favorites.enumerated()), id: \.element.id) { index, song in
-                            Button {
-                                // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
-                                RowTap.afterHighlight {
-                                    player.play(queue: library.favorites, startAt: index)
-                                    library.recordPlayed(song)
-                                    router.showPlayer = true
-                                }
-                            } label: {
-                                SongRow(song: song,
-                                        showsFavorite: true,
-                                        isFavorite: true,
-                                        onFavorite: {
-                                            Haptics.favorite()
-                                            withAnimation(Tokens.Motion.favorite) {
-                                                library.toggleFavorite(song)
-                                            }
-                                        })
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            }
-                            .buttonStyle(.rowPress)
-                            .contextMenu {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            header
+                            ForEach(Array(library.favorites.enumerated()), id: \.element.id) { index, song in
                                 Button {
-                                    downloadFlow.start(song: song, want: player.quality)
+                                    // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
+                                    RowTap.afterHighlight {
+                                        player.play(queue: library.favorites, startAt: index)
+                                        library.recordPlayed(song)
+                                        router.showPlayer = true
+                                    }
                                 } label: {
-                                    Label("下载…", systemImage: "arrow.down.circle")
+                                    SongRow(song: song,
+                                            showsFavorite: true,
+                                            isFavorite: true,
+                                            onFavorite: {
+                                                Haptics.favorite()
+                                                withAnimation(Tokens.Motion.favorite) {
+                                                    library.toggleFavorite(song)
+                                                }
+                                            })
+                                        .padding(.horizontal, Tokens.Spacing.pageMargin)
                                 }
-                                Button(role: .destructive) {
-                                    library.toggleFavorite(song)
-                                } label: {
-                                    Label("取消收藏", systemImage: "heart.slash")
+                                .buttonStyle(.rowPress)
+                                // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                                .id(song.id)
+                                .locatedFlash(active: locator.isHighlighted(song))
+                                .contextMenu {
+                                    Button {
+                                        downloadFlow.start(song: song, want: player.quality)
+                                    } label: {
+                                        Label("下载…", systemImage: "arrow.down.circle")
+                                    }
+                                    Button(role: .destructive) {
+                                        library.toggleFavorite(song)
+                                    } label: {
+                                        Label("取消收藏", systemImage: "heart.slash")
+                                    }
                                 }
+                            }
+                            // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
+                            MiniPlayerSpacer()
+                        }
+                        .readableWidth()
+                    }
+                    .scrollIndicators(.hidden)
+                    .locateToast(locator.toast)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            LocateNowPlayingButton {
+                                locator.locate(current: player.currentSong,
+                                               songs: library.favorites,
+                                               proxy: proxy)
                             }
                         }
-                        // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
-                        MiniPlayerSpacer()
                     }
-                    .readableWidth()
                 }
-                .scrollIndicators(.hidden)
             }
         }
         .navigationTitle("我的收藏")

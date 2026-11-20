@@ -20,6 +20,9 @@ struct DownloadsTabView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
 
+    /// 第四十四轮：「定位到正在播放」的状态
+    @State private var locator = SongLocator()
+
     private var ongoing: [DownloadItem] {
         downloads.items.filter { $0.status == .downloading || $0.status == .pending }
     }
@@ -47,87 +50,110 @@ struct DownloadsTabView: View {
     }
 
     private var list: some View {
-        List {
-            header
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+        ScrollViewReader { proxy in
+            List {
+                header
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
 
-            if !ongoing.isEmpty {
-                Section {
-                    ForEach(ongoing) { item in
-                        activeRow(item)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    downloads.cancel(itemID: item.id)
-                                } label: {
-                                    Label("取消", systemImage: "xmark.circle")
+                if !ongoing.isEmpty {
+                    Section {
+                        ForEach(ongoing) { item in
+                            activeRow(item)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        downloads.cancel(itemID: item.id)
+                                    } label: {
+                                        Label("取消", systemImage: "xmark.circle")
+                                    }
                                 }
-                            }
+                        }
+                    } header: {
+                        sectionHeader("正在下载（\(ongoing.count)）")
                     }
-                } header: {
-                    sectionHeader("正在下载（\(ongoing.count)）")
+                }
+
+                if !failed.isEmpty {
+                    Section {
+                        ForEach(failed) { item in
+                            failedRow(item)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        downloads.remove(itemID: item.id, deleteFile: true)
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                    Button {
+                                        downloads.retry(itemID: item.id, useBackground: true)
+                                    } label: {
+                                        Label("重试", systemImage: "arrow.clockwise")
+                                    }
+                                    .tint(Tokens.Palette.vermilion)
+                                }
+                        }
+                    } header: {
+                        sectionHeader("失败（\(failed.count)）")
+                    }
+                }
+
+                if !finished.isEmpty {
+                    Section {
+                        ForEach(finished) { item in
+                            completedRow(item)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        downloads.remove(itemID: item.id, deleteFile: true)
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                }
+                                // 第四十四轮：行 id 要让 ScrollViewReader 找得到
+                                .id(item.id)
+                        }
+                    } header: {
+                        sectionHeader("已下载（\(finished.count)）")
+                    }
+                }
+
+                Color.clear
+                    .frame(height: MiniPlayerMetrics.barHeight)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+            .locateToast(locator.toast)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LocateNowPlayingButton {
+                        // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
+                        let songs = downloads.completedSongs
+                        locator.locate(current: player.currentSong,
+                                       songs: songs,
+                                       rowID: { index in
+                                           finished.indices.contains(index)
+                                               ? finished[index].id
+                                               : songs[index].id
+                                       },
+                                       scroll: { id in
+                                           proxy.scrollTo(id, anchor: .center)
+                                       })
+                    }
                 }
             }
-
-            if !failed.isEmpty {
-                Section {
-                    ForEach(failed) { item in
-                        failedRow(item)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    downloads.remove(itemID: item.id, deleteFile: true)
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
-                                Button {
-                                    downloads.retry(itemID: item.id, useBackground: true)
-                                } label: {
-                                    Label("重试", systemImage: "arrow.clockwise")
-                                }
-                                .tint(Tokens.Palette.vermilion)
-                            }
-                    }
-                } header: {
-                    sectionHeader("失败（\(failed.count)）")
-                }
-            }
-
-            if !finished.isEmpty {
-                Section {
-                    ForEach(finished) { item in
-                        completedRow(item)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    downloads.remove(itemID: item.id, deleteFile: true)
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
-                            }
-                    }
-                } header: {
-                    sectionHeader("已下载（\(finished.count)）")
-                }
-            }
-
-            Color.clear
-                .frame(height: MiniPlayerMetrics.barHeight)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
     }
 
     private func sectionHeader(_ text: String) -> some View {
