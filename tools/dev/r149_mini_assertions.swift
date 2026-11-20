@@ -123,6 +123,34 @@ check("171KB 残片不可用", !FavoriteIdentity.isUsable(bytes: 171_072, durati
 check("真 320k 可用", FavoriteIdentity.isUsable(bytes: 10_792_943, durationSec: 269))
 check("时长 0 不可用", !FavoriteIdentity.isUsable(bytes: 10_792_943, durationSec: 0))
 
+print("— 灰区复核：什么才值得让用户看一眼")
+func gs(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval, id: String) -> Song {
+    Song.make(platform: p, platformID: id, name: name, singer: singer, album: "",
+              duration: dur, picURL: nil)
+}
+func gfp(_ bytes: Int64, _ kbps: Int64) -> FavoriteFingerprint {
+    FavoriteFingerprint(bytes: bytes, durationSec: 269, kbps: kbps,
+                        capturedAt: Date(timeIntervalSince1970: 0))
+}
+let gbase = gs(.kuwo, "晴天", "周杰伦", dur: 269, id: "g1")
+check("同名同歌手时长差 11s → 灰区",
+      FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "周杰伦", dur: 258, id: "g2")))
+check("一级不合并它", !FavoriteRules.isSameRecording(gbase, gs(.qq, "晴天", "周杰伦", dur: 258, id: "g2")))
+check("时长差 40s → 不是灰区", !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "周杰伦", dur: 309, id: "g3")))
+check("不同歌手 → 不是灰区", !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "某翻唱", dur: 269, id: "g4")))
+check("Live → 不是灰区", !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天 (Live)", "周杰伦", dur: 269, id: "g5")))
+check("相似度 0.67 → 灰区",
+      FavoriteReview.isGreyPair(gs(.kuwo, "我的天空", "南征北战", dur: 200, id: "g7"),
+                                gs(.qq, "我的天空啊呀", "南征北战", dur: 200, id: "g8")))
+let ga = gs(.kuwo, "晴天", "周杰伦", dur: 269, id: "qa")
+let gb = gs(.kugou, "晴天", "周杰伦", dur: 269, id: "qb")
+check("合并留 320k", FavoriteReview.preferred(ga, gb,
+      fingerprints: [ga.id: gfp(3_000_000, 128), gb.id: gfp(10_000_000, 320)]).id == gb.id)
+check("同码率比体积", FavoriteReview.preferred(ga, gb,
+      fingerprints: [ga.id: gfp(9_000_000, 320), gb.id: gfp(10_000_000, 320)]).id == gb.id)
+check("都没指纹留先出现的", FavoriteReview.preferred(ga, gb, fingerprints: [:]).id == ga.id)
+check("pairKey 顺序无关", FavoriteReview.pairKey(ga, gb) == FavoriteReview.pairKey(gb, ga))
+
 print("\n结果：通过 \(pass) / 失败 \(fail.count)")
 if !fail.isEmpty {
     for f in fail { print("  FAIL: \(f)") }

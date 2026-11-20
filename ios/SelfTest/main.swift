@@ -4122,6 +4122,52 @@ do {
     check("时长为 0 不可用", !FavoriteIdentity.isUsable(bytes: 10_792_943, durationSec: 0))
 }
 
+section("收藏灰区复核：什么才值得让用户看一眼")
+
+do {
+    func s(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval,
+           id: String) -> Song {
+        Song.make(platform: p, platformID: id, name: name, singer: singer, album: "",
+                  duration: dur, picURL: nil)
+    }
+    func fp(_ bytes: Int64, _ kbps: Int64) -> FavoriteFingerprint {
+        FavoriteFingerprint(bytes: bytes, durationSec: 269, kbps: kbps,
+                            capturedAt: Date(timeIntervalSince1970: 0))
+    }
+
+    let base = s(.kuwo, "晴天", "周杰伦", dur: 269, id: "g1")
+    let shorter = s(.qq, "晴天", "周杰伦", dur: 258, id: "g2")
+    check("同名同歌手、时长差 11s → 灰区", FavoriteReview.isGreyPair(base, shorter))
+    check("但一级不会合并它（差 11s > 4s）", !FavoriteRules.isSameRecording(base, shorter))
+
+    check("时长差 40s → 不是灰区（基本是两首歌）",
+          !FavoriteReview.isGreyPair(base, s(.qq, "晴天", "周杰伦", dur: 309, id: "g3")))
+    check("不同歌手 → 不是灰区",
+          !FavoriteReview.isGreyPair(base, s(.qq, "晴天", "某翻唱", dur: 269, id: "g4")))
+    check("Live 版 → 不是灰区（一听就知道是两首）",
+          !FavoriteReview.isGreyPair(base, s(.qq, "晴天 (Live)", "周杰伦", dur: 269, id: "g5")))
+    check("一级已经合并的完全同曲 → 不重复提示",
+          !FavoriteReview.isGreyPair(base, s(.kugou, "晴天", "周杰伦", dur: 269, id: "g6")))
+    check("歌名只差一点（相似度 0.67）→ 灰区",
+          FavoriteReview.isGreyPair(s(.kuwo, "我的天空", "南征北战", dur: 200, id: "g7"),
+                                    s(.qq, "我的天空啊呀", "南征北战", dur: 200, id: "g8")))
+
+    // 合并保留哪条：老板定"音质更好"
+    let a = s(.kuwo, "晴天", "周杰伦", dur: 269, id: "qa")
+    let b = s(.kugou, "晴天", "周杰伦", dur: 269, id: "qb")
+    check("320k 赢 128k", FavoriteReview.preferred(a, b,
+          fingerprints: [ga.id: fp(3_000_000, 128), gb.id: fp(10_000_000, 320)]).id == gb.id)
+    check("同码率比体积", FavoriteReview.preferred(a, b,
+          fingerprints: [ga.id: fp(9_000_000, 320), gb.id: fp(10_000_000, 320)]).id == gb.id)
+    check("都没指纹保留先出现的", FavoriteReview.preferred(a, b, fingerprints: [:]).id == ga.id)
+    check("只有一条有指纹就选它", FavoriteReview.preferred(a, b,
+          fingerprints: [ga.id: fp(3_000_000, 128)]).id == ga.id)
+
+    // 否定缓存的键与顺序无关
+    check("pairKey 与顺序无关", FavoriteReview.pairKey(a, b) == FavoriteReview.pairKey(b, a))
+    check("pairKey 能区分不同对", FavoriteReview.pairKey(a, b) != FavoriteReview.pairKey(a, base))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -22,6 +22,8 @@ struct FavoritesView: View {
     /// 真正会"回到顶部"的是滚动位置，所以这里把停留的那一行记进 `@SceneStorage`，重进页面自动回到原处。
     @State private var scrollTarget: String?
     @SceneStorage("favorites.scroll.anchor") private var savedAnchor: String = ""
+    /// 「整理重复」入口（灰区才出现，不主动弹）
+    @State private var showDuplicates = false
 
     var body: some View {
         Group {
@@ -99,6 +101,8 @@ struct FavoritesView: View {
             }
         }
         .navigationTitle("我的收藏")
+        .onAppear { library.refreshDuplicateGroups() }
+        .sheet(isPresented: $showDuplicates) { DuplicateReviewSheet() }
         // 第四轮（老板反馈 ③）：设置已经单独占一个 Tab，这里的齿轮撤掉，只留一个入口。
     }
 
@@ -158,6 +162,25 @@ struct FavoritesView: View {
                         .buttonStyle(.press)
                     }
                     .padding(.top, 2)
+
+                    // 灰区只有"机械判不了、但确实可能是同一首"的才会进来（同期时长差 4–12s、
+                    // 歌名相似度 0.6–0.75）。不主动弹，只在这里给一个可点的入口。
+                    if !library.duplicateGroups.isEmpty {
+                        Button {
+                            showDuplicates = true
+                        } label: {
+                            Label("整理重复 · \(library.duplicateGroups.count) 组",
+                                  systemImage: "rectangle.stack.badge.minus")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 10)
+                                .frame(minHeight: 28)
+                                .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.10)))
+                                .overlay(Capsule().strokeBorder(
+                                    Tokens.Palette.vermilion.opacity(0.25), lineWidth: 0.5))
+                        }
+                        .buttonStyle(.press)
+                        .padding(.top, 2)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -182,5 +205,105 @@ struct FavoritesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Tokens.Spacing.l)
+    }
+}
+
+// MARK: - 整理重复（灰区复核）
+//
+// 老板 2026-11-21 拍板：
+//   · 默认全自动（一级同曲 + 二级同文件都在收藏/后台静默做完），**不在收藏时询问**；
+//   · 只有机械判不了的灰区才在这里出现，入口是收藏页顶部那个不主动弹的「整理重复 · N 组」；
+//   · 「合并」保留**音质更好**的那条（码率 → 体积），封面换专辑原图，另一条记别名；
+//   · 「不是同一首」写否定缓存，以后同一对不再出现；
+//   · 合并可撤销（把两条原样放回）。
+private struct DuplicateReviewSheet: View {
+
+    @Environment(LibraryStore.self) private var library
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if library.duplicateGroups.isEmpty {
+                    ContentUnavailableView("没有疑似重复", systemImage: "checkmark.circle",
+                                           description: Text("收藏里暂时没有需要人工判断的重复"))
+                } else {
+                    List {
+                        ForEach(Array(library.duplicateGroups.enumerated()), id: \.offset) { _, group in
+                            Section {
+                                ForEach(group) { song in
+                                    HStack(spacing: Tokens.Spacing.s) {
+                                        SongArtwork(song: song, size: 44)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(song.name)
+                                                .font(.subheadline.weight(.medium))
+                                                .lineLimit(1)
+                                            Text(song.singer)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                            Text(factsText(song))
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Text(song.platform.displayName)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                HStack(spacing: Tokens.Spacing.s) {
+                                    Button {
+                                        library.mergeGroup(group)
+                                    } label: {
+                                        Label("合并（留音质好的）", systemImage: "arrow.triangle.merge")
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    Button("不是同一首") {
+                                        library.dismissAsDifferent(group[0], group[1])
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                .font(.footnote)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("整理重复")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if library.canUndoMerge {
+                    Button {
+                        library.undoLastMerge()
+                    } label: {
+                        Label("撤销上一次合并", systemImage: "arrow.uturn.backward")
+                            .font(.footnote.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                    .padding(.bottom, Tokens.Spacing.s)
+                }
+            }
+        }
+    }
+
+    /// 每首的"证据"：实测码率 + 体积 + 时长（没测到就直说，不编）
+    private func factsText(_ song: Song) -> String {
+        var parts: [String] = []
+        if let fp = library.fingerprints[song.id] {
+            parts.append("\(fp.kbps) kbps")
+            parts.append(String(format: "%.1f MB", Double(fp.bytes) / 1_048_576))
+        } else {
+            parts.append("码率未测得")
+        }
+        parts.append(song.durationText)
+        return parts.joined(separator: " · ")
     }
 }

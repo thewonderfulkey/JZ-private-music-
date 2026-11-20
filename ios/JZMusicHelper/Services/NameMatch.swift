@@ -345,3 +345,78 @@ enum FavoriteRules {
         return (out, merged)
     }
 }
+
+// MARK: - 收藏「灰区」复核（2026-11-21 老板拍板）
+//
+// 一级（同一条录音）与二级（同一文件）都是自动的。但有一类机械判不了、又确实可能是同一首的：
+//   · 歌名一样、歌手一样，但**时长差得多**（269s vs 258s，不同母版/剪辑）
+//   · 歌名只差一点（相似度 0.6–0.75，够不上自动合并的 0.75）
+//   · 一边没有时长/没有歌手，证据不足
+//
+// 处理原则（老板原话）：**不在收藏时询问**，只在收藏页给一个不主动弹的「整理重复 · N 组」入口，
+// 用户点进去逐组决定。这里只放纯逻辑：什么算灰区、合并时保留哪条。
+enum FavoriteReview {
+
+    /// 灰区歌名相似度下限（自动合并是 `FavoriteRules.titleSimilarityFloor` = 0.75）
+    static let minTitleSimilarity = 0.6
+
+    /// 灰区允许的最大时长差（超过这个基本是两首不同的歌，不值得打扰用户）
+    static let maxDurationGapSec = 12
+
+    /// 这一对是不是"值得让用户看一眼"的疑似重复（纯函数，CI 断言）
+    ///
+    /// 注意：**已经被一级合并掉的（isSameRecording）不算灰区**——那些根本不会同时出现在收藏里。
+    /// `keyA` / `keyB` 是调用方预先算好的歌名键（收藏上千条时避免每条都跑正则 + 繁简映射）。
+    static func isGreyPair(_ a: Song, _ b: Song,
+                           keyA: String? = nil, keyB: String? = nil) -> Bool {
+        if a.id == b.id { return false }
+        if FavoriteRules.isSameRecording(a, b) { return false }
+
+        // 版本类不同（Live / 伴奏 / 翻唱 / 粤语版）不算灰区：那是一听就知道的两首
+        guard NameMatch.versionClass(a.name) == NameMatch.versionClass(b.name) else { return false }
+
+        // 歌手：两边都有就必须有交集（"周杰伦 vs Jay Chou"这种别名映射不在本期，先不打扰）
+        let sa = NameMatch.singerTokens(a.singer)
+        let sb = NameMatch.singerTokens(b.singer)
+        if !sa.isEmpty && !sb.isEmpty, !NameMatch.singerMatches(a.singer, b.singer) {
+            return false
+        }
+
+        // 歌名：等值（说明是时长把一级挡住了）或相似度落在灰区
+        let ka = keyA ?? FavoriteRules.titleKey(a.name)
+        let kb = keyB ?? FavoriteRules.titleKey(b.name)
+        guard !ka.isEmpty, !kb.isEmpty else { return false }
+        let sim = (ka == kb) ? 1 : FavoriteRules.titleSimilarity(ka, kb)
+        guard sim >= minTitleSimilarity else { return false }
+
+        // 时长：两边都有时不能差太远
+        let da = a.durationSec
+        let db = b.durationSec
+        if da > 0 && db > 0, abs(da - db) > maxDurationGapSec { return false }
+        return true
+    }
+
+    /// 合并这一组时**保留哪条**：老板定"保留码率更高/体积更大的那条"。
+    ///
+    /// 排序键 (码率, 体积)：码率能反映档位（320k > 128k），体积在码率相同/缺失时兜底。
+    /// 两条都没指纹时保留先出现的那条（`a`）。
+    static func preferred(_ a: Song, _ b: Song,
+                          fingerprints: [String: FavoriteFingerprint]) -> Song {
+        let fa = fingerprints[a.id]
+        let fb = fingerprints[b.id]
+        if let fa, let fb {
+            if fa.kbps != fb.kbps { return fa.kbps > fb.kbps ? a : b }
+            if fa.bytes != fb.bytes { return fa.bytes > fb.bytes ? a : b }
+            return a
+        }
+        if let fa { return fa.bytes > 0 ? a : b }
+        if let fb { return fb.bytes > 0 ? b : a }
+        return a
+    }
+
+    /// 否定缓存的键（顺序无关）
+    static func pairKey(_ a: Song, _ b: Song) -> String {
+        let ids = [a.id, b.id].sorted()
+        return ids.joined(separator: "|")
+    }
+}

@@ -99,6 +99,8 @@ final class LibraryStore {
             favoriteDates.removeValue(forKey: removed.id)
             forgetIdentity(of: removed)
             persistFavorites()
+            mergeUndo = nil
+            refreshDuplicateGroups()
             return .removed
         }
         return addFavorite(song)
@@ -137,13 +139,18 @@ final class LibraryStore {
         persistFavorites()
         // 后台补一条文件指纹：有了它，下一次和别的平台同文件时才能合并
         Task { @MainActor in FavoriteDedupeService.shared.captureAfterAdd(song) }
+        mergeUndo = nil
+        refreshDuplicateGroups()
         return .added
     }
 
     func removeFavorite(_ song: Song) {
         favorites.removeAll { $0.id == song.id }
         favoriteDates.removeValue(forKey: song.id)
+        forgetIdentity(of: song)
         persistFavorites()
+        mergeUndo = nil
+        refreshDuplicateGroups()
     }
 
     /// 收藏落盘 + 失效判定缓存（所有改动都走这里，避免漏掉缓存）
@@ -256,8 +263,13 @@ final class LibraryStore {
            let map = try? JSONDecoder().decode([String: [String]].self, from: data) {
             aliases = map
         }
+        if let data = try? Data(contentsOf: dismissedURL),
+           let list = try? JSONDecoder().decode([String].self, from: data) {
+            dismissedPairs = Set(list)
+        }
         backfillMissingDates()
         dedupeExistingFavorites()
+        refreshDuplicateGroups()
     }
 
     /// 一次性清理历史重复：升级上来的老收藏里，同一首跨平台收过多条（封面不同、录音相同）。
@@ -351,6 +363,125 @@ final class LibraryStore {
                 persistFavorites()
             }
         }
+    }
+
+    // MARK: 灰区复核（老板拍板：不主动弹，只在收藏页给一个入口）
+    //
+    // 机械判不了的才进来：同名同歌手但时长差 4–12s、歌名相似度 0.6–0.75、一边缺时长/歌手。
+    // 用户逐组决定「合并」或「不是同一首」；后者写否定缓存，以后同一对不再出现。
+
+    /// 疑似重复的组（每组 2 首）
+    private(set) var duplicateGroups: [[Song]] = []
+    /// 否定缓存（`FavoriteReview.pairKey`）
+    private var dismissedPairs: Set<String> = []
+    /// 上一次合并前的快照（撤销用）
+    private var mergeUndo: (favorites: [Song], dates: [String: Date],
+                            fingerprints: [String: FavoriteFingerprint],
+                            aliases: [String: [String]])?
+    var canUndoMerge: Bool { mergeUndo != nil }
+
+    private let dismissedURL = LibraryStore.docURL("favorite_review_dismissed.json")
+
+    /// 重算疑似重复组（收藏变了 / 进入收藏页时调；按歌名首字分桶，避免 n² 全量比）
+    func refreshDuplicateGroups() {
+        guard favorites.count >= 2 else {
+            if !duplicateGroups.isEmpty { duplicateGroups = [] }
+            return
+        }
+        var buckets: [Character: [(song: Song, key: String)]] = [:]
+        for song in favorites {
+            let key = FavoriteRules.titleKey(song.name)
+            guard let c = key.first else { continue }
+            buckets[c, default: []].append((song, key))
+        }
+        var groups: [[Song]] = []
+        var used = Set<String>()
+        for (_, list) in buckets where list.count >= 2 {
+            for i in 0..<list.count {
+                let a = list[i]
+                if used.contains(a.song.id) { continue }
+                for j in (i + 1)..<list.count {
+                    let b = list[j]
+                    if used.contains(b.song.id) { continue }
+                    guard FavoriteReview.isGreyPair(a.song, b.song,
+                                                    keyA: a.key, keyB: b.key) else { continue }
+                    guard !dismissedPairs.contains(FavoriteReview.pairKey(a.song, b.song)) else {
+                        continue
+                    }
+                    used.insert(a.song.id)
+                    used.insert(b.song.id)
+                    groups.append([a.song, b.song])
+                    break
+                }
+            }
+        }
+        duplicateGroups = Array(groups.prefix(30))
+    }
+
+    /// 「不是同一首」：记住否定，别再来烦
+    func dismissAsDifferent(_ a: Song, _ b: Song) {
+        dismissedPairs.insert(FavoriteReview.pairKey(a, b))
+        save(Array(dismissedPairs), to: dismissedURL)
+        refreshDuplicateGroups()
+    }
+
+    /// 「合并」：保留**音质更好**的那条（码率 → 体积），另一条记为别名，封面换专辑原图
+    @discardableResult
+    func mergeGroup(_ group: [Song]) -> Bool {
+        guard group.count >= 2 else { return false }
+        let a = group[0]
+        let b = group[1]
+        let keeper = FavoriteReview.preferred(a, b, fingerprints: fingerprints)
+        let loser = keeper.id == a.id ? b : a
+        guard keeper.id != loser.id else { return false }
+
+        mergeUndo = (favorites, favoriteDates, fingerprints, aliases)
+
+        let merged = FavoriteRules.merge(existing: keeper, incoming: loser)
+
+        var list = aliases[keeper.id] ?? []
+        list.append(loser.id)
+        list.append(contentsOf: aliases[loser.id] ?? [])
+        aliases[keeper.id] = Array(Set(list.filter { $0 != keeper.id }))
+        aliases.removeValue(forKey: loser.id)
+
+        if fingerprints[keeper.id] == nil, let fp = fingerprints[loser.id] {
+            fingerprints[keeper.id] = fp
+        }
+        fingerprints.removeValue(forKey: loser.id)
+
+        let earliest = min(favoriteDates[a.id] ?? Date(), favoriteDates[b.id] ?? Date())
+        favoriteDates[keeper.id] = earliest
+        favoriteDates.removeValue(forKey: loser.id)
+
+        favorites = favorites.compactMap { song in
+            if song.id == keeper.id { return merged }
+            if song.id == loser.id { return nil }
+            return song
+        }
+        persistFavorites()
+        save(fingerprints, to: fingerprintsURL)
+        save(aliases, to: aliasesURL)
+        upgradeCoversToAlbum(ids: [keeper.id])
+        note("已合并，保留音质更好的那条（可撤销）")
+        refreshDuplicateGroups()
+        return true
+    }
+
+    /// 撤销上一次合并（把两条原样放回）
+    func undoLastMerge() {
+        guard let snap = mergeUndo else { return }
+        favorites = snap.favorites
+        favoriteDates = snap.dates
+        fingerprints = snap.fingerprints
+        aliases = snap.aliases
+        mergeUndo = nil
+        persistFavorites()
+        save(fingerprints, to: fingerprintsURL)
+        save(aliases, to: aliasesURL)
+        favoriteMatchCache.removeAll()
+        refreshDuplicateGroups()
+        note("已撤销合并")
     }
 
     /// 老用户升级上来时没有时间戳：按"列表顺序 = 由新到旧"补一个**近似**时间。
