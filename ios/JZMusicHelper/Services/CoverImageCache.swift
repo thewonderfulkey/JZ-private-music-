@@ -33,11 +33,6 @@ final class CoverImageCache: @unchecked Sendable {
         // 现在：按**真实解码字节**计费 + 张数/字节双上限 + 内存警告立即清空。
         cache.countLimit = 120
         cache.totalCostLimit = 40 * 1024 * 1024   // 40MB（按真实字节算）
-        NotificationCenter.default.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification,
-            object: nil, queue: .main) { [weak self] _ in
-            self?.clearMemory()
-        }
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -49,6 +44,13 @@ final class CoverImageCache: @unchecked Sendable {
         let limit = diskLimit
         Task.detached(priority: .utility) {
             CoverImageCache.trimDisk(directory: dir, limit: limit)
+        }
+
+        // 内存警告：清空内存缓存（必须放在 init 末尾 —— 所有存储属性初始化完之后才能捕获 self）
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            self?.clearMemory()
         }
     }
 
