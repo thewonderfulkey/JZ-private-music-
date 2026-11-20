@@ -43,6 +43,12 @@
 ### 回滚
 
 删 `SourceRegistry.all` 里那一行即可，零副作用——它挂掉对主链本来就无影响。
+
+### 本轮只出 iOS
+
+Android / Windows 的取流层**还没镜像**这条后端（下一轮补）。`android/app/build.gradle.kts` 的
+`versionName`/`versionCode` 同步到 2.4.36 / 214 只是因为 **iOS 的包名版本是从 Android 的 versionName 读的**
+（见 `ios-ipa.yml` L223 的注释）——不同步的话会打出「文件名 v2.4.35、包里是 2.4.36」的包。
 ## iOS v2.4.35（213）· Android · Windows · 2026-11-20（连点歌不再乱抢：只播最后点的那一首）
 
 老板 2026-11-20：「快速点了歌 A、歌 B、歌 C，最终所有歌都在请求，封面和歌词显示的是歌 C，
