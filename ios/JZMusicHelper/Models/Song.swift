@@ -148,3 +148,46 @@ struct Song: Identifiable, Codable, Hashable, Sendable {
              picURL: picURL)
     }
 }
+
+// MARK: - 收藏的「文件级」身份（2026-11-21 老板需求）
+//
+// 老板："比对多项维度，但最重要的是歌曲文件是否一样；一样就合并、换专辑原封面；
+//        两首不同平台的歌再次搜索依旧都显示已收藏。"
+//
+// "文件一样"不需要下载整首：解析出真实流后，**总字节数 + 时长**就够。
+// 实测（2026-11-21）同一首 320k《晴天》在 ikun / 酷狗 zddyr / 落月 vkeys 都是
+// **10,792,943 B**，一个字节不差；不同码率的同一首则字节不同（那种只在元数据级合并）。
+struct FavoriteFingerprint: Codable, Equatable {
+    let bytes: Int64
+    let durationSec: Int
+    let kbps: Int64
+    let capturedAt: Date
+}
+
+enum FavoriteIdentity {
+
+    /// 低于这个体积的一律不参与文件级去重。
+    ///
+    /// **这是硬闸门**：酷我对所有受限歌回的是同一段 181,521 B 的提示音（md5 43fe5f64…），
+    /// 要是拿它当指纹，周杰伦十几首会被并成一首——比"留重复"严重得多。
+    static let minContentBytes: Int64 = 300_000
+
+    /// 两个指纹是不是同一个文件（纯函数，CI 断言）
+    ///
+    /// 判据：字节数**完全相等** + 时长差 ≤1s（同一文件跨平台翻录会有 0–1s 的容器差）。
+    /// 码率只用来展示，不参与判定（同一文件算出来的码率本来一样）。
+    static func isSameFile(_ a: FavoriteFingerprint, _ b: FavoriteFingerprint) -> Bool {
+        guard a.bytes >= minContentBytes, b.bytes >= minContentBytes else { return false }
+        guard a.bytes == b.bytes else { return false }
+        return abs(a.durationSec - b.durationSec) <= 1
+    }
+
+    /// 这个指纹值不值得收（占位/残片直接丢）
+    static func isUsable(bytes: Int64, durationSec: Int) -> Bool {
+        guard bytes >= minContentBytes else { return false }
+        // 181,521 B 的窗口再挡一次（万一将来门槛被调小）
+        let placeholderWindow: ClosedRange<Int64> = 150_000...210_000
+        if placeholderWindow.contains(bytes) { return false }
+        return durationSec > 0
+    }
+}

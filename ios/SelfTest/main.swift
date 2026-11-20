@@ -3996,6 +3996,132 @@ do {
           Set(all.map(\.name)).count == all.count, "\(all.count) 条")
 }
 
+// MARK: - 第四十六轮（2026-11-21）：收藏去重（同一条录音才算重复）
+//
+// 老板："收藏一多就忘了已经收过这一首，又收一遍；封面不一样，但音乐文件是同一段。"
+// 根因：`Song.id = 平台_ID`，同一首在酷我/酷狗/QQ 各一条 → 天然算三条。
+// 口径钉在 `FavoriteRules`：名字核心 + 歌手 + 时长 ±4s + **版本类完全一致**（Live 不许并进录音室）。
+
+section("收藏去重：同一条录音才合并")
+
+do {
+    func s(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval,
+           id: String, pic: String? = nil) -> Song {
+        Song.make(platform: p, platformID: id, name: name, singer: singer,
+                  album: "叶惠美", duration: dur, picURL: pic)
+    }
+
+    // 同一首《晴天》在四家各一条
+    let kuwo = s(.kuwo, "晴天", "周杰伦", dur: 269, id: "228908", pic: "https://img/kuwo.jpg")
+    let kugou = s(.kugou, "晴天", "周杰伦", dur: 269, id: "B3A52A7A958BF0AED0EBFBA2E9A818B7")
+    let qq = s(.qq, "晴天", "周杰伦", dur: 269, id: "0039MnYb0qxYhV")
+    check("跨平台同曲算同一条录音（酷我 vs 酷狗）", FavoriteRules.isSameRecording(kuwo, kugou))
+    check("跨平台同曲算同一条录音（酷我 vs QQ）", FavoriteRules.isSameRecording(kuwo, qq))
+    check("同平台同 id 算同一条", FavoriteRules.isSameRecording(kuwo, kuwo))
+    check("对称：反过来也成立", FavoriteRules.isSameRecording(kugou, kuwo))
+
+    // 不能合并的几种
+    let cover = s(.kugou, "晴天", "某翻唱歌手", dur: 269, id: "c1")
+    check("同名不同歌手（翻唱）不合并", !FavoriteRules.isSameRecording(kuwo, cover))
+    let live = s(.kugou, "晴天 (Live)", "周杰伦", dur: 279, id: "live1")
+    check("Live 版不并进录音室版", !FavoriteRules.isSameRecording(kuwo, live))
+    let liveSameDur = s(.kugou, "晴天 (Live)", "周杰伦", dur: 269, id: "live2")
+    check("Live 就算时长一样也不合并（版本类不同）",
+          !FavoriteRules.isSameRecording(kuwo, liveSameDur))
+    let long = s(.kugou, "晴天", "周杰伦", dur: 299, id: "long1")
+    check("时长差 30s 不合并", !FavoriteRules.isSameRecording(kuwo, long))
+    let other = s(.kugou, "夜曲", "周杰伦", dur: 226, id: "n1")
+    check("同歌手不同歌不合并", !FavoriteRules.isSameRecording(kuwo, other))
+    let piano = s(.kugou, "晴天 (钢琴版)", "周杰伦", dur: 269, id: "p1")
+    check("钢琴版不合并", !FavoriteRules.isSameRecording(kuwo, piano))
+
+    // 时长未知（gdstudio 搜索不返回时长）→ 退回歌名口径
+    let noDur = s(.netease, "晴天", "周杰伦", dur: 0, id: "nd1")
+    check("一边时长未知、歌名歌手一致 → 合并", FavoriteRules.isSameRecording(kuwo, noDur))
+    let kr1 = s(.qq, "연애의 조건", "BESTie", dur: 0, id: "k1")
+    let kr2 = s(.netease, "恋爱的条件", "BESTie", dur: 0, id: "k2")
+    check("一边时长未知、译名不同 → 不合并（宁可不合，也不能并错）",
+          !FavoriteRules.isSameRecording(kr1, kr2))
+
+    // 老板 2026-11-21 补的口径：不同平台同一首原唱，标题带括号 / 差几个字 / 繁简不同，**都算同一首**
+    let trad = s(.kuwo, "後來", "刘若英", dur: 314, id: "tr1")
+    let simp = s(.qq, "后来", "刘若英", dur: 314, id: "tr2")
+    check("繁简不同 → 合并", FavoriteRules.isSameRecording(trad, simp))
+    let withBracket = s(.netease, "晴天 (原唱 周杰伦)", "周杰伦", dur: 269, id: "br1")
+    check("带括号说明 → 合并", FavoriteRules.isSameRecording(kuwo, withBracket))
+    let fuzzyA = s(.kuwo, "这世界那么多人", "莫文蔚", dur: 265, id: "fz1")
+    let fuzzyB = s(.qq, "这世界这么多人", "莫文蔚", dur: 265, id: "fz2")
+    check("差一个字（7 字名）→ 合并", FavoriteRules.isSameRecording(fuzzyA, fuzzyB))
+    check("标点/全角括号/空格归一", FavoriteRules.titleKey("晴天（原唱 周杰伦）") == FavoriteRules.titleKey("晴天"))
+
+    // 但放行有底线：像但不是同一首，不能并
+    check("爱情 vs 爱情转移（两字名不做模糊）",
+          !FavoriteRules.isSameRecording(s(.qq, "爱情", "陈奕迅", dur: 240, id: "lo1"),
+                                         s(.qq, "爱情转移", "陈奕迅", dur: 240, id: "lo2")))
+    check("晴天 vs 情天（两字名差一字）",
+          !FavoriteRules.isSameRecording(s(.kuwo, "晴天", "周杰伦", dur: 269, id: "qt1"),
+                                         s(.qq, "情天", "周杰伦", dur: 269, id: "qt2")))
+    check("相似标题但时长差 5s（模糊口径 ±2s）",
+          !FavoriteRules.isSameRecording(s(.kuwo, "这世界那么多人", "莫文蔚", dur: 265, id: "d5a"),
+                                         s(.qq, "这世界这么多人", "莫文蔚", dur: 270, id: "d5b")))
+    check("相似标题 + 一边时长未知（要求 ≥0.9）",
+          !FavoriteRules.isSameRecording(s(.kuwo, "这世界那么多人", "莫文蔚", dur: 265, id: "un1"),
+                                         s(.netease, "这世界这么多人", "莫文蔚", dur: 0, id: "un2")))
+
+    // duplicateIndex
+    let list = [kuwo, other]
+    check("能在收藏里找到同曲那一行", FavoriteRules.duplicateIndex(of: kugou, in: list) == 0)
+    check("不同歌返回空", FavoriteRules.duplicateIndex(of: s(.qq, "稻香", "周杰伦", dur: 223, id: "d1"),
+                                                   in: list) == nil)
+
+    // 合并：保住已有那条的身份，只补空字段
+    let merged = FavoriteRules.merge(existing: kuwo, incoming: kugou)
+    check("合并后 id 仍是原来那条（音源不偷换）", merged.id == kuwo.id, merged.id)
+    check("合并后封面保留原来的", merged.picURL == kuwo.picURL, merged.picURL ?? "nil")
+    let noPic = s(.kuwo, "夜曲", "周杰伦", dur: 226, id: "nopic")
+    let withPic = s(.kugou, "夜曲", "周杰伦", dur: 226, id: "withpic", pic: "https://img/kg.jpg")
+    check("原来没封面时用新来的补上",
+          FavoriteRules.merge(existing: noPic, incoming: withPic).picURL == "https://img/kg.jpg")
+    let noDur2 = s(.qq, "稻香", "周杰伦", dur: 0, id: "nd2")
+    let withDur = s(.kugou, "稻香", "周杰伦", dur: 223, id: "wd2")
+    check("原来时长为 0 时用新来的补上",
+          FavoriteRules.merge(existing: noDur2, incoming: withDur).duration > 0)
+
+    // 历史清理
+    let dupes = [kuwo, kugou, qq, other, live]
+    let result = FavoriteRules.dedupe(dupes)
+    check("三条同曲合成一条", result.songs.count == 3, "\(result.songs.count)")
+    check("合并计数 = 2", result.merged == 2, "\(result.merged)")
+    check("保留列表里最先出现的那条", result.songs.first?.id == kuwo.id)
+    check("Live 版仍单独保留", result.songs.contains { $0.id == live.id })
+}
+
+section("收藏文件级去重：字节指纹（同一文件才合并）")
+
+do {
+    func fp(_ bytes: Int64, _ dur: Int, _ kbps: Int64 = 320) -> FavoriteFingerprint {
+        FavoriteFingerprint(bytes: bytes, durationSec: dur, kbps: kbps,
+                            capturedAt: Date(timeIntervalSince1970: 0))
+    }
+    // 实测（2026-11-21）：同一首 320k《晴天》在 ikun / 酷狗 zddyr / 落月 vkeys 都是 10,792,943 B
+    check("字节完全相等 → 同一个文件",
+          FavoriteIdentity.isSameFile(fp(10_792_943, 269), fp(10_792_943, 269)))
+    check("字节差 1 → 不算（宁可不合）",
+          !FavoriteIdentity.isSameFile(fp(10_792_943, 269), fp(10_792_944, 269)))
+    check("时长差 1s 仍算同文件（容器差）",
+          FavoriteIdentity.isSameFile(fp(10_792_943, 269), fp(10_792_943, 270)))
+    check("时长差 5s → 不算",
+          !FavoriteIdentity.isSameFile(fp(10_792_943, 269), fp(10_792_943, 274)))
+
+    // 占位提示音必须排除：181,521 B 是所有受限歌共用的同一段
+    check("占位提示音不可用", !FavoriteIdentity.isUsable(bytes: 181_521, durationSec: 269))
+    check("两个占位文件不会互相判同",
+          !FavoriteIdentity.isSameFile(fp(181_521, 269), fp(181_521, 269)))
+    check("试听残片（171KB）不可用", !FavoriteIdentity.isUsable(bytes: 171_072, durationSec: 11))
+    check("真 320k 可用", FavoriteIdentity.isUsable(bytes: 10_792_943, durationSec: 269))
+    check("时长为 0 不可用", !FavoriteIdentity.isUsable(bytes: 10_792_943, durationSec: 0))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

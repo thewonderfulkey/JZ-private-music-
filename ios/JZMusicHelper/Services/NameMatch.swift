@@ -188,3 +188,160 @@ enum NameMatch {
         NSRange(s.startIndex..<s.endIndex, in: s)
     }
 }
+
+// MARK: - 收藏去重口径（2026-11-21 老板需求）
+//
+// 老板："收藏多了会忘掉已经收过这一首，又收一遍；封面不一样，但音乐文件是同一段。"
+// 根因：`Song.id = 平台_ID`，同一首《晴天》在酷我/酷狗/QQ 各有一条 → 天然算三条。
+// 所以去重不能用 id、不能用封面、也不能用 URL，只能用**同一条录音**这个口径
+// （跨平台同曲靠 歌名核心 + 歌手 + 时长 ±4s + 版本类 判定）。
+//
+// 纯逻辑放在这里（而不是新建文件）是刻意的：新增 .swift 要同时改 pbxproj、CI 编译清单、
+// 本地 run-selftest.sh 三处，漏一处就是"本地过了 CI 挂"。
+enum FavoriteRules {
+
+    /// 同一条录音？（**对称**口径，专用于收藏）
+    ///
+    /// 与 `NameMatch.sameRecording` 的区别：那个是"找源"用的（src 是目标、cand 是候选，
+    /// 版本闸门是单向的 `candVer ⊆ srcVer`）。收藏去重要求两边平等，所以版本类必须**完全相等**——
+    /// `晴天 (Live)` 绝不能被并进 `晴天`（老板要的是"同一段录音"，不是"同一首歌"）。
+    static func isSameRecording(_ a: Song, _ b: Song) -> Bool {
+        if a.id == b.id { return true }
+
+        // ① 版本类必须一致（studio / live / 伴奏 / remix / 纯音乐 …）
+        if NameMatch.versionClass(a.name) != NameMatch.versionClass(b.name) { return false }
+
+        // ② 歌手：两边都有就必须有交集；都没有才退回歌名
+        let sa = NameMatch.singerTokens(a.singer)
+        let sb = NameMatch.singerTokens(b.singer)
+        if !sa.isEmpty && !sb.isEmpty {
+            guard NameMatch.singerMatches(a.singer, b.singer) else { return false }
+        }
+
+        // ③ 歌名：**分级判定**（老板 2026-11-21 补的口径：不同平台同原唱、标题带括号或差几个字，
+        //    也算同一首）。分级顺序 = 完全等值 → 繁简归一后等值 → 高相似度；
+        //    但仍然不能放过"同歌手的两首不同歌"（《夜曲》226s vs《稻香》223s 就是被这条挡住的反例）。
+        let titleVerdict = titlesLookSame(a, b)
+        guard titleVerdict.same else { return false }
+
+        // ④ 时长：两边都有才判。
+        //    标题完全相同 → ±4s（跨平台翻录通常 ≤2s）；标题只是"高度相似" → 收紧到 ±2s。
+        let da = a.durationSec
+        let db = b.durationSec
+        if da > 0 && db > 0 {
+            let diff = abs(da - db)
+            return diff <= (titleVerdict.exact ? NameMatch.maxDurationDiffSec : 2)
+        }
+        // 有一边时长未知（gdstudio 搜索不返回时长）：标题完全等值就认；
+        // 只是相似的话要求非常像（≥0.9），否则宁可不合并。
+        return titleVerdict.exact || titleVerdict.similarity >= 0.9
+    }
+
+    /// 收藏去重用的歌名键：繁转简 + 剥括号说明 + 去掉标点/空白/大小写。
+    ///
+    /// `后来` 与 `後來`、`晴天` 与 `晴天 (原唱 周杰伦)`、`晴天` 与 `晴 天` 都归到同一个键。
+    static func titleKey(_ name: String) -> String {
+        let simplified = TradToSimpMap.toSimplified(name)
+        let core = NameMatch.normTitle(simplified).lowercased()
+        return String(core.filter { $0.isLetter || $0.isNumber })
+    }
+
+    /// 两个歌名键的相似度（最长公共子序列 / 较长者长度），0…1。
+    ///
+    /// 用 LCS 而不是编辑距离：中文歌名"差几个字"通常是中途少/多一个字，
+    /// LCS 对"这世界那么多人 / 这世界这么多人"给 0.857，对"夜曲 / 稻香"给 0。
+    static func titleSimilarity(_ a: String, _ b: String) -> Double {
+        if a.isEmpty || b.isEmpty { return 0 }
+        let x = Array(a)
+        let y = Array(b)
+        var prev = [Int](repeating: 0, count: y.count + 1)
+        var cur = prev
+        for i in 1...x.count {
+            cur[0] = 0
+            for j in 1...y.count {
+                cur[j] = (x[i - 1] == y[j - 1]) ? prev[j - 1] + 1 : max(prev[j], cur[j - 1])
+            }
+            swap(&prev, &cur)
+        }
+        return Double(prev[y.count]) / Double(max(x.count, y.count))
+    }
+
+    /// 相似度门槛：0.75 能吃掉"差一两个字"（7 字名差 1 字 ≈ 0.857），
+    /// 又放不过"爱情 / 爱情转移"（0.5）、"晴天 / 雨过天晴"（0.6）这种不同歌。
+    static let titleSimilarityFloor = 0.75
+
+    /// 收藏去重的歌名判定（纯函数，CI 断言）
+    static func titlesLookSame(_ a: Song, _ b: Song) -> (same: Bool, exact: Bool, similarity: Double) {
+        let ka = titleKey(a.name)
+        let kb = titleKey(b.name)
+        if !ka.isEmpty && ka == kb { return (true, true, 1) }
+        // 太短的歌名（≤2 字）不做模糊：「晴天 / 情天」「爱 / 爱情」这种差一个字就是另一首
+        let short = min(ka.count, kb.count)
+        guard short >= 3 else { return (false, false, 0) }
+        let sim = titleSimilarity(ka, kb)
+        return (sim >= titleSimilarityFloor, false, sim)
+    }
+
+    /// 在收藏里找"同一条录音"的下标（交互入口用；一次操作 O(n)，收藏几千条也是毫秒级）
+    static func duplicateIndex(of song: Song, in list: [Song]) -> Int? {
+        list.firstIndex { isSameRecording($0, song) }
+    }
+
+    /// 合并两条：**保留已有那条的身份**（platform / platformID / 歌名 / 歌手不动），只补空字段。
+    ///
+    /// 为什么不换成新来的那条：收藏行的播放/下载都靠 platformID 取流，换身份会静默改变音源，
+    /// 而用户这次点的可能正是"能出声的那条"。所以宁可只补封面/时长/专辑。
+    static func merge(existing: Song, incoming: Song) -> Song {
+        let pic: String? = {
+            let old = (existing.picURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !old.isEmpty { return existing.picURL }
+            let new = (incoming.picURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return new.isEmpty ? existing.picURL : incoming.picURL
+        }()
+        let dur = existing.duration > 0 ? existing.duration : incoming.duration
+        let album = existing.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? incoming.album : existing.album
+        return Song(platform: existing.platform,
+                    platformID: existing.platformID,
+                    name: existing.name,
+                    singer: existing.singer,
+                    album: album,
+                    duration: dur,
+                    picURL: pic)
+    }
+
+    /// 列表去重（首次升级时清理历史重复用）。
+    ///
+    /// 性能：先按**判断键**分桶（繁简/括号/标点已归一），只在桶内比；桶外再按"首字相同"扫一轮，
+    /// 吃掉「差一个字」那类。不这么做就是 n² 次正则归一化，几千条收藏会卡住启动。
+    static func dedupe(_ list: [Song]) -> (songs: [Song], merged: Int) {
+        var out: [Song] = []
+        var buckets: [String: [Int]] = [:]
+        var merged = 0
+
+        func firstHit(_ song: Song, keys: [String]) -> Int? {
+            for key in keys {
+                for idx in buckets[key] ?? [] where isSameRecording(out[idx], song) { return idx }
+            }
+            return nil
+        }
+
+        for song in list {
+            let key = titleKey(song.name)
+            var hit = firstHit(song, keys: [key])
+            if hit == nil, let first = key.first, !key.isEmpty {
+                // 首字相同的其它桶（差一两个字、译名主干相同之类）
+                let siblings = buckets.keys.filter { $0.first == first && $0 != key }
+                hit = firstHit(song, keys: siblings)
+            }
+            if let idx = hit {
+                out[idx] = merge(existing: out[idx], incoming: song)
+                merged += 1
+            } else {
+                buckets[key, default: []].append(out.count)
+                out.append(song)
+            }
+        }
+        return (out, merged)
+    }
+}

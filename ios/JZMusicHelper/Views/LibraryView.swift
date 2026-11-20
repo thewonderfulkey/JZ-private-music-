@@ -17,6 +17,12 @@ struct FavoritesView: View {
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
 
+    /// 页面快照（2026-11-21 老板："加载一次、退出后台不要重新加载"）：
+    /// 数据层本来就是 `LibraryStore` 单例 + JSON 落盘（进 tab 不重读盘），封面也有 NSCache+磁盘两级缓存；
+    /// 真正会"回到顶部"的是滚动位置，所以这里把停留的那一行记进 `@SceneStorage`，重进页面自动回到原处。
+    @State private var scrollTarget: String?
+    @SceneStorage("favorites.scroll.anchor") private var savedAnchor: String = ""
+
     var body: some View {
         Group {
             if library.favorites.isEmpty {
@@ -67,6 +73,16 @@ struct FavoritesView: View {
                             MiniPlayerSpacer()
                         }
                         .readableWidth()
+                        .scrollTargetLayout()
+                    }
+                    .scrollPosition(id: $scrollTarget)
+                    .onAppear {
+                        // 回到上次停留的那一行（只在从未定位过时恢复，别和"定位到正在播放"抢）
+                        guard scrollTarget == nil, !savedAnchor.isEmpty else { return }
+                        scrollTarget = savedAnchor
+                    }
+                    .onChange(of: scrollTarget) { _, new in
+                        if let new, !new.isEmpty { savedAnchor = new }
                     }
                     .scrollIndicators(.hidden)
                     .locateToast(locator.toast)

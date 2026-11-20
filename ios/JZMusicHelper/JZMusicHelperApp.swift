@@ -26,6 +26,8 @@ struct JZMusicHelperApp: App {
     init() {
         // 下载完成提示（可选权限，拒绝也不影响下载）
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // 收藏的文件级去重：收藏那一刻只做元数据级，指纹由后台补（延迟几秒，不和首屏抢网络）
+        Task { @MainActor in FavoriteDedupeService.shared.scheduleLaunchPass() }
     }
 
     var body: some Scene {
@@ -56,7 +58,18 @@ struct JZMusicHelperApp: App {
                     .transition(.opacity)
                     .zIndex(1)
                 }
+
+                // 收藏去重的提示：老板要"自动化"，但必须让人看见发生了什么（不弹窗、不打断）
+                if let notice = library.favoriteNotice {
+                    VStack {
+                        Spacer()
+                        ToastView(text: notice)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .zIndex(2)
+                }
             }
+            .animation(.easeOut(duration: 0.2), value: library.favoriteNotice)
             .preferredColorScheme(settings.appearance.colorScheme)
             .tint(Tokens.Palette.vermilion)
         }
