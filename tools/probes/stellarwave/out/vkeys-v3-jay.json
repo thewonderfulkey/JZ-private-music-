@@ -1,0 +1,14 @@
+{
+    "code": 0,
+    "message": "访问成功",
+    "data": {
+        "songID": 97773,
+        "songMID": "0039MnYb0qxYhV",
+        "kbps": "320kbps",
+        "link": "https://i.y.qq.com/v8/playsong.html?songmid=0039MnYb0qxYhV&type=0",
+        "url": "http://ws.stream.qqmusic.qq.com/M800003Qui1q2u1Zho.mp3?guid=0&vkey=BADAC6241E175E1EF3F175E1DADCBB7B1DE09206A6E54C6A147892ECC6A12BFB4D477F6B76D32CF286FDA41599DED1FE9C7AB29F29EE8C29__v2b932a8f&uin=1152921505349757380&fromtag=119093"
+    },
+    "time": "2026-11-20 21:23:24",
+    "pid": 260,
+    "tips": "欢迎使用落月API-V3"
+}

@@ -66,3 +66,6 @@ desktop/.kotlin/
 # pbxproj 备份（tools/ios 下的脚本会自动生成）
 ios/JZMusicHelper.xcodeproj/project.pbxproj.bak-*
 
+
+# 飞书群里抓下来的附件（录屏/截屏/IPA 副本，别入库）
+tools/notify/inbox/
