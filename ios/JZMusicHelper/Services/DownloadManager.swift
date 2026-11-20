@@ -866,15 +866,8 @@ enum CrashReporter {
         installed = true
         _ = directory()
 
-        NSSetUncaughtExceptionHandler { ex in
-            let text = """
-            ==== uncaught exception ====
-            \(Date())
-            \(ex.name.rawValue): \(ex.reason ?? "")
-            \(ex.callStackSymbols.joined(separator: "\n"))
-            """
-            append(text + "\n", to: "crash-\(stamp()).log")
-        }
+        // C 函数指针不能是"捕获上下文"的闭包 —— 必须用文件级函数（见文件末尾）
+        NSSetUncaughtExceptionHandler(jzUncaughtExceptionHandler)
 
         log("app launched · v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
         for name in [UIApplication.didEnterBackgroundNotification,
@@ -897,13 +890,13 @@ enum CrashReporter {
 
     // MARK: - 内部
 
-    private static func stamp() -> String {
+    fileprivate static func stamp() -> String {
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm:ss"
         return f.string(from: Date())
     }
 
-    private static func append(_ text: String, to name: String) {
+    fileprivate static func append(_ text: String, to name: String) {
         let url = directory().appendingPathComponent(name)
         guard let data = text.data(using: .utf8) else { return }
         if let handle = try? FileHandle(forWritingTo: url) {
@@ -921,7 +914,7 @@ enum CrashReporter {
         }
     }
 
-    private static func residentMB() -> Double {
+    fileprivate static func residentMB() -> Double {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size
                                            / MemoryLayout<natural_t>.size)
@@ -934,7 +927,7 @@ enum CrashReporter {
         return Double(info.resident_size) / 1024 / 1024
     }
 
-    private static func coverCount() -> Int {
+    fileprivate static func coverCount() -> Int {
         // 只为看一眼缓存规模（封面缓存 NSCache 不暴露数量的间接指标：磁盘也不合适）→ 用下载条数代替
         MainActor.assumeIsolated { DownloadManager.shared.items.filter { $0.status == .completed }.count }
     }
@@ -1292,3 +1285,15 @@ extension DownloadManager {
     }
 }
 
+/// 未捕获的 Objective-C 异常（Swift 的数组越界/断言是 SIGTRAP，这里收不到，
+/// 但内存曲线能区分 jetsam；这个 handler 只负责把真异常写下来）。
+private func jzUncaughtExceptionHandler(_ ex: NSException) {
+    let text = """
+    ==== uncaught exception ====
+    \(Date())
+    \(ex.name.rawValue): \(ex.reason ?? "")
+    \(ex.callStackSymbols.joined(separator: "\n"))
+
+    """
+    CrashReporter.append(text, to: "crash-\(CrashReporter.stamp()).log")
+}
