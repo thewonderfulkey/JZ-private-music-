@@ -357,7 +357,8 @@ enum SameSongCrossResolver {
             case .kuwo: return 1
             case .kugou: return 2
             case .qq: return 3
-            case .local: return -1
+            // 本地文件不是网络源：排最后，避免挤掉真实取流次序
+            case .local: return 99
             }
         case .high, .standard:
             switch platform {
@@ -365,7 +366,8 @@ enum SameSongCrossResolver {
             case .kugou: return 1
             case .kuwo: return 2
             case .qq: return 3
-            case .local: return -1
+            // 本地文件不是网络源：排最后，避免挤掉真实取流次序
+            case .local: return 99
             }
         }
     }
