@@ -515,7 +515,13 @@ struct NowPlayingView: View {
             if source.kbps > 0 { out.append("\(source.kbps) kbps") }
             if source.backendName != "本地文件" { out.append(source.platform.shortName) }
         }
-        out.append(player.quality.displayName)
+        // A7（老板 2026-11-20）：在线播放固定 ≤320k、无损只用于下载——这一排必须说实话，
+        // 不能再把「无损 FLAC」挂在在线播放上。本机文件（含下载下来的 FLAC）是例外：
+        // 那就是设备上的无损，写"本地播放"即可。
+        let playingLocalFile = player.source.map {
+            $0.backendName == "本地文件" || $0.backendName == "心动缓存"
+        } ?? false
+        out.append(playingLocalFile ? "本地播放" : PlaybackQualityRules.label)
         if isDownloaded { out.append("已下载") }
         return out
     }

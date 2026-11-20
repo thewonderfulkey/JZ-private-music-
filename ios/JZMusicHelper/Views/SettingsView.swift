@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 设置（设计稿 §3.11）
 //
@@ -43,6 +44,21 @@ struct SettingsView: View {
             Section("播放") {
                 Toggle("车载自动播放", isOn: $settings.carAutoPlay)
                 Text("连上车载蓝牙或车机后自动开始放：上次没播完的从断开的地方接着放，没有就放热门歌单。App 被系统杀掉之后需要先打开一次。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // 老板 2026-11-20：播放诊断长期保留在这里（只读、可复制）
+                NavigationLink {
+                    PlaybackDiagnosticsView()
+                } label: {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        Text("播放诊断")
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: Tokens.Spacing.xs)
+                        Text("最近 200 条")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("在线播放固定\(PlaybackQualityRules.label)。卡歌、播完不换下一首时，进「播放诊断」复制那段记录——每行都有时间戳和当时的 App 状态。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -201,5 +217,68 @@ struct SettingsView: View {
         if share <= 0.001 { return "全是新歌" }
         let per = max(2, Int((1.0 / share).rounded()))
         return "约 \(per) 首里 1 首旧"
+    }
+}
+
+// MARK: - 播放诊断（老板 2026-11-20 拍板：长期保留，只读）
+
+/// 最近 200 条播放打点的只读页。
+///
+/// 每行 = 「时间戳 · App 状态 · 阶段 · 备注」，阶段覆盖：
+/// `didPlayToEnd`（播完）→ `goTo`（换曲）→ `resolve 开始/结束`（取源）→ `item ready` → `play`（出声），
+/// 外加 `预取`/`预取命中`/`同曲换源`/`后台任务`/`回前台自愈` 这些诊断线。
+///
+/// 为什么值得长期留着：后台播完不换歌这类问题，离开"当时是不是已经在后台"这个信息就没法定案——
+/// 而 `UIApplication.shared.applicationState` 只有现场能取到，事后谁也补不出来。
+struct PlaybackDiagnosticsView: View {
+
+    @State private var entries: [PlaybackTraceEntry] = []
+    @State private var copied = false
+
+    var body: some View {
+        List {
+            Section {
+                Text("记录最近 200 条：播完 → 换曲 → 取源起止 → 起播，每条带时间戳与当时的 App 状态（前台 / 后台）。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                LabeledContent("记录条数", value: "\(entries.count) 条")
+                // 第二批的验收口径：缓存命中时这个数不涨
+                LabeledContent("歌单详情接口", value: "\(KuwoPlaylist.detailNetworkCalls) 次请求")
+                Button(copied ? "已复制" : "复制全部") {
+                    UIPasteboard.general.string = entries.map(PlaybackTrace.line).joined(separator: "\n")
+                    copied = true
+                }
+                .disabled(entries.isEmpty)
+                Button("清空记录", role: .destructive) {
+                    PlaybackTrace.shared.clear()
+                    entries = []
+                }
+                .disabled(entries.isEmpty)
+            }
+
+            Section("最近记录（新的在上）") {
+                if entries.isEmpty {
+                    Text("还没有记录。放一首歌、切几次歌，再回来看。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entries.reversed()) { entry in
+                        Text(PlaybackTrace.line(entry))
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .navigationTitle("播放诊断")
+        .navigationBarTitleDisplayMode(.inline)
+        // 1 秒刷一次：页面开着时也能看到播放过程（离开页面自动停）
+        .task {
+            while !Task.isCancelled {
+                entries = PlaybackTrace.shared.snapshot()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
     }
 }

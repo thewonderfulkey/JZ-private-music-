@@ -87,6 +87,9 @@ struct RootTabView: View {
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
             if phase == .active {
                 drainIntents()
+                // B3（老板 2026-11-20）：回前台自愈。后台被挂起后取源任务可能已经死了，
+                // 只靠"任务自己恢复"不够——应该出声却没出声时补一脚（用户自己暂停/来电打断不碰）。
+                player.recoverIfStalled()
                 // r121：回前台顺便核对一下热歌榜换没换。
                 // 发现页的 Tab 是保活的（`RootTabView` 只建一次），`DiscoverView.task` 不会再跑，
                 // 所以"App 在后台挂了两天"时榜单会一直停在旧日期——这里补一次（内部有 10 分钟节流）。

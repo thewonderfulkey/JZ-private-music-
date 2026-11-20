@@ -518,6 +518,48 @@ struct KugouPlayInfoAdapter: StreamSourceAdapter {
     }
 }
 
+// MARK: - 酷我系：官方 anti.s（按 rid 直接换播放地址）
+//
+// 为什么要有这一条（2026-11-20，A 方案"在线 ≤320k、FLAC 不进播放链"）：
+// 妖狐酷我**只有一个档位**——实测「晴天」「夜曲」都回 `level=lossless / bitrate=740`（FLAC 26MB），
+// 而酷我歌的播放链原本只有妖狐这一条。按 A 口径过滤掉 FLAC，等于整首没源——而歌单广场、
+// 热门音乐、最新单曲都是酷我的歌，这会直接把主界面打空。
+//
+// 官方 `anti.s` 按 rid 换地址：实测回 **129kbps mp3**（audio/mpeg，2,302,801 B / 143s），
+// 直连、支持 Range，正好补上"≤320k 的那一条"。想要 320k 只能靠起播后的跨平台后台升档
+// （`schedulePlaybackUpgrade`，仍受 ≤320k 约束）；`br=320` 这个参数服务端不认，
+// 回的是一个约 181KB 的残片，别用。
+struct KuwoOfficialAdapter: StreamSourceAdapter {
+    let name = "酷我官方"
+    let platform: MusicPlatform = .kuwo
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let rawID = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rid = rawID.hasPrefix("MUSIC_") ? String(rawID.dropFirst("MUSIC_".count)) : rawID
+        guard !rid.isEmpty, rid.allSatisfy({ $0.isNumber }) else {
+            throw APIError.parse("酷我官方：rid 非法")
+        }
+        let url = "https://antiserver.kuwo.cn/anti.s?type=convert_url&format=mp3"
+            + "&response=url&rid=MUSIC_\(rid)"
+        let rawText = try await APIClient.shared.getString(
+            url, headers: ["Referer": "https://www.kuwo.cn/"], timeout: 10)
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 这条接口失败时回的不是 JSON，而是一句人话（如 "refuse request!"）
+        guard text.lowercased().hasPrefix("http") else {
+            throw APIError.parse("酷我官方未返回地址")
+        }
+        let stream = UrlNormalizer.upgraded(text)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "官方直链（rid 直查，实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
 // MARK: - 后端注册表
 enum SourceRegistry {
 
@@ -526,6 +568,7 @@ enum SourceRegistry {
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
         YaohuKuwoAdapter(),
+        KuwoOfficialAdapter(),
         KugouPlayInfoAdapter(),
     ]
 

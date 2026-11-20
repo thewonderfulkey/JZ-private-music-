@@ -1,3 +1,45 @@
+## iOS v2.4.33（211） · 2026-11-20（在线播放降到 320k、无损只给下载；后台播完不换歌修掉；广场歌单详情加缓存）
+
+老板 2026-11-20 拍板的两批改动，一次提交、一次出包。诊断过程与证据见 `docs/ios/IOS-BACKGROUND-ADVANCE.md`。
+
+### A 在线播放降档（≤320k，无损只用于下载）
+
+- 播放链档位从 `.lossless` 改成 `.high`（`PlayerEngine.playbackQuality`），下载默认档仍是无损。
+- **FLAC/WAV 不进播放链**：新 `PlaybackQualityRules.isPlayable` 按「容器 + 实测码率」过滤（≥601kbps 也算无损）；
+  排名按实测码率 320 > 256 > 128，码率算不出的垫底。`SelfTest` 新增 12 条断言钉住这几个门槛。
+- 下线 `scheduleQualityUpgrade`（它会偷偷把播放链升到 FLAC），换成 `schedulePlaybackUpgrade`：
+  只在 ≤320k 之内补更高码率；已经在 320 档就不再白跑一轮 15s 的完整排名。
+- **补「酷我官方」后端**（`KuwoOfficialAdapter`，`anti.s?rid=`）：妖狐酷我只回 FLAC（实测 740k），
+  按新口径会被过滤掉，而酷我歌的播放链只有它一条——不补的话歌单广场 / 热门音乐 / 最新单曲会全部没声。
+  实测官方接口回 **129kbps mp3**（audio/mpeg，2,302,801 B / 143s），正是"≤320k 的那一条"；
+  更高码率交给起播后的跨平台升档（`br=320` 服务端不认，回的是约 181KB 残片，不要用）。
+- A5：删掉两处 `deadSongKeys.insert`（`rejectSource` 与 `handleNoSource`）——单条源失败不再升级成整首歌失败。
+- A6：**同曲换源**——播放失败先在同一首歌内换下一条候选（`rejectedSourceURLs` 记下坏 URL，取流链自动跳过），
+  `pendingRestoreSeconds` 把进度 seek 回原位；换满 3 条（`PlaybackRules.maxSameSongSwitches`）才跳歌并明说。
+- A7：播放页胶囊与设置页如实写「高品 320k（无损仅下载）」；本地文件（含下载的 FLAC）照实写「本地播放」。
+
+### B 后台播完不换下一首
+
+- B1 **预取下一首 URL**（`PrefetchRules`：剩余 20–30 秒触发；随机模式先钉住下一首下标，
+  预取和真正换曲用同一个），播完直接 `replaceCurrentItem` + `play()`，空档目标 ≤0.3s。
+  只预取 URL，**不预取音频字节**（瓶颈是取源决策，不是下载）。
+- B2 `beginBackgroundTask` 包住跨曲取源（30 秒，配对 `endBackgroundTask`，到期回调里自清）。
+- B3 回前台自愈 `recoverIfStalled()`（用户自己暂停 / 来电打断 / 已判定无源，三种情况不碰），
+  并修掉 `toggle()` 里 `if isResolving { return }` 导致的"回前台点播放没反应"。
+- B4 自然播完这条路径**不先暂停**（`goTo(pauseFirst: false)`）；"换曲先暂停"只保留给用户手动切歌（r71 原意）。
+- 取流改**先到先用**（`DownloadResolver.firstPlayable`）：第一个过「身份闸 + ≤320k」的候选立刻用，
+  不再等齐三个后端（实测三个 primary 后端从没有一次在 1.8s 内等齐：gdstudio 0.4–0.9s、oiapi 1.4–2.1s、妖狐 2.0–4.9s）。
+- 新增「设置 → 播放诊断」（`PlaybackDiagnosticsView`）：最近 200 条
+  `didPlayToEnd / goTo / resolve 起止 / item ready / play`，每条带时间戳与 `applicationState`，可复制、可清空。
+
+### C 广场歌单详情缓存
+
+- `Caches/playlist-details/<pid>.json` + `Codable`，读取顺序 内存 → 磁盘 → 网络，TTL 24 小时；
+  **回前台不自动刷新**，只有下拉刷新才重取；页头写「刚刚 / x 分钟前 / x 小时前更新」。
+- 导入的「我的歌单」不动（它本来就是内存 + `Documents` 快照、零网络）。
+- 诊断页显示 `KuwoPlaylist.detailNetworkCalls`：缓存命中时这个数不涨，就是"再来一次 0 请求"的直接证据。
+
+**版本**：iOS 2.4.33（211），Android versionCode 211 / versionName 2.4.33 同步（本期 Android 无改动）。
 ## iOS v2.4.32（210） · 2026-11-19（修：周杰伦《青花瓷》没词——④ 按名字搜不到，改按平台 id 直取官方词）
 
 老板反馈《青花瓷》加载不出歌词。复现与定位：

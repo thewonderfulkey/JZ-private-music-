@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import UIKit
 
 // MARK: - 播放引擎
 //
@@ -10,6 +11,81 @@ import Observation
 //   · 播完按 PlayMode 推进（单曲循环是重播当前曲，不是停止）
 //   · 实际时长与曲目时长差 >5s 判为坏源 → 拒播并换源
 //   · 连续 3 首无源就停下并给一句人话
+
+// MARK: - 播放诊断打点（老板 2026-11-20 拍板：长期保留，放「设置 → 播放诊断」）
+//
+// 为什么要有它：后台播完不换歌这类问题，**代码读一百遍也判不出**"到底卡在哪一秒、当时 App 是不是
+// 已经进了后台"——只有带时间戳 + appState 的现场记录能定案。所以这里做一个 200 条的环形缓冲，
+// 只记 5 个关键点（didPlayToEnd / goTo / resolve 起止 / item ready / play），开销可以忽略。
+//
+// 用 NSLock + 快照而不是 @Observable：写点的人都在主线程，读它的是设置页里一个轮询刷新的列表，
+// 走锁比把整个引擎拖进观察链更省事，也不会因为"在诊断页上打字"影响播放。
+struct PlaybackTraceEntry: Identifiable {
+    let id = UUID()
+    let at: Date
+    let stage: String
+    let appState: String
+    let note: String
+}
+
+final class PlaybackTrace: @unchecked Sendable {
+
+    static let shared = PlaybackTrace()
+
+    private let lock = NSLock()
+    private var buffer: [PlaybackTraceEntry] = []
+    /// 只留最近 200 条：一次连播 3 首大约 40 条，够倒查好几轮
+    private static let limit = 200
+
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    private init() {}
+
+    /// 记一条。`appState` 由这里自己取，调用点不用关心自己跑在什么状态里。
+    @MainActor
+    func log(_ stage: String, _ note: String = "") {
+        let entry = PlaybackTraceEntry(at: Date(), stage: stage,
+                                       appState: Self.appStateText(), note: note)
+        lock.lock()
+        buffer.append(entry)
+        if buffer.count > Self.limit { buffer.removeFirst(buffer.count - Self.limit) }
+        lock.unlock()
+        #if DEBUG
+        print("[PlaybackTrace] \(Self.line(entry))")
+        #endif
+    }
+
+    func snapshot() -> [PlaybackTraceEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer
+    }
+
+    func clear() {
+        lock.lock()
+        buffer.removeAll()
+        lock.unlock()
+    }
+
+    static func line(_ e: PlaybackTraceEntry) -> String {
+        "\(stamp.string(from: e.at))  \(e.appState)  \(e.stage)  \(e.note)"
+    }
+
+    @MainActor
+    private static func appStateText() -> String {
+        switch UIApplication.shared.applicationState {
+        case .active: return "前台"
+        case .inactive: return "未激活"
+        case .background: return "后台"
+        @unknown default: return "未知"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class PlayerEngine {
@@ -116,7 +192,11 @@ final class PlayerEngine {
     /// 规则见 `LyricsCleaning.lyricSeekHoldDecision`（纯函数，CI 有断言），与歌曲无关。
     private var pendingLyricLine: Int?
 
-    /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）
+    /// 已确认放不出来的歌（搜索结果里会被隐藏，与 Android 的 deadSongKeys 同口径）。
+    ///
+    /// 2026-11-20 老板拍板（A5）：**不再往里写**。单条源失败 ≠ 整首歌没源——
+    /// 写进来会让这首歌在搜索结果里被永久隐藏，而它换一条源其实是能放的。
+    /// 保留这个属性只为兼容视图层的过滤口径（现在恒为空）。
     private(set) var deadSongKeys: Set<String> = []
     private(set) var isLoadingLyrics = false
     var hasLyrics: Bool { !lyrics.isEmpty }
@@ -185,6 +265,28 @@ final class PlayerEngine {
 
     /// 心动模式已经解析好的流地址（没来得及下载时用，省掉再解析一遍的 1-8 秒）
     private var pendingStream: (songID: String, url: String)?
+
+    // MARK: 下一首预取（B1）/ 跨曲取源的后台任务（B2）/ 自愈状态（B3）
+
+    /// 播放链档位：**固定 320k**。无损只用于下载（老板 2026-11-20 定稿）。
+    /// 注意与 `quality`（下载默认档，恒无损）分工，两者不要混用。
+    static let playbackQuality: QualityLevel = .high
+
+    /// 预取任务（当前曲剩 20~30 秒时把下一首的源解析好）
+    private var prefetchTask: Task<Void, Never>?
+    /// 正在/已经预取过的那首（同一首不重复解析）
+    private var prefetchSongID: String?
+    /// 已经"定下来"的下一首。随机模式下预取和真正换曲**必须**是同一个下标，
+    /// 否则预取的源对不上、等于白跑一趟（`goTo` 会按 songID 校验，对不上就重新解析）。
+    private var plannedNext: (index: Int, songID: String)?
+    /// 跨曲取源期间的后台任务：让系统多给 30 秒，别在"没声音的空档"里把进程挂起
+    private var resolveBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// 用户自己按的暂停：回前台自愈时不能把这当成"卡住"（否则用户暂停了会被自动放起来）
+    private var userPaused = false
+    /// 被来电/闹钟打断：恢复交给 interruption 回调，自愈不要抢跑
+    private var interrupted = false
+    /// 同一首歌内已经换过几条源（A6）：换满 `PlaybackRules.maxSameSongSwitches` 才允许跳歌
+    private var sameSongSwitches = 0
 
     /// 最近一次主动切歌的时间：切歌后 1.2 秒内收到的"播完"一定是上一首的迟到通知，必须忽略。
     /// （老板录屏：「淋雨一直走」刚起播就被切走，就是旧 item 的 didPlayToEnd 迟到了）
@@ -256,9 +358,13 @@ final class PlayerEngine {
         currentSong = songs[target]
         rejectedSourceURLs.removeAll()
         consecutiveSkips = 0
+        sameSongSwitches = 0
+        plannedNext = nil
+        prefetchSongID = nil
         resetProgress()
         prepareLyrics(for: songs[target])
         syncHeartbeatSeed(songs[target])
+        beginResolveBackgroundTask()
         Task { await loadCurrent() }
     }
 
@@ -289,10 +395,14 @@ final class PlayerEngine {
         currentSong = songs[target]
         rejectedSourceURLs.removeAll()
         consecutiveSkips = 0
+        sameSongSwitches = 0
+        plannedNext = nil
+        prefetchSongID = nil
         resetProgress()
         pendingRestoreSeconds = positionSeconds.isFinite ? max(0, positionSeconds) : 0
         prepareLyrics(for: songs[target])
         syncHeartbeatSeed(songs[target])
+        beginResolveBackgroundTask()
         Task { await loadCurrent() }
     }
 
@@ -329,16 +439,29 @@ final class PlayerEngine {
         guard currentSong != nil else { return }
         attachSystemIfNeeded()
         // r71：正在换曲解析时不要把上一首又播起来（那时 currentItem 还是旧的）
-        if isResolving { return }
+        //
+        // B3（老板 2026-11-20）：但也不能像以前那样直接 return —— 后台被挂起过之后，
+        // 用户回到前台点播放，`isResolving` 可能还挂着，原来这一下等于"点了没反应"。
+        // 现在改成：没在出声就再踢一次解析（解析是幂等的，重复调用只会多一次候选并行）。
+        if isResolving {
+            if !isPlaying {
+                PlaybackTrace.shared.log("toggle", "解析中重试")
+                Task { await loadCurrent() }
+            }
+            return
+        }
         if isPlaying {
             player.pause()
             isPlaying = false
+            userPaused = true
             // 暂停时落一次快照：车载连上要"接着放"，断点就在这一下
             flushSnapshot(force: true)
         } else if player.currentItem != nil {
             player.play()
             isPlaying = true
+            userPaused = false
         } else {
+            userPaused = false
             Task { await loadCurrent() }
             return
         }
@@ -500,26 +623,42 @@ final class PlayerEngine {
 
     // MARK: 内部流程
 
-    private func goTo(_ newIndex: Int, localURL: URL? = nil, streamURL: String? = nil) {
+    /// 换到某一下标。
+    ///
+    /// - Parameter pauseFirst: 换之前要不要先暂停当前这首。
+    ///   用户手动切歌 = true（r71：「换曲的时候先暂停当前的歌曲」）；
+    ///   **自然播完 = false**（老板 2026-11-20 拍板 B4：连续播放不是切歌，静音正是空档被挂起的起点，
+    ///   而且预取命中时根本不该有任何空档）。
+    private func goTo(_ newIndex: Int, localURL: URL? = nil, streamURL: String? = nil,
+                      pauseFirst: Bool = true) {
         guard queue.indices.contains(newIndex) else { return }
         lastAdvanceAt = Date()
+        PlaybackTrace.shared.log("goTo", "→\(newIndex)/\(queue.count) pauseFirst=\(pauseFirst)")
         heartbeat.trackEnded(listened: preciseTime, completed: false)
+        // 预取存下来的源只在"目标就是那首"时才留着；换了别的歌立刻作废
         if let localURL {
             pendingLocal = (songID: queue[newIndex].id, url: localURL)
-        } else {
+        } else if pendingLocal?.songID != queue[newIndex].id {
             pendingLocal = nil
         }
         if let streamURL {
             pendingStream = (songID: queue[newIndex].id, url: streamURL)
-        } else {
+        } else if pendingStream?.songID != queue[newIndex].id {
             pendingStream = nil
         }
-        stopCurrentForSwitch()
+        if pauseFirst {
+            stopCurrentForSwitch()
+        } else {
+            cancelUpgradeForSwitch()
+        }
+        plannedNext = nil
+        sameSongSwitches = 0
         index = newIndex
         currentSong = queue[newIndex]
         rejectedSourceURLs.removeAll()
         resetProgress()
         prepareLyrics(for: queue[newIndex])
+        beginResolveBackgroundTask()
         Task { await loadCurrent() }
     }
 
@@ -531,12 +670,95 @@ final class PlayerEngine {
     ///
     /// 只暂停、不 `replaceCurrentItem`：保留当前 item 和进度，用户在解析期间点播放键还能继续听这首。
     private func stopCurrentForSwitch() {
-        upgradeTask?.cancel()
-        upgradeTask = nil
+        cancelUpgradeForSwitch()
         guard PlaybackRules.shouldPauseBeforeSwitch(hasLoadedItem: player.currentItem != nil) else { return }
         player.pause()
         isPlaying = false
         updateNowPlaying()
+    }
+
+    /// 只取消"换曲要作废的后台任务"，**不动正在播的音频**（B4：自然播完走这条）
+    private func cancelUpgradeForSwitch() {
+        upgradeTask?.cancel()
+        upgradeTask = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
+    }
+
+    // MARK: 跨曲取源的后台任务（B2）
+
+    /// 取源期间向系统申请后台时间（30 秒）。
+    ///
+    /// 为什么必须有：后台音频 App 的"执行权"是跟着**有没有在出声**走的。上一首播完、下一首还没
+    /// 开始的那段时间里，进程随时会被挂起——取源的请求就停在那儿，回前台才继续。
+    /// `beginBackgroundTask` 给的是定时长的豁免（这里 30 秒），足够覆盖"一次完整排名 + 跨源补位"。
+    /// 结束必须配对 `endResolveBackgroundTask`，否则到期会被系统强杀。
+    private func beginResolveBackgroundTask() {
+        endResolveBackgroundTask()
+        resolveBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "jz-resolve-next") { [weak self] in
+            // 到期回调：系统马上要收走执行权，必须自己先结束，不然进程会被强杀
+            MainActor.assumeIsolated {
+                PlaybackTrace.shared.log("后台任务", "到期")
+                self?.endResolveBackgroundTask()
+            }
+        }
+        if resolveBackgroundTask != .invalid {
+            PlaybackTrace.shared.log("后台任务", "开始")
+        }
+    }
+
+    private func endResolveBackgroundTask() {
+        guard resolveBackgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(resolveBackgroundTask)
+        resolveBackgroundTask = .invalid
+    }
+
+    // MARK: 下一首预取（B1）
+
+    /// 时间观察者每 0.5 秒调一次：剩余 20~30 秒时把下一首的源解析好存进 `pendingStream`。
+    private func maybePrefetchNext() {
+        let remaining = duration - currentTime
+        guard PrefetchRules.shouldPrefetch(remainingSec: remaining,
+                                           hasItem: player.currentItem != nil,
+                                           isResolving: isResolving,
+                                           mode: mode) else { return }
+        let next: Int
+        if let planned = plannedNext,
+           queue.indices.contains(planned.index),
+           queue[planned.index].id == planned.songID,
+           planned.index != index {
+            next = planned.index
+        } else {
+            guard let picked = PlaybackRules.nextIndex(
+                count: queue.count, current: index, mode: mode,
+                randomIn: { Int.random(in: $0) }) else { return }
+            next = picked
+            // 随机模式下先把"下一首是谁"钉住：预取和真正换曲必须是同一个下标
+            plannedNext = (picked, queue[picked].id)
+        }
+        guard queue.indices.contains(next) else { return }
+        let song = queue[next]
+        guard prefetchSongID != song.id else { return }
+        prefetchSongID = song.id
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            await self?.prefetch(song: song)
+        }
+    }
+
+    /// 预取：只解析 URL（老板 2026-11-20：**不做音频字节预取**，瓶颈是取源决策不是下载）。
+    private func prefetch(song: Song) async {
+        // 已下载的不用预取：`loadCurrent` 第一条分支直接播本地文件
+        if DownloadManager.shared.localFileURL(for: song) != nil { return }
+        if pendingStream?.songID == song.id || pendingLocal?.songID == song.id { return }
+        let src = await resolveStream(for: song)
+        guard !Task.isCancelled, prefetchSongID == song.id else { return }
+        guard let src else {
+            PlaybackTrace.shared.log("预取失败", song.name)
+            return
+        }
+        pendingStream = (songID: song.id, url: src.url)
+        PlaybackTrace.shared.log("预取", "\(song.name) ← \(src.backendName) \(src.kbps)kbps")
     }
 
     private func resetProgress() {
@@ -555,7 +777,8 @@ final class PlayerEngine {
 
     private func loadCurrent() async {
         guard let song = currentSong else { return }
-        errorText = nil
+        // 注意：这里**不**清 errorText。A6 的"几路源都放不出来，已跳到下一首"要留到新歌
+        // 真正起播（`start()` 里清），否则那句提示会被这一行立刻抹掉，用户什么也看不到。
 
         // 已下到本地的歌优先播本地文件：离线也能放，也省掉一次解析
         if let localURL = DownloadManager.shared.localFileURL(for: song) {
@@ -592,17 +815,19 @@ final class PlayerEngine {
         }
         pendingLocal = nil
 
-        // 心动模式现场解析好的流地址：直接用，省掉再走一遍取流链（同样不升档）
+        // 解析好的流地址直接用：心动模式的现场解析 + 普通连播的预取（B1）都走这里。
+        // 这是"空档 ≤0.3s"的关键路径——命中它就没有任何网络等待。
         if let pending = pendingStream, pending.songID == song.id,
            let url = URL(string: pending.url) {
             pendingStream = nil
             let src = StreamSource(url: pending.url,
-                                   backendName: "心动解析",
+                                   backendName: "预取源",
                                    platform: song.platform,
-                                   quality: .high,
+                                   quality: PlayerEngine.playbackQuality,
                                    format: url.pathExtension.lowercased(),
-                                   note: "播放中解析")
-            statusText = "心动解析 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
+                                   note: "播放中预取")
+            statusText = "预取 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
+            PlaybackTrace.shared.log("预取命中", "\(song.name)")
             start(item: AVPlayerItem(url: url), song: song, source: src)
             return
         }
@@ -610,27 +835,46 @@ final class PlayerEngine {
 
         isResolving = true
         statusText = "正在解析音源…"
+        PlaybackTrace.shared.log("resolve 开始", song.name)
+        let startedAt = Date()
 
         let resolved = await resolveStream(for: song)
         isResolving = false
+        let outcome: String
+        if let resolved {
+            outcome = "\(resolved.backendName) \(resolved.kbps)kbps"
+        } else {
+            outcome = "无源"
+        }
+        PlaybackTrace.shared.log("resolve 结束",
+                                 "\(Int(Date().timeIntervalSince(startedAt) * 1000))ms \(outcome)")
 
-        guard let src = resolved else {
+        guard let src = resolved, let url = URL(string: src.url) else {
             handleNoSource()
             return
         }
-        guard let url = URL(string: src.url) else {
-            handleNoSource()
-            return
-        }
 
+        // A7：播放链的诚实标注（无损只用于下载）
         statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
+            + " · \(PlaybackQualityRules.label)"
         start(item: AVPlayerItem(url: url), song: song, source: src)
+        // 起播之后再决定"要不要换更高码率"：这时 `source` 才是这一首的真实档位，
+        // 已经是 320 档就不会再白跑一轮完整排名。
+        schedulePlaybackUpgrade(for: song)
     }
 
     /// 装配并起播一个 item（本地文件与在线取流共用这一处）
     private func start(item: AVPlayerItem, song: Song, source: StreamSource) {
         self.source = source
         consecutiveSkips = 0
+        sameSongSwitches = 0
+        userPaused = false
+        interrupted = false
+        errorText = nil
+        // 已经起播：这次换曲不再需要后台豁免
+        endResolveBackgroundTask()
+        PlaybackTrace.shared.log("play", "\(song.name) ← \(source.backendName) "
+            + "\(source.format.uppercased()) \(source.kbps)kbps")
         wire(item: item, song: song, source: source)
         player.replaceCurrentItem(with: item)
         player.play()
@@ -647,56 +891,74 @@ final class PlayerEngine {
         flushSnapshot()
     }
 
-    /// 三级取流（老板 2026-11-19 口径：**播放链允许"先粗后精"**，下载链不允许）：
-    ///   ① 本平台 + 妖狐 并发，质量窗口 1.8s 内取分最高的先起播（起播速度优先）；
-    ///   ② 窗口内一条都没有 → 等下载链的完整排名（全收集 + 打分）；
-    ///   ③ 起播后后台继续跑排名，出现更高档的源就替换（保留进度）；
-    ///   ④ 仍然没有才走"跨源补位"并按 2s / 2.5s / 3s 重试。
+    /// 取流（2026-11-20 老板口径重写：**先到先用 + 同曲换源 + 全程 ≤320k**）。
+    ///
+    ///   ① 本平台后端里**第一个**「身份闸 + ≤320k」的候选立刻用——不再等齐三个后端；
+    ///   ② 一个都没回来 → 拿下载链的完整排名，挑「可播且没被拒」的最高实测码率；
+    ///   ③ 仍然没有 → 同一首在别家的条目（跨平台补位），同样受 ≤320k 约束；
+    ///   ④ 全空 → nil（调用方决定"同曲再换一条"还是"跳歌"，见 `switchSourceWithinSong`）。
+    ///
+    /// 这里**不写状态行、也不起后台升档**：预取也会走它，而预取不该改界面。
+    /// 升档由 `loadCurrent` 在真正起播之后决定（那时才知道"当前这条是多少码率"）。
     private func resolveStream(for song: Song) async -> StreamSource? {
-        let attempts = 3
-        let triedCandidates = TriedKeys()
-        for attempt in 0..<attempts {
-            if attempt > 0 {
-                let delays: [Double] = [2, 2.5, 3]
-                let delay = delays[min(attempt - 1, delays.count - 1)]
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-            if attempt == 0,
-               let quick = await DownloadResolver.quickPick(song: song, want: quality),
-               !rejectedSourceURLs.contains(quick.source.url) {
-                scheduleQualityUpgrade(for: song)
-                return quick.source
-            }
-            let plan = await DownloadResolver.plan(song: song, want: quality)
-            if let picked = plan.picked, !rejectedSourceURLs.contains(picked.source.url) {
-                scheduleQualityUpgrade(for: song)
-                return picked.source
-            }
-            if let cross = await SameSongCrossResolver.resolve(
-                song: song, quality: quality, triedKeys: triedCandidates),
-               !rejectedSourceURLs.contains(cross.url) {
-                return cross
-            }
+        // 被拒的 URL 只属于"当前这首"：预取别的歌时不能拿这份名单去筛
+        let rejected = (song.id == currentSong?.id) ? rejectedSourceURLs : []
+
+        // ① 先到先用
+        if let quick = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
+           PlaybackQualityRules.isPlayable(quick.source),
+           !rejected.contains(quick.source.url) {
+            return quick.source
+        }
+
+        // ② 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
+        let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
+        if let picked = plan.ranked.first(where: {
+            PlaybackQualityRules.isPlayable($0.source) && !rejected.contains($0.source.url)
+        }) {
+            return picked.source
+        }
+
+        // ③ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
+        if let cross = await SameSongCrossResolver.resolve(
+            song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys()),
+           PlaybackQualityRules.isPlayable(cross),
+           !rejected.contains(cross.url) {
+            return cross
+        }
+
+        // ④ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        if let retry = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
+           PlaybackQualityRules.isPlayable(retry.source),
+           !rejected.contains(retry.source.url) {
+            return retry.source
         }
         return nil
     }
 
-    // MARK: 后台换更高档（先粗后精的"后精"）
+    // MARK: 后台再判一次"有没有更高码率"（只在 ≤320k 以内）
 
-    /// 起播后按下载链的排名再找一次；只有"档位更高"才换，避免来回横跳。
-    /// 当前已经是无损（tier 1000）就不启动，省掉一轮 15s 的收集。
-    private func scheduleQualityUpgrade(for song: Song) {
-        guard let cur = source, DownloadResolver.tierOf(cur) < 1000 else { return }
+    /// 老板 2026-11-20 定稿：旧的 `scheduleQualityUpgrade`（会顺手把播放链升到 FLAC）**必须下线**。
+    /// 这里是它的替代品——只在 ≤320k 之内往更高**实测码率**走（320 > 256 > 128），无损永远不参与。
+    /// 起播用它换更好的档音质；已经是 320 档就不再白跑一轮 15s 的完整排名。
+    private func schedulePlaybackUpgrade(for song: Song) {
+        guard let cur = source, PlaybackQualityRules.isPlayable(cur) else { return }
+        guard !PlaybackQualityRules.isTopTier(cur) else { return }
         guard upgradedSongID != song.id else { return }
         upgradeTask?.cancel()
         upgradeTask = Task { [weak self] in
             guard let self else { return }
-            let plan = await DownloadResolver.plan(song: song, want: self.quality)
-            guard !Task.isCancelled else { return }
-            guard self.currentSong?.id == song.id else { return }
-            guard let better = plan.picked?.source,
-                  DownloadResolver.isBetter(better, than: self.source) else { return }
+            let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
+            guard !Task.isCancelled, self.currentSong?.id == song.id else { return }
+            let best = plan.ranked
+                .map(\.source)
+                .filter { PlaybackQualityRules.isPlayable($0) }
+                .max { PlaybackQualityRules.isBetter($1, than: $0) }
+            guard let better = best,
+                  PlaybackQualityRules.isBetter(better, than: self.source) else { return }
             self.upgradedSongID = song.id
+            PlaybackTrace.shared.log("升档", "\(better.backendName) \(better.kbps)kbps")
             self.swapToBetterSource(better)
         }
     }
@@ -729,6 +991,9 @@ final class PlayerEngine {
                 switch item.status {
                 case .readyToPlay:
                     let actual = item.duration.seconds
+                    // 注意：远端流这一刻的 duration 可能是 indefinite（NaN），直接 Int() 会崩
+                    let durationText = actual.isFinite ? "\(Int(actual))s" : "时长未知"
+                    PlaybackTrace.shared.log("item ready", "\(song.name) \(durationText)")
                     self.adoptDuration(actual)
                     // 续播断点：ready 之后才能 seek（这时 duration 才可信）
                     if let restore = self.pendingRestoreSeconds {
@@ -781,6 +1046,7 @@ final class PlayerEngine {
     }
 
     private func handleTrackFinished() {
+        PlaybackTrace.shared.log("didPlayToEnd", "index=\(index)/\(queue.count) mode=\(mode.displayName)")
         // 刚切过歌（<1.2s）又收到"播完"：一定是上一首的迟到通知——再切一次就是"我没动它自己跳了"
         guard Date().timeIntervalSince(lastAdvanceAt) > 1.2 else {
             statusText = "忽略切歌瞬间的迟到结束通知"
@@ -798,10 +1064,9 @@ final class PlayerEngine {
             currentTime = 0
             isPlaying = true
         case .listLoop, .shuffle:
-            guard let next = PlaybackRules.nextIndex(
-                count: queue.count, current: index, mode: mode,
-                randomIn: { Int.random(in: $0) }) else { return }
-            goTo(next)
+            guard let next = plannedNextForAdvance() else { return }
+            // B4：自然播完是连续播放，**不先暂停**（静音就是空档被挂起的起点）
+            goTo(next, pauseFirst: false)
         case .heartbeat:
             // 播完这首才算"听完"（负反馈只看 userSkipped/nextTrack 那条路径）
             heartbeat.trackEnded(listened: duration > 0 ? duration : currentTime, completed: true)
@@ -812,6 +1077,22 @@ final class PlayerEngine {
                 planAndPlayHeartbeat()
             }
         }
+    }
+
+    /// 自然播完要去哪：预取时定下的那首优先。
+    ///
+    /// 随机模式必须走这条——不然预取时随出来的是 A、播完时又随一次成了 B，预取的源对不上，
+    /// 等于白跑一趟，而且 B 还得现取（又回到"空档里被挂起"的老路）。
+    private func plannedNextForAdvance() -> Int? {
+        if let planned = plannedNext,
+           queue.indices.contains(planned.index),
+           queue[planned.index].id == planned.songID {
+            plannedNext = nil
+            PlaybackTrace.shared.log("下一首", "\(queue[planned.index].name)（预取已定）")
+            return planned.index
+        }
+        return PlaybackRules.nextIndex(count: queue.count, current: index, mode: mode,
+                                       randomIn: { Int.random(in: $0) })
     }
 
     // MARK: 心动模式
@@ -941,27 +1222,59 @@ final class PlayerEngine {
         }
     }
 
+    /// 某一条源放不出来（403 / 坏容器 / 时长不符 / 播放中断）。
+    ///
+    /// A6（老板 2026-11-20）：**先在同一首歌内换下一条源**（保持进度、seek 回原位置），全换完才跳歌。
+    /// A5：`deadSongKeys.insert` 删掉——单条源失败不等于整首歌没源，记进那个集合会让这首歌
+    /// 在搜索结果里永远被隐藏（同一个错误模式不该从"一条源"升级成"整首歌"）。
     private func rejectSource(_ source: StreamSource, reason: String) {
+        PlaybackTrace.shared.log("源失败", "\(source.backendName)：\(reason)")
         rejectedSourceURLs.insert(source.url)
-        if let song = currentSong { deadSongKeys.insert(song.id) }
         errorText = reason
-        consecutiveSkips += 1
-        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) {
-            isPlaying = false
-            errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
-            return
-        }
-        // 还有余量：换下一首（同一首的其它源会在 loadCurrent 里被重新解析）
-        advanceAfterFailure()
+        switchSourceWithinSong()
     }
 
+    /// 一首歌的候选**全部**试完（取流链自己走空了）：这时才允许跳歌。
     private func handleNoSource() {
-        if let song = currentSong { deadSongKeys.insert(song.id) }
+        PlaybackTrace.shared.log("无源", currentSong?.name ?? "—")
         consecutiveSkips += 1
         errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
         isPlaying = false
-        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) { return }
+        if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) {
+            endResolveBackgroundTask()
+            return
+        }
         advanceAfterFailure()
+    }
+
+    /// 同曲换源：先记住播放位置，再重新解析这一首。
+    /// `rejectedSourceURLs` 已经收下刚失败的那条 URL，取流链会跳过它、挑同曲的下一条候选；
+    /// 新源 ready 之后 `pendingRestoreSeconds` 把进度 seek 回原位（见 `wire(item:)`）。
+    private func switchSourceWithinSong() {
+        guard let song = currentSong else { return }
+        let pos = player.currentTime().seconds
+        if pos.isFinite, pos > 1 { pendingRestoreSeconds = pos }
+        sameSongSwitches += 1
+        guard sameSongSwitches <= PlaybackRules.maxSameSongSwitches else {
+            // 这首的几路源都换过了：这才跳歌，并明确提示（`start()` 之前不会被清掉）
+            sameSongSwitches = 0
+            consecutiveSkips += 1
+            PlaybackTrace.shared.log("同曲换源放弃", "\(song.name) 换满 \(PlaybackRules.maxSameSongSwitches) 条")
+            if PlaybackRules.shouldStopAfterSkips(consecutiveSkips, limit: skipLimit) {
+                isPlaying = false
+                errorText = PlaybackRules.skipMessage(consecutiveSkips, limit: skipLimit)
+                endResolveBackgroundTask()
+                return
+            }
+            advanceAfterFailure()
+            errorText = "《\(song.name)》的几路音源都放不出来，已跳到下一首（第 \(consecutiveSkips) 首）"
+            return
+        }
+        statusText = "这首在换源（第 \(sameSongSwitches) 条）…"
+        PlaybackTrace.shared.log("同曲换源",
+                                 "\(song.name) 第\(sameSongSwitches)条 pos=\(Int(max(0, pos.isFinite ? pos : 0)))s")
+        beginResolveBackgroundTask()
+        Task { await loadCurrent() }
     }
 
     /// 这首放不出来时往哪走：普通模式按队列规则；心动模式换引擎里的下一首（或现场算）。
@@ -991,6 +1304,8 @@ final class PlayerEngine {
                 if seconds.isFinite {
                     self.currentTime = seconds
                     self.updateLyricIndex()
+                    // B1：剩余 20~30 秒时把下一首的源解析好（"播完不换歌"的正解）
+                    self.maybePrefetchNext()
                     // 播放中每 10 秒落一次断点（store 内部还会再夹一次间隔）
                     if self.isPlaying, Int(seconds) % 10 == 0 {
                         self.flushSnapshot()
@@ -1032,6 +1347,8 @@ final class PlayerEngine {
         guard isPlaying else { return }
         player.pause()
         isPlaying = false
+        // 被打断不是"卡住"：回前台自愈不能把来电/闹钟之后的暂停当成故障自动放起来
+        interrupted = true
         updateNowPlaying()
         // 拔耳机 / 断开蓝牙（含下车）：把断点落盘，下次连上从这儿接着放
         flushSnapshot(force: true)
@@ -1041,7 +1358,24 @@ final class PlayerEngine {
         guard player.currentItem != nil, !isPlaying else { return }
         player.play()
         isPlaying = true
+        interrupted = false
+        userPaused = false
         updateNowPlaying()
+    }
+
+    // MARK: 回前台自愈（B3）
+
+    /// 回到前台时调一次：**应该出声却没出声**就重新踢一次解析。
+    ///
+    /// 为什么需要：后台被挂起之后，取源那个 Task 有可能已经死掉（进程被系统清掉、
+    /// 或请求在挂起期间直接失败），只靠"任务自己恢复"不够——用户看到的就是
+    /// "回前台还是没声音，点一下才好"。这里排除三种情况：
+    /// 用户自己按的暂停、来电/闹钟打断、以及已经明确判定"没有可用源"（重试只会原地打转）。
+    func recoverIfStalled() {
+        guard currentSong != nil, !isPlaying, !isResolving, errorText == nil else { return }
+        guard !userPaused, !interrupted else { return }
+        PlaybackTrace.shared.log("回前台自愈", currentSong?.name ?? "—")
+        Task { await loadCurrent() }
     }
 
     // MARK: 歌词

@@ -152,6 +152,13 @@ enum PlaybackRules {
         hasLoadedItem
     }
 
+    /// 同一首歌内最多换几条源（A6）。
+    ///
+    /// 老板 2026-11-20：「起播失败时在同一首歌内换下一条候选（保持进度、seek 回原位置），
+    /// 全部失败才跳歌」。这里给一个上限，避免"这首的每一路都慢慢超时"把整个队列卡死在原地：
+    /// 换满 3 条还不成，就按老口径跳歌并给一句人话。
+    static let maxSameSongSwitches = 3
+
     /// 连续失败后的提示文案（口语、可执行，不甩代码）
     static func skipMessage(_ consecutiveSkips: Int) -> String {
         skipMessage(consecutiveSkips, limit: autoSkipLimit)
@@ -162,6 +169,72 @@ enum PlaybackRules {
             return "连着 \(consecutiveSkips) 首都没有可用的播放源，先停在这里。换个关键词，或稍后再试。"
         }
         return "这首暂时没有可用的播放源，已跳到下一首（第 \(consecutiveSkips) 首）"
+    }
+}
+
+// MARK: - 播放链条的档位口径（2026-11-20 老板定稿：在线播放 ≤320k，无损只用于下载）
+//
+// 口径来源：老板 2026-11-20 拍板「A. 在线播放降档 + 无损只用于下载」。
+//   · 播放链固定 ≤320k，**FLAC 不进播放链**（哪怕它更好听——无损只给下载）；
+//   · 播放链排名按**实测码率** 320 > 256 > 128；码率算不出的垫底（不知道就别拿它起播）；
+//   · 下载链不动，仍是 无损 > 320 > 256 > 128（见 `DownloadResolver` 的 Score）。
+//
+// 为什么抽成纯函数：改错了不会崩，只会"明明有 320 却在放 128"或者"无损又溜回播放链"，
+// 界面完全看不出来。CI 的断言（`ios/SelfTest/main.swift`）钉住这几个门槛。
+enum PlaybackQualityRules {
+
+    /// 播放链硬上限（kbps）。320k 的 mp3 实测常在 300~330 之间，所以门槛取"无损下界"而不是 320 整数。
+    static let maxKbps: Int64 = 320
+
+    /// 无损下界：**与 `QualityFacts` 共用同一个常量**——两边各写一个数，就会出现
+    /// "界面标 320k、其实拿到 FLAC"（r120 那类事故）。
+    static var losslessFloorKbps: Int64 { QualityFacts.losslessFloorKbps }
+
+    /// 这条源能不能进播放链
+    static func isPlayable(_ src: StreamSource) -> Bool {
+        let fmt = src.format.lowercased()
+        if fmt.contains("flac") || fmt.contains("wav") || fmt.contains("ape") { return false }
+        if src.quality == .lossless { return false }        // 标着无损（哪怕码率算不出）也不进播放链
+        if src.kbps >= losslessFloorKbps { return false }   // 容器认错但码率是无损量级
+        return true
+    }
+
+    /// 播放链择优：实测码率高的赢；同码率优先「按平台 ID 直连」的后端（身份更可靠）。
+    /// 无损源一律不算"更好"——它在播放链里根本不该被选中。
+    static func isBetter(_ a: StreamSource, than b: StreamSource?) -> Bool {
+        guard isPlayable(a) else { return false }
+        guard let b else { return true }
+        guard isPlayable(b) else { return true }
+        if a.kbps != b.kbps { return a.kbps > b.kbps }
+        return a.directId && !b.directId
+    }
+
+    /// 已经在 320 档（实测 ≥296kbps）：起播后不用再找"更好的一档"，省掉一轮 15s 的完整排名。
+    /// 320k 的 mp3 实测常在 300~330，门槛取 296 给编码误差留余量。
+    static func isTopTier(_ src: StreamSource) -> Bool { src.kbps >= 296 }
+
+    /// 播放页/设置页那句诚实标注（老板 2026-11-20 原话口径）
+    static let label = "高品 320k（无损仅下载）"
+}
+
+// MARK: - 预取窗口（B1）
+//
+// 老板 2026-11-20：「当前曲剩余 20–30 秒时后台解析下一首的源，播完直接 replaceCurrentItem + play()」。
+// 窗口/条件抽成纯函数，CI 钉住——窗口改坏了不会崩，只会表现为"预取早了浪费流量/晚了赶不上"。
+enum PrefetchRules {
+
+    /// 当前曲剩多少秒时开始预取
+    static let windowSec: ClosedRange<Double> = 20...30
+
+    static func shouldPrefetch(remainingSec: Double,
+                               hasItem: Bool,
+                               isResolving: Bool,
+                               mode: PlayMode) -> Bool {
+        // 只有"自然连播"的两种模式值得预取：单曲循环重播同一份音频，心动模式有自己的预取和本地缓存
+        guard mode == .listLoop || mode == .shuffle else { return false }
+        guard hasItem, !isResolving else { return false }
+        guard remainingSec.isFinite else { return false }
+        return windowSec.contains(remainingSec)
     }
 }
 

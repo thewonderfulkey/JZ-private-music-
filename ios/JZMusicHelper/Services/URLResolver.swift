@@ -549,6 +549,49 @@ enum DownloadResolver {
             .max { $0.score < $1.score }
     }
 
+    // MARK: 播放链：先到先用（2026-11-20 老板定稿：不要再等齐三个后端）
+
+    /// 播放入口：**哪个后端先回来、且过了「≤320k + 身份闸」，就立刻用它起播**。
+    ///
+    /// 旧 `quickPick` 是"等齐"——`collect` 里的 `for await` 要等每个 job 各自返回或各自超时
+    /// 才收工。实测（老板真实歌单取样）三个 primary 后端**从来没有一次**在 1.8s 内等齐：
+    /// gdstudio 0.4~0.9s、oiapi 1.4~2.1s、妖狐酷我 2.0~4.9s。于是每次切歌都吃满窗口，
+    /// 那一段"没声音"的空档正好把进程送到系统的挂起线以下（见 IOS-BACKGROUND-ADVANCE.md）。
+    ///
+    /// 现在第一个合格候选直接返回，其余候选不再等。后续"要不要更好的一档"由
+    /// `AudioPlayer.schedulePlaybackUpgrade` 在后台收尾（同样受 ≤320k 约束）。
+    static func firstPlayable(song: Song, want: QualityLevel,
+                              deadline: TimeInterval = 6) async -> Candidate? {
+        let jobs = primaryJobs(for: song)
+        guard !jobs.isEmpty else { return nil }
+        return await withTaskGroup(of: Candidate?.self) { group in
+            for job in jobs {
+                group.addTask {
+                    let t0 = Date()
+                    guard let src = await withTimeoutOrNil(deadline, {
+                        try await job.adapter.resolve(song: job.song, quality: want)
+                    }) else { return nil }
+                    // 身份闸：primary 后端拿的就是这首歌自己；跨源条目才需要再验一次
+                    if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
+                        return nil
+                    }
+                    // A 口径：播放链只收 ≤320k（FLAC/WAV 回来也不收）
+                    guard PlaybackQualityRules.isPlayable(src) else { return nil }
+                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                    return Candidate(song: job.song, source: src, elapsedMs: ms,
+                                     score: score(of: src, song: job.song, ref: song, ms: ms))
+                }
+            }
+            for await c in group {
+                if let c {
+                    group.cancelAll()
+                    return c
+                }
+            }
+            return nil
+        }
+    }
+
     /// 后台换源判据：新源档位更高（或同档但码率明显更高）才换，避免来回横跳。
     static func isBetter(_ a: StreamSource, than b: StreamSource?) -> Bool {
         guard let b else { return true }

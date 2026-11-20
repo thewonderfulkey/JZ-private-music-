@@ -75,7 +75,9 @@ enum KuwoPlaylist {
     }
 
     /// 歌单详情：歌单元信息 + 按歌单原顺序的歌
-    struct Detail {
+    ///
+    /// `Codable` 是为了第二批的详情缓存（`Caches/playlist-details/<pid>.json`，2026-11-20 老板定稿）。
+    struct Detail: Codable {
         let summary: Summary
         let releases: [Release]
     }
@@ -162,9 +164,11 @@ enum KuwoPlaylist {
     }
 
     /// 拉歌单详情（元信息 + 第一页歌）。歌单自己的顺序不做二次排序。
+    /// 这里只管拿；落盘/命中判定在 `cachedDetail` / `saveDetail`（`PlaylistDetailView` 调用）。
     static func fetchDetail(pid: String,
                             page: Int = 0,
                             rn: Int = pageSize) async throws -> Detail {
+        detailNetworkCalls += 1
         let json = try await APIClient.shared.getJSON(
             url(pid: pid, page: page, rn: rn),
             headers: headers,
@@ -382,6 +386,108 @@ enum KuwoPlaylist {
 
     static func storeNewestID(_ id: String) {
         UserDefaults.standard.set(id, forKey: newestIDKey)
+    }
+
+    // MARK: 广场歌单详情缓存（Caches/playlist-details/<pid>.json，TTL 24h）
+    //
+    // 老板 2026-11-20 定稿（第二批）：广场歌单详情**加载一次就不再加载**——
+    //   读取顺序 内存 → 磁盘 → 网络；TTL 24h；**回前台不自动刷新**；只有下拉刷新才手动更新。
+    //
+    // 为什么不用 UserDefaults（广场列表用的是它）：详情是一页 100 首 ≈ 20~40KB，
+    // 几十个歌单就是 MB 级，塞 UserDefaults 会拖慢启动；`Caches` 目录系统空间紧张时还能自己清。
+    // 内存层是**进程级**的：底部 Tab 保活，同一个歌单反复进出不该再解码一次 JSON。
+
+    /// 详情缓存有效期：24 小时（老板口径）
+    static let detailTTL: TimeInterval = 24 * 3600
+
+    /// 详情接口**真正发出去**的请求数（诊断用）。
+    /// 验收口径就靠它：缓存命中时这个数不涨 → "退出后台再进来 0 请求"是可直接看到的证据。
+    static private(set) var detailNetworkCalls = 0
+
+    /// 进程内缓存（跨页面实例保留；App 被杀就没了，那时正好读磁盘）
+    private final class DetailMemo: @unchecked Sendable {
+        private let lock = NSLock()
+        private var map: [String: (detail: Detail, savedAt: Date)] = [:]
+
+        func get(_ pid: String) -> (Detail, Date)? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let hit = map[pid] else { return nil }
+            return (hit.detail, hit.savedAt)
+        }
+
+        func set(_ pid: String, _ detail: Detail, _ savedAt: Date) {
+            lock.lock()
+            defer { lock.unlock() }
+            map[pid] = (detail, savedAt)
+        }
+
+        func removeAll() {
+            lock.lock()
+            defer { lock.unlock() }
+            map.removeAll()
+        }
+    }
+
+    private static let detailMemo = DetailMemo()
+
+    private struct CachedDetailFile: Codable {
+        let savedAt: Date
+        let detail: Detail
+    }
+
+    private static var detailDirectory: URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let dir = caches.appendingPathComponent("playlist-details", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// 文件名用 pid 的十六进制：歌单号里有 gcid_xxx 这种形态，别让路径分隔符之类的东西进来
+    private static func detailFileURL(_ pid: String) -> URL? {
+        let safe = pid.unicodeScalars.map { String(format: "%02x", $0.value) }.joined()
+        return detailDirectory?.appendingPathComponent("\(safe).json")
+    }
+
+    /// 详情：内存 → 磁盘 → nil（TTL 内才算命中；过期返回 nil 让上层去联网）
+    static func cachedDetail(pid: String, maxAge: TimeInterval = detailTTL) -> Detail? {
+        if let hit = detailMemo.get(pid), Date().timeIntervalSince(hit.1) <= maxAge {
+            return hit.0
+        }
+        guard let file = detailFileURL(pid),
+              let data = try? Data(contentsOf: file),
+              let cached = try? JSONDecoder().decode(CachedDetailFile.self, from: data),
+              Date().timeIntervalSince(cached.savedAt) <= maxAge,
+              !cached.detail.releases.isEmpty else { return nil }
+        detailMemo.set(pid, cached.detail, cached.savedAt)
+        return cached.detail
+    }
+
+    /// 缓存里的保存时间（界面上写「x 分钟前更新」）
+    static func detailSavedAt(pid: String) -> Date? {
+        if let hit = detailMemo.get(pid) { return hit.1 }
+        guard let file = detailFileURL(pid),
+              let data = try? Data(contentsOf: file),
+              let cached = try? JSONDecoder().decode(CachedDetailFile.self, from: data) else { return nil }
+        return cached.savedAt
+    }
+
+    /// 写缓存（内存 + 磁盘）
+    static func saveDetail(_ detail: Detail, pid: String, at date: Date = Date()) {
+        detailMemo.set(pid, detail, date)
+        guard let file = detailFileURL(pid),
+              let data = try? JSONEncoder().encode(CachedDetailFile(savedAt: date, detail: detail)) else { return }
+        try? data.write(to: file, options: .atomic)
+    }
+
+    /// 清空详情缓存（设置页「清空数据」/ 诊断用）
+    static func clearDetailCache() {
+        detailMemo.removeAll()
+        guard let dir = detailDirectory else { return }
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
     // MARK: 字段取值（接口里同一字段常常有时是字符串有时是数字）

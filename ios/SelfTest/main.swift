@@ -3581,6 +3581,106 @@ do {
           PlaylistImport.replacing([old], with: fromQQ).count == 2)
 }
 
+// MARK: - 第四十三轮（2026-11-20）：在线播放 ≤320k / 同曲换源 / 预取窗口
+
+section("播放降档：在线 ≤320k、无损只用于下载（A）")
+
+do {
+    func src(_ fmt: String, _ kbps: Int64, _ q: QualityLevel,
+             direct: Bool = true, backend: String = "t") -> StreamSource {
+        StreamSource(url: "https://example.com/\(fmt)-\(kbps)", backendName: backend,
+                     platform: .netease, quality: q, format: fmt, note: "",
+                     directId: direct, kbps: kbps, totalBytes: 0, rangeOK: true)
+    }
+
+    // FLAC/WAV 不进播放链——这是本次最硬的一条口径
+    check("FLAC 不进播放链", !PlaybackQualityRules.isPlayable(src("flac", 1087, .lossless)))
+    check("WAV 不进播放链", !PlaybackQualityRules.isPlayable(src("wav", 1411, .lossless)))
+    check("标着无损但容器认不出，也不进播放链",
+          !PlaybackQualityRules.isPlayable(src("mp3", 0, .lossless)))
+    check("无损量级码率（601k）同样不进播放链",
+          !PlaybackQualityRules.isPlayable(src("mp3", 601, .lossless)))
+    check("320k mp3 可播", PlaybackQualityRules.isPlayable(src("mp3", 320, .high)))
+    check("256k 可播", PlaybackQualityRules.isPlayable(src("mp3", 256, .high)))
+    check("128k 可播（降级兜底）", PlaybackQualityRules.isPlayable(src("mp3", 128, .standard)))
+
+    // 排名：实测码率 320 > 256 > 128
+    check("320 胜过 256",
+          PlaybackQualityRules.isBetter(src("mp3", 320, .high), than: src("mp3", 256, .high)))
+    check("256 胜过 128",
+          PlaybackQualityRules.isBetter(src("mp3", 256, .high), than: src("mp3", 128, .standard)))
+    check("128 不胜过 320",
+          !PlaybackQualityRules.isBetter(src("mp3", 128, .standard), than: src("mp3", 320, .high)))
+    check("无损永远不比 320 更好（播放链口径）",
+          !PlaybackQualityRules.isBetter(src("flac", 1087, .lossless), than: src("mp3", 320, .high)))
+    check("同码率优先直连后端",
+          PlaybackQualityRules.isBetter(src("mp3", 320, .high, direct: true),
+                                        than: src("mp3", 320, .high, direct: false)))
+    check("已经是 320 档不再触发后台升档（≥296 算到顶）",
+          PlaybackQualityRules.isTopTier(src("mp3", 318, .high))
+            && !PlaybackQualityRules.isTopTier(src("mp3", 256, .high)))
+    check("UI 标注写的是 320k 且说明无损只用于下载",
+          PlaybackQualityRules.label.contains("320") && PlaybackQualityRules.label.contains("无损"),
+          PlaybackQualityRules.label)
+}
+
+section("同曲换源上限（A6）")
+
+do {
+    check("同一首歌最多换 3 条源，之后才跳歌",
+          PlaybackRules.maxSameSongSwitches == 3, "\(PlaybackRules.maxSameSongSwitches)")
+}
+
+section("身份闸：副标题/译名放行，版本类拦截（A7 不变）")
+
+do {
+    let baseline = song(.netease, "恋爱的条件", "BESTie", dur: 200, id: "n1")
+    let translated = song(.qq, "연애의 조건 (LOVE OPTIONS)", "BESTie", dur: 201, id: "q1")
+    let live = song(.qq, "恋爱的条件 (Live)", "BESTie", dur: 210, id: "q2")
+    let inst = song(.qq, "恋爱的条件 (Inst.)", "BESTie", dur: 200, id: "q3")
+    let cover = song(.qq, "恋爱的条件 (翻唱)", "别人", dur: 200, id: "q4")
+    check("带官方英文副标题的同曲要放行（译名不是版本）",
+          NameMatch.sameRecording(src: baseline, cand: translated))
+    check("Live 版要拦（版本类）", !NameMatch.sameRecording(src: baseline, cand: live))
+    check("伴奏/Inst 要拦", !NameMatch.sameRecording(src: baseline, cand: inst))
+    check("翻唱要拦", !NameMatch.sameRecording(src: baseline, cand: cover))
+    check("时长差 4s 是硬闸门（差 5s 直接拒）",
+          !NameMatch.sameRecording(src: baseline,
+                                   cand: song(.qq, "恋爱的条件", "BESTie", dur: 206, id: "q5")))
+}
+
+section("下一首预取窗口（B1：剩余 20~30 秒）")
+
+do {
+    check("剩 25 秒要预取",
+          PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: true,
+                                       isResolving: false, mode: .listLoop))
+    check("剩 5 秒太晚（来不及）",
+          !PrefetchRules.shouldPrefetch(remainingSec: 5, hasItem: true,
+                                        isResolving: false, mode: .listLoop))
+    check("剩 60 秒太早（浪费一次解析）",
+          !PrefetchRules.shouldPrefetch(remainingSec: 60, hasItem: true,
+                                        isResolving: false, mode: .listLoop))
+    check("随机播放也要预取（下标会被钉住，不会白跑）",
+          PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: true,
+                                       isResolving: false, mode: .shuffle))
+    check("单曲循环不预取（重播同一份音频）",
+          !PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: true,
+                                        isResolving: false, mode: .singleLoop))
+    check("心动模式不预取（它有自己的预取链）",
+          !PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: true,
+                                        isResolving: false, mode: .heartbeat))
+    check("正在解析时不要再起一个预取",
+          !PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: true,
+                                        isResolving: true, mode: .listLoop))
+    check("没有播放项时不预取",
+          !PrefetchRules.shouldPrefetch(remainingSec: 25, hasItem: false,
+                                        isResolving: false, mode: .listLoop))
+    check("时长未知（NaN）时不预取",
+          !PrefetchRules.shouldPrefetch(remainingSec: Double.nan, hasItem: true,
+                                        isResolving: false, mode: .listLoop))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
