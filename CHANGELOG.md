@@ -33,6 +33,11 @@
 - 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会撞）。
 - 新增 `Services/ListLocate.swift`、`Views/NowPlayingLocate.swift`，并登记进手写 pbxproj 与 CI 的 selftest 编译清单。
 
+**出包**：CI #140（`df24c0c`）· `JZ-Music-v2.4.34-df24c0c-r140-ios-unsigned.ipa` · 2,727,238 B ·
+sha256 `33a14bc273e85fc4229d6c7d28f7cc8ca174fbc46525623093e60cb451c1f350` · 包内 `2.4.34 (212)` / minOS 17.0 / 1 个 appex。
+（逻辑自测 13 条新断言 + 未签名 IPA 两段全绿；飞书群已收到包。本轮没发 GitHub Release，
+包只在飞书群与本地 `releases/` 归档；README 里的下载表仍指向 v2.4.33。）
+
 ## iOS v2.4.33（211） · 2026-11-20（在线播放降到 320k、无损只给下载；后台播完不换歌修掉；广场歌单详情加缓存）
 
 老板 2026-11-20 拍板的两批改动，一次提交、一次出包。诊断过程与证据见 `docs/ios/IOS-BACKGROUND-ADVANCE.md`。

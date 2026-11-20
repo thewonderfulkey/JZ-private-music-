@@ -127,8 +127,9 @@
 
 ## 7 验证与遗留
 
-- 本机是 Windows，没有 Swift 工具链：**编译与断言由 CI 跑**（`logic-tests` job 的 `swiftc` + 全部断言），
-  IPA 由 `build-ipa` job 出包。
+- 本机是 Windows，没有 Swift 工具链：**编译与断言由 CI 跑**。本轮 CI #140（`df24c0c`）已全绿——
+  `logic-tests`（swiftc 编译 + 含本轮 13 条新断言的全部断言）与 `build-ipa`（xcodebuild + 未签名 IPA）
+  都通过，包内 `2.4.34 (212)` / minOS 17.0 / 1 个 appex。
 - 离线能判的先判掉了：`tools/ios/check_pbxproj.py`（对象引用/漏挂）与 `tools/ios/check_ui_hygiene.py`
   （硬编码字号 / 固定行高）在本机已通过。
 - 真机观感（滚动落点、高亮时长、导航栏按钮与各页标题的挤压）需要装机确认——尤其
