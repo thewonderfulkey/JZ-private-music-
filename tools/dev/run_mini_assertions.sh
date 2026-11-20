@@ -9,14 +9,15 @@ if [ ! -d "$OUT" ]; then
     echo "先跑一次 .build/swiftcheck/run-selftest.sh 生成 $OUT"
     exit 2
 fi
-STAGE=.build/swiftcheck/r146mini
+STAGE=.build/swiftcheck/mini-current
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 for f in "$OUT"/*.swift; do
     b=$(basename "$f")
     [ "$b" = "main.swift" ] && continue
     cp "$f" "$STAGE/$b"
 done
-cp tools/dev/r146_mini_assertions.swift "$STAGE/main.swift"
+MINI="${1:-tools/dev/r146_mini_assertions.swift}"
+cp "$MINI" "$STAGE/main.swift"
 swiftc -Onone -swift-version 5 -I .build/swiftcheck/mod -L .build/swiftcheck/mod \
     -lCompression -lCryptoKit -o "$STAGE/run" "$STAGE"/*.swift 2>&1 | tail -15
 echo "BUILD_EXIT=${PIPESTATUS[0]}"

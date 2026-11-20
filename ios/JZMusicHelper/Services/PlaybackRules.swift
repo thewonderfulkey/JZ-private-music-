@@ -208,6 +208,55 @@ enum PlaybackQualityRules {
         return true
     }
 
+    // MARK: 内容闸门（2026-11-21 老板报障的直接产物）
+
+    /// 低于这个码率不可能是歌：酷我对受限歌统一回的那段 11.3s 提示音，算出来只有 4 kbps。
+    /// 以前这条"能播"——`isPlayable` 只看「非无损 + 码率 < 601」，于是它被当成了有效源，
+    /// 用户听到的是「当前音乐只在酷我最新手机端才能播放」。（181,521 B / 344s = 4 kbps）
+    static let minPlausibleKbps: Int64 = 32
+
+    /// 不是歌的东西：体积算不出码率、或码率量级明显不对、或命中已知占位文件的体积窗口
+    static func isPlaceholder(_ src: StreamSource, songDurationSec: Int) -> Bool {
+        guard src.totalBytes > 0 else { return false }   // 体积未知不在这里判（交给时长闸门）
+        let kb = QualityFacts.kbps(src.totalBytes, songDurationSec)
+        if kb > 0, kb < minPlausibleKbps { return true }
+        // 已知占位文件的字节数是 181,521（酷我受限歌统一那段提示音，实测 md5 43fe5f64…）。
+        // 给一个窗口是为了容 CDN 加头；同时要求"按这首歌算出来码率很低"，避免误伤短歌。
+        let sizeWindow = (150_000...210_000).contains(src.totalBytes)
+        return sizeWindow && (kb == 0 || kb < 96)
+    }
+
+    /// 一条源的「内容指纹」：体积 + 曲目时长。
+    ///
+    /// 2026-11-20 的事故：酷我对周杰伦回的那段 11.3s 提示音，每次调用都给一个**新的带 token 的 URL**，
+    /// 所以只按 URL 去重的 `rejectedSourceURLs` 永远认不出"还是那段东西"。体积+时长能认出来。
+    static func fingerprint(totalBytes: Int64, durationSec: Int) -> String {
+        "\(totalBytes)-\(durationSec)"
+    }
+
+    /// 例外开关：允许无损进播放链。
+    ///
+    /// 老板 2026-11-21 定：周杰伦这类"酷我只有 FLAC"的歌必须能出声。
+    /// 但它**只当最后一条可用源**用（`firstPlayable(allowLossless:)`），不参与常规排名、
+    /// 也不在"自然播完"的关键路径上现拉——否则又会回到"播完卡住"（见下）。
+    static let allowsLosslessPlayback = true
+
+    /// 能不能真正拿来出声（任意档位）——播放链的最后一道可用性判定
+    ///
+    /// 顺序要紧：先过「加密包 / 占位音频」，再谈档位。反过来就会出现
+    /// "占位音频满足 ≤320k → 被选中 → 播出一句人话"。
+    static func isUsable(_ src: StreamSource, songDurationSec: Int,
+                         allowLossless: Bool = false) -> Bool {
+        guard !src.url.isEmpty else { return false }
+        if StreamEncryptionRules.isEncrypted(src.url) { return false }
+        if isPlaceholder(src, songDurationSec: songDurationSec) { return false }
+        if isPlayable(src) { return true }
+        guard allowLossless, allowsLosslessPlayback else { return false }
+        let fmt = src.format.lowercased()
+        if fmt.contains("flac") || fmt.contains("wav") { return true }
+        return src.quality == .lossless || src.kbps >= losslessFloorKbps
+    }
+
     /// 播放链择优：实测码率高的赢；同码率优先「按平台 ID 直连」的后端（身份更可靠）。
     /// 无损源一律不算"更好"——它在播放链里根本不该被选中。
     static func isBetter(_ a: StreamSource, than b: StreamSource?) -> Bool {
@@ -226,7 +275,116 @@ enum PlaybackQualityRules {
     static let label = "高品 320k（无损仅下载）"
 }
 
-// MARK: - 预取窗口（B1）
+// MARK: - 加密容器（QQ 的 .mgg / O4M-O8M）
+//
+// 实测（2026-11-20，星澜脚本的 QQ 后端）：320k 有概率回 `.mgg` —— HTTP 200、
+// 11,698,595 B、Content-Range 也正常，但首字节是随机字节，任何第三方播放器都解不开。
+// 以前这条判断只写在落月适配器里，cyapi 漏了；现在所有后端共用一个入口。
+enum StreamEncryptionRules {
+    static func isEncrypted(_ url: String) -> Bool {
+        let lower = url.lowercased()
+        if lower.contains(".mgg") { return true }
+        return ["/o4m", "/o6m", "/o8m"].contains { lower.contains($0) }
+    }
+}
+
+// MARK: - 后端熔断：403 限流 / 风控不再每次播放都去撞
+//
+// 2026-11-20 实测：妖狐酷我连续请求几十次后回 `code=403 由于你多次频繁请求…`，
+// 冷却 25 分钟仍未解封；而 App 每播一首会打它 2~4 次（firstPlayable + plan + 跨源），
+// 越打越久解不了封。规则抽成纯函数，冷却时长进 SelfTest 断言。
+enum BackendHealthRules {
+
+    /// 从一次失败里算出要冷却多久（nil = 不用冷却，正常失败而已）
+    static func cooldownSeconds(apiCode: Int?, message: String, httpStatus: Int?) -> TimeInterval? {
+        if let code = apiCode {
+            switch code {
+            case 403: return 900          // 妖狐 / ikun：频繁请求被屏蔽
+            case 110001: return 300       // 落月：共享账号被风控
+            case 429: return 300
+            case 503: return 120          // 上游系统错误（落月 v2 恒回这个）
+            default: break
+            }
+        }
+        if let status = httpStatus, status == 403 || status == 429 { return 300 }
+        let m = message.lowercased()
+        if m.contains("频繁") || m.contains("风控") || m.contains("屏蔽") || m.contains("too many") {
+            return 900
+        }
+        return nil
+    }
+
+    /// 冷却是不是还没过（纯函数，便于断言）
+    static func isCoolingDown(blockedUntil: TimeInterval?, now: TimeInterval) -> Bool {
+        guard let until = blockedUntil else { return false }
+        return until > now
+    }
+}
+
+/// 进程内 + 磁盘（UserDefaults）的后端冷却表
+final class BackendHealth: @unchecked Sendable {
+
+    static let shared = BackendHealth()
+
+    private let lock = NSLock()
+    private var blockedUntil: [String: TimeInterval] = [:]
+    private let defaultsKey = "jz_backend_cooldown_v1"
+
+    private init() {
+        if let saved = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: Double] {
+            blockedUntil = saved
+        }
+    }
+
+    func isCoolingDown(_ name: String, now: TimeInterval = Date().timeIntervalSince1970) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let until = blockedUntil[name] else { return false }
+        if until <= now {
+            blockedUntil[name] = nil     // 到期顺手清掉，不留脏数据
+            return false
+        }
+        return true
+    }
+
+    func remaining(_ name: String, now: TimeInterval = Date().timeIntervalSince1970) -> TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let until = blockedUntil[name], until > now else { return 0 }
+        return until - now
+    }
+
+    func block(_ name: String, seconds: TimeInterval,
+               now: TimeInterval = Date().timeIntervalSince1970) {
+        guard seconds > 0 else { return }
+        lock.lock()
+        blockedUntil[name] = now + seconds
+        let snapshot = blockedUntil
+        lock.unlock()
+        UserDefaults.standard.set(snapshot, forKey: defaultsKey)
+    }
+
+    /// 成功一次就把冷却清掉（恢复得比预期快时不至于一直在黑名单里）
+    func clear(_ name: String) {
+        lock.lock()
+        guard blockedUntil.removeValue(forKey: name) != nil else {
+            lock.unlock()
+            return
+        }
+        let snapshot = blockedUntil
+        lock.unlock()
+        UserDefaults.standard.set(snapshot, forKey: defaultsKey)
+    }
+
+    /// 诊断/测试用
+    func snapshot() -> [String: TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return blockedUntil
+    }
+}
+
+
 //
 // 老板 2026-11-20：「当前曲剩余 20–30 秒时后台解析下一首的源，播完直接 replaceCurrentItem + play()」。
 // 窗口/条件抽成纯函数，CI 钉住——窗口改坏了不会崩，只会表现为"预取早了浪费流量/晚了赶不上"。

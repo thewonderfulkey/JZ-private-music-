@@ -347,6 +347,10 @@ struct CyapiQQAdapter: StreamSourceAdapter {
         guard let raw = json["url"] as? String, !raw.isEmpty else {
             throw APIError.parse("cyapi 未返回 URL")
         }
+        // 加密包闸门：QQ 有概率回 .mgg（O4M/O6M/O8M），HTTP 200 且体积正常但放不出声
+        guard !StreamEncryptionRules.isEncrypted(raw) else {
+            throw APIError.parse("cyapi 回的是 QQ 加密包（.mgg）")
+        }
         let stream = UrlNormalizer.upgraded(raw)
         guard let facts = await StreamVerifier.inspect(stream) else {
             throw APIError.httpStatus(0)
@@ -359,20 +363,22 @@ struct CyapiQQAdapter: StreamSourceAdapter {
     }
 }
 
-// MARK: - QQ 系：落月 vkeys（**已下线**，2026-11-20 晚）
+// MARK: - QQ 系：落月 vkeys（v3 已恢复注册，2026-11-21）
 //
-// 现状：**不注册**（`SourceRegistry.all` 里没有它），QQ 只有 cyapi 一条后端。
-// 下线原因：上线当天（v2.4.36）真机反馈「QQ 源直接听不了、被风控」。
-// 它的上游是公共共享账号，本身就在被风控：同一端点会回 HTTP 200 + `{"code":503}`，
-// 或者 `{"code":110001,"message":"cookie异常：账号被风控无法获取"}`；
-// 更麻烦的是它偶尔仍回 200 + 一个 URL（比 cyapi 快得多，会赢下 `firstPlayable`），
-// 但那条 URL 到播放时已经不可用——于是「后端看起来成功、实际听着没声」。
+// 时间线（别把这条再搞丢，踩过两次）：
+//   · v2.4.36 上线，接的是 **v2** `/v2/music/tencent/geturl`；
+//   · 当天真机"QQ 听不了"，v2.4.38 按老板要求下线——**但那次的真因是端点选错了**：
+//     v2 现在恒回 `{"code":503,"message":"系统运行错误！"}`；
+//   · 2026-11-21 逐端点复测：**v3** `/music/tencent/song/link` 正常，晴天 q=8 →
+//     10,792,943 B（真 320k）、q=10 → 55,397,039 B（flac），`data.url` 就是 CDN 直链；
+//     同一首 2 轮各 2/2 命中；大鱼 flac 也通。
 //
-// 保留这份实现与它的断言（纯逻辑：档位映射 / 加密包闸门 / 信封解析），
-// 因为落月一旦恢复，在 `SourceRegistry.all` 加回一行就能用。
-// 真要重启前必须先解决"回 200 但链接已死"这件事（例如只用于下载、不用于播放）。
+// 仍然只当**机会性加分源**：上游是公共共享账号，会回 `code=110001 cookie异常：账号被风控`；
+// 七里香、大鱼 320k 在 2026-11-21 的抽样里 0/2。所以它：
+//   · 不挡路（失败很快，冷却 5 分钟，`BackendHealth` 记着）；
+//   · 不许"回 200 但链接已死"的 URL 赢下 firstPlayable —— 靠 `StreamVerifier` 实测体积/容器兜住。
 //
-// 以下是当初上线时的实测依据（2026-11-20 白天，脚本仿真器实测）：
+// 以下是上线时的实测依据（2026-11-20 白天，脚本仿真器实测）：
 //   · quality=8  → mp3 10,792,943 B = 真 320 kbps（Range 206、容器可认）
 //   · quality=10 → flac 55,397,039 B
 //   · 同一个 mid 下 cyapi 只有 3,283,546 B / ~97 kbps
@@ -391,20 +397,87 @@ struct LuoyueQQAdapter: StreamSourceAdapter {
         }
     }
 
-    /// `.mgg` 是 QQ 音乐的加密 OGG（O4M / O6M / O8M 前缀），第三方播放器解不开。
-    /// 实测《大鱼》320k 就是这种：HTTP 200、11,698,595 B、Content-Range 正常，
-    /// 但首字节和偏移 100000 处都是随机字节、任何容器魔数都不匹配——播放器拿到手才炸。
-    /// 必须在取流侧就拒掉，别指望 StreamVerifier 的"认不出容器"顺带挡住。
-    static func isEncryptedQQ(_ url: String) -> Bool {
-        let lower = url.lowercased()
-        if lower.contains(".mgg") { return true }
-        return ["/o4m", "/o6m", "/o8m"].contains { lower.contains($0) }
+    /// 加密容器判定交给统一入口（`StreamEncryptionRules`），保留这个别名是因为
+    /// SelfTest 里已有针对它的断言。
+    static func isEncryptedQQ(_ url: String) -> Bool { StreamEncryptionRules.isEncrypted(url) }
+
+    /// 解析**落月 v3**（`/music/tencent/song/link`）的信封。
+    ///
+    /// 2026-11-21 实测（这是 v2.4.38 撤掉落月之后的纠正）：
+    ///   · v2 `/v2/music/tencent/geturl` → 恒回 `{"code":503,"message":"系统运行错误！"}`
+    ///     ——v2.4.36 接的就是这条，所以"落月挂了"其实是**接错端点**；
+    ///   · v3 `/music/tencent/song/link` → `{"code":0,"data":{"url":"…M800….mp3"}}`，
+    ///     晴天 q=8 给 10,792,943 B（真 320k）、q=10 给 55,397,039 B（flac）。
+    /// 注意 `data.link` 只是 i.y.qq.com 的播放页，**不能用**；必须取 `data.url`。
+    static func parseV3(_ json: [String: Any]) throws -> String {
+        let code = (json["code"] as? Int) ?? Int((json["code"] as? String) ?? "") ?? -1
+        guard code == 0 else {
+            let msg = (json["message"] as? String) ?? ""
+            throw APIError.parse("落月 v3 code=\(code) \(msg)")
+        }
+        let data = json["data"] as? [String: Any] ?? [:]
+        guard let raw = data["url"] as? String, !raw.isEmpty else {
+            let msg = (data["message"] as? String) ?? "空"
+            throw APIError.parse("落月 v3 无 url（\(msg)）")
+        }
+        return raw
     }
 
-    /// 解析落月的响应信封。**它的失败也是 HTTP 200**（`APIClient` 只看状态码会当成成功），
-    /// 所以这里必须自己判 `code`：
+    /// 取一次 `/music/tencent/song/link`（重试逻辑复用它，别把 URL 抄两遍）
+    static func fetchLink(song: Song, quality: QualityLevel) async throws -> [String: Any] {
+        let url = "https://api.vkeys.cn/music/tencent/song/link"
+            + "?mid=\(song.platformID)&quality=\(Self.vkeysQuality(quality))"
+        return try await APIClient.shared.getJSON(
+            url, headers: ["Accept": "application/json"], timeout: 10)
+    }
+
+    /// 哪些错误码值得**立刻重试一次**（纯函数，CI 可断言）
+    ///
+    /// 2026-11-21 实测：`110001 账号被风控` 是**逐次**的——同一首隔 400ms 重试通常就过
+    /// （夜曲第 1 次 110001 → 重试 320k 成功；晴天/稻香一次就过）。
+    /// 所以它不该在第一次失败后立刻冷却 5 分钟：那等于把周杰伦这条路自己堵死。
+    static func shouldRetryOnce(code: Int) -> Bool { code == 110001 }
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        var json = try await Self.fetchLink(song: song, quality: quality)
+        var code = (json["code"] as? Int) ?? -1
+
+        if Self.shouldRetryOnce(code: code) {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if let again = try? await Self.fetchLink(song: song, quality: quality) {
+                let c2 = (again["code"] as? Int) ?? -1
+                if c2 == 0 { json = again; code = 0 }
+            }
+        }
+        if code != 0 {
+            // 110001 = 共享账号被风控；冷却 5 分钟，别每首播放都去撞
+            let msg = (json["message"] as? String) ?? ""
+            if let cool = BackendHealthRules.cooldownSeconds(apiCode: code, message: msg,
+                                                              httpStatus: nil) {
+                BackendHealth.shared.block(name, seconds: cool)
+            }
+            throw APIError.parse("落月 v3 code=\(code) \(msg)")
+        }
+        let raw = try Self.parseV3(json)
+        BackendHealth.shared.clear(name)
+        guard !Self.isEncryptedQQ(raw) else {
+            throw APIError.parse("落月 回的是 QQ 加密包（.mgg）")
+        }
+        let stream = UrlNormalizer.upgraded(raw)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        // 档位按**实测**报，不按请求报：实测出现过"要 flac 回 320k mp3"（报告 §4.1）
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "聚合直链（实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+
+    /// 解析落月 **v2** 的响应信封（历史实现，留作断言基线；线上走 v3）。
     ///   `{"code":200,"data":{"url":"…"}}`            ← 成功
-    ///   `{"code":503,"message":"系统运行错误！"}`      ← 上游挂了
+    ///   `{"code":503,"message":"系统运行错误！"}`      ← 上游挂了（v2 现在恒回这个）
     ///   `{"code":110001,"message":"cookie异常…"}`     ← 账号被风控
     static func parse(_ json: [String: Any]) throws -> String {
         let code = (json["code"] as? Int) ?? Int((json["code"] as? String) ?? "") ?? -1
@@ -426,27 +499,6 @@ struct LuoyueQQAdapter: StreamSourceAdapter {
             throw APIError.parse("落月 未返回 URL")
         }
         return url
-    }
-
-    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
-        let url = "https://api.vkeys.cn/v2/music/tencent/geturl"
-            + "?mid=\(song.platformID)&quality=\(Self.vkeysQuality(quality))"
-        let json = try await APIClient.shared.getJSON(
-            url, headers: ["Accept": "application/json"], timeout: 10)
-        let raw = try Self.parse(json)
-        guard !Self.isEncryptedQQ(raw) else {
-            throw APIError.parse("落月 回的是 QQ 加密包（.mgg）")
-        }
-        let stream = UrlNormalizer.upgraded(raw)
-        guard let facts = await StreamVerifier.inspect(stream) else {
-            throw APIError.httpStatus(0)
-        }
-        // 档位按**实测**报，不按请求报：实测出现过"要 flac 回 320k mp3"（报告 §4.1）
-        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
-        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
-                            format: fmt, note: "聚合直链（实测标注）", directId: true,
-                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
-                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
     }
 }
 
@@ -542,7 +594,18 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
             + "?key=nvgKtvzw7CFSNFrDhA6&action=search&msg=\(APIClient.encode(searchKey))&n=1"
         let json = try await APIClient.shared.getJSON(
             url, headers: ["X-Client-Software": "lx"], timeout: 12)
-        if (json["code"] as? Int) != 200 { throw APIError.parse("妖狐酷我 code != 200") }
+        let apiCode = (json["code"] as? Int) ?? -1
+        let apiMsg = (json["msg"] as? String) ?? (json["message"] as? String) ?? ""
+        if apiCode != 200 {
+            // 2026-11-20 实测：连续请求几十次后回 403「由于你多次频繁请求，系统已暂时屏蔽」，
+            // 冷却 25 分钟仍未解封。冷却期内别再叫它（否则每播一首都在续封）。
+            if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
+                                                              httpStatus: nil) {
+                BackendHealth.shared.block(name, seconds: cool)
+            }
+            throw APIError.parse("妖狐酷我 code=\(apiCode) \(apiMsg)")
+        }
+        BackendHealth.shared.clear(name)
         guard let data = json["data"] as? [String: Any] else {
             throw APIError.parse("妖狐酷我无 data")
         }
@@ -651,18 +714,243 @@ struct KuwoOfficialAdapter: StreamSourceAdapter {
     }
 }
 
+// MARK: - 酷我系：ikun 聚合（按 rid 直取，320k / flac）
+//
+// 2026-11-20 23:2x 实测（老板要求"多接几个源"之后从星澜脚本里挑出来的）：
+//   `POST https://c.wwwweb.top/music/url  {"source":"kw","musicId":"<rid>","quality":"320k"}`
+//   · 晴天 rid=228908 → mp3 10,792,943 B（真 320k），flac → 55,397,039 B
+//   · 七里香 rid=94237 → 11,970,297 B（320kbps）、大鱼 rid=7095195 → 12,551,167 B
+//   · 3 首 × 2 档 × 2 轮 = **6/6 命中**，接口 0.8–2.1s，音频首字节 80–400ms
+// 为什么它重要：酷我官方 anti.s 对周杰伦（杰威尔）只回 181,521 B 的提示音，
+// 这条是**唯一能把周杰伦给成整首 320k** 的通道。
+struct IkunKuwoAdapter: StreamSourceAdapter {
+    let name = "ikun 酷我"
+    let platform: MusicPlatform = .kuwo
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let rawID = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rid = rawID.hasPrefix("MUSIC_") ? String(rawID.dropFirst("MUSIC_".count)) : rawID
+        guard !rid.isEmpty, rid.allSatisfy({ $0.isNumber }) else {
+            throw APIError.parse("ikun 酷我：rid 非法")
+        }
+        let q = quality == .lossless ? "flac" : "320k"
+        let body = "{\"source\":\"kw\",\"musicId\":\"\(rid)\",\"quality\":\"\(q)\"}"
+        let json = try await APIClient.shared.postJSON(
+            "https://c.wwwweb.top/music/url", body: body, timeout: 15)
+        let apiCode = (json["code"] as? Int) ?? -1
+        let apiMsg = (json["message"] as? String) ?? ""
+        guard apiCode == 200 else {
+            if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
+                                                              httpStatus: nil) {
+                BackendHealth.shared.block(name, seconds: cool)
+            }
+            throw APIError.parse("ikun 酷我 code=\(apiCode) \(apiMsg)")
+        }
+        guard let raw = json["url"] as? String, !raw.isEmpty else {
+            throw APIError.parse("ikun 酷我未返回 URL")
+        }
+        guard !StreamEncryptionRules.isEncrypted(raw) else {
+            throw APIError.parse("ikun 回的是加密包")
+        }
+        let stream = UrlNormalizer.upgraded(raw)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        let (qq, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        BackendHealth.shared.clear(name)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: qq,
+                            format: fmt, note: "聚合直链（按 rid 直取，实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
+// MARK: - 酷我系：星海（yy.zddyr.top，按 rid 取流，只给 FLAC）
+//
+// 2026-11-20 23:3x 实测：`GET https://yy.zddyr.top/lx/api/?source=kw&name=&id=<rid>&quality=`
+//   · ID 参数必须是 `id`（星澜脚本自己写的 `songid` 已被服务端拒："缺少歌曲 ID"）
+//   · 返回的是**跳板** `/lx/api/kwplay.php?mid=…&s=…`，跟随后才是酷我 CDN 的 FLAC
+//   · 3 首 × 2 轮 = 6/6，晴天 55,397,039 B；跳板多付 1.1–1.7s 首字节
+// 所以它只当"第三条独立来源"：播放链里排在 ≤320k 之后，走 allowLossless 兜底；
+// 下载链按实测码率如实标无损。
+struct XinghaiKuwoAdapter: StreamSourceAdapter {
+    let name = "星海酷我"
+    let platform: MusicPlatform = .kuwo
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let rawID = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rid = rawID.hasPrefix("MUSIC_") ? String(rawID.dropFirst("MUSIC_".count)) : rawID
+        guard !rid.isEmpty, rid.allSatisfy({ $0.isNumber }) else {
+            throw APIError.parse("星海酷我：rid 非法")
+        }
+        let q = quality == .lossless ? "flac" : "320kmp3"
+        let name = "\(song.name) \(song.singer)"
+        let url = "https://yy.zddyr.top/lx/api/?source=kw"
+            + "&name=\(APIClient.encode(name))&id=\(rid)&quality=\(q)"
+        let json = try await APIClient.shared.getJSON(
+            url, headers: ["Referer": "https://www.kuwo.cn/"], timeout: 12)
+        let apiCode = (json["code"] as? Int) ?? -1
+        let apiMsg = (json["msg"] as? String) ?? ""
+        guard apiCode == 200, let raw = json["url"] as? String, !raw.isEmpty else {
+            if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
+                                                              httpStatus: nil) {
+                BackendHealth.shared.block(self.name, seconds: cool)
+            }
+            throw APIError.parse("星海酷我 code=\(apiCode) \(apiMsg)")
+        }
+        guard !StreamEncryptionRules.isEncrypted(raw) else {
+            throw APIError.parse("星海酷我 回的是加密包")
+        }
+        let stream = UrlNormalizer.upgraded(raw)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        let (qq, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        BackendHealth.shared.clear(self.name)
+        return StreamSource(url: stream, backendName: self.name, platform: platform, quality: qq,
+                            format: fmt, note: "聚合直链（星海跳板，实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
+// MARK: - 酷狗系：星海 zddyr `source=kg`（hash 直查，128k / 320k / flac）
+//
+// 为什么必须补这一条（2026-11-21 实测）：酷狗官方 `getSongInfo.php?cmd=playInfo` 至今回
+// `errcode=1002`、**没有 url** —— 也就是说酷狗曲在 App 里根本没有原生取流，全靠
+// `SameSongCrossResolver` 按歌名去别家猜。那条路既慢、又会拿错版本（周杰伦实测网易给的是翻唱），
+// 酷狗独家曲则直接没源。
+//
+// 端点（照 聆滙岛报告 §3 那家 zddyr 的同族接口，2026-11-21 本机 4 首 × 4 档全通）：
+//   `GET https://yy.zddyr.top/lx/api/?source=kg&quality=<128k|320k|flac>&mainHash=<FileHash>`
+//   · `songmid` / `albumId` **可以不填**（报告里那两个值是它抓包时的残留，填了也一样）
+//   · 回 `{code:200, msg:"成功", url:"http://fsandroid.tx.kugou.com/…"}`，直连 CDN，支持 Range 与 seek
+//   · 实测（孤勇者 256s）：128k→4,097,029 B；320k→10,242,283 B；flac→28,729,042 B；master→108,494,040 B
+//   · 首字节 77–181ms，接口 0.82–1.02s → 是现在最快的一条取流
+//
+// **只用三档，不用 master**：master 是 3,390kbps / 108MB 的母带，播放链吃不下、流量也不合理。
+// **直链约 20 分钟后 403**（路径里带时间戳）：所以绝不可落库缓存 URL；下载长暂停后失败由
+// `AudioPlayer` 已有的"失败重取一次"兜住。
+struct XinghaiKugouAdapter: StreamSourceAdapter {
+    let name = "星海酷狗"
+    let platform: MusicPlatform = .kugou
+
+    /// 三档 → zddyr 的 quality 参数（纯函数，CI 断言）
+    static func qualityParam(_ q: QualityLevel) -> String {
+        switch q {
+        case .standard: return "128k"
+        case .high: return "320k"
+        case .lossless: return "flac"
+        }
+    }
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let hash = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        // 酷狗的 FileHash 是 32 位十六进制；不像 hash 的直接判死，别把歌名当 hash 发出去
+        guard hash.count == 32, hash.allSatisfy({ $0.isHexDigit }) else {
+            throw APIError.parse("星海酷狗：hash 非法")
+        }
+        let url = "https://yy.zddyr.top/lx/api/?source=kg"
+            + "&quality=\(Self.qualityParam(quality))&mainHash=\(hash)"
+        let json = try await APIClient.shared.getJSON(
+            url, headers: ["Referer": "https://www.kugou.com/"], timeout: 12)
+        let apiCode = (json["code"] as? Int) ?? -1
+        let apiMsg = (json["msg"] as? String) ?? ""
+        guard apiCode == 200, let raw = json["url"] as? String, !raw.isEmpty else {
+            if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
+                                                             httpStatus: nil) {
+                BackendHealth.shared.block(name, seconds: cool)
+            }
+            throw APIError.parse("星海酷狗 code=\(apiCode) \(apiMsg)")
+        }
+        guard !StreamEncryptionRules.isEncrypted(raw) else {
+            throw APIError.parse("星海酷狗 回的是加密包")
+        }
+        let stream = UrlNormalizer.upgraded(raw)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        BackendHealth.shared.clear(name)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "聚合直链（酷狗 hash 直查，实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
+// MARK: - 网易系：meting（qijieya，`type=url` 直接吐音频字节）
+//
+// 为什么补：网易现在只有 `gdstudio` 一条活后端（oiapi 已死）。两家都在同一批聚合商上游，
+// 但域名/限流是独立的——老板要的"一个挂了自动换下一个"需要的是**独立域**，不是同域多参数。
+//
+// 端点：`GET https://api.qijieya.cn/meting/?server=netease&type=url&id=<songId>`
+//   · **它不是 JSON，直接把音频字节吐出来**（302 落到 m701.music.126.net），所以这条 URL
+//     本身就是可播地址；Range/mid-file seek 实测都通（206 + Content-Range）
+//   · 实测 6/6：320k mp3，8.4–13.3MB，1.0–2.9s
+//   · **坑**：拿不到时它回 **HTTP 200 + text/html + 0 字节**——只看状态码会把 HTML 当歌放。
+//     这里靠 `StreamVerifier`（容器头/Content-Type）拦，并且再要求体积 ≥1MB。
+enum MetingStreamRules {
+    /// 体积下限：真歌 320k 至少几 MB；HTML 错误页 / 空响应都在 1MB 以下
+    static let minBytes: Int64 = 1_000_000
+
+    /// 这条 meting 结果像不像一首真歌（纯函数，CI 断言）
+    static func looksLikeAudio(container: String, totalBytes: Int64) -> Bool {
+        guard totalBytes >= minBytes else { return false }
+        return ["mp3", "flac", "m4a", "ogg", "wav"].contains(container)
+    }
+}
+
+struct MetingNeteaseAdapter: StreamSourceAdapter {
+    let name = "meting 网易"
+    let platform: MusicPlatform = .netease
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let id = song.platformID.filter { $0.isNumber }
+        guard !id.isEmpty else { throw APIError.parse("meting 网易：id 非法") }
+        // meting 只给一条 320k 流，不认档位参数——请求无损时它仍是 320k，
+        // 所以按实测标注（QualityFacts），不按请求标注。
+        let stream = "https://api.qijieya.cn/meting/?server=netease&type=url&id=\(id)"
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        guard MetingStreamRules.looksLikeAudio(container: facts.container,
+                                               totalBytes: facts.totalBytes) else {
+            throw APIError.parse("meting 网易：不是音频（\(facts.container) / \(facts.totalBytes) B）")
+        }
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        BackendHealth.shared.clear(name)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "meting 直吐字节（实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
 // MARK: - 后端注册表
 enum SourceRegistry {
 
     static let all: [StreamSourceAdapter] = [
         CyapiQQAdapter(),
-        // 2026-11-20 晚：`LuoyueQQAdapter` 已**下线**（见下方结构体上的说明）。
-        // QQ 恢复成只有 cyapi 一条后端——即 v2.4.35 及之前的行为。
-        // 要重新启用：在下面 CyapiQQAdapter() 之后加回 `LuoyueQQAdapter(),` 一行即可。
+        // 2026-11-21：落月恢复注册，但走的是 **v3** `/music/tencent/song/link`
+        // （v2 `/v2/music/tencent/geturl` 恒回 code=503，v2.4.36 就是接错了这条）。
+        // 它给真 320k/flac，但上游共享账号会风控（110001）→ 失败快、带冷却，只当机会性加分源。
+        LuoyueQQAdapter(),
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
         YaohuKuwoAdapter(),
         KuwoOfficialAdapter(),
+        // 2026-11-21：酷我补两条独立取流器（老板"多条取流器"的初衷）
+        //   · ikun：按 rid 直取，能给周杰伦整首 320k（官方 anti.s 只回提示音）
+        //   · 星海：只给 FLAC，走 allowLossless 兜底 / 下载链
+        IkunKuwoAdapter(),
+        XinghaiKuwoAdapter(),
+        // 2026-11-21：补两家"以前完全没有"的平台/独立域取流
+        //   · 星海酷狗：zddyr `source=kg`，hash 直查。酷狗官方 playInfo 至今 errcode=1002 没有 url，
+        //     这条是酷狗唯一的原生取流（320k 0.82–1.02s，flac 26–31MB）
+        //   · meting 网易：qijieya 直吐字节，给网易一条与 gdstudio 完全不同域的活路
+        XinghaiKugouAdapter(),
+        MetingNeteaseAdapter(),
         KugouPlayInfoAdapter(),
     ]
 

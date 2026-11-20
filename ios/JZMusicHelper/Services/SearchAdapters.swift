@@ -22,10 +22,57 @@ struct QQSearchAdapter: SearchAdapter {
     func search(keyword: String, limit: Int, page: Int = 1) async throws -> [Song] {
         let url = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
             + "?p=\(max(1, page))&n=\(limit)&w=\(APIClient.encode(keyword))&format=json"
-        let json = try await APIClient.shared.getJSON(url, headers: ["Referer": "https://y.qq.com/"])
-        guard let list = json.nested(["data", "song", "list"]) as? [[String: Any]] else {
-            throw APIError.parse("QQ 搜索结果结构异常")
+        // 2026-11-21：官方这条在真机上会"卡住不回"（老板截图：QQ ⚠️超时）。
+        // 实测本机 4/4 成功但 1.5–2.0s —— 4s 上限在蜂窝网/弱信号下必误报"超时"，
+        // 所以放到 7s（`SearchService.perSourceTimeout` 是 8s，留 1s 余量），超时/空结果再兜底。
+        if let json = try? await APIClient.shared.getJSON(
+                url, headers: ["Referer": "https://y.qq.com/"], timeout: 7),
+           let list = json.nested(["data", "song", "list"]) as? [[String: Any]] {
+            let songs = Self.songs(fromQQ: list)
+            if !songs.isEmpty { return songs }
         }
+        // 兜底：meting 的 tencent 搜索（2026-11-21 实测 200 / 1.2–2.0s，`url` 里带的就是**真 songmid**）。
+        // 注意：gdstudio 的 `source=tencent` 实测 **400 / 503**——它只支持 netease，
+        // 以前那段"用 gdstudio 兜 QQ"是死代码，等于 QQ 一超时就 0 条候选。
+        let fallback = await Self.metingTencentSearch(keyword: keyword, limit: limit)
+        if !fallback.isEmpty { return fallback }
+        throw APIError.timeout
+    }
+
+    /// meting（qijieya）的 tencent 搜索 → Song；id 从 `url=…?server=tencent&type=url&id=<songmid>` 里取
+    static func metingTencentSearch(keyword: String, limit: Int) async -> [Song] {
+        let url = "https://api.qijieya.cn/meting/?server=tencent&type=search&id="
+            + APIClient.encode(keyword)
+        guard let raw = try? await APIClient.shared.getJSONArray(url, timeout: 8) else { return [] }
+        let items = raw.compactMap { $0 as? [String: Any] }
+        var seen = Set<String>()
+        var out: [Song] = []
+        for item in items {
+            guard let u = item["url"] as? String,
+                  let mid = tencentMid(fromMetingURL: u), seen.insert(mid).inserted else { continue }
+            let name = (item["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let artist = item["artist"] as? String ?? ""
+            out.append(Song.make(platform: .qq, platformID: mid, name: name, singer: artist,
+                                 album: "", duration: 0, picURL: nil))
+            if out.count >= max(1, limit) { break }
+        }
+        return out
+    }
+
+    /// 从 meting 的 url 里取 QQ songmid（只认 `server=tencent`；纯函数，CI 可断言）
+    ///
+    /// songmid 是 14 位字母数字（如 `0039MnYb0qxYhV`），不能像网易 id 那样只取数字。
+    static func tencentMid(fromMetingURL url: String) -> String? {
+        guard url.contains("server=tencent"), let range = url.range(of: "id=") else { return nil }
+        let tail = url[range.upperBound...]
+        let mid = tail.prefix { $0.isLetter || $0.isNumber }
+        guard mid.count >= 10 else { return nil }
+        return String(mid)
+    }
+
+    /// QQ 官方搜索结果 → Song（纯函数，CI 可断言）
+    static func songs(fromQQ list: [[String: Any]]) -> [Song] {
         var songs: [Song] = []
         for item in list {
             guard let name = item["songname"] as? String, !name.isEmpty,
@@ -102,7 +149,8 @@ struct NeteaseSearchAdapter: SearchAdapter {
     /// gdstudio 不返回时长（选曲侧只用于"找 id"），`duration` 记 0：
     /// `sameSong` 的时长闸门会跳过，`DownloadResolver` 也会退回档位桶比较。
     /// 取流那一侧用接口自报的 `br`/`size` 兜底定档，所以时长缺不影响"是不是无损"。
-    static func songs(fromGdstudio items: [[String: Any]]) -> [Song] {
+    static func songs(fromGdstudio items: [[String: Any]],
+                      platform: MusicPlatform = .netease) -> [Song] {
         var seen = Set<String>()
         var songs: [Song] = []
         for item in items {
@@ -122,7 +170,7 @@ struct NeteaseSearchAdapter: SearchAdapter {
                 artists = ""
             }
             let album = item["album"] as? String ?? ""
-            songs.append(Song.make(platform: .netease, platformID: id, name: name,
+            songs.append(Song.make(platform: platform, platformID: id, name: name,
                               singer: artists, album: album, duration: 0, picURL: nil))
         }
         return songs
@@ -162,13 +210,25 @@ struct NeteaseSearchAdapter: SearchAdapter {
     }
     /// gdstudio 搜索（官方 /api/search/get 被风控时的兜底）
     static func gdstudioSearch(keyword: String, limit: Int, page: Int = 1) async -> [Song] {
+        await gdstudioSearch(keyword: keyword, source: "netease", platform: .netease,
+                             limit: limit, page: page)
+    }
+
+    /// 2026-11-21：**QQ 也要有兜底**。
+    ///
+    /// 老板 22:52 的截图直接给了证据：搜索页写着 `QQ ⚠️超时 · 网易 10 · 酷我 20 · 酷狗 20`。
+    /// 网易早就因为 r123 吃过这个亏（4s 上限 + gdstudio 兜底），QQ 一直是默认 15s 且无兜底——
+    /// 一超时，跨平台补位里就一条 QQ 候选都没有，"QQ 兜底"整条失效。
+    static func gdstudioSearch(keyword: String, source: String,
+                               platform: MusicPlatform,
+                               limit: Int, page: Int = 1) async -> [Song] {
         let url = "https://music-api.gdstudio.xyz/api.php"
-            + "?types=search&source=netease&name=\(APIClient.encode(keyword))"
+            + "?types=search&source=\(APIClient.encode(source))&name=\(APIClient.encode(keyword))"
             + "&count=\(max(1, min(limit, 30)))&pages=\(max(1, page))"
         guard let raw = try? await APIClient.shared.getJSONArray(
             url, headers: ["User-Agent": "LX-Music-Mobile"], timeout: 10) else { return [] }
         let items = raw.compactMap { $0 as? [String: Any] }
-        return songs(fromGdstudio: items)
+        return songs(fromGdstudio: items, platform: platform)
     }
 
     /// v2.1.94：/api/search/get 只回 picId 不回 picUrl，用 /api/song/detail 批量补（20 首一次）

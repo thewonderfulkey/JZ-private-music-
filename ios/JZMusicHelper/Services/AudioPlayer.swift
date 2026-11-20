@@ -266,6 +266,8 @@ final class PlayerEngine {
     private var consecutiveSkips = 0
     /// 被判为坏源（时长不符 / 放不出来）的 URL，换源时跳过，避免同一首歌反复撞同一条
     private var rejectedSourceURLs: Set<String> = []
+    /// 坏源的**内容指纹**（体积+时长）：占位提示音每次都是新 URL，只按 URL 记永远认不出来
+    private var rejectedFingerprints: Set<String> = []
     /// 续播断点：等这一条播放项 ready 之后再 seek（见 `play(queue:startAt:positionSeconds:)`）
     private var pendingRestoreSeconds: Double?
 
@@ -365,7 +367,7 @@ final class PlayerEngine {
         queue = songs
         index = target
         currentSong = songs[target]
-        rejectedSourceURLs.removeAll()
+        rejectedSourceURLs.removeAll(); rejectedFingerprints.removeAll()
         consecutiveSkips = 0
         sameSongSwitches = 0
         plannedNext = nil
@@ -402,7 +404,7 @@ final class PlayerEngine {
         queue = songs
         index = target
         currentSong = songs[target]
-        rejectedSourceURLs.removeAll()
+        rejectedSourceURLs.removeAll(); rejectedFingerprints.removeAll()
         consecutiveSkips = 0
         sameSongSwitches = 0
         plannedNext = nil
@@ -664,7 +666,7 @@ final class PlayerEngine {
         sameSongSwitches = 0
         index = newIndex
         currentSong = queue[newIndex]
-        rejectedSourceURLs.removeAll()
+        rejectedSourceURLs.removeAll(); rejectedFingerprints.removeAll()
         resetProgress()
         prepareLyrics(for: queue[newIndex])
         beginResolveBackgroundTask()
@@ -944,38 +946,62 @@ final class PlayerEngine {
     /// 这里**不写状态行、也不起后台升档**：预取也会走它，而预取不该改界面。
     /// 升档由 `loadCurrent` 在真正起播之后决定（那时才知道"当前这条是多少码率"）。
     private func resolveStream(for song: Song) async -> StreamSource? {
-        // 被拒的 URL 只属于"当前这首"：预取别的歌时不能拿这份名单去筛
-        let rejected = (song.id == currentSong?.id) ? rejectedSourceURLs : []
+        // 被拒的 URL / 指纹只属于"当前这首"：预取别的歌时不能拿这份名单去筛
+        let rejectedURLs = (song.id == currentSong?.id) ? rejectedSourceURLs : []
+        let rejectedFP = (song.id == currentSong?.id) ? rejectedFingerprints : []
 
-        // ① 先到先用
+        func usable(_ src: StreamSource, allowLossless: Bool = false) -> Bool {
+            if rejectedURLs.contains(src.url) { return false }
+            let fp = PlaybackQualityRules.fingerprint(totalBytes: src.totalBytes,
+                                                      durationSec: song.durationSec)
+            if rejectedFP.contains(fp) { return false }
+            return PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec,
+                                                 allowLossless: allowLossless)
+        }
+
+        // ① 先到先用（≤320k + 内容闸门）
         if let quick = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
-           PlaybackQualityRules.isPlayable(quick.source),
-           !rejected.contains(quick.source.url) {
+           usable(quick.source) {
             return quick.source
         }
 
         // ② 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
         let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
-        if let picked = plan.ranked.first(where: {
-            PlaybackQualityRules.isPlayable($0.source) && !rejected.contains($0.source.url)
-        }) {
+        if let picked = plan.ranked.first(where: { usable($0.source) }) {
             return picked.source
         }
 
         // ③ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
         if let cross = await SameSongCrossResolver.resolve(
             song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys()),
-           PlaybackQualityRules.isPlayable(cross),
-           !rejected.contains(cross.url) {
+           usable(cross) {
             return cross
         }
 
-        // ④ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
+        // ④ 无损兜底：**只在前三条全空时**才放开 FLAC（周杰伦这类"酷我只有 FLAC"的歌）。
+        //
+        // 为什么必须放在最后、且只跑一次：无损要现拉 26~55MB 的远端流，首字节 1.5~2s，
+        // 放在关键路径上就会重现"播完卡住"（2026-11-19 心动模式的结论：无损必须现拉，
+        // 那就是卡顿来源）。这里只作为"否则整首没声"的兜底，且走的是同一个
+        // `beginBackgroundTask` 保护区（`loadCurrent` 外层已开）。
+        if let lossless = await DownloadResolver.firstPlayable(
+            song: song, want: .lossless, allowLossless: true),
+           usable(lossless.source, allowLossless: true) {
+            PlaybackTrace.shared.log("无损兜底", "\(lossless.source.backendName) "
+                + "\(lossless.source.kbps)kbps")
+            return lossless.source
+        }
+
+        // ⑤ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         if let retry = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
-           PlaybackQualityRules.isPlayable(retry.source),
-           !rejected.contains(retry.source.url) {
+           usable(retry.source) {
             return retry.source
+        }
+        if let retryLossless = await DownloadResolver.firstPlayable(
+            song: song, want: .lossless, allowLossless: true),
+           usable(retryLossless.source, allowLossless: true) {
+            return retryLossless.source
         }
         return nil
     }
@@ -1273,6 +1299,12 @@ final class PlayerEngine {
     private func rejectSource(_ source: StreamSource, reason: String) {
         PlaybackTrace.shared.log("源失败", "\(source.backendName)：\(reason)")
         rejectedSourceURLs.insert(source.url)
+        if let song = currentSong {
+            // 也记内容指纹：占位提示音每次换新 URL，只记 URL 会一直重试同一段东西
+            rejectedFingerprints.insert(
+                PlaybackQualityRules.fingerprint(totalBytes: source.totalBytes,
+                                                 durationSec: song.durationSec))
+        }
         errorText = reason
         switchSourceWithinSong()
     }

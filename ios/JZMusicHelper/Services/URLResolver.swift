@@ -551,7 +551,7 @@ enum DownloadResolver {
 
     // MARK: 播放链：先到先用（2026-11-20 老板定稿：不要再等齐三个后端）
 
-    /// 播放入口：**哪个后端先回来、且过了「≤320k + 身份闸」，就立刻用它起播**。
+    /// 播放入口：**哪个后端先回来、且过了「档位 + 内容闸门 + 身份闸」，就立刻用它起播**。
     ///
     /// 旧 `quickPick` 是"等齐"——`collect` 里的 `for await` 要等每个 job 各自返回或各自超时
     /// 才收工。实测（老板真实歌单取样）三个 primary 后端**从来没有一次**在 1.8s 内等齐：
@@ -560,9 +560,17 @@ enum DownloadResolver {
     ///
     /// 现在第一个合格候选直接返回，其余候选不再等。后续"要不要更好的一档"由
     /// `AudioPlayer.schedulePlaybackUpgrade` 在后台收尾（同样受 ≤320k 约束）。
+    ///
+    /// `allowLossless`：**只给"最后一条可用源"用**（周杰伦这类酷我只有 FLAC 的歌）。
+    /// 常规路径（第一遍）传 false —— 无损不进关键路径，否则又会回到"播完卡住"
+    /// （2026-11-19 心动模式那次的结论：无损必须现拉远端流，那就是卡顿来源）。
     static func firstPlayable(song: Song, want: QualityLevel,
-                              deadline: TimeInterval = 6) async -> Candidate? {
-        let jobs = primaryJobs(for: song)
+                              deadline: TimeInterval = 6,
+                              allowLossless: Bool = false) async -> Candidate? {
+        // 冷却中的后端直接不叫（妖狐 403 / 落月风控 / ikun 限流）
+        let jobs = primaryJobs(for: song).filter {
+            !BackendHealth.shared.isCoolingDown($0.adapter.name)
+        }
         guard !jobs.isEmpty else { return nil }
         return await withTaskGroup(of: Candidate?.self) { group in
             for job in jobs {
@@ -575,8 +583,11 @@ enum DownloadResolver {
                     if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
                         return nil
                     }
-                    // A 口径：播放链只收 ≤320k（FLAC/WAV 回来也不收）
-                    guard PlaybackQualityRules.isPlayable(src) else { return nil }
+                    // 内容闸门（占位提示音 / 加密包）+ 档位（常规 ≤320k，兜底才放开无损）
+                    guard PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec,
+                                                         allowLossless: allowLossless) else {
+                        return nil
+                    }
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
                     return Candidate(song: job.song, source: src, elapsedMs: ms,
                                      score: score(of: src, song: job.song, ref: song, ms: ms))
@@ -679,10 +690,12 @@ enum DownloadResolver {
     /// 并发跑一批后端，每个任务按**剩余预算**单独超时；到点返回已收到的（不丢部分结果）。
     private static func collect(jobs: [Job], want: QualityLevel,
                                 deadline: TimeInterval) async -> [RawCandidate] {
-        guard !jobs.isEmpty else { return [] }
+        // 冷却中的后端不占预算（妖狐 403 之后 15 分钟不再叫它）
+        let live = jobs.filter { !BackendHealth.shared.isCoolingDown($0.adapter.name) }
+        guard !live.isEmpty else { return [] }
         let start = Date()
         return await withTaskGroup(of: RawCandidate?.self) { group in
-            for job in jobs {
+            for job in live {
                 group.addTask {
                     let left = max(1, deadline - Date().timeIntervalSince(start))
                     let t0 = Date()

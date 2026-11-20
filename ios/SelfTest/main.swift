@@ -3684,6 +3684,131 @@ do {
           PlaybackRules.maxSameSongSwitches == 3, "\(PlaybackRules.maxSameSongSwitches)")
 }
 
+// MARK: - 第四十四轮（2026-11-21）：占位音频闸门 / 无损兜底 / 后端熔断 / 落月 v3
+//
+// 老板 2026-11-20 晚的报障：周杰伦的歌播出来是「当前音乐只在酷我最新手机端才能播放」。
+// 那段东西是酷我回的 **181,521 B / 11.3s 提示音**，而它满足当时所有闸门（mp3、206、非无损），
+// 于是被当成有效源起播。这一节把"什么不算歌"钉死。
+
+section("内容闸门：占位提示音 / 加密包不是歌")
+
+do {
+    func src(_ fmt: String, _ kbps: Int64, _ q: QualityLevel, bytes: Int64,
+             url: String = "https://example.com/a.mp3") -> StreamSource {
+        StreamSource(url: url, backendName: "t", platform: .kuwo, quality: q, format: fmt,
+                     note: "", directId: true, kbps: kbps, totalBytes: bytes, rangeOK: true)
+    }
+
+    // 酷我的占位文件：181,521 B / 344s ≈ 4 kbps（md5 43fe5f6460e49afdf0bc2340012fe7b5）
+    let prompt = src("mp3", 4, .standard, bytes: 181_521)
+    check("占位提示音被判成占位（181,521 B / 344s）",
+          PlaybackQualityRules.isPlaceholder(prompt, songDurationSec: 344))
+    check("占位提示音不可用（哪怕它 ≤320k）",
+          !PlaybackQualityRules.isUsable(prompt, songDurationSec: 344))
+    check("占位提示音也进不了「可播」白名单判断",
+          PlaybackQualityRules.isPlayable(prompt) && !PlaybackQualityRules.isUsable(prompt, songDurationSec: 344),
+          "isPlayable 只看档位，isUsable 才是放行的唯一口径")
+
+    // 真 320k：10,792,943 B / 344s ≈ 250 kbps
+    let real320 = src("mp3", 250, .high, bytes: 10_792_943)
+    check("真 320k 可用", PlaybackQualityRules.isUsable(real320, songDurationSec: 344))
+    check("真 320k 不算占位", !PlaybackQualityRules.isPlaceholder(real320, songDurationSec: 344))
+
+    // 体积未知时不在这里判死（留给时长闸门）
+    let unknownSize = src("mp3", 0, .standard, bytes: 0)
+    check("体积未知不判占位", !PlaybackQualityRules.isPlaceholder(unknownSize, songDurationSec: 344))
+
+    // 加密包：QQ 的 .mgg / O4M~O8M
+    check(".mgg 判加密", StreamEncryptionRules.isEncrypted("http://x/O8M0003.mgg?guid=1"))
+    check("O4M 路径判加密", StreamEncryptionRules.isEncrypted("http://x/O4M0003ae8"))
+    check("普通 mp3 不判加密", !StreamEncryptionRules.isEncrypted("http://x/M800003.mp3"))
+    check("加密源不可用",
+          !PlaybackQualityRules.isUsable(
+            src("mp3", 320, .high, bytes: 11_698_595, url: "http://x/O8M0003.mgg?guid=1"),
+            songDurationSec: 269))
+
+    // 坏源指纹：体积+时长（占位音频每次都是新 URL，只按 URL 去重认不出来）
+    check("坏源指纹按 体积+时长",
+          PlaybackQualityRules.fingerprint(totalBytes: 181_521, durationSec: 344) == "181521-344",
+          PlaybackQualityRules.fingerprint(totalBytes: 181_521, durationSec: 344))
+}
+
+section("无损兜底：只在最后一条可用源时放开（周杰伦这类）")
+
+do {
+    func src(_ fmt: String, _ kbps: Int64, _ q: QualityLevel) -> StreamSource {
+        StreamSource(url: "https://example.com/\(fmt)", backendName: "妖狐酷我",
+                     platform: .kuwo, quality: q, format: fmt, note: "",
+                     directId: false, kbps: kbps, totalBytes: 55_397_039, rangeOK: true)
+    }
+    let flac = src("flac", 1288, .lossless)
+    check("常规路径：FLAC 不能起播（≤320k 口径不变）",
+          !PlaybackQualityRules.isUsable(flac, songDurationSec: 344))
+    check("兜底路径：允许无损时 FLAC 可用",
+          PlaybackQualityRules.isUsable(flac, songDurationSec: 344, allowLossless: true))
+    check("兜底开关是开的（老板 2026-11-21 定）",
+          PlaybackQualityRules.allowsLosslessPlayback)
+    check("无损不会因为「可播」被升级逻辑当成更好的一条",
+          !PlaybackQualityRules.isBetter(flac, than: src("mp3", 320, .high)))
+}
+
+section("后端熔断：403 限流要冷却，不是每首播放都去撞")
+
+do {
+    let now: TimeInterval = 1_800_000_000
+    check("403 冷却 15 分钟",
+          BackendHealthRules.cooldownSeconds(apiCode: 403, message: "", httpStatus: nil) == 900)
+    check("落月风控 110001 冷却 5 分钟",
+          BackendHealthRules.cooldownSeconds(apiCode: 110001, message: "", httpStatus: nil) == 300)
+    check("503 冷却 2 分钟",
+          BackendHealthRules.cooldownSeconds(apiCode: 503, message: "", httpStatus: nil) == 120)
+    check("「频繁请求」文案也判冷却",
+          BackendHealthRules.cooldownSeconds(apiCode: nil, message: "由于你多次频繁请求", httpStatus: nil) == 900)
+    check("普通失败不冷却",
+          BackendHealthRules.cooldownSeconds(apiCode: nil, message: "解析失败", httpStatus: nil) == nil)
+    check("冷却期内算「在冷却」",
+          BackendHealthRules.isCoolingDown(blockedUntil: now + 10, now: now))
+    check("到期就不算在冷却",
+          !BackendHealthRules.isCoolingDown(blockedUntil: now - 1, now: now))
+    check("没记录过不算在冷却",
+          !BackendHealthRules.isCoolingDown(blockedUntil: nil, now: now))
+}
+
+section("落月 v3 信封（v2 恒 503，线上走 song/link）")
+
+do {
+    let ok: [String: Any] = ["code": 0, "message": "访问成功",
+                             "data": ["url": "http://ws.stream.qqmusic.qq.com/M800.mp3",
+                                      "link": "https://i.y.qq.com/v8/playsong.html?songmid=x"]]
+    check("v3 取的是 data.url（不是 data.link）",
+          (try? LuoyueQQAdapter.parseV3(ok)) == "http://ws.stream.qqmusic.qq.com/M800.mp3")
+
+    let risk: [String: Any] = ["code": 110001, "message": "cookie异常：账号被风控无法获取"]
+    check("v3 风控失败抛错", (try? LuoyueQQAdapter.parseV3(risk)) == nil)
+
+    let empty: [String: Any] = ["code": 0, "data": ["link": "https://i.y.qq.com/x"]]
+    check("v3 只有 link 没 url 也算失败", (try? LuoyueQQAdapter.parseV3(empty)) == nil)
+
+    // v2 的老断言基线（保留，防止有人把 v2 端点又接回去）
+    let v2: [String: Any] = ["code": 200, "data": ["url": "http://a/b.mp3"]]
+    check("v2 信封仍能解析（历史基线）",
+          (try? LuoyueQQAdapter.parse(v2)) == "http://a/b.mp3")
+    check("v2 的 503 会被拒", (try? LuoyueQQAdapter.parse(["code": 503])) == nil)
+}
+
+section("多源：酷我三条独立后端 + QQ 两条")
+
+do {
+    let all = SourceRegistry.all
+    let kuwo = all.filter { $0.platform == .kuwo }.map(\.name)
+    let qq = all.filter { $0.platform == .qq }.map(\.name)
+    check("酷我有 ≥3 条后端（妖狐/官方/ikun/星海）", Set(kuwo).count >= 3, kuwo.joined(separator: "/"))
+    check("ikun 已注册", kuwo.contains("ikun 酷我"), kuwo.joined(separator: "/"))
+    check("星海已注册", kuwo.contains("星海酷我"), kuwo.joined(separator: "/"))
+    check("QQ 有 cyapi + 落月 v3 两条", Set(qq).count >= 2, qq.joined(separator: "/"))
+    check("落月已恢复注册", qq.contains("落月 QQ"), qq.joined(separator: "/"))
+}
+
 section("身份闸：副标题/译名放行，版本类拦截（A7 不变）")
 
 do {
@@ -3792,6 +3917,83 @@ do {
     let kr = song(.qq, "연애의 조건 (Love Options)", "BESTie", dur: 212, id: "b1")
     let krPlaying = song(.netease, "恋爱的条件", "BESTie", dur: 212, id: "b2")
     check("译名不同不认（宁可不定位，也不跳错行）", ListLocate.index(of: krPlaying, in: [kr]) == nil)
+}
+
+// MARK: - 第四十五轮（2026-11-21）：酷狗取流 / 网易 meting / QQ 兜底三件事
+//
+// 老板当晚的三个现象：周杰伦还播那句提示音、QQ 一直"超时"、源不够壮。
+// 这轮补的是「酷狗从来就没有原生取流」「网易只有一条活后端」「QQ 的兜底是死代码」。
+// 纯逻辑全部钉在下面；真实字节的证据在 docs/dev/EVAL-聆听岛报告接入评估.md 附录。
+
+section("酷狗取流：zddyr source=kg 的档位映射")
+
+do {
+    check("标准档 → 128k", XinghaiKugouAdapter.qualityParam(.standard) == "128k",
+          XinghaiKugouAdapter.qualityParam(.standard))
+    check("高品档 → 320k", XinghaiKugouAdapter.qualityParam(.high) == "320k",
+          XinghaiKugouAdapter.qualityParam(.high))
+    check("无损档 → flac（不是 master：master 是 3.4Mbps/108MB 母带）",
+          XinghaiKugouAdapter.qualityParam(.lossless) == "flac",
+          XinghaiKugouAdapter.qualityParam(.lossless))
+    check("不会有人把 master 写进播放链",
+          !["128k", "320k", "flac"].contains("master"))
+}
+
+section("网易 meting：200 + text/html 不是歌")
+
+do {
+    check("真 320k（audio/mpeg + 10MB）算音频",
+          MetingStreamRules.looksLikeAudio(container: "mp3", totalBytes: 10_242_285))
+    check("真无损（flac 32MB）算音频",
+          MetingStreamRules.looksLikeAudio(container: "flac", totalBytes: 32_511_640))
+    check("HTML 错误页（0 字节）不算音频",
+          !MetingStreamRules.looksLikeAudio(container: "unknown", totalBytes: 0))
+    check("体积过小（试听残片）不算音频",
+          !MetingStreamRules.looksLikeAudio(container: "mp3", totalBytes: 171_072))
+    check("容器认不出（unknown）也不算音频",
+          !MetingStreamRules.looksLikeAudio(container: "unknown", totalBytes: 13_042_460))
+}
+
+section("QQ 搜索兜底：meting tencent 给的是真 songmid")
+
+do {
+    let u = "https://api.qijieya.cn/meting/?server=tencent&type=url&id=0039MnYb0qxYhV"
+    check("从 meting url 取出 QQ songmid", QQSearchAdapter.tencentMid(fromMetingURL: u) == "0039MnYb0qxYhV",
+          QQSearchAdapter.tencentMid(fromMetingURL: u) ?? "nil")
+    check("只认 server=tencent（网易 url 不能当 QQ mid）",
+          QQSearchAdapter.tencentMid(
+            fromMetingURL: "https://api.qijieya.cn/meting/?server=netease&type=url&id=2668397359") == nil)
+    check("mid 太短的不认（防止把空串当 id）",
+          QQSearchAdapter.tencentMid(
+            fromMetingURL: "https://api.qijieya.cn/meting/?server=tencent&type=url&id=abc") == nil)
+
+    // gdstudio 的 source=tencent 实测 400/503：这条兜底是死的，别再写回去
+    check("gdstudio 不是 QQ 搜索的兜底（实测 400/503）",
+          true, "留作记录：QQ 兜底只能走 meting tencent")
+}
+
+section("QQ 取流：110001 风控先重试一次，别立刻熔断")
+
+do {
+    check("110001 值得重试一次", LuoyueQQAdapter.shouldRetryOnce(code: 110001))
+    check("503 不重试（上游系统错误，重试也白搭）", !LuoyueQQAdapter.shouldRetryOnce(code: 503))
+    check("0（成功）不需要重试", !LuoyueQQAdapter.shouldRetryOnce(code: 0))
+    check("403 不重试（会被封更久）", !LuoyueQQAdapter.shouldRetryOnce(code: 403))
+}
+
+section("新源已进注册表（酷狗 ≥2 条、网易 ≥3 条）")
+
+do {
+    let all = SourceRegistry.all
+    let kg = all.filter { $0.platform == .kugou }.map(\.name)
+    let ne = all.filter { $0.platform == .netease }.map(\.name)
+    check("星海酷狗已注册", kg.contains("星海酷狗"), kg.joined(separator: "/"))
+    check("酷狗现在有 ≥2 条后端（官方 + 星海）", Set(kg).count >= 2, kg.joined(separator: "/"))
+    check("meting 网易已注册", ne.contains("meting 网易"), ne.joined(separator: "/"))
+    check("网易现在有 ≥3 条后端（gdstudio/oiapi/meting）", Set(ne).count >= 3,
+          ne.joined(separator: "/"))
+    check("注册表里没有重复名字",
+          Set(all.map(\.name)).count == all.count, "\(all.count) 条")
 }
 
 // MARK: - 汇总

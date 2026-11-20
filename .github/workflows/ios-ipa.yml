@@ -257,6 +257,16 @@ jobs:
             exit 1
           fi
 
+      # 出包闸：包内主二进制必须与历史包不同。
+      # 2026-11-21 的事故就是"版本号变了、代码没进包"：r146/r147 与 r145 的二进制 sha256 完全相同
+      # （35b71813…），因为那两个 commit 一行 Swift 都没改。BUILD SUCCEEDED + 版本号正确 = 一路绿灯。
+      - name: 出包闸（二进制必须与上一版不同）
+        run: |
+          set -euo pipefail
+          python3 tools/ios/check_ipa_identity.py \
+            --new "$ARTIFACT_DIR/${{ steps.pkg.outputs.ipa }}" \
+            --against 'releases/*.ipa'
+
       - name: 留存 artifact
         uses: actions/upload-artifact@v4
         with:
