@@ -32,6 +32,26 @@
 
 播放页歌词那颗「回到当前」还是同一个箭头符号——它旁边有完整的三个字兜着，不会被读成下载；
 两处要不要统一，等老板定。
+
+### 出包
+
+| 端 | 产物 | 体积 | 校验 |
+|---|---|---|---|
+| iPhone | `JZ-Music-v2.4.37-a11a11e-r144-ios-unsigned.ipa`（CI #144，双 job 全绿） | 2,731,755 B | sha256 `7fed6fdd…b7a143`；包内 `2.4.37 (215)` / minOS 17.0 / 1 个 appex |
+| Android | 本轮未出包（只改了 iOS 界面） | — | `versionName 2.4.37` / versionCode 215 仅作版本线同步 |
+| Windows | 本轮未出包 | — | 桌面版仍是 2.1.95 版本线 |
+
+逻辑自测 **964 条断言 / 0 失败**（本轮无新增断言——换图标是视觉改动，没有可判定的口径）。
+飞书群已收到包，包留档在 `releases/`。本轮未发 GitHub Release。
+
+### 顺手修掉的推送配置（与本次功能无关）
+
+老板反馈"出包要我反复点 GitHub 账户"。查下来是 `credential.helper = manager` 被注册了两次
+（`D:/Git/etc/gitconfig` 系统级 + `C:/Users/17948/.gitconfig` 全局级），git 每次鉴权会调用 GCM 两次，
+需要补授权时就连着弹两次。已删掉全局那份，并钉住 `credential.https://github.com.username = thewonderfulkey`
+（GCM 不再问"用哪个账户"）。workflow 本身没有 `environment` / required reviewers，
+#140–#144 的 `triggering_actor` 全是本人账号，构建从来不需要人工批准。
+
 ## iOS v2.4.36（214）· 2026-11-20（QQ 补真 320k/flac：新增「落月」机会性后端）
 
 老板 2026-11-20 让解析一个外部 LX 音源脚本（星澜 StellarWave v4.0.2），判断能不能融进来、顺便做连通性测试。
