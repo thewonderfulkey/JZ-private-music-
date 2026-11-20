@@ -8,7 +8,7 @@ iPhone 版还能**把别家的歌单直接导进来**（QQ 音乐 / 网易云 / 
 播放页还有**心动模式**，按你的口味一首首接着推。
 
 > 想自己编译、看工程结构或发版流程：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/HANDOFF.md](docs/HANDOFF.md)、[docs/RELEASE.md](docs/RELEASE.md)
-> 更新记录：[CHANGELOG.md](CHANGELOG.md)　·　安装包与源码：[最新发布（v2.4.32）](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)
+> 更新记录：[CHANGELOG.md](CHANGELOG.md)　·　安装包与源码：[最新发布（v2.4.33）](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)
 
 ---
 
@@ -30,11 +30,12 @@ iPhone 版还能**把别家的歌单直接导进来**（QQ 音乐 / 网易云 / 
 |---|---|---|---|---|
 | **Windows** | Windows 10 / 11（64 位） | `JZ-Music-v2.1.95-windows-x64.exe` | 约 139 MB | 免安装单文件，双击即用 |
 | **Android** | Android 8.0 及以上 | `JZ-Music-v2.4.32.apk` | 约 29 MB | 覆盖安装即可 |
-| **iPhone** | iOS 17.0 及以上 | `JZ-Music-v2.4.32-4b194cd-r137-ios-unsigned.ipa` | 约 2.5 MB | **未签名**，需自己签一次（Sideloadly / AltStore） |
+| **iPhone** | iOS 17.0 及以上 | `JZ-Music-v2.4.33-44ec0a8-r138-ios-unsigned.ipa` | 约 2.5 MB | **未签名**，需自己签一次（Sideloadly / AltStore） |
 
-> 三个平台的包和源码都在 [最新发布 v2.4.32](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)：
-> iPhone 是这一轮的新包；Windows 仍是 **2.1.95**（Windows 端本轮未改）；Android 用当前源码重新打了包、
-> 版本号随仓库升到 **2.4.32**（Android 代码与 2.4.23 相同，本轮未改）。
+> 三个平台的包和源码都在 [最新发布 v2.4.33](https://github.com/thewonderfulkey/JZ-private-music-/releases/latest)：
+> iPhone 是这一轮的新包（**在线播放降到 320k、无损只给下载；后台播完不再被切歌；歌单详情加缓存**）；
+> Windows 仍是 **2.1.95**（Windows 端本轮未改）；Android 仍是 **2.4.32**（本轮 Android 无改动，
+> 版本号只随仓库同步到 2.4.33）。
 > 源码用页面里的 Source code (zip / tar.gz)（GitHub 按 tag 自动生成）。
 
 三个平台共用同一套「搜索 → 换源 → 取流 → 歌词」逻辑，所以同一首歌在哪一端都能放；
