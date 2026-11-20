@@ -45,6 +45,17 @@ Android / Windows 的 `AppState.resolveAndPlayIfNeeded` 在 `resolveSourceOnce(.
 
 在任意列表里 1 秒内连点三首不同的歌（比如 A、B、C），等 5 秒：
 出声的必须是 C，且播放页封面/标题/歌词都是 C；进度条从 0:00 正常走，不再出现"放到一半突然换人"。
+
+### 出包（三端同一版本线 v2.4.35 / 213）
+
+| 端 | 产物 | 体积 | 校验 |
+|---|---|---|---|
+| iPhone | `JZ-Music-v2.4.35-ac43cdd-r141-ios-unsigned.ipa`（CI #141，双 job 全绿） | 2,727,027 B | sha256 `f190320e…cf9345`；包内 `2.4.35 (213)` / minOS 17.0 / 1 个 appex |
+| Android | `releases/JZ音乐助手-v2.4.35.apk` | 29,875,521 B | `aapt2`：`com.jz.musichelper` / versionCode 213 / versionName 2.4.35 / minSdk 26 |
+| Windows | `releases\windows\JZ Music-2.4.35-portable.exe`（单文件便携版） | 145,597,440 B | payload 指纹 `227ae760`；`JZ Music-v2.4.35-windows-x64.zip` 138.8 MB 一并留档 |
+
+逻辑自测 **952 条断言 / 0 失败**（CI `logic-tests`），其中这轮新增 4 条（代次相同才放行、迟到的 A/B 丢弃、同曲换源换轮同样丢弃）。
+本轮未发 GitHub Release（与 r140 同口径），三端包留在 `releases/` 与飞书群。
 ## iOS v2.4.34（212） · 2026-11-20（所有列表页加「定位到正在播放」）
 
 老板 2026-11-20：歌单和列表越存越多，当前播的那首在第几行要自己滑很久。这一版给**每一个歌曲列表页**
