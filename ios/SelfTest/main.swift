@@ -4156,12 +4156,12 @@ do {
     let a = s(.kuwo, "晴天", "周杰伦", dur: 269, id: "qa")
     let b = s(.kugou, "晴天", "周杰伦", dur: 269, id: "qb")
     check("320k 赢 128k", FavoriteReview.preferred(a, b,
-          fingerprints: [ga.id: fp(3_000_000, 128), gb.id: fp(10_000_000, 320)]).id == gb.id)
+          fingerprints: [a.id: fp(3_000_000, 128), b.id: fp(10_000_000, 320)]).id == b.id)
     check("同码率比体积", FavoriteReview.preferred(a, b,
-          fingerprints: [ga.id: fp(9_000_000, 320), gb.id: fp(10_000_000, 320)]).id == gb.id)
-    check("都没指纹保留先出现的", FavoriteReview.preferred(a, b, fingerprints: [:]).id == ga.id)
+          fingerprints: [a.id: fp(9_000_000, 320), b.id: fp(10_000_000, 320)]).id == b.id)
+    check("都没指纹保留先出现的", FavoriteReview.preferred(a, b, fingerprints: [:]).id == a.id)
     check("只有一条有指纹就选它", FavoriteReview.preferred(a, b,
-          fingerprints: [ga.id: fp(3_000_000, 128)]).id == ga.id)
+          fingerprints: [a.id: fp(3_000_000, 128)]).id == a.id)
 
     // 否定缓存的键与顺序无关
     check("pairKey 与顺序无关", FavoriteReview.pairKey(a, b) == FavoriteReview.pairKey(b, a))
@@ -4173,7 +4173,7 @@ section("本地导入：文件名解析 / 基名唯一 / 搜索")
 do {
     let a = ImportRules.parseFileName("01 - 周杰伦 - 晴天.mp3")
     check("音轨号 + 歌手 - 歌名", a.title == "晴天" && a.artist == "周杰伦" && a.confident,
-          "\(a.artist)|\$a.title")
+          "\(a.artist)|\(a.title)")
     let b = ImportRules.parseFileName("周杰伦 - 晴天.flac")
     check("歌手 - 歌名", b.title == "晴天" && b.artist == "周杰伦", "\(b.artist)|\(b.title)")
     let c = ImportRules.parseFileName("晴天.mp3")
