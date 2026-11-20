@@ -244,4 +244,32 @@ enum DownloadLocation {
         let home = NSHomeDirectory()
         return url.standardizedFileURL.path.hasPrefix(home)
     }
+
+    // MARK: - iCloud 备份排除（2026-11-21 老板定：默认不进备份）
+    //
+    // 关掉备份的收益：几百首几 GB 的歌不会占用户的 iCloud 配额、也不会拖慢备份。
+    // 代价必须写进设置页：**关闭后重装 App / 换机会丢本地文件**。
+    // 注意这是"排除备份"，不影响「文件」App 里可见（UIFileSharingEnabled 照旧）。
+    static func applyBackupExclusion(_ excluded: Bool) {
+        let roots = [currentDirectory(), musicDirectory(), lyricsDirectory(), coverDirectory()]
+        for dir in roots {
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = excluded
+            var url = dir
+            try? url.setResourceValues(values)
+            // 目录下已存在的文件也要补设：iOS 不会因为目录被标而回溯
+            guard let en = FileManager.default.enumerator(
+                at: dir, includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
+            var guardCount = 0
+            while let f = en.nextObject() as? URL {
+                guardCount += 1
+                if guardCount > 5000 { break }
+                var v = URLResourceValues()
+                v.isExcludedFromBackup = excluded
+                var target = f
+                try? target.setResourceValues(v)
+            }
+        }
+    }
 }

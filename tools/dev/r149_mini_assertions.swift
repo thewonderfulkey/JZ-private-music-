@@ -151,6 +151,24 @@ check("同码率比体积", FavoriteReview.preferred(ga, gb,
 check("都没指纹留先出现的", FavoriteReview.preferred(ga, gb, fingerprints: [:]).id == ga.id)
 check("pairKey 顺序无关", FavoriteReview.pairKey(ga, gb) == FavoriteReview.pairKey(gb, ga))
 
+print("— 本地导入：文件名 / 基名 / 搜索")
+let pa = ImportRules.parseFileName("01 - 周杰伦 - 晴天.mp3")
+check("音轨号 + 歌手 - 歌名", pa.title == "晴天" && pa.artist == "周杰伦")
+let pb = ImportRules.parseFileName("晴天.mp3")
+check("只有歌名 → 歌手留空", pb.title == "晴天" && pb.artist.isEmpty && !pb.confident)
+check("数字开头不是音轨号", ImportRules.parseFileName("2002年的第一场雪.mp3").title.hasPrefix("2002年"))
+check("ape 不导入", !ImportRules.isPlayable(extension: "ape"))
+check("撞基名加 (2)", ImportRules.uniqueBaseName("周杰伦 - 晴天", taken: ["周杰伦 - 晴天"]) == "周杰伦 - 晴天 (2)")
+let qs = Song.make(platform: .local, platformID: "imp_1", name: "晴天", singer: "周杰伦",
+                   album: "叶惠美", duration: 269, picURL: nil)
+check("按歌名搜到", LibrarySearch.rank(song: qs, fileName: "周杰伦 - 晴天.mp3", query: "晴天") >= 2)
+check("按歌手搜到", LibrarySearch.rank(song: qs, fileName: nil, query: "周杰伦") >= 1)
+check("搜不到 = 0", LibrarySearch.rank(song: qs, fileName: nil, query: "夜曲") == 0)
+check("繁简可搜", LibrarySearch.rank(
+      song: Song.make(platform: .local, platformID: "imp_2", name: "后来", singer: "刘若英",
+                      album: "", duration: 314, picURL: nil),
+      fileName: nil, query: "後來") >= 2)
+
 print("\n结果：通过 \(pass) / 失败 \(fail.count)")
 if !fail.isEmpty {
     for f in fail { print("  FAIL: \(f)") }

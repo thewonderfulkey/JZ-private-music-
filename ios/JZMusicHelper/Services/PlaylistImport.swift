@@ -246,6 +246,7 @@ enum PlaylistImport {
         case .netease: return try await fetchNetease(link.sourceID)
         case .kuwo: return try await fetchKuwo(link.sourceID)
         case .kugou: return try await fetchKugou(link.sourceID)
+        case .local: throw APIError.parse("本地文件不是网络歌单，不能导入")
         }
     }
 

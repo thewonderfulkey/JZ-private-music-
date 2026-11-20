@@ -28,6 +28,8 @@ struct JZMusicHelperApp: App {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         // 收藏的文件级去重：收藏那一刻只做元数据级，指纹由后台补（延迟几秒，不和首屏抢网络）
         Task { @MainActor in FavoriteDedupeService.shared.scheduleLaunchPass() }
+        // iCloud 备份开关（默认关）在每次启动时对现有文件补设一次
+        DownloadLocation.applyBackupExclusion(!SettingsStore.shared.iCloudBackup)
     }
 
     var body: some Scene {
@@ -70,6 +72,23 @@ struct JZMusicHelperApp: App {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: library.favoriteNotice)
+            // 下载前发现本地已有同一首：问一句（并存 / 覆盖 / 取消）
+            .confirmationDialog(
+                downloadFlow.duplicatePrompt.map { "本地已有《\($0.song.name)》" } ?? "",
+                isPresented: Binding(
+                    get: { downloadFlow.duplicatePrompt != nil },
+                    set: { if !$0 { downloadFlow.resolveDuplicate(.cancel) } }),
+                titleVisibility: .visible) {
+                Button("仍然下载（两份并存）") { downloadFlow.resolveDuplicate(.keepBoth) }
+                Button("覆盖本地（删旧再下）", role: .destructive) {
+                    downloadFlow.resolveDuplicate(.replace)
+                }
+                Button("取消", role: .cancel) { downloadFlow.resolveDuplicate(.cancel) }
+            } message: {
+                if let local = downloadFlow.duplicatePrompt {
+                    Text("已有：\(local.song.name) · \(local.song.singer)（\(local.quality.displayName) · \(local.sizeText)）")
+                }
+            }
             .preferredColorScheme(settings.appearance.colorScheme)
             .tint(Tokens.Palette.vermilion)
         }

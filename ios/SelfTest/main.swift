@@ -4168,6 +4168,47 @@ do {
     check("pairKey 能区分不同对", FavoriteReview.pairKey(a, b) != FavoriteReview.pairKey(a, base))
 }
 
+section("本地导入：文件名解析 / 基名唯一 / 搜索")
+
+do {
+    let a = ImportRules.parseFileName("01 - 周杰伦 - 晴天.mp3")
+    check("音轨号 + 歌手 - 歌名", a.title == "晴天" && a.artist == "周杰伦" && a.confident,
+          "\(a.artist)|\$a.title")
+    let b = ImportRules.parseFileName("周杰伦 - 晴天.flac")
+    check("歌手 - 歌名", b.title == "晴天" && b.artist == "周杰伦", "\(b.artist)|\(b.title)")
+    let c = ImportRules.parseFileName("晴天.mp3")
+    check("只有歌名时歌手留空（不瞎猜）", c.title == "晴天" && c.artist.isEmpty && !c.confident)
+    let d = ImportRules.parseFileName("2002年的第一场雪.mp3")
+    check("开头的数字不是音轨号", d.title.hasPrefix("2002年的第一场雪"), d.title)
+
+    check("mp3 可导入", ImportRules.isPlayable(extension: "mp3"))
+    check("ape 不可导入（iOS 放不了）", !ImportRules.isPlayable(extension: "ape"))
+
+    check("基名清洗掉斜杠等非法字符", !ImportRules.sanitizeBase("AC/DC: Back").contains("/"))
+    let taken: Set<String> = ["周杰伦 - 晴天"]
+    check("撞基名自动加 (2)",
+          ImportRules.uniqueBaseName("周杰伦 - 晴天", taken: taken) == "周杰伦 - 晴天 (2)")
+    check("不撞就原样",
+          ImportRules.uniqueBaseName("周杰伦 - 夜曲", taken: taken) == "周杰伦 - 夜曲")
+
+    let qing = Song.make(platform: .local, platformID: "imp_1", name: "晴天", singer: "周杰伦",
+                         album: "叶惠美", duration: 269, picURL: nil)
+    check("按歌名搜到", LibrarySearch.rank(song: qing, fileName: "周杰伦 - 晴天.mp3", query: "晴天") >= 2)
+    check("按歌手搜到", LibrarySearch.rank(song: qing, fileName: nil, query: "周杰伦") >= 1)
+    check("按专辑搜到", LibrarySearch.rank(song: qing, fileName: nil, query: "叶惠美") >= 1)
+    check("按文件名搜到", LibrarySearch.rank(song: qing, fileName: "周杰伦 - 晴天.mp3", query: "晴天") >= 1)
+    check("繁简都能搜（後來 → 后来）",
+          LibrarySearch.rank(song: Song.make(platform: .local, platformID: "imp_2", name: "后来",
+                                             singer: "刘若英", album: "", duration: 314, picURL: nil),
+                             fileName: nil, query: "後來") >= 2)
+    check("搜不到返回 0", LibrarySearch.rank(song: qing, fileName: nil, query: "夜曲") == 0)
+    check("精确比包含更靠前",
+          LibrarySearch.rank(song: qing, fileName: nil, query: "晴天")
+          > LibrarySearch.rank(song: Song.make(platform: .local, platformID: "imp_3", name: "晴天娃娃",
+                                               singer: "", album: "", duration: 200, picURL: nil),
+                               fileName: nil, query: "晴天"))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

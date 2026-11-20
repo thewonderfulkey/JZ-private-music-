@@ -70,6 +70,8 @@ final class SettingsStore {
         static let recognizeSeconds = "rec_seconds"
         static let wifiOnlyDownload = "wifi_only"
         static let backgroundDownload = "bg_download"
+        /// iCloud 备份（默认**关**：老板 2026-11-21 定。关掉后重装/换机会丢本地文件）
+        static let iCloudBackup = "icloud_backup"
         static let lyricOffsetPerSong = "lyric_offset_by_song"
         /// 歌词缓存上限（`LyricsCacheRules.key`，LyricsService 直接读同一个键）
         static let lyricsCacheLimit = LyricsCacheRules.key
@@ -104,6 +106,14 @@ final class SettingsStore {
 
     var backgroundDownload: Bool {
         didSet { defaults.set(backgroundDownload, forKey: Key.backgroundDownload) }
+    }
+
+    /// 本地文件是否进 iCloud 备份（默认关）。改完立刻对整个下载目录生效。
+    var iCloudBackup: Bool {
+        didSet {
+            defaults.set(iCloudBackup, forKey: Key.iCloudBackup)
+            DownloadLocation.applyBackupExclusion(!iCloudBackup)
+        }
     }
 
     /// 歌词缓存最多留多少首（默认 200，与 r74 起写死的那个常量一致）。
@@ -211,6 +221,7 @@ final class SettingsStore {
         recognizeSeconds = [12, 15, 20].contains(seconds) ? seconds : 12
         wifiOnlyDownload = d.object(forKey: Key.wifiOnlyDownload) as? Bool ?? true
         backgroundDownload = d.object(forKey: Key.backgroundDownload) as? Bool ?? true
+        iCloudBackup = d.object(forKey: Key.iCloudBackup) as? Bool ?? false
 
         let savedLimit = d.integer(forKey: Key.lyricsCacheLimit)
         lyricsCacheLimit = savedLimit > 0 ? LyricsCacheRules.clamp(savedLimit)

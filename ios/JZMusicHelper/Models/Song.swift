@@ -6,6 +6,8 @@ enum MusicPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
     case qq = "qq"
     case netease = "netease"
     case kugou = "kugou"
+    /// 本地导入的文件（离线资料库）。platformID = 导入条目的稳定 id
+    case local = "local"
 
     var id: String { rawValue }
 
@@ -15,6 +17,7 @@ enum MusicPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         case .qq: return "QQ音乐"
         case .netease: return "网易云音乐"
         case .kugou: return "酷狗音乐"
+        case .local: return "本地文件"
         }
     }
 
@@ -24,6 +27,7 @@ enum MusicPlatform: String, Codable, CaseIterable, Identifiable, Hashable {
         case .qq: return "QQ"
         case .netease: return "网易"
         case .kugou: return "酷狗"
+        case .local: return "本地"
         }
     }
 }

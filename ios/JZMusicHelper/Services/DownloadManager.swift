@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import Foundation
 import UIKit
 import UserNotifications
@@ -823,3 +824,287 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         backgroundCompletionHandlers[identifier] = nil
     }
 }
+
+// MARK: - 本地音乐导入（2026-11-21 老板需求）
+//
+// 老板："批量导入已经下载好的歌曲文件；导入的音乐文件可以根据音乐去找封面、歌词，
+//        下载到对应的文件夹中；专辑等信息要显示无误；导入后异步进行歌词封面专辑匹配。"
+//
+// 设计（与下载完全共用一套目录与基名约定）：
+//   · 音频 → `Download/Music/<歌手 - 歌名>.<ext>`
+//   · 歌词 → `Download/Lyrics/<同基名>.lrc`（由 `startCompanionFill` 后台补）
+//   · 封面 → `Download/Cover/<同基名>.jpg`（内嵌封面先抽出来写一份，保证离线就有图）
+//   · 标签里有的信息一律以标签为准；缺的才用文件名推，绝不瞎填
+//   · 同一个文件（字节 SHA-256 相同）直接跳过；同一首（同一条录音）只留音质更高的一条
+extension DownloadManager {
+
+    /// 一次导入的结果（给 UI 展示，不静默吞失败）
+    struct ImportReport {
+        var added = 0
+        var duplicateFiles = 0
+        var duplicateSongs = 0
+        var unsupported: [String] = []
+        var failed: [String] = []
+        var addedNames: [String] = []
+
+        var summary: String {
+            var parts: [String] = []
+            if added > 0 { parts.append("导入 \(added) 首") }
+            if duplicateFiles > 0 { parts.append("跳过同文件 \(duplicateFiles) 个") }
+            if duplicateSongs > 0 {
+                parts.append("跳过重复歌曲 \(duplicateSongs) 首（已有更好的音质）")
+            }
+            if !unsupported.isEmpty { parts.append("不支持 \(unsupported.count) 个") }
+            if !failed.isEmpty { parts.append("读取失败 \(failed.count) 个") }
+            return parts.isEmpty ? "没有可导入的音频文件" : parts.joined(separator: " · ")
+        }
+
+        var detail: String {
+            var lines: [String] = [summary]
+            if !unsupported.isEmpty {
+                lines.append("不支持的格式（iOS 放不了）：" + unsupported.prefix(6).joined(separator: "、"))
+            }
+            if !failed.isEmpty {
+                lines.append("读取失败：" + failed.prefix(6).joined(separator: "、"))
+            }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    /// 批量导入（文件或文件夹里筛出来的音频 URL）
+    func importAudioFiles(_ urls: [URL]) async -> ImportReport {
+        var report = ImportReport()
+        let musicDir = musicDirectory
+        try? FileManager.default.createDirectory(at: musicDir, withIntermediateDirectories: true)
+
+        // 已占用的基名：既包括记录里的，也包括磁盘上已有的（用户可能手动放进去过）
+        var taken = Set(items.compactMap { $0.fileName.isEmpty ? nil : ($0.fileName as NSString).deletingPathExtension })
+        if let onDisk = try? FileManager.default.contentsOfDirectory(
+            at: musicDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for url in onDisk { taken.insert(url.deletingPathExtension().lastPathComponent) }
+        }
+
+        // 先展开文件夹：文件夹的 security scope 必须**整批处理期间一直开着**，
+        // 否则 defer 一释放，里面的文件就复制不出来了。
+        for picked in urls {
+            let folderScope = picked.startAccessingSecurityScopedResource()
+            defer { if folderScope { picked.stopAccessingSecurityScopedResource() } }
+
+            for url in Self.expandImportTargets(picked) {
+            let ext = url.pathExtension.lowercased()
+            guard ImportRules.isPlayable(extension: ext) else {
+                report.unsupported.append(url.lastPathComponent)
+                continue
+            }
+            guard let meta = await Self.localMetadata(of: url), meta.bytes > 0 else {
+                report.failed.append(url.lastPathComponent)
+                continue
+            }
+
+            // ① 同一个文件（字节级相同）→ 跳过
+            if items.contains(where: { $0.status == .completed && $0.contentHash == meta.hash }) {
+                report.duplicateFiles += 1
+                continue
+            }
+
+            let kbps: Int64 = meta.duration > 0
+                ? Int64((Double(meta.bytes) * 8 / meta.duration / 1000).rounded()) : 0
+            let container = (ext == "m4a" || ext == "m4b" || ext == "aac") ? "m4a" : ext
+            let quality = QualityFacts.quality(container: container, kbps: kbps)
+
+            let incoming = Song.make(platform: .local,
+                                     platformID: "imp_" + String(meta.hash.prefix(12)),
+                                     name: meta.title, singer: meta.artist, album: meta.album,
+                                     duration: meta.duration, picURL: nil)
+
+            // ② 同一首（同一条录音）→ 留音质更高的一条；已有更好/相同就跳过
+            if let existing = items.first(where: {
+                $0.status == .completed && FavoriteRules.isSameRecording($0.song, incoming)
+            }) {
+                if Self.kbps(of: existing) >= kbps {
+                    report.duplicateSongs += 1
+                    continue
+                }
+                // 新来的更好：删掉旧的（含它的旁车），再继续导入
+                remove(itemID: existing.id, deleteFile: true)
+            }
+
+            // ③ 落盘（基名必须唯一：旁车靠基名对应，撞了会串歌）
+            let wantedBase: String = {
+                if !meta.artist.isEmpty && !meta.title.isEmpty {
+                    return "\(meta.artist) - \(meta.title)"
+                }
+                if !meta.title.isEmpty { return meta.title }
+                return ImportRules.parseFileName(url.lastPathComponent).title
+            }()
+            let base = ImportRules.uniqueBaseName(wantedBase, taken: taken)
+            let dest = musicDir.appendingPathComponent(base).appendingPathExtension(ext)
+            do {
+                try FileManager.default.copyItem(at: url, to: dest)
+            } catch {
+                report.failed.append(url.lastPathComponent)
+                continue
+            }
+            taken.insert(base)
+
+            let song = Song.make(platform: .local,
+                                 platformID: "imp_" + String(meta.hash.prefix(12)),
+                                 name: meta.title, singer: meta.artist, album: meta.album,
+                                 duration: meta.duration, picURL: nil)
+
+            // 内嵌封面先抽出来写成旁车：**离线第一眼就有图**，不用等联网匹配
+            if let artwork = meta.artwork, !artwork.isEmpty {
+                _ = DownloadCompanion.writeSidecars(audio: dest, lyricsText: nil, coverData: artwork,
+                                                    lyricsDirectory: lyricsDirectory,
+                                                    coverDirectory: coverDirectory)
+            }
+
+            let id = UUID()
+            let item = DownloadItem(id: id, song: song, streamURL: dest.absoluteString,
+                                    backendName: "本地导入", quality: quality,
+                                    fileName: dest.lastPathComponent, localPath: dest.path,
+                                    status: .completed, progress: 1,
+                                    receivedBytes: meta.bytes, totalBytes: meta.bytes,
+                                    expectedBytes: meta.bytes,
+                                    createdAt: Date(), finishedAt: Date(),
+                                    actualNote: "导入 · \(kbps) kbps",
+                                    companionsNote: meta.artwork != nil ? "封面已存旁车" : nil,
+                                    origin: "import", contentHash: meta.hash)
+            appendOrUpdate(item)
+            report.added += 1
+            report.addedNames.append(song.name)
+
+            // ④ 后台补齐：歌词 / 封面（联网匹配）/ 内嵌（mp3、m4a）
+            startCompanionFill(itemID: id, song: song, audioURL: dest)
+            }
+        }
+        return report
+    }
+
+    /// 把"用户选中的一个 URL"展开成一批音频文件（文件夹递归，最多 5000 个，防止误选根目录）
+    static func expandImportTargets(_ picked: URL) -> [URL] {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: picked.path, isDirectory: &isDir) else { return [] }
+        if !isDir.boolValue { return [picked] }
+        guard let en = FileManager.default.enumerator(
+            at: picked, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var out: [URL] = []
+        while let f = en.nextObject() as? URL {
+            if out.count >= 5000 { break }
+            if ImportRules.isPlayable(extension: f.pathExtension) { out.append(f) }
+        }
+        return out
+    }
+
+    /// 本机是否已有"同一首"的本地文件（下载前的询问用）
+    func localDuplicate(of song: Song) -> DownloadItem? {
+        items.first { $0.status == .completed && FavoriteRules.isSameRecording($0.song, song) }
+    }
+
+    /// 下载列表去重：同一首只留**音质更高**的一条（老板 2026-11-21 拍板）
+    @discardableResult
+    func dedupeSameRecording() -> (merged: Int, freedBytes: Int64) {
+        var merged = 0
+        var freed: Int64 = 0
+        var kept: [DownloadItem] = []
+        for item in items where item.status == .completed {
+            if let hitIndex = kept.firstIndex(where: { FavoriteRules.isSameRecording($0.song, item.song) }) {
+                let hit = kept[hitIndex]
+                let keepExisting = Self.kbps(of: hit) >= Self.kbps(of: item)
+                let loser = keepExisting ? item : hit
+                let winner = keepExisting ? hit : item
+                freed += loser.totalBytes
+                remove(itemID: loser.id, deleteFile: true)
+                if !keepExisting {
+                    kept[hitIndex] = winner
+                }
+                merged += 1
+            } else {
+                kept.append(item)
+            }
+        }
+        return (merged, freed)
+    }
+
+    // MARK: - 内部
+
+    static func kbps(of item: DownloadItem) -> Int64 {
+        let dur = item.song.duration
+        guard dur > 0, item.totalBytes > 0 else { return 0 }
+        return Int64((Double(item.totalBytes) * 8 / dur / 1000).rounded())
+    }
+
+    /// 读本地音频的标签与时长（异步；失败返回 nil）
+    private static func localMetadata(of url: URL) async
+    -> (title: String, artist: String, album: String, duration: TimeInterval,
+        artwork: Data?, hash: String, bytes: Int64)? {
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        guard let hash = sha256Hex(of: url) else { return nil }
+
+        let asset = AVURLAsset(url: url)
+        let duration = (try? await asset.load(.duration))?.seconds ?? 0
+        let common = (try? await asset.load(.commonMetadata)) ?? []
+
+        var title = ""
+        var artist = ""
+        var album = ""
+        var artwork: Data?
+
+        for item in common {
+            guard let key = item.commonKey else { continue }
+            switch key {
+            case .commonKeyTitle:
+                if let v = try? await item.load(.stringValue) { title = repairMojibake(v) }
+            case .commonKeyArtist:
+                if let v = try? await item.load(.stringValue) { artist = repairMojibake(v) }
+            case .commonKeyAlbumName:
+                if let v = try? await item.load(.stringValue) { album = repairMojibake(v) }
+            case .commonKeyArtwork:
+                if let data = try? await item.load(.dataValue) { artwork = data }
+            default:
+                break
+            }
+        }
+
+        // 标签缺失 → 用文件名兜底（并标记为"推测"，UI 不显示成确定信息）
+        if title.isEmpty || artist.isEmpty {
+            let parsed = ImportRules.parseFileName(url.lastPathComponent)
+            if title.isEmpty { title = parsed.title }
+            if artist.isEmpty { artist = parsed.artist }
+        }
+        if title.isEmpty { title = url.deletingPathExtension().lastPathComponent }
+        if duration <= 0 { return nil }
+
+        return (title, artist, album, duration, artwork, hash, bytes)
+    }
+
+    /// 文件 SHA-256（分块读，几百 MB 也不会把内存吃满）
+    private static func sha256Hex(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let chunk = (try? handle.read(upToCount: 1 << 20)) ?? nil
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 修 GBK 乱码：ID3v2.3 里中文常被标成 ISO-8859-1，AVFoundation 解出来是 "ÖÜ½ÜÂ×" 这种。
+    /// 只在这两种情况动手：① 原串里没有 CJK；② 按 latin1 取字节后用 GB18030 能解出 CJK。
+    private static func repairMojibake(_ s: String) -> String {
+        guard !s.isEmpty else { return s }
+        let hasCJK = s.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+        if hasCJK { return s }
+        guard let latin1 = s.data(using: .isoLatin1), !latin1.isEmpty else { return s }
+        let gb = CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+        guard let fixed = String(data: latin1, encoding: String.Encoding(rawValue: gb)),
+              fixed.unicodeScalars.contains(where: { (0x4E00...0x9FFF).contains($0.value) })
+        else { return s }
+        return fixed
+    }
+}
+

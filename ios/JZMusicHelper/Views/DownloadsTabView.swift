@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - 下载（第四十轮补丁 4）
 //
@@ -22,15 +23,30 @@ struct DownloadsTabView: View {
 
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
+    /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
+    @State private var query = ""
+    @State private var showImporter = false
+    @State private var importReport: DownloadManager.ImportReport?
+    @State private var showDedupeConfirm = false
+    @State private var dedupeResult: String?
+
+    private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func hit(_ item: DownloadItem) -> Bool {
+        queryKey.isEmpty
+            || LibrarySearch.matches(song: item.song, fileName: item.fileName, query: queryKey)
+    }
 
     private var ongoing: [DownloadItem] {
-        downloads.items.filter { $0.status == .downloading || $0.status == .pending }
+        downloads.items.filter {
+            ($0.status == .downloading || $0.status == .pending) && hit($0)
+        }
     }
     private var finished: [DownloadItem] {
-        downloads.items.filter { $0.status == .completed }
+        downloads.items.filter { $0.status == .completed && hit($0) }
     }
     private var failed: [DownloadItem] {
-        downloads.items.filter { $0.status == .failed || $0.status == .cancelled }
+        downloads.items.filter { ($0.status == .failed || $0.status == .cancelled) && hit($0) }
     }
 
     private var totalBytes: Int64 {
@@ -46,6 +62,38 @@ struct DownloadsTabView: View {
             } else {
                 list
             }
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.audio, .folder],
+                      allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result, !urls.isEmpty else { return }
+            Task { @MainActor in
+                importReport = await downloads.importAudioFiles(urls)
+            }
+        }
+        .alert("导入完成", isPresented: Binding(
+            get: { importReport != nil },
+            set: { if !$0 { importReport = nil } })) {
+            Button("好") { importReport = nil }
+        } message: {
+            Text(importReport?.detail ?? "")
+        }
+        .confirmationDialog("把同一首歌的多条合成一条？（只留音质更好的）",
+                            isPresented: $showDedupeConfirm, titleVisibility: .visible) {
+            Button("整理", role: .destructive) {
+                let r = downloads.dedupeSameRecording()
+                dedupeResult = r.merged == 0
+                    ? "没有需要整理的重复"
+                    : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .alert("整理完成", isPresented: Binding(
+            get: { dedupeResult != nil },
+            set: { if !$0 { dedupeResult = nil } })) {
+            Button("好") { dedupeResult = nil }
+        } message: {
+            Text(dedupeResult ?? "")
         }
     }
 
@@ -136,7 +184,25 @@ struct DownloadsTabView: View {
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
             .locateToast(locator.toast)
+            .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button {
+                            showImporter = true
+                        } label: {
+                            Label("导入本地音乐…", systemImage: "square.and.arrow.down")
+                        }
+                        Button {
+                            showDedupeConfirm = true
+                        } label: {
+                            Label("整理重复（同曲留最高音质）", systemImage: "rectangle.stack.badge.minus")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("导入与整理")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     LocateNowPlayingButton {
                         // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
@@ -259,7 +325,7 @@ struct DownloadsTabView: View {
                             library.toggleFavorite(item.song)
                         }
                     },
-                    subtitle: "\(item.quality.displayName) · \(item.sizeText)")
+                    subtitle: "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)")
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)

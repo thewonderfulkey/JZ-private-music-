@@ -98,7 +98,41 @@ final class DownloadFlow {
 
     // MARK: 入口
 
+    /// 本地已有同一首时弹出的询问（老板 2026-11-21：下载前先问一句）
+    private(set) var duplicatePrompt: DownloadItem?
+    private var pendingAfterPrompt: (song: Song, want: QualityLevel)?
+
+    enum DuplicateChoice { case keepBoth, replace, cancel }
+
     func start(song: Song, want: QualityLevel) {
+        // 同一条录音已有本地文件 → 先问，不要默默下第二份、也不要默默跳过
+        if let local = DownloadManager.shared.localDuplicate(of: song) {
+            duplicatePrompt = local
+            pendingAfterPrompt = (song, want)
+            return
+        }
+        begin(song: song, want: want)
+    }
+
+    /// 询问结果：并存 / 覆盖（删旧再下）/ 取消
+    func resolveDuplicate(_ choice: DuplicateChoice) {
+        let local = duplicatePrompt
+        let pending = pendingAfterPrompt
+        duplicatePrompt = nil
+        pendingAfterPrompt = nil
+        guard let pending else { return }
+        switch choice {
+        case .cancel:
+            return
+        case .replace:
+            if let local { DownloadManager.shared.remove(itemID: local.id, deleteFile: true) }
+            begin(song: pending.song, want: pending.want)
+        case .keepBoth:
+            begin(song: pending.song, want: pending.want)
+        }
+    }
+
+    private func begin(song: Song, want: QualityLevel) {
         resolveTask?.cancel()
         self.song = song
         self.want = want

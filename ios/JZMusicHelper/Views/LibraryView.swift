@@ -24,21 +24,36 @@ struct FavoritesView: View {
     @SceneStorage("favorites.scroll.anchor") private var savedAnchor: String = ""
     /// 「整理重复」入口（灰区才出现，不主动弹）
     @State private var showDuplicates = false
+    /// 收藏页本地搜索（在去重后的列表上过滤）
+    @State private var query = ""
+
+    /// 搜索后的收藏（空查询 = 全部；有查询按命中强度排序，同分保持原顺序）
+    private var filteredFavorites: [Song] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return library.favorites }
+        return library.favorites.enumerated()
+            .compactMap { index, song -> (Int, Song, Int)? in
+                let rank = LibrarySearch.rank(song: song, fileName: nil, query: q)
+                return rank > 0 ? (index, song, rank) : nil
+            }
+            .sorted { a, b in a.2 == b.2 ? a.0 < b.0 : a.2 > b.2 }
+            .map(\.1)
+    }
 
     var body: some View {
         Group {
-            if library.favorites.isEmpty {
+            if filteredFavorites.isEmpty {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             header
-                            ForEach(Array(library.favorites.enumerated()), id: \.element.id) { index, song in
+                            ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
                                 Button {
                                     // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
                                     RowTap.afterHighlight {
-                                        player.play(queue: library.favorites, startAt: index)
+                                        player.play(queue: filteredFavorites, startAt: index)
                                         library.recordPlayed(song)
                                         router.showPlayer = true
                                     }
@@ -101,6 +116,7 @@ struct FavoritesView: View {
             }
         }
         .navigationTitle("我的收藏")
+        .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑")
         .onAppear { library.refreshDuplicateGroups() }
         .sheet(isPresented: $showDuplicates) { DuplicateReviewSheet() }
         // 第四轮（老板反馈 ③）：设置已经单独占一个 Tab，这里的齿轮撤掉，只留一个入口。
@@ -198,7 +214,9 @@ struct FavoritesView: View {
                 .foregroundStyle(Tokens.Palette.vermilion.opacity(0.7))
             Text("还没有收藏的歌")
                 .font(.headline)
-            Text("在播放页点 ❤，或在搜索结果里左滑收藏")
+            Text(query.isEmpty
+                 ? "在播放页点 ❤，或在搜索结果里左滑收藏"
+                 : "这个收藏里没有匹配「\(query)」的歌")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

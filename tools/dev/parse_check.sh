@@ -8,6 +8,13 @@ FILES=(
   ios/JZMusicHelper/JZMusicHelperApp.swift
   ios/JZMusicHelper/Views/LibraryView.swift
   ios/JZMusicHelper/Views/Components.swift
+  ios/JZMusicHelper/Services/DownloadManager.swift
+  ios/JZMusicHelper/Services/DownloadFlow.swift
+  ios/JZMusicHelper/Services/DownloadLocation.swift
+  ios/JZMusicHelper/Services/CoverImageCache.swift
+  ios/JZMusicHelper/Models/SettingsStore.swift
+  ios/JZMusicHelper/Views/DownloadsTabView.swift
+  ios/JZMusicHelper/Views/SettingsView.swift
   ios/SelfTest/main.swift
 )
 fail=0

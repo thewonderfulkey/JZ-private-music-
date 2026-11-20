@@ -420,3 +420,132 @@ enum FavoriteReview {
         return ids.joined(separator: "|")
     }
 }
+
+// MARK: - 本地导入的纯逻辑（2026-11-21 老板需求：批量导入已下载的歌曲文件）
+//
+// 导入和下载共用同一套目录（Music / Lyrics / Cover）与**基名**约定，所以这里只负责三件事：
+//   · 哪些扩展名能播（iOS AVFoundation 能吃哪些）
+//   · 文件名 → (歌手, 歌名) 的兜底解析（标签缺失时才用）
+//   · 基名清洗与去重（撞基名会让歌词/封面串到别的歌上，这是最危险的静默错误）
+enum ImportRules {
+
+    /// AVFoundation 能播的（其余导入了也放不出来，导入时直接标"不支持"）
+    static let playableExtensions: Set<String> = [
+        "mp3", "m4a", "m4b", "aac", "flac", "wav", "aiff", "aif", "caf", "alac"
+    ]
+
+    /// 常见但 iOS 放不了的（导入时给明确提示，别让人导完才发现）
+    static let knownUnsupported: Set<String> = [
+        "ape", "wma", "dsf", "dff", "ogg", "opus", "wv", "tta", "tak"
+    ]
+
+    static func isPlayable(extension ext: String) -> Bool {
+        playableExtensions.contains(ext.lowercased())
+    }
+
+    /// 去掉音轨号前缀：`01 - `、`01.`、`01_`、`01、`
+    static func strippingTrackNumber(_ s: String) -> String {
+        var out = s
+        var i = out.startIndex
+        var digits = 0
+        while i < out.endIndex, out[i].isNumber { digits += 1; i = out.index(after: i) }
+        guard digits > 0, digits <= 3, i < out.endIndex else { return s }
+        // 音轨号后面必须紧跟分隔符，否则 "2002年的第一场雪" 会被当成音轨号
+        var j = i
+        var seps = 0
+        while j < out.endIndex, " -_.、．·".contains(out[j]) { seps += 1; j = out.index(after: j) }
+        guard seps >= 1 else { return s }
+        out = String(out[j...])
+        return out.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// 文件名 → (歌名, 歌手, 是否可靠)
+    ///
+    /// 约定俗成的两种：`歌手 - 歌名`（中文合集最常见）与 `01 - 歌手 - 歌名`。
+    /// 单段文件名只当歌名，歌手留空（等联网匹配/手动纠正）——**绝不瞎猜**。
+    static func parseFileName(_ rawName: String) -> (title: String, artist: String, confident: Bool) {
+        var s = (rawName as NSString).deletingPathExtension
+        s = strippingTrackNumber(s)
+        s = s.replacingOccurrences(of: "（", with: "(").replacingOccurrences(of: "）", with: ")")
+        let separators = [" - ", " – ", " — ", " _ ", "－", "—", "–"]
+        for sep in separators {
+            if s.contains(sep) {
+                let parts = s.components(separatedBy: sep)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                if parts.count >= 2 {
+                    // 两段：歌手 - 歌名（最常见）；三段以上：取第 2 段当歌手，其余合并当歌名
+                    let artist = parts[0]
+                    let title = parts.dropFirst().joined(separator: " ")
+                    return (title, artist, true)
+                }
+            }
+        }
+        return (s.trimmingCharacters(in: .whitespaces), "", false)
+    }
+
+    /// 基名清洗：去掉路径分隔与非法字符，限长（太长会让 Files 里很难看，也可能撞文件系统上限）
+    static func sanitizeBase(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for bad in ["/", ":", "\0", "\n", "\r", "\\"] {
+            s = s.replacingOccurrences(of: bad, with: "-")
+        }
+        while s.contains("  ") { s = s.replacingOccurrences(of: "  ", with: " ") }
+        if s.count > 90 { s = String(s.prefix(90)).trimmingCharacters(in: .whitespaces) }
+        return s.isEmpty ? "未命名" : s
+    }
+
+    /// 基名去重：撞了就加 ` (2)`、` (3)`……
+    ///
+    /// **为什么必须唯一**：歌词/封面是靠"音频基名"推导的（`DownloadCompanion`），
+    /// 两个文件同基名 → 后写的旁车会把前一首的词图顶掉，而且完全静默。
+    static func uniqueBaseName(_ wanted: String, taken: Set<String>) -> String {
+        let base = sanitizeBase(wanted)
+        guard taken.contains(base) else { return base }
+        var n = 2
+        while n < 1000 {
+            let candidate = "\(base) (\(n))"
+            if !taken.contains(candidate) { return candidate }
+            n += 1
+        }
+        return "\(base) (\(UUID().uuidString.prefix(6)))"
+    }
+}
+
+// MARK: - tab 内本地搜索（下载 / 收藏）
+//
+// 纯本地、不联网：老板要"根据每个 tab 中的内容返回结果"。
+// 匹配字段：歌名、歌手、专辑，以及**文件名**（导入的文件常是 "01 - 歌手 - 歌名"）。
+// 归一化复用收藏那套（繁转简 + 去标点/空白），所以「後來」能搜出「后来」。
+enum LibrarySearch {
+
+    private static func key(_ s: String) -> String {
+        FavoriteRules.titleKey(s)
+    }
+
+    /// 是否命中（空查询由调用方当作"全部"，这里返回 false）
+    static func matches(song: Song, fileName: String?, query: String) -> Bool {
+        rank(song: song, fileName: fileName, query: query) > 0
+    }
+
+    /// 命中强度：0 = 不命中；数字越大越靠前（精确 > 前缀 > 包含 > 只在歌手/专辑/文件名里出现）
+    static func rank(song: Song, fileName: String?, query: String) -> Int {
+        let q = key(query)
+        guard !q.isEmpty else { return 0 }
+
+        let title = key(song.name)
+        if title == q { return 4 }
+        if title.hasPrefix(q) { return 3 }
+        if title.contains(q) { return 2 }
+
+        let singer = key(song.singer)
+        let album = key(song.album)
+        if singer.contains(q) || album.contains(q) { return 1 }
+
+        if let fileName {
+            let base = key((fileName as NSString).deletingPathExtension)
+            if base.contains(q) { return 1 }
+        }
+        return 0
+    }
+}

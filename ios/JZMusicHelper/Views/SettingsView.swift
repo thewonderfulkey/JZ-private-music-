@@ -63,6 +63,16 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // 老板 2026-11-21：iCloud 备份默认关（几百首几 GB 不该占他的 iCloud）
+            Section("存储") {
+                Toggle("iCloud 备份", isOn: $settings.iCloudBackup)
+                Text(settings.iCloudBackup
+                     ? "已开启：下载与导入的音乐会随 iCloud 备份，换机/重装能恢复，但会占用 iCloud 空间。"
+                     : "已关闭（默认）：不占 iCloud、不拖慢备份；**重装 App 或换机会丢本地文件**（在线收藏和歌单不受影响）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             // 导入歌单（老板 2026-11-19）：入口只放设置页。导入过以后发现页才会出现「我的歌单」模块，
             // 没导入时发现页一个像素都不多。歌单整份落盘，之后不再联网。
             Section("歌单") {

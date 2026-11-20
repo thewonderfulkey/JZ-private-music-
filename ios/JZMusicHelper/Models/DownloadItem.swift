@@ -63,6 +63,11 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     /// 下载完成后的异步补料会回填它，下载列表据此能看出"词和图到底有没有跟着歌走"。
     /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
     var companionsNote: String?
+    /// 来源：nil/"download" = 联网下载；"import" = 用户导入的本地文件。
+    /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
+    var origin: String?
+    /// 导入文件的 SHA-256（同文件判重用；下载记录暂时为 nil）
+    var contentHash: String?
 
     init(id: UUID = UUID(),
          song: Song,
@@ -80,7 +85,9 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          finishedAt: Date? = nil,
          errorMessage: String? = nil,
          actualNote: String? = nil,
-         companionsNote: String? = nil) {
+         companionsNote: String? = nil,
+         origin: String? = nil,
+         contentHash: String? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -98,6 +105,8 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.errorMessage = errorMessage
         self.actualNote = actualNote
         self.companionsNote = companionsNote
+        self.origin = origin
+        self.contentHash = contentHash
     }
 
     var progressText: String {

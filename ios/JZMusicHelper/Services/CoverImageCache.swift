@@ -47,6 +47,15 @@ final class CoverImageCache: @unchecked Sendable {
         cache.object(forKey: url as NSURL)
     }
 
+    /// 本地文件封面（`Download/Cover/<基名>.jpg`）：已下载/导入的歌离线也要有图。
+    /// 走同一套内存缓存，key 用文件 URL，互不干扰。
+    func image(forFile url: URL) async -> UIImage? {
+        if let hit = cached(url) { return hit }
+        guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
+        store(img, for: url)
+        return img
+    }
+
     /// 取图：内存 → 磁盘 → 网络（同一 URL 并发只下一次）
     func image(for url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
