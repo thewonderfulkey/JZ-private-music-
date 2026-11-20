@@ -577,6 +577,49 @@ do {
     check("高品档优先「按 ID 直连」的后端", pickedHigh?.url == "b", "picked=\(pickedHigh?.url ?? "nil")")
 }
 
+// MARK: - 7b 落月 QQ（机会性真 320k）：档位映射 / 加密包闸门 / 信封解析
+
+section("落月 QQ 适配器")
+
+do {
+    // 档位码：只用 6/8/10，绝不落到 11/13/14/16（hires / atmos / master）
+    check("标准档 → quality 6", LuoyueQQAdapter.vkeysQuality(.standard) == 6)
+    check("高品档 → quality 8", LuoyueQQAdapter.vkeysQuality(.high) == 8)
+    check("无损档 → quality 10", LuoyueQQAdapter.vkeysQuality(.lossless) == 10)
+
+    // 加密包闸门：实测《大鱼》320k 回的就是 .mgg（O8M 前缀），HTTP 200 + 11.7MB 但放不出声
+    check("拦 .mgg 加密包",
+          LuoyueQQAdapter.isEncryptedQQ(
+            "http://wx.music.tc.qq.com/O8M0003ae8GI3mQimV.mgg?guid=yibaihotapi&vkey=x"))
+    check("拦 O4M/O6M 加密前缀",
+          LuoyueQQAdapter.isEncryptedQQ("http://dl.stream.qqmusic.qq.com/O4M000abc.mp3?vkey=x"))
+    check("正常 flac 直链不拦",
+          !LuoyueQQAdapter.isEncryptedQQ(
+            "http://ws.stream.qqmusic.qq.com/F000003Qui1q2u1Zho.flac?guid=0&vkey=x"))
+    check("正常 320k mp3 直链不拦",
+          !LuoyueQQAdapter.isEncryptedQQ(
+            "http://ws.stream.qqmusic.qq.com/M800003Qui1q2u1Zho.mp3?guid=0&vkey=x"))
+
+    // 信封解析：它的失败**也是 HTTP 200**，只靠状态码会把"账号被风控"当成成功
+    let okEnvelope: [String: Any] = ["code": 200, "data": ["url": "https://a/b.mp3"]]
+    check("code=200 取 data.url", (try? LuoyueQQAdapter.parse(okEnvelope)) == "https://a/b.mp3")
+
+    let riskControlled: [String: Any] = [
+        "code": 110001, "message": "cookie异常：账号被风控无法获取", "data": NSNull()
+    ]
+    check("被风控（200 但 code=110001）必须抛错",
+          (try? LuoyueQQAdapter.parse(riskControlled)) == nil)
+
+    let serverErr: [String: Any] = ["code": 503, "message": "系统运行错误！", "data": [Any]()]
+    check("code=503 必须抛错", (try? LuoyueQQAdapter.parse(serverErr)) == nil)
+
+    let noUrl: [String: Any] = ["code": 200, "data": [String: Any]()]
+    check("code=200 但没 url 必须抛错", (try? LuoyueQQAdapter.parse(noUrl)) == nil)
+
+    let dataString: [String: Any] = ["code": 200, "data": "https://a/c.mp3"]
+    check("data 直接是字符串也认", (try? LuoyueQQAdapter.parse(dataString)) == "https://a/c.mp3")
+}
+
 // MARK: - 8 目标档判定
 
 section("DownloadResolver.isExact")

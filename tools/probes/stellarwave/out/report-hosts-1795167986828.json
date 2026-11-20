@@ -1,0 +1,372 @@
+{
+  "source": "C:\\Users\\17948\\xwechat_files\\wxid_bx89f9gkjtbc22_26bf\\temp\\RWTemp\\2026-11\\9e20f478899dc29eb19741386f9343c8\\stellarwave音源（推荐）.js",
+  "at": "2026-11-20T09:44:46.877Z",
+  "hosts": [
+    {
+      "host": "103.79.184.97",
+      "lines": [
+        281,
+        1309
+      ],
+      "samples": [
+        "https://103.79.184.97",
+        "https://103.79.184.97/api/music/url?source=kg&songId="
+      ],
+      "status": 200,
+      "ms": 4666
+    },
+    {
+      "host": "106.55.0.102",
+      "lines": [
+        930
+      ],
+      "samples": [
+        "http://106.55.0.102/baimusic/qqhoturl.php"
+      ],
+      "status": 200,
+      "ms": 1137
+    },
+    {
+      "host": "175.27.166.236:8928",
+      "lines": [
+        1167
+      ],
+      "samples": [
+        "http://175.27.166.236:8928/kwstream?id="
+      ],
+      "status": 0,
+      "ms": 1681,
+      "err": "EPROTO"
+    },
+    {
+      "host": "a.aa.cab",
+      "lines": [
+        998
+      ],
+      "samples": [
+        "https://a.aa.cab/qq.music?msg="
+      ],
+      "status": 0,
+      "ms": 1237,
+      "err": "ECONNRESET"
+    },
+    {
+      "host": "api.317ak.cn",
+      "lines": [
+        1026
+      ],
+      "samples": [
+        "https://api.317ak.cn/api/yinyue/qqyinyue?ckey=ZK76QJCIH5PPICJOOXUH&i="
+      ],
+      "status": 200,
+      "ms": 1905
+    },
+    {
+      "host": "api.canxiang.cn",
+      "lines": [
+        763
+      ],
+      "samples": [
+        "https://api.canxiang.cn/api/wyymusic?"
+      ],
+      "status": 0,
+      "ms": 10977,
+      "err": "请求超时 10000ms"
+    },
+    {
+      "host": "api.cenguigui.cn",
+      "lines": [
+        1110
+      ],
+      "samples": [
+        "https://api.cenguigui.cn/api/netease/music_v1.php?id="
+      ],
+      "status": 521,
+      "ms": 3042
+    },
+    {
+      "host": "api.vkeys.cn",
+      "lines": [
+        874,
+        886,
+        1014
+      ],
+      "samples": [
+        "https://api.vkeys.cn/v2/music/tencent/geturl?mid=",
+        "https://api.vkeys.cn/v2/music/tencent/geturl?mid=$"
+      ],
+      "status": 200,
+      "ms": 1502
+    },
+    {
+      "host": "api.xinghai.com",
+      "lines": [
+        781
+      ],
+      "samples": [
+        "https://api.xinghai.com/lx/api/?source="
+      ],
+      "status": 0,
+      "ms": 10013,
+      "err": "请求超时 10000ms"
+    },
+    {
+      "host": "api.ygking.cn",
+      "lines": [
+        743
+      ],
+      "samples": [
+        "https://api.ygking.cn/api/song/url?mid="
+      ],
+      "status": 0,
+      "ms": 391,
+      "err": "ENOTFOUND"
+    },
+    {
+      "host": "api.yunmge.com",
+      "lines": [
+        797
+      ],
+      "samples": [
+        "https://api.yunmge.com/kuwo?key=yunmge_key&token=yunmge_token&id="
+      ],
+      "status": 200,
+      "ms": 2110
+    },
+    {
+      "host": "app.c.nf.migu.cn",
+      "lines": [
+        1423
+      ],
+      "samples": [
+        "https://app.c.nf.migu.cn/MIGUM2.0/strategy/listen-url/v2.2?copyrightId=",
+        "https://app.c.nf.migu.cn/"
+      ],
+      "status": 200,
+      "ms": 633
+    },
+    {
+      "host": "c.wwwweb.top",
+      "lines": [
+        1092,
+        1206
+      ],
+      "samples": [
+        "https://c.wwwweb.top/music/url",
+        "https://c.wwwweb.top/music/url"
+      ],
+      "status": 404,
+      "ms": 2501
+    },
+    {
+      "host": "ffapi.cn",
+      "lines": [
+        854
+      ],
+      "samples": [
+        "https://ffapi.cn/int/v2/songurl?url="
+      ],
+      "status": 0,
+      "ms": 3236,
+      "err": "ECONNREFUSED"
+    },
+    {
+      "host": "interface3.music.163.com",
+      "lines": [
+        1064
+      ],
+      "samples": [
+        "https://interface3.music.163.com/eapi/song/enhance/player/url/v1"
+      ],
+      "status": 200,
+      "ms": 1753
+    },
+    {
+      "host": "isure.stream.qqmusic.qq.com",
+      "lines": [
+        976
+      ],
+      "samples": [
+        "https://isure.stream.qqmusic.qq.com/"
+      ],
+      "status": 403,
+      "ms": 1679
+    },
+    {
+      "host": "mcp.nianxinxz.com",
+      "lines": [
+        819
+      ],
+      "samples": [
+        "https://mcp.nianxinxz.com/kgqq/kg.php?id="
+      ],
+      "status": 520,
+      "ms": 5424
+    },
+    {
+      "host": "mobi.kuwo.cn",
+      "lines": [
+        1233
+      ],
+      "samples": [
+        "https://mobi.kuwo.cn/mobi.s?f=web&rid="
+      ],
+      "status": 404,
+      "ms": 1455
+    },
+    {
+      "host": "music.163.com",
+      "lines": [
+        849,
+        1076
+      ],
+      "samples": [
+        "https://music.163.com/",
+        "https://music.163.com/song?id="
+      ],
+      "status": 200,
+      "ms": 1725
+    },
+    {
+      "host": "music.migu.cn",
+      "lines": [
+        852,
+        1410
+      ],
+      "samples": [
+        "https://music.migu.cn/v3/api/music/audioPlayer/getPlayInfo?copyrightId=",
+        "https://music.migu.cn/"
+      ],
+      "status": 200,
+      "ms": 625
+    },
+    {
+      "host": "music.nxinxz.com",
+      "lines": [
+        1035,
+        1129,
+        1257,
+        1374
+      ],
+      "samples": [
+        "https://music.nxinxz.com/kgqq/tx.php?id=",
+        "http://music.nxinxz.com/wy.php?id="
+      ],
+      "status": 200,
+      "ms": 975
+    },
+    {
+      "host": "musicserver.haitangw.cc",
+      "lines": [
+        600,
+        1188,
+        1285,
+        1352
+      ],
+      "samples": [
+        "https://musicserver.haitangw.cc/v1/music/resolve-url",
+        "https://musicserver.haitangw.cc/v1/"
+      ],
+      "status": 404,
+      "ms": 4478
+    },
+    {
+      "host": "nmobi.kuwo.cn",
+      "lines": [
+        1246
+      ],
+      "samples": [
+        "https://nmobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayerhd_ar_4.3.0.8_tianbao_T1A_qirui.apk&type=convert_url_with_sign&rid="
+      ],
+      "status": 404,
+      "ms": 1439
+    },
+    {
+      "host": "qt.haitangw.net",
+      "lines": [
+        601
+      ],
+      "samples": [
+        "https://qt.haitangw.net/v1/"
+      ],
+      "status": 404,
+      "ms": 1692
+    },
+    {
+      "host": "u.y.qq.com",
+      "lines": [
+        969
+      ],
+      "samples": [
+        "https://u.y.qq.com/cgi-bin/musicu.fcg"
+      ],
+      "status": 404,
+      "ms": 581
+    },
+    {
+      "host": "www.kugou.com",
+      "lines": [
+        851,
+        1363
+      ],
+      "samples": [
+        "https://www.kugou.com/",
+        "https://www.kugou.com/song/#hash="
+      ],
+      "status": 200,
+      "ms": 1552
+    },
+    {
+      "host": "www.kuwo.cn",
+      "lines": [
+        850
+      ],
+      "samples": [
+        "https://www.kuwo.cn/play_detail/"
+      ],
+      "status": 500,
+      "ms": 1407
+    },
+    {
+      "host": "wwwapi.kugou.com",
+      "lines": [
+        1363
+      ],
+      "samples": [
+        "https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash="
+      ],
+      "status": 200,
+      "ms": 1693
+    },
+    {
+      "host": "y.qq.com",
+      "lines": [
+        848,
+        967
+      ],
+      "samples": [
+        "https://y.qq.com/",
+        "https://y.qq.com/n/ryqq/songDetail/"
+      ],
+      "status": 200,
+      "ms": 1878
+    },
+    {
+      "host": "yy.zddyr.top",
+      "lines": [
+        985,
+        1120,
+        1174,
+        1327,
+        1341,
+        1400
+      ],
+      "samples": [
+        "https://yy.zddyr.top/lx/api/?source=qq&songmid=",
+        "https://yy.zddyr.top/lx/api/?source=netease&songmid="
+      ],
+      "status": 200,
+      "ms": 992
+    }
+  ]
+}

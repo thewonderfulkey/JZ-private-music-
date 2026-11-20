@@ -1,0 +1,291 @@
+{
+  "api.ygking.cn": {
+    "lines": [
+      743
+    ],
+    "samples": [
+      "https://api.ygking.cn/api/song/url?mid="
+    ]
+  },
+  "api.canxiang.cn": {
+    "lines": [
+      763
+    ],
+    "samples": [
+      "https://api.canxiang.cn/api/wyymusic?"
+    ]
+  },
+  "api.xinghai.com": {
+    "lines": [
+      781
+    ],
+    "samples": [
+      "https://api.xinghai.com/lx/api/?source="
+    ]
+  },
+  "api.yunmge.com": {
+    "lines": [
+      797
+    ],
+    "samples": [
+      "https://api.yunmge.com/kuwo?key=yunmge_key&token=yunmge_token&id="
+    ]
+  },
+  "mcp.nianxinxz.com": {
+    "lines": [
+      819
+    ],
+    "samples": [
+      "https://mcp.nianxinxz.com/kgqq/kg.php?id="
+    ]
+  },
+  "y.qq.com": {
+    "lines": [
+      848,
+      967
+    ],
+    "samples": [
+      "https://y.qq.com/",
+      "https://y.qq.com/n/ryqq/songDetail/'"
+    ]
+  },
+  "u.y.qq.com": {
+    "lines": [
+      969
+    ],
+    "samples": [
+      "https://u.y.qq.com/cgi-bin/musicu.fcg"
+    ]
+  },
+  "isure.stream.qqmusic.qq.com": {
+    "lines": [
+      976
+    ],
+    "samples": [
+      "https://isure.stream.qqmusic.qq.com/"
+    ]
+  },
+  "yy.zddyr.top": {
+    "lines": [
+      985,
+      1120,
+      1174,
+      1327,
+      1341,
+      1400
+    ],
+    "samples": [
+      "https://yy.zddyr.top/lx/api/?source=qq&songmid=",
+      "https://yy.zddyr.top/lx/api/?source=netease&songmid=",
+      "https://yy.zddyr.top/lx/api/?source=kw&name="
+    ]
+  },
+  "a.aa.cab": {
+    "lines": [
+      998
+    ],
+    "samples": [
+      "https://a.aa.cab/qq.music?msg="
+    ]
+  },
+  "api.vkeys.cn": {
+    "lines": [
+      874,
+      886,
+      1014
+    ],
+    "samples": [
+      "https://api.vkeys.cn/v2/music/tencent/geturl?mid=",
+      "https://api.vkeys.cn/v2/music/tencent/geturl?mid=$",
+      "https://api.vkeys.cn/music/tencent/song/link?mid=$"
+    ]
+  },
+  "api.317ak.cn": {
+    "lines": [
+      1026
+    ],
+    "samples": [
+      "https://api.317ak.cn/api/yinyue/qqyinyue?ckey=ZK76QJCIH5PPICJOOXUH&i="
+    ]
+  },
+  "music.nxinxz.com": {
+    "lines": [
+      1035,
+      1129,
+      1257,
+      1374
+    ],
+    "samples": [
+      "https://music.nxinxz.com/kgqq/tx.php?id=",
+      "http://music.nxinxz.com/wy.php?id=",
+      "https://music.nxinxz.com/kgqq/kw.php?id="
+    ]
+  },
+  "interface3.music.163.com": {
+    "lines": [
+      1064
+    ],
+    "samples": [
+      "https://interface3.music.163.com/eapi/song/enhance/player/url/v1"
+    ]
+  },
+  "music.163.com": {
+    "lines": [
+      849,
+      1076
+    ],
+    "samples": [
+      "https://music.163.com/",
+      "https://music.163.com/song?id='"
+    ]
+  },
+  "c.wwwweb.top": {
+    "lines": [
+      1092,
+      1206
+    ],
+    "samples": [
+      "https://c.wwwweb.top/music/url",
+      "https://c.wwwweb.top/music/url',"
+    ]
+  },
+  "api.cenguigui.cn": {
+    "lines": [
+      1110
+    ],
+    "samples": [
+      "https://api.cenguigui.cn/api/netease/music_v1.php?id="
+    ]
+  },
+  "175.27.166.236:8928": {
+    "lines": [
+      1167
+    ],
+    "samples": [
+      "http://175.27.166.236:8928/kwstream?id="
+    ]
+  },
+  "mobi.kuwo.cn": {
+    "lines": [
+      1233
+    ],
+    "samples": [
+      "https://mobi.kuwo.cn/mobi.s?f=web&rid="
+    ]
+  },
+  "nmobi.kuwo.cn": {
+    "lines": [
+      1246
+    ],
+    "samples": [
+      "https://nmobi.kuwo.cn/mobi.s?f=web&user=0&source=kwplayerhd_ar_4.3.0.8_tianbao_T1A_qirui.apk&type=convert_url_with_sign&rid="
+    ]
+  },
+  "musicserver.haitangw.cc": {
+    "lines": [
+      600,
+      1188,
+      1285,
+      1352
+    ],
+    "samples": [
+      "https://musicserver.haitangw.cc/v1/music/resolve-url",
+      "https://musicserver.haitangw.cc/v1/',",
+      "https://musicserver.haitangw.cc/v1/music/resolve-url',"
+    ]
+  },
+  "wwwapi.kugou.com": {
+    "lines": [
+      1363
+    ],
+    "samples": [
+      "https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash="
+    ]
+  },
+  "www.kugou.com": {
+    "lines": [
+      851,
+      1363
+    ],
+    "samples": [
+      "https://www.kugou.com/",
+      "https://www.kugou.com/song/#hash='"
+    ]
+  },
+  "music.migu.cn": {
+    "lines": [
+      852,
+      1410
+    ],
+    "samples": [
+      "https://music.migu.cn/v3/api/music/audioPlayer/getPlayInfo?copyrightId=",
+      "https://music.migu.cn/",
+      "https://music.migu.cn/v3/music/song/'"
+    ]
+  },
+  "app.c.nf.migu.cn": {
+    "lines": [
+      1423
+    ],
+    "samples": [
+      "https://app.c.nf.migu.cn/MIGUM2.0/strategy/listen-url/v2.2?copyrightId=",
+      "https://app.c.nf.migu.cn/"
+    ]
+  },
+  "github.com": {
+    "lines": [
+      6
+    ],
+    "samples": [
+      "https://github.com/your-repo/StellarWave"
+    ]
+  },
+  "103.79.184.97'": {
+    "lines": [
+      281
+    ],
+    "samples": [
+      "https://103.79.184.97'"
+    ]
+  },
+  "qt.haitangw.net": {
+    "lines": [
+      601
+    ],
+    "samples": [
+      "https://qt.haitangw.net/v1/',"
+    ]
+  },
+  "www.kuwo.cn": {
+    "lines": [
+      850
+    ],
+    "samples": [
+      "https://www.kuwo.cn/play_detail/'"
+    ]
+  },
+  "ffapi.cn": {
+    "lines": [
+      854
+    ],
+    "samples": [
+      "https://ffapi.cn/int/v2/songurl?url='"
+    ]
+  },
+  "106.55.0.102": {
+    "lines": [
+      930
+    ],
+    "samples": [
+      "http://106.55.0.102/baimusic/qqhoturl.php',"
+    ]
+  },
+  "103.79.184.97": {
+    "lines": [
+      1309
+    ],
+    "samples": [
+      "https://103.79.184.97/api/music/url?source=kg&songId="
+    ]
+  }
+}

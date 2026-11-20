@@ -1,0 +1,144 @@
+[
+  {
+    "host": "yy.zddyr.top",
+    "verdict": "通",
+    "n": 13,
+    "ok": 13,
+    "rate": 100.0,
+    "med": 738,
+    "max": 1337,
+    "errs": {},
+    "backend": "星海主后端、星海KG/酷我/汽水、酷我 flac 跳板"
+  },
+  {
+    "host": "musicserver.haitangw.cc",
+    "verdict": "通",
+    "n": 10,
+    "ok": 10,
+    "rate": 100.0,
+    "med": 1005,
+    "max": 2124,
+    "errs": {},
+    "backend": "云记QQ/云记咪咕（resolve-url）、HelloWorld KW主API、海堂KG"
+  },
+  {
+    "host": "api.vkeys.cn",
+    "verdict": "通",
+    "n": 8,
+    "ok": 8,
+    "rate": 100.0,
+    "med": 160,
+    "max": 462,
+    "errs": {},
+    "backend": "落月QQ（v2 geturl / v3 song-link）、vkeys"
+  },
+  {
+    "host": "music.migu.cn",
+    "verdict": "通",
+    "n": 8,
+    "ok": 8,
+    "rate": 100.0,
+    "med": 613,
+    "max": 1619,
+    "errs": {},
+    "backend": "Migu 直接源、FFAPI 页面"
+  },
+  {
+    "host": "qt.haitangw.net",
+    "verdict": "通",
+    "n": 6,
+    "ok": 6,
+    "rate": 100.0,
+    "med": 1000,
+    "max": 2961,
+    "errs": {},
+    "backend": "云记QQ/云记咪咕（备用 host）"
+  },
+  {
+    "host": "c.wwwweb.top",
+    "verdict": "通",
+    "n": 6,
+    "ok": 6,
+    "rate": 100.0,
+    "med": 1400,
+    "max": 2188,
+    "errs": {},
+    "backend": "ikun 网易云、HelloWorld KW 备用API"
+  },
+  {
+    "host": "interface3.music.163.com",
+    "verdict": "通",
+    "n": 4,
+    "ok": 4,
+    "rate": 100.0,
+    "med": 1520,
+    "max": 1632,
+    "errs": {},
+    "backend": "网易云官方 eapi"
+  },
+  {
+    "host": "app.c.nf.migu.cn",
+    "verdict": "通",
+    "n": 4,
+    "ok": 4,
+    "rate": 100.0,
+    "med": 607,
+    "max": 612,
+    "errs": {},
+    "backend": "Migu API"
+  },
+  {
+    "host": "103.79.184.97",
+    "verdict": "不稳",
+    "n": 14,
+    "ok": 2,
+    "rate": 14.0,
+    "med": 3196,
+    "max": 10005,
+    "errs": {
+      "HTTP 500": 9,
+      "请求超时 10000ms": 1,
+      "HTTP 403": 2
+    },
+    "backend": "HYWmusic 全平台、白姬KG、咪咕 proxy"
+  },
+  {
+    "host": "api.cenguigui.cn",
+    "verdict": "半通",
+    "n": 4,
+    "ok": 0,
+    "rate": 0.0,
+    "med": 199,
+    "max": 225,
+    "errs": {
+      "HTTP 521": 4
+    },
+    "backend": "笒鬼鬼 WY"
+  },
+  {
+    "host": "api.xinghai.com",
+    "verdict": "半通",
+    "n": 2,
+    "ok": 0,
+    "rate": 0.0,
+    "med": 8218,
+    "max": 8417,
+    "errs": {
+      "请求超时 8000ms": 2
+    },
+    "backend": "星海聚合（酷我/酷狗/咪咕通用）"
+  },
+  {
+    "host": "zrcdy.dpdns.org",
+    "verdict": "半通",
+    "n": 2,
+    "ok": 0,
+    "rate": 0.0,
+    "med": 1043,
+    "max": 1233,
+    "errs": {
+      "HTTP 500": 2
+    },
+    "backend": "星海汽水备用线路"
+  }
+]

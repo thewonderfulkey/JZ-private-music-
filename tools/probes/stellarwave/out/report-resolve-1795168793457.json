@@ -1,0 +1,571 @@
+{
+  "source": "C:\\Users\\17948\\xwechat_files\\wxid_bx89f9gkjtbc22_26bf\\temp\\RWTemp\\2026-11\\9e20f478899dc29eb19741386f9343c8\\stellarwave音源（推荐）.js",
+  "at": "2026-11-20T09:58:05.859Z",
+  "resolve": [
+    {
+      "platform": "tx",
+      "platformCN": "QQ音乐",
+      "anchor": "大鱼/周深(QQ VIP)",
+      "quality": "320k",
+      "ok": true,
+      "ms": 3172,
+      "url": "http://wx.music.tc.qq.com/O8M0003ae8GI3mQimV.mgg?guid=yibaihotapi&vkey=B07660F3FEA677B0E8217AB5557144A8AEB17780CF1192E734DC0F4D00099903310F63A1FB3B39067CE5140954736FF7D694528316C53F35__v2b9aaf13&uin=3507420008&fromtag=120734",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 452,
+          "host": "api.vkeys.cn",
+          "err": "",
+          "bytes": 164
+        },
+        {
+          "status": 500,
+          "ms": 1038,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 60
+        },
+        {
+          "status": 200,
+          "ms": 254,
+          "host": "api.vkeys.cn",
+          "err": "",
+          "bytes": 192
+        },
+        {
+          "status": 200,
+          "ms": 1521,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 973,
+          "host": "qt.haitangw.net",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 658,
+          "host": "106.55.0.102",
+          "err": "",
+          "bytes": 358
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 1112,
+        "container": "unknown",
+        "totalBytes": 11698595,
+        "rangeOK": true,
+        "ct": "application/octet-stream",
+        "gotBytes": 8192,
+        "host": "wx.music.tc.qq.com",
+        "chain": []
+      }
+    },
+    {
+      "platform": "tx",
+      "platformCN": "QQ音乐",
+      "anchor": "大鱼/周深(QQ VIP)",
+      "quality": "flac",
+      "ok": true,
+      "ms": 1157,
+      "url": "http://ws.stream.qqmusic.qq.com/F000003ae8GI3mQimV.flac?guid=0&vkey=1F143BED47AA57FCA29A6554E3755EF654C0E5C6DEAF2CD7A084AF91A534645C84F43B9C6A0623DA49F9BED76357E452FE3F17A67C78A0D9__v21e2a1605&uin=1152921505349757380&fromtag=119114&src=F000004OQ5Mt0EmEzv.flac",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 413,
+          "host": "api.vkeys.cn",
+          "err": "",
+          "bytes": 164
+        },
+        {
+          "status": 200,
+          "ms": 138,
+          "host": "api.vkeys.cn",
+          "err": "",
+          "bytes": 615
+        },
+        {
+          "status": 200,
+          "ms": 1355,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 2991,
+          "host": "qt.haitangw.net",
+          "err": "",
+          "bytes": 146
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 1278,
+        "container": "flac",
+        "totalBytes": 31314747,
+        "rangeOK": true,
+        "ct": "audio/x-flac",
+        "gotBytes": 8192,
+        "host": "ws.stream.qqmusic.qq.com",
+        "chain": []
+      }
+    },
+    {
+      "platform": "wy",
+      "platformCN": "网易云",
+      "anchor": "大鱼/周深(网易 VIP)",
+      "quality": "320k",
+      "ok": true,
+      "ms": 3243,
+      "url": "http://m8.music.126.net/20261120181736/d51e3a4523bd7fb489ad5cde2c8f1155/ymusic/9714/b7d0/b39e/dd9f78912be11e7cae10c268911db888.mp3",
+      "err": "",
+      "wire": [
+        {
+          "status": 521,
+          "ms": 205,
+          "host": "api.cenguigui.cn",
+          "err": "",
+          "bytes": 955
+        },
+        {
+          "status": 200,
+          "ms": 1483,
+          "host": "interface3.music.163.com",
+          "err": "",
+          "bytes": 738
+        },
+        {
+          "status": 200,
+          "ms": 3241,
+          "host": "c.wwwweb.top",
+          "err": "",
+          "bytes": 197
+        },
+        {
+          "status": 0,
+          "ms": 11299,
+          "host": "103.79.184.97",
+          "err": "请求超时 10000ms",
+          "bytes": 0
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 176,
+        "container": "mp3",
+        "totalBytes": 12707048,
+        "rangeOK": true,
+        "ct": "audio/mpeg",
+        "gotBytes": 8192,
+        "host": "m8.music.126.net",
+        "chain": []
+      }
+    },
+    {
+      "platform": "wy",
+      "platformCN": "网易云",
+      "anchor": "大鱼/周深(网易 VIP)",
+      "quality": "flac",
+      "ok": true,
+      "ms": 1893,
+      "url": "http://m7.music.126.net/20261120181737/bf380d85573eaba9534acb43206ef80a/ymusic/b9eb/f14d/c76b/e3d5b2980f26d949748da6fb86fa531f.flac",
+      "err": "",
+      "wire": [
+        {
+          "status": 521,
+          "ms": 214,
+          "host": "api.cenguigui.cn",
+          "err": "",
+          "bytes": 955
+        },
+        {
+          "status": 200,
+          "ms": 1537,
+          "host": "interface3.music.163.com",
+          "err": "",
+          "bytes": 738
+        },
+        {
+          "status": 200,
+          "ms": 1891,
+          "host": "c.wwwweb.top",
+          "err": "",
+          "bytes": 198
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 169,
+        "container": "flac",
+        "totalBytes": 30885652,
+        "rangeOK": true,
+        "ct": "audio/mpeg",
+        "gotBytes": 8192,
+        "host": "m7.music.126.net",
+        "chain": []
+      }
+    },
+    {
+      "platform": "kw",
+      "platformCN": "酷我",
+      "anchor": "大鱼/周深(酷我 VIP)",
+      "quality": "320k",
+      "ok": true,
+      "ms": 1085,
+      "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=7095195&q=320k&ts=1795168718&s=f0e20fa576f41f7d",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 1084,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 587
+        },
+        {
+          "status": 200,
+          "ms": 1676,
+          "host": "c.wwwweb.top",
+          "err": "",
+          "bytes": 179
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 956,
+        "container": "mp3",
+        "totalBytes": 12551167,
+        "rangeOK": true,
+        "ct": "audio/mpeg",
+        "gotBytes": 8192,
+        "host": "bd-lw.kuwo.cn",
+        "chain": [
+          "yy.zddyr.top→bd-lw.kuwo.cn"
+        ],
+        "hops": 1
+      }
+    },
+    {
+      "platform": "kw",
+      "platformCN": "酷我",
+      "anchor": "大鱼/周深(酷我 VIP)",
+      "quality": "flac",
+      "ok": true,
+      "ms": 978,
+      "url": "http://car-lw.kuwo.cn/76b2787cc7cefb447fbf4d4922feb420/6b00186a/resource/30106/trackmedia/F000004OQ5Mt0EmEzv.flac",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 978,
+          "host": "c.wwwweb.top",
+          "err": "",
+          "bytes": 180
+        },
+        {
+          "status": 200,
+          "ms": 1199,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 588
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 2029,
+        "container": "flac",
+        "totalBytes": 31314747,
+        "rangeOK": true,
+        "ct": "audio/x-flac",
+        "gotBytes": 8192,
+        "host": "car-lw.kuwo.cn",
+        "chain": []
+      }
+    },
+    {
+      "platform": "kg",
+      "platformCN": "酷狗",
+      "anchor": "大鱼/周深(酷狗 VIP)",
+      "quality": "320k",
+      "ok": true,
+      "ms": 5446,
+      "url": "http://fsandroid.tx.kugou.com/202611201752/24842ed752cf2e1bba93f0e48a61bad2/v3/bcec0087b8ccf17a15298dc5b64f5323/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx38641536_qu320_ct500000_s423932890.mp3",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 1354,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 500,
+          "ms": 3915,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 114
+        },
+        {
+          "status": 500,
+          "ms": 3353,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 114
+        },
+        {
+          "status": 200,
+          "ms": 1090,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 731
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 1768,
+        "container": "mp3",
+        "totalBytes": 12551167,
+        "rangeOK": true,
+        "ct": "application/octet-stream",
+        "gotBytes": 8192,
+        "host": "fsandroid.tx.kugou.com",
+        "chain": []
+      }
+    },
+    {
+      "platform": "kg",
+      "platformCN": "酷狗",
+      "anchor": "大鱼/周深(酷狗 VIP)",
+      "quality": "flac",
+      "ok": true,
+      "ms": 3846,
+      "url": "http://fsandroid.tx.kugou.com/202611201753/68c7dd9af409b4162523993ca837e064/v3/823a1a6fa8cb8d8f020ca873d38c0554/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx38641536_quflac_ct500000_s3245684507.flac",
+      "err": "",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 974,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 500,
+          "ms": 1835,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 114
+        },
+        {
+          "status": 500,
+          "ms": 1755,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 114
+        },
+        {
+          "status": 200,
+          "ms": 1079,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 735
+        }
+      ],
+      "audio": {
+        "ok": true,
+        "status": 206,
+        "ms": 1696,
+        "container": "flac",
+        "totalBytes": 31314747,
+        "rangeOK": true,
+        "ct": "application/octet-stream",
+        "gotBytes": 8192,
+        "host": "fsandroid.tx.kugou.com",
+        "chain": []
+      }
+    },
+    {
+      "platform": "mg",
+      "platformCN": "咪咕",
+      "anchor": "大鱼/周深(咪咕)",
+      "quality": "320k",
+      "ok": true,
+      "ms": 4343,
+      "url": "https://103.79.184.97/api/music/proxy?platform=mg&sid=rfa3yuyxot4or5&key=6C1F-53W0-GRKI-EVFG",
+      "err": "",
+      "wire": [
+        {
+          "status": 301,
+          "ms": 627,
+          "host": "music.migu.cn",
+          "err": "",
+          "bytes": 166
+        },
+        {
+          "status": 200,
+          "ms": 621,
+          "host": "music.migu.cn",
+          "err": "",
+          "bytes": 2720
+        },
+        {
+          "status": 200,
+          "ms": 1381,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 1559,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 501
+        },
+        {
+          "status": 200,
+          "ms": 1018,
+          "host": "qt.haitangw.net",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 590,
+          "host": "app.c.nf.migu.cn",
+          "err": "",
+          "bytes": 39
+        },
+        {
+          "status": 200,
+          "ms": 1352,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 298
+        }
+      ],
+      "audio": {
+        "ok": false,
+        "status": 502,
+        "ms": 4105,
+        "container": "unknown",
+        "totalBytes": 0,
+        "rangeOK": false,
+        "ct": "application/json",
+        "gotBytes": 41,
+        "host": "103.79.184.97",
+        "chain": []
+      }
+    },
+    {
+      "platform": "mg",
+      "platformCN": "咪咕",
+      "anchor": "大鱼/周深(咪咕)",
+      "quality": "flac",
+      "ok": false,
+      "ms": 11413,
+      "url": "",
+      "err": "所有后端均失败（共 7 个）\n云记咪咕(海堂): https://musicserver.haitangw.cc/v1/ -> 当前版本已停止服务，请升级到最新版本后重试 | https://qt.haitangw.net/v1/ -> 当前版本已停止服务，请升级到最新版本后重试\n星海主后端: 星海主后端: 取流失败\nMigu直接源: Migu直接源: 无数据\nMigu API: Migu API: 无数据\nHYWmusic MG: HYWmusic: 鉴权失败\n星海咪咕: 请求超时 8000ms\nFFAPI: 返回无效URL",
+      "wire": [
+        {
+          "status": 301,
+          "ms": 632,
+          "host": "music.migu.cn",
+          "err": "",
+          "bytes": 166
+        },
+        {
+          "status": 200,
+          "ms": 1212,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 501
+        },
+        {
+          "status": 200,
+          "ms": 605,
+          "host": "music.migu.cn",
+          "err": "",
+          "bytes": 2720
+        },
+        {
+          "status": 200,
+          "ms": 1438,
+          "host": "musicserver.haitangw.cc",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 984,
+          "host": "qt.haitangw.net",
+          "err": "",
+          "bytes": 146
+        },
+        {
+          "status": 200,
+          "ms": 617,
+          "host": "app.c.nf.migu.cn",
+          "err": "",
+          "bytes": 39
+        },
+        {
+          "status": 403,
+          "ms": 367,
+          "host": "103.79.184.97",
+          "err": "",
+          "bytes": 554
+        },
+        {
+          "status": 0,
+          "ms": 8101,
+          "host": "api.xinghai.com",
+          "err": "请求超时 8000ms",
+          "bytes": 0
+        }
+      ]
+    },
+    {
+      "platform": "qs",
+      "platformCN": "汽水",
+      "anchor": "汽水(无公开曲库ID)",
+      "quality": "320k",
+      "ok": false,
+      "ms": 1434,
+      "url": "",
+      "err": "所有后端均失败（共 2 个）\n星海汽水主线路: 星海汽水主线路: 上游请求失败（HTTP 500 - upstream HTTP 500）\n星海汽水备用线路: 星海汽水备用线路: 接口无数据",
+      "wire": [
+        {
+          "status": 200,
+          "ms": 1217,
+          "host": "yy.zddyr.top",
+          "err": "",
+          "bytes": 440
+        },
+        {
+          "status": 500,
+          "ms": 1433,
+          "host": "zrcdy.dpdns.org",
+          "err": "",
+          "bytes": 0
+        }
+      ]
+    }
+  ]
+}

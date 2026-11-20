@@ -359,6 +359,92 @@ struct CyapiQQAdapter: StreamSourceAdapter {
     }
 }
 
+// MARK: - QQ 系：落月 vkeys（机会性真 320k / flac）
+//
+// 2026-11-20 实测（`docs/api/星澜音源StellarWave-解析与连通性测试报告.md` §3.3）：
+//   · quality=8  → mp3 10,792,943 B = 真 320 kbps（Range 206、容器可认）
+//   · quality=10 → flac 55,397,039 B
+//   · 同一个 mid 下 cyapi 只有 3,283,546 B / ~97 kbps —— 这是 QQ 侧唯一的音质短板
+//
+// 但它是**公共共享账号**的聚合接口、正在被风控：同一端点会回 HTTP 200 + `{"code":503}`，
+// 或者 `{"code":110001,"message":"cookie异常：账号被风控无法获取"}`。
+// 所以定位是「机会性加分源」——靠 `SourceRegistry` 与其他后端**并发**上场：
+// 赢了就用，输了/挂了当没它，对主链零影响；不抢首播（首播仍由 cyapi 先出声），
+// 也不给 `backendTrust` 加权（见 URLResolver 的分级注释）。
+struct LuoyueQQAdapter: StreamSourceAdapter {
+    let name = "落月 QQ"
+    let platform: MusicPlatform = .qq
+
+    /// 我们的三档 → 落月 quality 码。
+    /// 只用 6/8/10；11/13/14/16（hires / atmos / atmos_plus / master）一律不碰：
+    /// 播放链按 `PlaybackQualityRules` 不吃 ≥601kbps，下载档 flac 已经够。
+    static func vkeysQuality(_ q: QualityLevel) -> Int {
+        switch q {
+        case .standard: return 6
+        case .high: return 8
+        case .lossless: return 10
+        }
+    }
+
+    /// `.mgg` 是 QQ 音乐的加密 OGG（O4M / O6M / O8M 前缀），第三方播放器解不开。
+    /// 实测《大鱼》320k 就是这种：HTTP 200、11,698,595 B、Content-Range 正常，
+    /// 但首字节和偏移 100000 处都是随机字节、任何容器魔数都不匹配——播放器拿到手才炸。
+    /// 必须在取流侧就拒掉，别指望 StreamVerifier 的"认不出容器"顺带挡住。
+    static func isEncryptedQQ(_ url: String) -> Bool {
+        let lower = url.lowercased()
+        if lower.contains(".mgg") { return true }
+        return ["/o4m", "/o6m", "/o8m"].contains { lower.contains($0) }
+    }
+
+    /// 解析落月的响应信封。**它的失败也是 HTTP 200**（`APIClient` 只看状态码会当成成功），
+    /// 所以这里必须自己判 `code`：
+    ///   `{"code":200,"data":{"url":"…"}}`            ← 成功
+    ///   `{"code":503,"message":"系统运行错误！"}`      ← 上游挂了
+    ///   `{"code":110001,"message":"cookie异常…"}`     ← 账号被风控
+    static func parse(_ json: [String: Any]) throws -> String {
+        let code = (json["code"] as? Int) ?? Int((json["code"] as? String) ?? "") ?? -1
+        guard code == 200 else {
+            let msg = (json["message"] as? String) ?? ""
+            throw APIError.parse("落月 code=\(code) \(msg)")
+        }
+        let data = json["data"]
+        let raw: String?
+        if let dict = data as? [String: Any] {
+            raw = dict["url"] as? String
+        } else if let s = data as? String {
+            // 少数线路把 URL 直接放 data 里
+            raw = s
+        } else {
+            raw = nil
+        }
+        guard let url = raw, !url.isEmpty else {
+            throw APIError.parse("落月 未返回 URL")
+        }
+        return url
+    }
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let url = "https://api.vkeys.cn/v2/music/tencent/geturl"
+            + "?mid=\(song.platformID)&quality=\(Self.vkeysQuality(quality))"
+        let json = try await APIClient.shared.getJSON(
+            url, headers: ["Accept": "application/json"], timeout: 10)
+        let raw = try Self.parse(json)
+        guard !Self.isEncryptedQQ(raw) else {
+            throw APIError.parse("落月 回的是 QQ 加密包（.mgg）")
+        }
+        let stream = UrlNormalizer.upgraded(raw)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        // 档位按**实测**报，不按请求报：实测出现过"要 flac 回 320k mp3"（报告 §4.1）
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "聚合直链（实测标注）", directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
 // MARK: - 网易系：gdstudio
 // 2026-11-16 实测：br=320 → mp3、320kbps、10.83MB（诚实分档）
 struct GdstudioNeteaseAdapter: StreamSourceAdapter {
@@ -565,6 +651,9 @@ enum SourceRegistry {
 
     static let all: [StreamSourceAdapter] = [
         CyapiQQAdapter(),
+        // 2026-11-20：QQ 侧唯一能出真 320k/flac 的机会性后端（cyapi 只有 ~97kbps）。
+        // 与上面并发上场，不抢首播、不给信任加权；删掉这一行即完全回滚。
+        LuoyueQQAdapter(),
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
         YaohuKuwoAdapter(),

@@ -1,0 +1,347 @@
+{
+  "source": "C:\\Users\\17948\\xwechat_files\\wxid_bx89f9gkjtbc22_26bf\\temp\\RWTemp\\2026-11\\9e20f478899dc29eb19741386f9343c8\\stellarwave音源（推荐）.js",
+  "at": "2026-11-20T09:49:15.213Z",
+  "stability": [
+    {
+      "platform": "tx",
+      "quality": "320k",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        1157,
+        1160,
+        1172
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 1157,
+          "url": "http://ws.stream.qqmusic.qq.com/M800003Qui1q2u1Zho.mp3?guid=0&vkey=BADAC6241E175E1EF3F175E1DADCBB7B1DE09206A6E54C6A147892ECC6A12BFB4D477F6B76D32CF286FDA41599DED1FE9C7AB29F29EE8C29__v2b932a8f&uin=1152921505349757380&fromtag=119093",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1160,
+          "url": "http://ws.stream.qqmusic.qq.com/M800003Qui1q2u1Zho.mp3?guid=0&vkey=BADAC6241E175E1EF3F175E1DADCBB7B1DE09206A6E54C6A147892ECC6A12BFB4D477F6B76D32CF286FDA41599DED1FE9C7AB29F29EE8C29__v2b932a8f&uin=1152921505349757380&fromtag=119093",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1172,
+          "url": "http://ws.stream.qqmusic.qq.com/M800003Qui1q2u1Zho.mp3?guid=0&vkey=BADAC6241E175E1EF3F175E1DADCBB7B1DE09206A6E54C6A147892ECC6A12BFB4D477F6B76D32CF286FDA41599DED1FE9C7AB29F29EE8C29__v2b932a8f&uin=1152921505349757380&fromtag=119093",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "tx",
+      "quality": "flac",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        1172,
+        1165,
+        1161
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 1172,
+          "url": "http://ws.stream.qqmusic.qq.com/F000003Qui1q2u1Zho.flac?guid=0&vkey=318779451E00D0DEBD251FE5E8666215087CBD846306B12B8239D59AC5A273CA9CAC46E78F30E84F17CF7D20D2E1434A5C671DD27F3F87BF__v215df3228&uin=1152921505349757380&fromtag=119114",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1165,
+          "url": "http://ws.stream.qqmusic.qq.com/F000003Qui1q2u1Zho.flac?guid=0&vkey=318779451E00D0DEBD251FE5E8666215087CBD846306B12B8239D59AC5A273CA9CAC46E78F30E84F17CF7D20D2E1434A5C671DD27F3F87BF__v215df3228&uin=1152921505349757380&fromtag=119114",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1161,
+          "url": "http://ws.stream.qqmusic.qq.com/F000003Qui1q2u1Zho.flac?guid=0&vkey=318779451E00D0DEBD251FE5E8666215087CBD846306B12B8239D59AC5A273CA9CAC46E78F30E84F17CF7D20D2E1434A5C671DD27F3F87BF__v215df3228&uin=1152921505349757380&fromtag=119114",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "wy",
+      "quality": "320k",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        1624,
+        1143,
+        2157
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 1624,
+          "url": "http://m701.music.126.net/20261120181136/ca7ecafd113e0f17c5ab8cd13a3fffcc/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481681523/a777/e66c/684b/077b8e3242636865d62c852761ca654b.mp3",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1143,
+          "url": "http://m701.music.126.net/20261120181136/ca7ecafd113e0f17c5ab8cd13a3fffcc/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481681523/a777/e66c/684b/077b8e3242636865d62c852761ca654b.mp3",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 2157,
+          "url": "http://m701.music.126.net/20261120181136/ca7ecafd113e0f17c5ab8cd13a3fffcc/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481681523/a777/e66c/684b/077b8e3242636865d62c852761ca654b.mp3",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "wy",
+      "quality": "flac",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        808,
+        1649,
+        780
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 808,
+          "url": "http://m701.music.126.net/20261120181137/5be4920b79360dd138c3882a7bbf300b/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481678452/16fc/a1c3/7be1/52ca706c1d59a3b850945019ffda9f16.flac",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1649,
+          "url": "http://m701.music.126.net/20261120181137/5be4920b79360dd138c3882a7bbf300b/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481678452/16fc/a1c3/7be1/52ca706c1d59a3b850945019ffda9f16.flac",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 780,
+          "url": "http://m701.music.126.net/20261120181137/5be4920b79360dd138c3882a7bbf300b/jdymusic/obj/wo3DlMOGwrbDjj7DisKw/28481678452/16fc/a1c3/7be1/52ca706c1d59a3b850945019ffda9f16.flac",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "kw",
+      "quality": "320k",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        734,
+        398,
+        395
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 734,
+          "url": "http://car-er.kuwo.cn/ee9ed2f5aeee55cc5e2b8227511a6d04/6b0015a4/resource/30106/trackmedia/M800000bYDlc2XxKLs.mp3",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 398,
+          "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=228908&q=320k&ts=1795168190&s=894cccd5b6d79137",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 395,
+          "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=228908&q=320k&ts=1795168192&s=3c13b555cee3d1eb",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "kw",
+      "quality": "flac",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        388,
+        396,
+        400
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 388,
+          "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=228908&q=flac&ts=1795168194&s=8bdd18603b9b50ef",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 396,
+          "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=228908&q=flac&ts=1795168196&s=ec08ea0d0e83c03a",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 400,
+          "url": "https://yy.zddyr.top/lx/api/kwplay.php?mid=228908&q=flac&ts=1795168198&s=99dc41bd3c8f5018",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "kg",
+      "quality": "320k",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        3069,
+        2734,
+        2167
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 3069,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/61aaa33e742a16a1880b2ea9830bdd76/v3/1b56126a8a03924f1dd066259c095cbc/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_qu320_ct500000_s821296388.mp3",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 2734,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/61aaa33e742a16a1880b2ea9830bdd76/v3/1b56126a8a03924f1dd066259c095cbc/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_qu320_ct500000_s821296388.mp3",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 2167,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/61aaa33e742a16a1880b2ea9830bdd76/v3/1b56126a8a03924f1dd066259c095cbc/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_qu320_ct500000_s821296388.mp3",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "kg",
+      "quality": "flac",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        10998,
+        2103,
+        1996
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 10998,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/b3c7acbc831eb292ad9d81ddf904bc3f/v3/0a69169202de95aaf24a9944ccf0730d/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_quflac_ct500000_s1929986932.flac",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 2103,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/b3c7acbc831eb292ad9d81ddf904bc3f/v3/0a69169202de95aaf24a9944ccf0730d/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_quflac_ct500000_s1929986932.flac",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 1996,
+          "url": "http://fsandroid.tx.kugou.com/202611201746/b3c7acbc831eb292ad9d81ddf904bc3f/v3/0a69169202de95aaf24a9944ccf0730d/yp/full/ap1005_us1806684881_mimusicapi_pi2_mx32100650_quflac_ct500000_s1929986932.flac",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "mg",
+      "quality": "320k",
+      "okCount": 3,
+      "repeat": 3,
+      "lat": [
+        4463,
+        2105,
+        3306
+      ],
+      "runs": [
+        {
+          "ok": true,
+          "ms": 4463,
+          "url": "https://103.79.184.97/api/music/proxy?platform=mg&sid=lm4fmmyhostg0l&key=6C1F-53W0-GRKI-EVFG",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 2105,
+          "url": "https://103.79.184.97/api/music/proxy?platform=mg&sid=bgcmrfnfostisz&key=6C1F-53W0-GRKI-EVFG",
+          "err": ""
+        },
+        {
+          "ok": true,
+          "ms": 3306,
+          "url": "https://103.79.184.97/api/music/proxy?platform=mg&sid=vugpm19gostmiy&key=6C1F-53W0-GRKI-EVFG",
+          "err": ""
+        }
+      ]
+    },
+    {
+      "platform": "mg",
+      "quality": "flac",
+      "okCount": 0,
+      "repeat": 3,
+      "lat": [
+        16314,
+        13250,
+        20878
+      ],
+      "runs": [
+        {
+          "ok": false,
+          "ms": 16314,
+          "url": "",
+          "err": "所有后端均失败（共 7 个）"
+        },
+        {
+          "ok": false,
+          "ms": 13250,
+          "url": "",
+          "err": "所有后端均失败（共 7 个）"
+        },
+        {
+          "ok": false,
+          "ms": 20878,
+          "url": "",
+          "err": "所有后端均失败（共 7 个）"
+        }
+      ]
+    },
+    {
+      "platform": "qs",
+      "quality": "320k",
+      "okCount": 0,
+      "repeat": 3,
+      "lat": [
+        1338,
+        795,
+        693
+      ],
+      "runs": [
+        {
+          "ok": false,
+          "ms": 1338,
+          "url": "",
+          "err": "所有后端均失败（共 2 个）"
+        },
+        {
+          "ok": false,
+          "ms": 795,
+          "url": "",
+          "err": "所有后端均失败（共 2 个）"
+        },
+        {
+          "ok": false,
+          "ms": 693,
+          "url": "",
+          "err": "所有后端均失败（共 2 个）"
+        }
+      ]
+    }
+  ]
+}
