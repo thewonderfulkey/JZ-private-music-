@@ -1882,6 +1882,16 @@ do {
           !PlaybackRules.shouldReuseCurrentSong(currentID: nil, targetID: "qq_1",
                                                 hasLoadedItem: true, hasError: false))
 
+    // ⑤b 连点 A→B→C：只有最后一轮的取流结果允许起播（迟到的 A/B 必须丢弃）。
+    //    老板 2026-11-20：「封面歌词是 C，A 或 B 的请求先回来就直接放 A 了」。
+    check("取流代次相同 → 这一轮允许起播", PlaybackRules.isCurrentLoad(token: 3, currentToken: 3))
+    check("迟到的第一首（点 A→B→C，C 已是第 3 轮）→ 丢弃",
+          !PlaybackRules.isCurrentLoad(token: 1, currentToken: 3))
+    check("迟到的第二首（B 是第 2 轮）→ 丢弃",
+          !PlaybackRules.isCurrentLoad(token: 2, currentToken: 3))
+    check("同曲换源/重试也会 +1 代次 → 上一轮丢弃",
+          !PlaybackRules.isCurrentLoad(token: 3, currentToken: 4))
+
     // ⑧ r72：取词候选的分数**只用 LDDC 公式**（标题 0.5 + 歌手 0.5），
     //    不再有"版本标记 −35 / 时长差 −40 / 三档四档兜底"——那几档会把本来能用的歌压到线下。
     let qili = song(.qq, "七里香", "周杰伦", dur: 299, id: "q777")

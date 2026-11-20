@@ -201,6 +201,13 @@ object AppState {
     private var recJob: Job? = null
     val lastPlayedKey = mutableStateOf("")                 // 最近一次已解析播放的歌曲 key（防退出播放页后重播）
     val resolvingSongKey = mutableStateOf<String?>(null)    // 正在后台解析取流的歌曲 key（全局，不随播放页销毁）
+    // 播放意图代次：每次"用户要听某一首"（点歌 / 切歌 / 重试）时 +1。
+    // 为什么必须有：连着点 A → B → C 时三路取流同时在跑，谁先回来谁就起播——
+    // 界面（封面/歌词）已经是 C，A 的请求迟到回来却把音频换成了 A。
+    // 取流协程起播前必须核对代次，不是最新那一轮的结果整个丢掉。
+    private var playIntent = 0L
+    // 正在跑的那一轮取流：新一轮开始时取消上一轮，旧请求不再白等网络
+    private var resolveJob: Job? = null
     val resolveError = mutableStateOf<Pair<String, String>?>(null)  // (songKey, 错误信息)：最近一次解析失败
     val deadSongKeys = mutableStateOf<Set<String>>(emptySet())      // 已确认无源的歌曲 key（搜索列表据此自动隐藏）
     val currentSource = mutableStateOf<StreamSource?>(null)         // 最近一次解析成功并开始播放的音源（播放页"音源来源"提示条）
@@ -836,11 +843,14 @@ object AppState {
         ) return  // 已在播
         resolvingSongKey.value = key
         resolveError.value = null
-        PlayLog.log("resolve start key=$key cross=$allowCrossRetry")
+        // 这一轮是"最新意图"：从这里开始，上一轮还没回来的取流一律作废（连同网络请求一起取消）
+        val intent = ++playIntent
+        resolveJob?.cancel()
+        PlayLog.log("resolve start key=$key cross=$allowCrossRetry intent=$intent")
         // 与取流并发的歌词预取：点击/切歌瞬间即开始请求歌词（4h 缓存 + in-flight 去重），
         // 播放页打开时直接读缓存，歌出声时歌词已就绪；失败静默，不影响取流
         globalScope.launch { runCatching { LyricsService.fetch(song) } }
-        globalScope.launch {
+        resolveJob = globalScope.launch {
             val q = HistoryStore.loadQuality()
             var attempts = 0
             var waitingNetwork = false
@@ -852,6 +862,13 @@ object AppState {
                 // ② 第 2 级：同曲跨平台补源（见 resolveSourceOnce）
                 val src = resolveSourceOnce(song, q, triedCandidates)
                 if (src != null) {
+                    // 迟到的取流：期间用户已经点了别的歌 → 整个丢掉。
+                    // 绝不能写 lastPlayedKey / currentSource，更不能 PlayerManager.play——
+                    // 那正是"封面歌词是 C、出声的却是 A"的成因。
+                    if (intent != playIntent) {
+                        PlayLog.log("resolve stale key=$key intent=$intent cur=$playIntent")
+                        return@launch
+                    }
                     AppState.lastPlayedKey.value = key
                     consecutiveFailures = 0
                     skipJob?.cancel()          // 新歌起播，作废上一轮排着的"超时自动跳歌"
@@ -900,11 +917,15 @@ object AppState {
                 }
                 attempts += 1
                 delay(RESOLVE_RETRY_DELAYS_MS.getOrElse(attempts - 1) { 3000L })
-                if (resolvingSongKey.value != key) break          // 期间用户已切到别的歌，放弃本歌重试
+                // 期间用户已切到别的歌（新一轮意图已开始）：放弃本歌的剩余重试
+                if (intent != playIntent) break
             }
             // 本歌重试耗尽仍无源：计入一次跳过额度，短暂提示后自动切下一首（不再依赖播放页是否打开，后台同样自动继续）
             // v2.1.68：等网络的情况下不跳歌（waitingNetwork=true），避免"看不见的时候把队列连跳 3 首"
-            if (!waitingNetwork && lastSong.value != null && resolveError.value?.first == key) {
+            // 迟到的失败结果同样不能触发自动跳歌——那会把用户刚点的那首一起跳掉
+            if (intent == playIntent && !waitingNetwork && lastSong.value != null &&
+                resolveError.value?.first == key
+            ) {
                 consecutiveFailures += 1
                 // v2.1.96：单曲循环下"取不到源"绝不能跳到下一首——那正是用户看到的"单曲循环变顺序播放"。
                 // 前几次先原地重播同一首，连续失败太多（超过跳过额度）才放行跳过，避免真的卡死。
@@ -915,8 +936,8 @@ object AppState {
                     skipJob = globalScope.launch {
                         delay(AUTO_SKIP_DELAY_MS)
                         // 双重确认：没有别的歌在解析、且失败提示仍是本歌——否则说明情况已变（已起播/已换歌），不能跳
-                        if (resolvingSongKey.value == null && resolveError.value?.first == key &&
-                            !PlayerManager.isPlaying.value
+                        if (intent == playIntent && resolvingSongKey.value == null &&
+                            resolveError.value?.first == key && !PlayerManager.isPlaying.value
                         ) {
                             if (singleLoop && consecutiveFailures <= AUTO_SKIP_MAX) {
                                 PlayLog.log("autoSkip suppressed (single loop) key=$key")

@@ -142,6 +142,15 @@ enum PlaybackRules {
         consecutiveSkips >= max(1, limit)
     }
 
+    /// 这一轮取流回来时，还是不是"最新那一轮"。
+    ///
+    /// 老板 2026-11-20 报的 bug：连着点 A → B → C，三路取流同时在跑，**谁先回来谁就起播**——
+    /// 封面和歌词已经是 C，A 的请求迟到回来却把音频换成了 A。
+    /// 每一轮取流开始时 +1 代次，回来先比一次：不是最新那轮就整个丢掉（不起播、不改状态行）。
+    static func isCurrentLoad(token: Int, currentToken: Int) -> Bool {
+        token == currentToken
+    }
+
     /// 换曲前要不要先暂停当前这首（r71）。
     ///
     /// 老板："换曲的时候先暂停当前的歌曲，之前好好的，现在又没了这个功能。"

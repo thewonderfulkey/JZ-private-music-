@@ -469,9 +469,19 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 .background(p.surface2, RoundedCornerShape(12.dp))
                 .padding(12.dp)
         ) {
-            Text("JZ的音乐助手 v2.1.95", fontSize = 14.sp, color = p.text)
+            Text("JZ的音乐助手 v2.4.35", fontSize = 14.sp, color = p.text)
             Spacer(Modifier.height(6.dp))
             Text("本版更新", fontSize = 12.sp, color = p.text3)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "连点歌不再乱抢：以前连着点几首歌，每一首的取流都会各自跑完，谁先回来谁就起播——" +
+                    "界面显示的是最后一首，出声的却可能是前面某一首。现在点下去就把上一轮的取流请求作废，" +
+                    "回来的结果先核对「还是不是最新那一首」，不是就整个丢掉，最终只有最后点的那一首会响。",
+                fontSize = 12.sp,
+                color = p.text2
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("更早（v2.1.95）", fontSize = 12.sp, color = p.text3)
             Spacer(Modifier.height(3.dp))
             Text(
                 "四个细节：① 识曲页的「最近识过」改成贴底排列，最后一条正好落在播放悬浮栏上沿，不再留一大片空白。" +

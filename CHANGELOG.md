@@ -1,3 +1,50 @@
+## iOS v2.4.35（213）· Android · Windows · 2026-11-20（连点歌不再乱抢：只播最后点的那一首）
+
+老板 2026-11-20：「快速点了歌 A、歌 B、歌 C，最终所有歌都在请求，封面和歌词显示的是歌 C，
+但这时候 A 的请求到了或者 B 的请求到了，直接开始播放——根本不是我想听的 C。希望最后只播 C，
+前面的请求直接忽略。」不是 100% 复现。
+
+### 根因：三端是同一类缺陷——取流回来就起播，没有任何"这一轮还算不算数"的校验
+
+点一首歌 → 起一轮取流（同平台后端 / 妖狐 / 跨平台补位，最长十几秒）→ 拿到 URL 就 `play`。
+界面状态（`currentSong` / 封面 / 歌词）在**点下去那一刻**就换成了新歌，**取流协程却各跑各的**：
+
+- 连点 A→B→C 时有三轮取流同时在跑，**谁先回来谁就起播**；
+- 界面的封面/歌词早就是 C，A 的请求迟到回来照样 `PlayerManager.play` / `replaceCurrentItem`，
+  于是"看着是 C、出声是 A"；
+- 上一轮的重试、无源自动跳歌也会跟着迟到生效（更乱）。
+
+三处代码形状几乎一样：iOS `AudioPlayer.loadCurrent()` 在 `await resolveStream(...)` 之后直接用结果；
+Android / Windows 的 `AppState.resolveAndPlayIfNeeded` 在 `resolveSourceOnce(...)` 之后直接起播。
+原来的 `resolvingSongKey` / `isResolving` 只能挡住"同一首歌重复发起"，挡不住"上一首歌迟到"。
+
+### 改法：每轮取流一个代次，回来先核对，不是最新那轮就整个丢掉
+
+- **统一规则**：每轮取流开始 `+1` 代次（iOS `PlaybackRules.isCurrentLoad` 是纯函数，有断言），
+  同时**取消上一轮**（旧请求不再白等网络）；`await` 回来先比代次，不相等就 `return`——
+  不写 `lastPlayedKey` / `currentSource`、不改状态行、不起播、也不触发无源自动跳歌。
+- **iOS**：新增 `loadToken` / `loadTask`，起播入口统一走 `beginLoad()`（原来 6 处裸 `Task { await loadCurrent() }`）；
+  `loadCurrent` 在取流回来、起播之前核对「代次 + 未取消 + 还是这首」；
+  `start(item:song:source:)` 再兜一道「出声的必须是当前显示这一首」（本地文件 / 预取 / 换源这些同步分支也走同一处）。
+- **Android / Windows**：`AppState` 新增 `playIntent` / `resolveJob`，取流协程里三处用到 `intent != playIntent`
+  （成功起播前、重试循环末尾、无源自动跳歌前后）。界面状态行只由最新那一轮写。
+
+### 效果
+
+连点 A→B→C：A、B 的请求被取消；万一它们已经回来了，也只是被丢掉（日志留一行 `resolve 丢弃 / resolve stale`）。
+只有 C 起播，封面、歌词、出声三者始终是同一首。
+
+### 验证
+
+- iOS：`swiftc` 类型检查通过（CI 同文件清单），新增 4 条 SelfTest 断言（代次相同才放行 / 迟到的 A、B 丢弃 /
+  同曲换源换轮同样丢弃），独立小跑 5/5；本机全量 selftest 仍在 KRC zlib 那段提前退出（Linux 桩，老问题）。
+- Android：`compileReleaseKotlin` 通过；Windows 桌面：`compileKotlin` 通过。
+- 缺口：无真机 / 无模拟器，三端的"连点"只能在真机上按 30 秒自查确认（见下）。
+
+### 30 秒自查
+
+在任意列表里 1 秒内连点三首不同的歌（比如 A、B、C），等 5 秒：
+出声的必须是 C，且播放页封面/标题/歌词都是 C；进度条从 0:00 正常走，不再出现"放到一半突然换人"。
 ## iOS v2.4.34（212） · 2026-11-20（所有列表页加「定位到正在播放」）
 
 老板 2026-11-20：歌单和列表越存越多，当前播的那首在第几行要自己滑很久。这一版给**每一个歌曲列表页**

@@ -184,6 +184,15 @@ final class PlayerEngine {
     /// 每次 seek +1：完成回调回来时如果已经不是最新那次，直接丢掉
     private var seekToken: Int = 0
 
+    /// 取流代次：每次"该放哪一首"变化（点歌、切歌、同曲换源、解析重试）时 +1。
+    ///
+    /// 为什么必须有（老板 2026-11-20 报的 bug）：连着点 A → B → C 时三路取流同时在跑，
+    /// **谁先回来谁就起播**——界面已经在显示 C 的封面和歌词，A 的请求迟到回来却把音频换成了 A。
+    /// 现在每一轮取流记住自己的代次，回来先核对：不是最新那一轮就整个丢掉（不改状态行、不起播）。
+    private var loadToken: Int = 0
+    /// 正在跑的那一轮取流。新一轮开始时取消上一轮，旧请求不必再白等网络。
+    private var loadTask: Task<Void, Never>?
+
     /// 点某一句歌词跳转后"还没唱到的那一行"。播放头走到这一行的时间之前，高亮与滚动都钉在它上面。
     ///
     /// 为什么需要：`AVPlayer.seek` 真机上常落到目标**之前**几百毫秒（关键帧对齐），
@@ -365,7 +374,7 @@ final class PlayerEngine {
         prepareLyrics(for: songs[target])
         syncHeartbeatSeed(songs[target])
         beginResolveBackgroundTask()
-        Task { await loadCurrent() }
+        beginLoad()
     }
 
     /// 心动模式下用户手点了别的歌：种子跟着换（网易云同款），待播重排。
@@ -403,7 +412,7 @@ final class PlayerEngine {
         prepareLyrics(for: songs[target])
         syncHeartbeatSeed(songs[target])
         beginResolveBackgroundTask()
-        Task { await loadCurrent() }
+        beginLoad()
     }
 
     /// 上次播放快照（车载连上时"接着上次没播完的接着放"读它）
@@ -446,7 +455,7 @@ final class PlayerEngine {
         if isResolving {
             if !isPlaying {
                 PlaybackTrace.shared.log("toggle", "解析中重试")
-                Task { await loadCurrent() }
+                beginLoad()
             }
             return
         }
@@ -462,7 +471,7 @@ final class PlayerEngine {
             userPaused = false
         } else {
             userPaused = false
-            Task { await loadCurrent() }
+            beginLoad()
             return
         }
         updateNowPlaying()
@@ -659,7 +668,7 @@ final class PlayerEngine {
         resetProgress()
         prepareLyrics(for: queue[newIndex])
         beginResolveBackgroundTask()
-        Task { await loadCurrent() }
+        beginLoad()
     }
 
     /// 换曲前**先把当前这首停下来**（r71，老板："换曲的时候先暂停当前的歌曲，之前好好的，现在又没了"）。
@@ -775,7 +784,27 @@ final class PlayerEngine {
         pendingRestoreSeconds = nil
     }
 
+    /// 起播/换源统一入口：**先作废上一轮还没回来的取流**，再开始这一轮。
+    ///
+    /// 老板 2026-11-20：「快速点了歌 A、歌 B、歌 C，所有歌都在请求，封面歌词是 C，
+    /// 但 A 或 B 的请求先回来就直接放 A 了」。根因就是每一轮取流各跑各的、回来就起播。
+    /// 现在每轮 +1 代次并取消上一轮；`loadCurrent` 在 await 之后、起播之前核对代次，
+    /// 过期的结果整个丢掉——最终只有最后点的那一首会响。
+    private func beginLoad() {
+        loadToken &+= 1
+        loadTask?.cancel()
+        // 上一轮可能正卡在"解析中"：这一轮接管界面状态，别让转圈留在那儿
+        isResolving = false
+        loadTask = Task { [weak self] in
+            await self?.loadCurrent()
+        }
+    }
+
     private func loadCurrent() async {
+        // 已被下一轮取代的任务连跑都不用跑（`Task.cancel()` 不会阻止 body 执行）
+        guard !Task.isCancelled else { return }
+        // 这一轮自己的代次：await 回来之后拿它判断"是不是还是最新那一轮"
+        let token = loadToken
         guard let song = currentSong else { return }
         // 注意：这里**不**清 errorText。A6 的"几路源都放不出来，已跳到下一首"要留到新歌
         // 真正起播（`start()` 里清），否则那句提示会被这一行立刻抹掉，用户什么也看不到。
@@ -839,6 +868,14 @@ final class PlayerEngine {
         let startedAt = Date()
 
         let resolved = await resolveStream(for: song)
+        // 迟到的取流结果：期间用户已经点了别的歌（或这一轮已被下一轮取流取代）
+        // → 整个丢掉：不改状态行、不动 isResolving、更不起播。
+        guard PlaybackRules.isCurrentLoad(token: token, currentToken: loadToken),
+              !Task.isCancelled,
+              currentSong?.id == song.id else {
+            PlaybackTrace.shared.log("resolve 丢弃", "\(song.name)（已切到别的歌）")
+            return
+        }
         isResolving = false
         let outcome: String
         if let resolved {
@@ -865,6 +902,12 @@ final class PlayerEngine {
 
     /// 装配并起播一个 item（本地文件与在线取流共用这一处）
     private func start(item: AVPlayerItem, song: Song, source: StreamSource) {
+        // 最后一道闸：出声的必须是"当前显示的这一首"。
+        // 取流代次已经拦过一轮，这里再兜一次——本地文件 / 预取 / 换源这些同步分支也走同一处。
+        guard song.id == currentSong?.id else {
+            PlaybackTrace.shared.log("起播丢弃", "\(song.name)（已切到别的歌）")
+            return
+        }
         self.source = source
         consecutiveSkips = 0
         sameSongSwitches = 0
@@ -1274,7 +1317,7 @@ final class PlayerEngine {
         PlaybackTrace.shared.log("同曲换源",
                                  "\(song.name) 第\(sameSongSwitches)条 pos=\(Int(max(0, pos.isFinite ? pos : 0)))s")
         beginResolveBackgroundTask()
-        Task { await loadCurrent() }
+        beginLoad()
     }
 
     /// 这首放不出来时往哪走：普通模式按队列规则；心动模式换引擎里的下一首（或现场算）。
@@ -1375,7 +1418,7 @@ final class PlayerEngine {
         guard currentSong != nil, !isPlaying, !isResolving, errorText == nil else { return }
         guard !userPaused, !interrupted else { return }
         PlaybackTrace.shared.log("回前台自愈", currentSong?.name ?? "—")
-        Task { await loadCurrent() }
+        beginLoad()
     }
 
     // MARK: 歌词
