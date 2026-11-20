@@ -359,18 +359,23 @@ struct CyapiQQAdapter: StreamSourceAdapter {
     }
 }
 
-// MARK: - QQ 系：落月 vkeys（机会性真 320k / flac）
+// MARK: - QQ 系：落月 vkeys（**已下线**，2026-11-20 晚）
 //
-// 2026-11-20 实测（`docs/api/星澜音源StellarWave-解析与连通性测试报告.md` §3.3）：
+// 现状：**不注册**（`SourceRegistry.all` 里没有它），QQ 只有 cyapi 一条后端。
+// 下线原因：上线当天（v2.4.36）真机反馈「QQ 源直接听不了、被风控」。
+// 它的上游是公共共享账号，本身就在被风控：同一端点会回 HTTP 200 + `{"code":503}`，
+// 或者 `{"code":110001,"message":"cookie异常：账号被风控无法获取"}`；
+// 更麻烦的是它偶尔仍回 200 + 一个 URL（比 cyapi 快得多，会赢下 `firstPlayable`），
+// 但那条 URL 到播放时已经不可用——于是「后端看起来成功、实际听着没声」。
+//
+// 保留这份实现与它的断言（纯逻辑：档位映射 / 加密包闸门 / 信封解析），
+// 因为落月一旦恢复，在 `SourceRegistry.all` 加回一行就能用。
+// 真要重启前必须先解决"回 200 但链接已死"这件事（例如只用于下载、不用于播放）。
+//
+// 以下是当初上线时的实测依据（2026-11-20 白天，脚本仿真器实测）：
 //   · quality=8  → mp3 10,792,943 B = 真 320 kbps（Range 206、容器可认）
 //   · quality=10 → flac 55,397,039 B
-//   · 同一个 mid 下 cyapi 只有 3,283,546 B / ~97 kbps —— 这是 QQ 侧唯一的音质短板
-//
-// 但它是**公共共享账号**的聚合接口、正在被风控：同一端点会回 HTTP 200 + `{"code":503}`，
-// 或者 `{"code":110001,"message":"cookie异常：账号被风控无法获取"}`。
-// 所以定位是「机会性加分源」——靠 `SourceRegistry` 与其他后端**并发**上场：
-// 赢了就用，输了/挂了当没它，对主链零影响；不抢首播（首播仍由 cyapi 先出声），
-// 也不给 `backendTrust` 加权（见 URLResolver 的分级注释）。
+//   · 同一个 mid 下 cyapi 只有 3,283,546 B / ~97 kbps
 struct LuoyueQQAdapter: StreamSourceAdapter {
     let name = "落月 QQ"
     let platform: MusicPlatform = .qq
@@ -651,9 +656,9 @@ enum SourceRegistry {
 
     static let all: [StreamSourceAdapter] = [
         CyapiQQAdapter(),
-        // 2026-11-20：QQ 侧唯一能出真 320k/flac 的机会性后端（cyapi 只有 ~97kbps）。
-        // 与上面并发上场，不抢首播、不给信任加权；删掉这一行即完全回滚。
-        LuoyueQQAdapter(),
+        // 2026-11-20 晚：`LuoyueQQAdapter` 已**下线**（见下方结构体上的说明）。
+        // QQ 恢复成只有 cyapi 一条后端——即 v2.4.35 及之前的行为。
+        // 要重新启用：在下面 CyapiQQAdapter() 之后加回 `LuoyueQQAdapter(),` 一行即可。
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
         YaohuKuwoAdapter(),
