@@ -997,7 +997,7 @@ extension DownloadManager {
         try? FileManager.default.createDirectory(at: musicDir, withIntermediateDirectories: true)
 
         // 起点快照：不跨线程读 `items`
-        let existing = await MainActor.run { self.items }
+        let existing: [DownloadItem] = await MainActor.run { self.items }
         var taken = Set(existing.compactMap {
             $0.fileName.isEmpty ? nil : ($0.fileName as NSString).deletingPathExtension
         })
@@ -1022,7 +1022,8 @@ extension DownloadManager {
             defer { if rootScope { batch.root.stopAccessingSecurityScopedResource() } }
 
             for url in batch.files {
-                if await MainActor.run({ self.importCancelled }) { break }
+                let cancelled: Bool = await MainActor.run { self.importCancelled }
+                if cancelled { break }
 
                 var ext = url.pathExtension.lowercased()
                 // 未知扩展名：按**文件内容**嗅探（对方 App 可能只是把 .flac/.m4a 改了名）
@@ -1041,8 +1042,6 @@ extension DownloadManager {
                     continue
                 }
 
-                let current = await MainActor.run { self.importProgress }
-                _ = current
                 await MainActor.run {
                     self.importProgress = ImportProgress(done: done, total: totalFiles,
                                                          name: url.lastPathComponent)
@@ -1165,6 +1164,22 @@ extension DownloadManager {
 
     /// 取消正在进行的导入（已导入的保留，剩下的不再处理）
     func cancelImport() { importCancelled = true }
+
+    /// 把"用户选中的一个 URL"展开成一批音频文件（文件夹递归，最多 5000 个，防止误选根目录）
+    static func expandImportTargets(_ picked: URL) -> [URL] {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: picked.path, isDirectory: &isDir) else { return [] }
+        if !isDir.boolValue { return [picked] }
+        guard let en = FileManager.default.enumerator(
+            at: picked, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var out: [URL] = []
+        while let f = en.nextObject() as? URL {
+            if out.count >= 5000 { break }
+            if ImportRules.isPlayable(extension: f.pathExtension) { out.append(f) }
+        }
+        return out
+    }
 
     /// 本机是否已有"同一首"的本地文件（下载前的询问用）
     func localDuplicate(of song: Song) -> DownloadItem? {
