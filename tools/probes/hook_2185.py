@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import urllib.request
 
-HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+HOOK = os.environ.get("LARK_WEBHOOK", "")
 TEXT = (
     "JZ的音乐助手 v2.1.85 已发群。三条反馈全部落地：\n"
     "① 识别对但播放的不是同一首：录屏第 4 秒就是铁证（认出 IVORY TOWER / 澤野弘之，起播的却是 Blackmore 的同名曲）。"

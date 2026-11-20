@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import urllib.request
 
-HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+HOOK = os.environ.get("LARK_WEBHOOK", "")
 TEXT = (
     "JZ的音乐助手 v2.1.83 已发群。两条反馈都落地：\n"
     "① 识别结果点「播放」直接起播：不再把「歌名 歌手」丢进首页搜索框，改为后台按歌名+歌手检索，"

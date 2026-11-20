@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import urllib.request
 
-HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+HOOK = os.environ.get("LARK_WEBHOOK", "")
 TEXT = (
     "JZ的音乐助手 v2.1.82 已发群。\n"
     "修「另一台手机外放很大声，却一直提示没听到声音」。两处都是采集层：\n"

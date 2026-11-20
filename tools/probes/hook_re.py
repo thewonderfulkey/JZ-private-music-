@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """向「音乐软件开发」群 webhook 推送本次逆向结论。"""
 import json
+import os
 import urllib.request
 
-URL = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+URL = os.environ.get("LARK_WEBHOOK", "")
 text = (
     "【笒音 2.0.1 逆向对照已出】\n"
     "1) 群里那个 base.apk 无加固壳，纯 Flutter（libapp.so 为 Dart AOT），砸壳不适用。\n"

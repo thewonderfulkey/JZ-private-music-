@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import urllib.request
 
-HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+HOOK = os.environ.get("LARK_WEBHOOK", "")
 TEXT = (
     "JZ的音乐助手 v2.1.84 已发群。四条反馈全部落地：\n"
     "① 聆听/辨认中再点一次麦克风＝取消这次识别（上一版这个分支写成了 if(!listening)，点了直接被吞、没反应）；\n"

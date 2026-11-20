@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import urllib.request
 
-URL = "https://open.feishu.cn/open-apis/bot/v2/hook/20e2cec8-2f03-4147-95bd-2731b9fe66d7"
+URL = os.environ.get("LARK_WEBHOOK", "")
 
 text = (
     "【新版本已发群】JZ的音乐助手 v2.1.86\n"
