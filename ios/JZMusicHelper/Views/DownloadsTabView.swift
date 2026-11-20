@@ -26,9 +26,9 @@ struct DownloadsTabView: View {
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
     @State private var showImporter = false
-    @State private var importReport: DownloadManager.ImportReport?
+    /// 导入/整理共用**一个** alert（同一视图挂多个 alert 会互相吞事件）
+    @State private var importAlert: String?
     @State private var showDedupeConfirm = false
-    @State private var dedupeResult: String?
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -63,37 +63,69 @@ struct DownloadsTabView: View {
                 list
             }
         }
+        // 2026-11-21：`allowedContentTypes` 原来是 [.audio, .folder]，对方 App 用自定义扩展名存的歌
+        // 会被系统置灰/不可选。现在放开成 `.item`（任何文件都能选，文件夹也能选），
+        // 真正的格式判断交给我们自己（按扩展名 + 按文件头嗅探）。
         .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [.audio, .folder],
+                      allowedContentTypes: [.item],
                       allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result, !urls.isEmpty else { return }
-            Task { @MainActor in
-                importReport = await downloads.importAudioFiles(urls)
+            switch result {
+            case .success(let urls):
+                guard !urls.isEmpty else { return }
+                downloads.importCancelled = false
+                // **必须 detached**：哈希与复制是重活，放主线程会把选择器卡死（这就是"打开没反应"）
+                Task.detached(priority: .userInitiated) {
+                    let report = await downloads.importAudioFiles(urls)
+                    await MainActor.run { importAlert = report.detail }
+                }
+            case .failure(let error):
+                // 以前这里是静默 return —— 用户什么都看不到，以为是"点了没反应"
+                importAlert = "打开文件失败：\(error.localizedDescription)"
             }
         }
-        .alert("导入完成", isPresented: Binding(
-            get: { importReport != nil },
-            set: { if !$0 { importReport = nil } })) {
-            Button("好") { importReport = nil }
+        .alert("导入", isPresented: Binding(
+            get: { importAlert != nil },
+            set: { if !$0 { importAlert = nil } })) {
+            Button("好") { importAlert = nil }
         } message: {
-            Text(importReport?.detail ?? "")
+            Text(importAlert ?? "")
         }
         .confirmationDialog("把同一首歌的多条合成一条？（只留音质更好的）",
                             isPresented: $showDedupeConfirm, titleVisibility: .visible) {
             Button("整理", role: .destructive) {
                 let r = downloads.dedupeSameRecording()
-                dedupeResult = r.merged == 0
+                importAlert = r.merged == 0
                     ? "没有需要整理的重复"
                     : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
             }
             Button("取消", role: .cancel) {}
         }
-        .alert("整理完成", isPresented: Binding(
-            get: { dedupeResult != nil },
-            set: { if !$0 { dedupeResult = nil } })) {
-            Button("好") { dedupeResult = nil }
-        } message: {
-            Text(dedupeResult ?? "")
+    }
+
+    /// 导入进度（后台在干活时显示；没有进度条用户就以为"没反应"）
+    @ViewBuilder
+    private var importProgressBanner: some View {
+        if let p = downloads.importProgress {
+            HStack(spacing: Tokens.Spacing.xs) {
+                ProgressView().scaleEffect(0.8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("正在导入 \(min(p.done + 1, p.total))/\(p.total)")
+                        .font(.footnote.weight(.semibold))
+                    Text(p.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Button("取消") { downloads.cancelImport() }
+                    .font(.footnote)
+                    .buttonStyle(.press)
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .padding(.vertical, Tokens.Spacing.xs)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
         }
     }
 
@@ -101,6 +133,7 @@ struct DownloadsTabView: View {
         ScrollViewReader { proxy in
             List {
                 header
+                importProgressBanner
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)

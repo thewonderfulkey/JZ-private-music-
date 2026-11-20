@@ -224,17 +224,27 @@ enum FavoriteRules {
         let titleVerdict = titlesLookSame(a, b)
         guard titleVerdict.same else { return false }
 
-        // ④ 时长：两边都有才判。
-        //    标题完全相同 → ±4s（跨平台翻录通常 ≤2s）；标题只是"高度相似" → 收紧到 ±2s。
+        // ④ 包含关系（长副标题）比"完全相同"弱一档，多一道专辑闸：
+        //    两边专辑都有时必须一致（录屏那两首都是「哎呦，不错哦」，通过）。
+        if titleVerdict.containment {
+            let albA = titleKey(a.album)
+            let albB = titleKey(b.album)
+            if !albA.isEmpty && !albB.isEmpty && albA != albB { return false }
+        }
+
+        // ⑤ 时长
         let da = a.durationSec
         let db = b.durationSec
         if da > 0 && db > 0 {
             let diff = abs(da - db)
-            return diff <= (titleVerdict.exact ? NameMatch.maxDurationDiffSec : 2)
+            if titleVerdict.exact || titleVerdict.containment {
+                return diff <= NameMatch.maxDurationDiffSec
+            }
+            return diff <= 2          // 只是"高度相似"→ 收紧到 ±2s
         }
-        // 有一边时长未知（gdstudio 搜索不返回时长）：标题完全等值就认；
-        // 只是相似的话要求非常像（≥0.9），否则宁可不合并。
-        return titleVerdict.exact || titleVerdict.similarity >= 0.9
+        // 有一边时长未知：完全等值或包含关系就认；只是相似的要 ≥0.9
+        return titleVerdict.exact || titleVerdict.containment
+            || titleVerdict.similarity >= 0.9
     }
 
     /// 收藏去重用的歌名键：繁转简 + 剥括号说明 + 去掉标点/空白/大小写。
@@ -270,16 +280,39 @@ enum FavoriteRules {
     /// 又放不过"爱情 / 爱情转移"（0.5）、"晴天 / 雨过天晴"（0.6）这种不同歌。
     static let titleSimilarityFloor = 0.75
 
+    /// 包含关系生效的最短标题（4 字）：`爱情 / 爱情转移`、`晴天 / 晴天娃娃` 这类两三个字的，
+    /// 差一个字就是另一首，绝不做包含判定。
+    static let containmentMinLength = 4
+
+    /// 长标题至少要多出这么多字才算"副标题"（防止「我的天空」vs「我的天空啊呀」这种只多两字的被并掉）
+    static let containmentMinExtra = 3
+
     /// 收藏去重的歌名判定（纯函数，CI 断言）
-    static func titlesLookSame(_ a: Song, _ b: Song) -> (same: Bool, exact: Bool, similarity: Double) {
+    ///
+    /// 三种命中：
+    ///   ① 完全等值（繁简/括号/标点已归一）
+    ///   ② 包含关系：短标题（≥4 字）是长标题的子串
+    ///      —— 录屏实证：「手写的从前」vs「手写的从前-优酸乳为爱告白广告曲」，
+    ///      整体相似度只有 5/17≈0.29，靠 ①③ 都判不出来，但短名确实被长名包含
+    ///   ③ 高相似度（≥0.75）
+    static func titlesLookSame(_ a: Song, _ b: Song)
+    -> (same: Bool, exact: Bool, similarity: Double, containment: Bool) {
         let ka = titleKey(a.name)
         let kb = titleKey(b.name)
-        if !ka.isEmpty && ka == kb { return (true, true, 1) }
-        // 太短的歌名（≤2 字）不做模糊：「晴天 / 情天」「爱 / 爱情」这种差一个字就是另一首
+        if !ka.isEmpty && ka == kb { return (true, true, 1, false) }
         let short = min(ka.count, kb.count)
-        guard short >= 3 else { return (false, false, 0) }
+        guard short >= 3 else { return (false, false, 0, false) }
         let sim = titleSimilarity(ka, kb)
-        return (sim >= titleSimilarityFloor, false, sim)
+
+        if short >= containmentMinLength {
+            let pair = ka.count >= kb.count ? (long: ka, short: kb) : (long: kb, short: ka)
+            let extra = pair.long.count - pair.short.count
+            if extra >= containmentMinExtra,
+               pair.long.hasPrefix(pair.short) || pair.long.contains(pair.short) {
+                return (true, false, sim, true)
+            }
+        }
+        return (sim >= titleSimilarityFloor, false, sim, false)
     }
 
     /// 在收藏里找"同一条录音"的下标（交互入口用；一次操作 O(n)，收藏几千条也是毫秒级）
@@ -387,7 +420,15 @@ enum FavoriteReview {
         let kb = keyB ?? FavoriteRules.titleKey(b.name)
         guard !ka.isEmpty, !kb.isEmpty else { return false }
         let sim = (ka == kb) ? 1 : FavoriteRules.titleSimilarity(ka, kb)
-        guard sim >= minTitleSimilarity else { return false }
+        let containment = {
+            let short = min(ka.count, kb.count)
+            guard short >= FavoriteRules.containmentMinLength else { return false }
+            let pair = ka.count >= kb.count ? (long: ka, short: kb) : (long: kb, short: ka)
+            guard pair.long.count - pair.short.count >= FavoriteRules.containmentMinExtra
+            else { return false }
+            return pair.long.contains(pair.short)
+        }()
+        guard sim >= minTitleSimilarity || containment else { return false }
 
         // 时长：两边都有时不能差太远
         let da = a.durationSec

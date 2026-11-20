@@ -353,13 +353,18 @@ final class LibraryStore {
         guard !ids.isEmpty else { return }
         Task { @MainActor in
             for id in ids {
+                // 先抓一份快照去请求（await 期间列表可能被改：取消收藏 / 又合并 / 导入）
+                guard let snapshot = favorites.first(where: { $0.id == id }) else { continue }
+                guard let url = await CoverResolver.shared.coverURLIgnoringOriginal(for: snapshot),
+                      !url.isEmpty, url != snapshot.picURL else { continue }
+                // **await 之后必须重新查下标**：2026-11-21 修的是"用 await 前抓的 idx 写回列表"，
+                // 只要等待那一秒里收藏变过（取消/合并/导入），旧 idx 就可能越界 → 直接崩。
                 guard let idx = favorites.firstIndex(where: { $0.id == id }) else { continue }
-                let song = favorites[idx]
-                guard let url = await CoverResolver.shared.coverURLIgnoringOriginal(for: song),
-                      !url.isEmpty, url != song.picURL else { continue }
-                favorites[idx] = Song(platform: song.platform, platformID: song.platformID,
-                                      name: song.name, singer: song.singer, album: song.album,
-                                      duration: song.duration, picURL: url)
+                let current = favorites[idx]
+                guard url != current.picURL else { continue }
+                favorites[idx] = Song(platform: current.platform, platformID: current.platformID,
+                                      name: current.name, singer: current.singer, album: current.album,
+                                      duration: current.duration, picURL: url)
                 persistFavorites()
             }
         }

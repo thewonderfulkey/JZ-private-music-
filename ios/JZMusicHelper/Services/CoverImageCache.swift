@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import UIKit
 
 // MARK: - 封面内存缓存 + 磁盘缓存
@@ -26,8 +27,17 @@ final class CoverImageCache: @unchecked Sendable {
     private let diskLimit = 600
 
     private init() {
-        cache.countLimit = 300
-        cache.totalCostLimit = 60 * 1024 * 1024   // 60MB，够一屏几百张小图
+        // 2026-11-21（老板："播放中翻搜索结果，90 秒后 App 直接回桌面"）：
+        // 原来 cost 写死 16KB/张，60MB 上限形同虚设，真正生效的只有"300 张"这一个张数上限；
+        // 一张 1080 的封面解码就是 4.6MB，300 张 = 1.4GB → jetsam 杀进程。
+        // 现在：按**真实解码字节**计费 + 张数/字节双上限 + 内存警告立即清空。
+        cache.countLimit = 120
+        cache.totalCostLimit = 40 * 1024 * 1024   // 40MB（按真实字节算）
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            self?.clearMemory()
+        }
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -51,7 +61,8 @@ final class CoverImageCache: @unchecked Sendable {
     /// 走同一套内存缓存，key 用文件 URL，互不干扰。
     func image(forFile url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
-        guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else { return nil }
+        guard let data = try? Data(contentsOf: url),
+              let img = Self.downsample(data, maxPixel: Self.maxDisplayPixel) else { return nil }
         store(img, for: url)
         return img
     }
@@ -68,8 +79,9 @@ final class CoverImageCache: @unchecked Sendable {
         let task = Task<UIImage?, Never> { [weak self] in
             guard let self else { return nil }
 
-            // ① 磁盘：冷启动就能命中，不用等网络
-            if let onDisk = Self.loadFromDisk(url, directory: diskDirectory) {
+            // ① 磁盘：冷启动就能命中，不用等网络（读出来也降采样，磁盘上可能是原图）
+            if let onDisk = Self.loadFromDisk(url, directory: diskDirectory,
+                                              maxPixel: Self.maxDisplayPixel) {
                 self.store(onDisk, for: url)
                 return onDisk
             }
@@ -82,7 +94,7 @@ final class CoverImageCache: @unchecked Sendable {
             guard let (data, response) = try? await URLSession.shared.data(for: request),
                   let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode),
-                  let image = UIImage(data: data) else {
+                  let image = Self.downsample(data, maxPixel: Self.maxDisplayPixel) else {
                 return nil
             }
             self.store(image, for: url)
@@ -99,8 +111,47 @@ final class CoverImageCache: @unchecked Sendable {
         return result
     }
 
+    /// 列表/播放页真正显示的最大边长。所有封面解码到这个尺寸就够，多出来的全是浪费内存。
+    static let maxDisplayPixel = 300
+
     func store(_ image: UIImage, for url: URL) {
-        cache.setObject(image, forKey: url as NSURL, cost: 64 * 64 * 4)
+        cache.setObject(image, forKey: url as NSURL, cost: Self.decodedBytes(of: image))
+    }
+
+    /// 一张图真正占多少内存（CGImage 的 bytesPerRow × height），而不是拍脑袋的常数
+    static func decodedBytes(of image: UIImage) -> Int {
+        guard let cg = image.cgImage else {
+            return Int(image.size.width * image.size.height * 4)
+        }
+        return cg.bytesPerRow * cg.height
+    }
+
+    /// 降采样解码：**不先把整张大图解出来**，直接按目标边长解码（ImageIO），
+    /// 这是内存峰值最低的一条路（1500×1500 的专辑图解码成 300 只要 1/25 的内存）。
+    static func downsample(_ data: Data, maxPixel: Int = 300) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cg)
+    }
+
+    /// 把封面数据压到合适边长再落盘（写 `Cover/` 旁车用）：
+    /// 原图 1500–3000px 的专辑图解码一次就是 9–36MB，既占磁盘也占内存。
+    static func compressedCoverData(_ data: Data, maxPixel: Int = 600) -> Data {
+        guard let image = downsample(data, maxPixel: maxPixel) else { return data }
+        return image.jpegData(compressionQuality: 0.85) ?? data
+    }
+
+    /// 内存警告 / 后台时清空（缓存本来就可重建）
+    func clearMemory() {
+        cache.removeAllObjects()
     }
 
     /// 按**歌曲**取封面（列表行与播放页共用同一条链，r65 老板反馈 ① 就修在这里）：
@@ -152,12 +203,13 @@ final class CoverImageCache: @unchecked Sendable {
         return directory.appendingPathComponent(name).appendingPathExtension("img")
     }
 
-    private static func loadFromDisk(_ url: URL, directory: URL) -> UIImage? {
+    private static func loadFromDisk(_ url: URL, directory: URL,
+                                     maxPixel: Int = 300) -> UIImage? {
         let file = fileURL(for: url, directory: directory)
         guard let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
         // 顺手刷一下修改时间：淘汰按"最后访问"排序，常用的封面不会被清掉
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
-        return UIImage(data: data)
+        return downsample(data, maxPixel: maxPixel)
     }
 
     private static func saveToDisk(_ data: Data, url: URL, directory: URL) {

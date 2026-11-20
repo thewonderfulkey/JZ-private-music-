@@ -4209,6 +4209,40 @@ do {
                                fileName: nil, query: "晴天"))
 }
 
+section("收藏去重：长副标题（包含关系）")
+
+do {
+    func s(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval,
+           id: String, album: String = "哎呦，不错哦") -> Song {
+        Song.make(platform: p, platformID: id, name: name, singer: singer, album: album,
+                  duration: dur, picURL: nil)
+    }
+    // 录屏实证：这两首在收藏里并存（QQ vs 酷我），都是 04:57
+    let qq = s(.qq, "手写的从前", "周杰伦", dur: 297, id: "h1")
+    let kuwo = s(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 297, id: "h2")
+    check("短标题被长标题包含 → 同一条录音", FavoriteRules.isSameRecording(qq, kuwo))
+    check("反过来也成立", FavoriteRules.isSameRecording(kuwo, qq))
+    check("专辑不同 → 不合并（防止同名不同专辑的联名版）",
+          !FavoriteRules.isSameRecording(
+            qq, s(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 297,
+                  id: "h3", album: "别的专辑")))
+    check("时长差 30s → 不合并",
+          !FavoriteRules.isSameRecording(
+            qq, s(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 327, id: "h4")))
+    check("四字以上才做包含：三字名不合并",
+          !FavoriteRules.isSameRecording(s(.qq, "七里香", "周杰伦", dur: 299, id: "p1"),
+                                         s(.kuwo, "七里香花开", "周杰伦", dur: 299, id: "p2")))
+    check("两字名不合并（爱情 / 爱情转移）",
+          !FavoriteRules.isSameRecording(s(.qq, "爱情", "陈奕迅", dur: 240, id: "l1"),
+                                         s(.kuwo, "爱情转移", "陈奕迅", dur: 240, id: "l2")))
+    check("长标题带 Live 仍按版本类挡住",
+          !FavoriteRules.isSameRecording(s(.qq, "手写的从前", "周杰伦", dur: 297, id: "l3"),
+                                         s(.kuwo, "手写的从前 (Live)", "周杰伦", dur: 297, id: "l4")))
+    check("包含关系也认：去掉连字符/标点后依然包含",
+          FavoriteRules.isSameRecording(s(.qq, "手写的从前", "周杰伦", dur: 297, id: "k1"),
+                                         s(.kugou, "手写的从前（优酸乳广告曲）", "周杰伦", dur: 297, id: "k2")))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

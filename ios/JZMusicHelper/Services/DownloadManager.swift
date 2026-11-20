@@ -23,6 +23,10 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 主线程发布：下载列表
     @Published var items: [DownloadItem] = []
     @Published var backgroundTaskCount: Int = 0
+    /// 导入进度（nil = 没在导入）。后台写、主线程读。
+    @Published var importProgress: ImportProgress?
+    /// 取消标记（导入循环每首检查一次）
+    var importCancelled = false
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -420,6 +424,12 @@ final class DownloadManager: NSObject, ObservableObject {
         let cover = await fetchCoverData(for: song)
         if isCompanionCancelled(itemID) { return }
 
+        // 2026-11-21：封面先压到 600px 再落盘/内嵌。
+        // 原图（1500–3000px）写进 Cover/ 后，每次列表解码就是 9–36MB —— 那是 jetsam 的主因之一。
+        let coverData: Data? = cover.map {
+            CoverImageCache.compressedCoverData($0.data, maxPixel: 600)
+        }
+
         // 写盘前再确认一次：歌词接口 + 封面下载可能花掉几秒，用户完全可能已经删了这条下载
         guard await isCompletedDownload(itemID) else { return }
 
@@ -427,7 +437,7 @@ final class DownloadManager: NSObject, ObservableObject {
         //    第四十轮补丁 3：歌词进 `…/Lyrics`、封面进 `…/Cover`，和音频分开摆。
         var sidecars = DownloadCompanion.writeSidecars(audio: audioURL,
                                                        lyricsText: lyricsText,
-                                                       coverData: cover?.data,
+                                                       coverData: coverData,
                                                        lyricsDirectory: lyricsDirectory,
                                                        coverDirectory: coverDirectory)
 
@@ -439,11 +449,11 @@ final class DownloadManager: NSObject, ObservableObject {
             case "m4a", "mp4":
                 embedded = await AudioTagEmbedder.embedM4A(
                     fileURL: audioURL, title: song.name, artist: song.singer,
-                    album: song.album, coverData: cover?.data, lyrics: lyricsText ?? "")
+                    album: song.album, coverData: coverData, lyrics: lyricsText ?? "")
             case "mp3":
                 embedded = await AudioTagEmbedder.embedMP3(
                     fileURL: audioURL, title: song.name, artist: song.singer,
-                    album: song.album, coverData: cover?.data,
+                    album: song.album, coverData: coverData,
                     coverMime: cover?.mime ?? "image/jpeg", lyrics: lyricsText ?? "")
             default:
                 embedded = false
@@ -452,7 +462,7 @@ final class DownloadManager: NSObject, ObservableObject {
         sidecars.embedded = embedded
 
         // ⑤ 回填说明。内嵌会重写音频文件，写完再确认条目还在：别给已删除的条目写说明。
-        let note = Self.companionsNote(lyricsText: lyricsText, coverData: cover?.data,
+        let note = Self.companionsNote(lyricsText: lyricsText, coverData: coverData,
                                        sidecars: sidecars)
         guard await isCompletedDownload(itemID) else { return }
         await MainActor.run {
@@ -797,6 +807,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        CrashReporter.install()
         return true
     }
 
@@ -822,6 +833,109 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     static func completeBackgroundSession(for identifier: String) {
         backgroundCompletionHandlers[identifier]?()
         backgroundCompletionHandlers[identifier] = nil
+    }
+}
+
+
+// MARK: - 崩溃 / 内存取证（2026-11-21）
+//
+// 老板报："播放中翻搜索结果，约 90–100 秒后 App 没有任何报错就回桌面。"
+// 这种死法只有三种：内存被杀（jetsam）、看门狗超时、信号崩溃。三者都**不会**在 App 里留下痕迹，
+// 所以先加最轻的取证：
+//   · 每 10 秒记一条内存曲线（resident MB + 封面缓存张数 + 收藏/下载条数）→ `诊断/life.log`
+//   · 记录启动 / 前后台切换（如果最后一条是"进后台后再没起来"，且内存接近阈值 → jetsam）
+//   · 未捕获异常（NSException）写 `诊断/crash-<时间>.log`
+// 没加信号处理器是刻意的：Swift 的越界/断言是 SIGTRAP，在信号处理里做 Swift 字符串拼接
+// 有死锁风险（malloc 锁），反而会让问题更难查。内存曲线足以区分 jetsam 与 trap。
+enum CrashReporter {
+
+    static let folderName = "诊断"
+
+    static func directory() -> URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent(folderName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static var installed = false
+
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        _ = directory()
+
+        NSSetUncaughtExceptionHandler { ex in
+            let text = """
+            ==== uncaught exception ====
+            \(Date())
+            \(ex.name.rawValue): \(ex.reason ?? "")
+            \(ex.callStackSymbols.joined(separator: "\n"))
+            """
+            append(text + "\n", to: "crash-\(stamp()).log")
+        }
+
+        log("app launched · v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+        for name in [UIApplication.didEnterBackgroundNotification,
+                     UIApplication.willEnterForegroundNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                log(name == UIApplication.didEnterBackgroundNotification ? "→ background" : "→ foreground")
+            }
+        }
+        Task { @MainActor in
+            while true {
+                log("mem \(String(format: "%.0f", residentMB()))MB · covers \(coverCount())")
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
+    }
+
+    static func log(_ line: String) {
+        append("\(stamp()) \(line)\n", to: "life.log")
+    }
+
+    // MARK: - 内部
+
+    private static func stamp() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm:ss"
+        return f.string(from: Date())
+    }
+
+    private static func append(_ text: String, to name: String) {
+        let url = directory().appendingPathComponent(name)
+        guard let data = text.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url, options: .atomic)
+        }
+        // life.log 超过 200KB 就轮转一次，别无限长
+        if name == "life.log",
+           let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int,
+           size > 200_000 {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func residentMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size
+                                           / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return 0 }
+        return Double(info.resident_size) / 1024 / 1024
+    }
+
+    private static func coverCount() -> Int {
+        // 只为看一眼缓存规模（封面缓存 NSCache 不暴露数量的间接指标：磁盘也不合适）→ 用下载条数代替
+        MainActor.assumeIsolated { DownloadManager.shared.items.filter { $0.status == .completed }.count }
     }
 }
 
@@ -872,130 +986,184 @@ extension DownloadManager {
     }
 
     /// 批量导入（文件或文件夹里筛出来的音频 URL）
+    ///
+    /// **必须从后台执行**（`Task.detached`）：这里面有"读完整个文件算 SHA-256"和"复制整个文件"，
+    /// 2026-11-21 的 bug 就是它在主线程上跑 —— 全选几十首 95MB 的歌把主线程堵死，
+    /// 系统文件选择器的「打开」回调没人处理，表现为"点多少次都没反应"。
     func importAudioFiles(_ urls: [URL]) async -> ImportReport {
         var report = ImportReport()
         let musicDir = musicDirectory
         try? FileManager.default.createDirectory(at: musicDir, withIntermediateDirectories: true)
 
-        // 已占用的基名：既包括记录里的，也包括磁盘上已有的（用户可能手动放进去过）
-        var taken = Set(items.compactMap { $0.fileName.isEmpty ? nil : ($0.fileName as NSString).deletingPathExtension })
+        // 起点快照：不跨线程读 `items`
+        let existing = await MainActor.run { self.items }
+        var taken = Set(existing.compactMap {
+            $0.fileName.isEmpty ? nil : ($0.fileName as NSString).deletingPathExtension
+        })
         if let onDisk = try? FileManager.default.contentsOfDirectory(
             at: musicDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
             for url in onDisk { taken.insert(url.deletingPathExtension().lastPathComponent) }
         }
+        var known = existing
 
-        // 先展开文件夹：文件夹的 security scope 必须**整批处理期间一直开着**，
-        // 否则 defer 一释放，里面的文件就复制不出来了。
+        // 先把"选中项"展开成文件清单（文件夹的作用域要在整批处理期间一直开着）
+        var batches: [(root: URL, files: [URL])] = []
         for picked in urls {
-            let folderScope = picked.startAccessingSecurityScopedResource()
-            defer { if folderScope { picked.stopAccessingSecurityScopedResource() } }
+            let scope = picked.startAccessingSecurityScopedResource()
+            batches.append((picked, Self.expandImportTargets(picked)))
+            if !scope { /* 没有作用域也能试，能读就继续 */ }
+        }
+        let totalFiles = max(1, batches.reduce(0) { $0 + $1.files.count })
+        var done = 0
 
-            for url in Self.expandImportTargets(picked) {
-            let ext = url.pathExtension.lowercased()
-            guard ImportRules.isPlayable(extension: ext) else {
-                report.unsupported.append(url.lastPathComponent)
-                continue
-            }
-            guard let meta = await Self.localMetadata(of: url), meta.bytes > 0 else {
-                report.failed.append(url.lastPathComponent)
-                continue
-            }
+        for batch in batches {
+            let rootScope = batch.root.startAccessingSecurityScopedResource()
+            defer { if rootScope { batch.root.stopAccessingSecurityScopedResource() } }
 
-            // ① 同一个文件（字节级相同）→ 跳过
-            if items.contains(where: { $0.status == .completed && $0.contentHash == meta.hash }) {
-                report.duplicateFiles += 1
-                continue
-            }
+            for url in batch.files {
+                if await MainActor.run({ self.importCancelled }) { break }
 
-            let kbps: Int64 = meta.duration > 0
-                ? Int64((Double(meta.bytes) * 8 / meta.duration / 1000).rounded()) : 0
-            let container = (ext == "m4a" || ext == "m4b" || ext == "aac") ? "m4a" : ext
-            let quality = QualityFacts.quality(container: container, kbps: kbps)
+                var ext = url.pathExtension.lowercased()
+                // 未知扩展名：按**文件内容**嗅探（对方 App 可能只是把 .flac/.m4a 改了名）
+                if !ImportRules.isPlayable(extension: ext) {
+                    if let sniffed = Self.sniffAudioExtension(of: url) {
+                        ext = sniffed
+                    } else {
+                        report.unsupported.append(url.lastPathComponent)
+                        done += 1
+                        continue
+                    }
+                }
+                guard ImportRules.isPlayable(extension: ext) else {
+                    report.unsupported.append(url.lastPathComponent)
+                    done += 1
+                    continue
+                }
 
-            let incoming = Song.make(platform: .local,
+                let current = await MainActor.run { self.importProgress }
+                _ = current
+                await MainActor.run {
+                    self.importProgress = ImportProgress(done: done, total: totalFiles,
+                                                         name: url.lastPathComponent)
+                }
+
+                guard let meta = await Self.localMetadata(of: url) else {
+                    report.failed.append(url.lastPathComponent)
+                    done += 1
+                    continue
+                }
+
+                // ① 同一个文件（字节级）
+                if known.contains(where: { $0.status == .completed && $0.contentHash == meta.hash }) {
+                    report.duplicateFiles += 1
+                    done += 1
+                    continue
+                }
+
+                let kbps: Int64 = meta.duration > 0
+                    ? Int64((Double(meta.bytes) * 8 / meta.duration / 1000).rounded()) : 0
+                let container = (ext == "m4a" || ext == "m4b" || ext == "aac") ? "m4a" : ext
+                let quality = QualityFacts.quality(container: container, kbps: kbps)
+
+                let incoming = Song.make(platform: .local,
+                                         platformID: "imp_" + String(meta.hash.prefix(12)),
+                                         name: meta.title, singer: meta.artist, album: meta.album,
+                                         duration: meta.duration, picURL: nil)
+
+                // ② 同一首（同一条录音）→ 留音质更高的一条
+                if let dup = known.first(where: {
+                    $0.status == .completed && FavoriteRules.isSameRecording($0.song, incoming)
+                }) {
+                    if Self.kbps(of: dup) >= kbps {
+                        report.duplicateSongs += 1
+                        done += 1
+                        continue
+                    }
+                    await MainActor.run { self.remove(itemID: dup.id, deleteFile: true) }
+                    known.removeAll { $0.id == dup.id }
+                }
+
+                // ③ 落盘（基名唯一：旁车靠基名对应，撞了会串歌）
+                let wantedBase: String = {
+                    if !meta.artist.isEmpty && !meta.title.isEmpty {
+                        return "\(meta.artist) - \(meta.title)"
+                    }
+                    if !meta.title.isEmpty { return meta.title }
+                    return ImportRules.parseFileName(url.lastPathComponent).title
+                }()
+                let base = ImportRules.uniqueBaseName(wantedBase, taken: taken)
+                let dest = musicDir.appendingPathComponent(base).appendingPathExtension(ext)
+                do {
+                    try FileManager.default.copyItem(at: url, to: dest)
+                } catch {
+                    report.failed.append(url.lastPathComponent)
+                    done += 1
+                    continue
+                }
+                taken.insert(base)
+
+                // 内嵌封面先压到 600px 再写成旁车（原图解码一次就是 9–36MB）
+                if let artwork = meta.artwork, !artwork.isEmpty {
+                    let compact = CoverImageCache.compressedCoverData(artwork, maxPixel: 600)
+                    _ = DownloadCompanion.writeSidecars(audio: dest, lyricsText: nil,
+                                                        coverData: compact,
+                                                        lyricsDirectory: lyricsDirectory,
+                                                        coverDirectory: coverDirectory)
+                }
+
+                let id = UUID()
+                let song = Song.make(platform: .local,
                                      platformID: "imp_" + String(meta.hash.prefix(12)),
                                      name: meta.title, singer: meta.artist, album: meta.album,
                                      duration: meta.duration, picURL: nil)
-
-            // ② 同一首（同一条录音）→ 留音质更高的一条；已有更好/相同就跳过
-            if let existing = items.first(where: {
-                $0.status == .completed && FavoriteRules.isSameRecording($0.song, incoming)
-            }) {
-                if Self.kbps(of: existing) >= kbps {
-                    report.duplicateSongs += 1
-                    continue
+                let item = DownloadItem(id: id, song: song, streamURL: dest.absoluteString,
+                                        backendName: "本地导入", quality: quality,
+                                        fileName: dest.lastPathComponent, localPath: dest.path,
+                                        status: .completed, progress: 1,
+                                        receivedBytes: meta.bytes, totalBytes: meta.bytes,
+                                        expectedBytes: meta.bytes,
+                                        createdAt: Date(), finishedAt: Date(),
+                                        actualNote: "导入 · \(kbps) kbps",
+                                        companionsNote: meta.artwork != nil ? "封面已存旁车" : nil,
+                                        origin: "import", contentHash: meta.hash)
+                await MainActor.run {
+                    self.appendOrUpdate(item)
+                    self.startCompanionFill(itemID: id, song: song, audioURL: dest)
                 }
-                // 新来的更好：删掉旧的（含它的旁车），再继续导入
-                remove(itemID: existing.id, deleteFile: true)
-            }
-
-            // ③ 落盘（基名必须唯一：旁车靠基名对应，撞了会串歌）
-            let wantedBase: String = {
-                if !meta.artist.isEmpty && !meta.title.isEmpty {
-                    return "\(meta.artist) - \(meta.title)"
-                }
-                if !meta.title.isEmpty { return meta.title }
-                return ImportRules.parseFileName(url.lastPathComponent).title
-            }()
-            let base = ImportRules.uniqueBaseName(wantedBase, taken: taken)
-            let dest = musicDir.appendingPathComponent(base).appendingPathExtension(ext)
-            do {
-                try FileManager.default.copyItem(at: url, to: dest)
-            } catch {
-                report.failed.append(url.lastPathComponent)
-                continue
-            }
-            taken.insert(base)
-
-            let song = Song.make(platform: .local,
-                                 platformID: "imp_" + String(meta.hash.prefix(12)),
-                                 name: meta.title, singer: meta.artist, album: meta.album,
-                                 duration: meta.duration, picURL: nil)
-
-            // 内嵌封面先抽出来写成旁车：**离线第一眼就有图**，不用等联网匹配
-            if let artwork = meta.artwork, !artwork.isEmpty {
-                _ = DownloadCompanion.writeSidecars(audio: dest, lyricsText: nil, coverData: artwork,
-                                                    lyricsDirectory: lyricsDirectory,
-                                                    coverDirectory: coverDirectory)
-            }
-
-            let id = UUID()
-            let item = DownloadItem(id: id, song: song, streamURL: dest.absoluteString,
-                                    backendName: "本地导入", quality: quality,
-                                    fileName: dest.lastPathComponent, localPath: dest.path,
-                                    status: .completed, progress: 1,
-                                    receivedBytes: meta.bytes, totalBytes: meta.bytes,
-                                    expectedBytes: meta.bytes,
-                                    createdAt: Date(), finishedAt: Date(),
-                                    actualNote: "导入 · \(kbps) kbps",
-                                    companionsNote: meta.artwork != nil ? "封面已存旁车" : nil,
-                                    origin: "import", contentHash: meta.hash)
-            appendOrUpdate(item)
-            report.added += 1
-            report.addedNames.append(song.name)
-
-            // ④ 后台补齐：歌词 / 封面（联网匹配）/ 内嵌（mp3、m4a）
-            startCompanionFill(itemID: id, song: song, audioURL: dest)
+                known.append(item)
+                report.added += 1
+                report.addedNames.append(song.name)
+                done += 1
             }
         }
+
+        await MainActor.run { self.importProgress = nil }
         return report
     }
 
-    /// 把"用户选中的一个 URL"展开成一批音频文件（文件夹递归，最多 5000 个，防止误选根目录）
-    static func expandImportTargets(_ picked: URL) -> [URL] {
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: picked.path, isDirectory: &isDir) else { return [] }
-        if !isDir.boolValue { return [picked] }
-        guard let en = FileManager.default.enumerator(
-            at: picked, includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
-        var out: [URL] = []
-        while let f = en.nextObject() as? URL {
-            if out.count >= 5000 { break }
-            if ImportRules.isPlayable(extension: f.pathExtension) { out.append(f) }
-        }
-        return out
+    /// 进度（后台写、主线程读）；nil = 没在导入
+    struct ImportProgress: Equatable {
+        var done: Int
+        var total: Int
+        var name: String
     }
+
+    /// 未知扩展名按文件头嗅探（只为"对方 App 改了后缀"的情况）
+    static func sniffAudioExtension(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let head = (try? handle.read(upToCount: 16)) ?? nil, !head.isEmpty else { return nil }
+        switch StreamVerifier.sniffHead([UInt8](head)) {
+        case "flac": return "flac"
+        case "mp3": return "mp3"
+        case "m4a": return "m4a"
+        case "wav": return "wav"
+        default: return nil
+        }
+    }
+
+    /// 取消正在进行的导入（已导入的保留，剩下的不再处理）
+    func cancelImport() { importCancelled = true }
 
     /// 本机是否已有"同一首"的本地文件（下载前的询问用）
     func localDuplicate(of song: Song) -> DownloadItem? {

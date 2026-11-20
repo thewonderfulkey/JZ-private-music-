@@ -169,6 +169,26 @@ check("繁简可搜", LibrarySearch.rank(
                       album: "", duration: 314, picURL: nil),
       fileName: nil, query: "後來") >= 2)
 
+print("— 收藏去重：长副标题（包含关系）")
+func hs(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval, id: String,
+        album: String = "哎呦，不错哦") -> Song {
+    Song.make(platform: p, platformID: id, name: name, singer: singer, album: album,
+              duration: dur, picURL: nil)
+}
+let hq = hs(.qq, "手写的从前", "周杰伦", dur: 297, id: "h1")
+let hk = hs(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 297, id: "h2")
+check("短标题被包含 → 合并", FavoriteRules.isSameRecording(hq, hk))
+check("专辑不同 → 不合并", !FavoriteRules.isSameRecording(
+      hq, hs(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 297, id: "h3", album: "别的")))
+check("时长差 30s → 不合并", !FavoriteRules.isSameRecording(
+      hq, hs(.kuwo, "手写的从前-优酸乳为爱告白广告曲", "周杰伦", dur: 327, id: "h4")))
+check("三字名不做包含", !FavoriteRules.isSameRecording(
+      hs(.qq, "七里香", "周杰伦", dur: 299, id: "p1"),
+      hs(.kuwo, "七里香花开", "周杰伦", dur: 299, id: "p2")))
+check("两字名不做包含", !FavoriteRules.isSameRecording(
+      hs(.qq, "爱情", "陈奕迅", dur: 240, id: "l1"),
+      hs(.kuwo, "爱情转移", "陈奕迅", dur: 240, id: "l2")))
+
 print("\n结果：通过 \(pass) / 失败 \(fail.count)")
 if !fail.isEmpty {
     for f in fail { print("  FAIL: \(f)") }
