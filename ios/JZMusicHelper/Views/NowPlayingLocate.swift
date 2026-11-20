@@ -125,10 +125,18 @@ final class SongLocator {
 
 // MARK: - 导航栏按钮
 
-/// 所有列表页右上角同一颗按钮：箭头 + 「定位」，一枚浅朱砂胶囊。
+/// 所有列表页右上角同一颗按钮：准星 + 「定位」，一枚浅朱砂胶囊。
 ///
-/// 为什么不用纯图标：图标（向下箭头）在这个 App 里已经有「回到当前」的含义，
-/// 但列表页的标题栏是空的、放得下两个字——写清楚比让老板猜更省事。
+/// 为什么不用纯图标：图标在这个 App 里没有唯一含义，列表页的标题栏又是空的、放得下两个字
+/// ——写清楚比让人猜更省事。
+///
+/// 为什么图标从 `arrow.down.to.line.compact` 换成 `scope`（2026-11-20 老板反馈"有点像下载"）：
+/// 那个符号是"箭头落到一条基准线上"，在 iOS 里本来就是**下载 / 存到文件**的意思，
+/// 而且本 App 的下载家族已经占了 `arrow.down.circle`（`LibraryView` / `NowPlayingView` /
+/// `SearchTabView` 里的「下载…」，以及下载 Tab 的 `arrow.down.circle.fill`）——
+/// 定位按钮跟下载按钮长得像一家人，是符号选错了，不是位置的问题。
+/// 换成准星：语义就是"对准 / 定位"，且与下载家族、搜索（`magnifyingglass`）、
+/// 收藏（`heart`）、心动（`sparkles`）都不重样。
 struct LocateNowPlayingButton: View {
 
     var action: () -> Void
@@ -136,7 +144,7 @@ struct LocateNowPlayingButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "arrow.down.to.line.compact")
+                Image(systemName: "scope")
                     .font(.caption.weight(.semibold))
                 Text("定位")
                     .font(.footnote.weight(.semibold))
@@ -145,7 +153,10 @@ struct LocateNowPlayingButton: View {
             .padding(.horizontal, Tokens.Spacing.xs)
             .frame(minHeight: 30)
             .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.10)))
-            .contentShape(Capsule())
+            // 视觉仍是 30pt 的胶囊，但点击区补到 44pt（HIG 的最小触摸目标）：
+            // 胶囊本身偏小，手指在导航栏上容易点到旁边而没反应。
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.press)
         .accessibilityLabel("定位到正在播放")
