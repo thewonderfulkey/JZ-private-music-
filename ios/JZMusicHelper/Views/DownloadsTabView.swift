@@ -118,7 +118,8 @@ struct DownloadsTabView: View {
                                     }
                                 }
                                 // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                                .id(item.id)
+                                // （用 uuidString 而不是 UUID：ScrollViewReader 的 id 统一走 String）
+                                .id(item.id.uuidString)
                         }
                     } header: {
                         sectionHeader("已下载（\(finished.count)）")
@@ -139,14 +140,9 @@ struct DownloadsTabView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     LocateNowPlayingButton {
                         // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
-                        let songs = downloads.completedSongs
                         locator.locate(current: player.currentSong,
-                                       songs: songs,
-                                       rowID: { index in
-                                           finished.indices.contains(index)
-                                               ? finished[index].id
-                                               : songs[index].id
-                                       },
+                                       songs: downloads.completedSongs,
+                                       rowIDs: finished.map { $0.id.uuidString },
                                        scroll: { id in
                                            proxy.scrollTo(id, anchor: .center)
                                        })

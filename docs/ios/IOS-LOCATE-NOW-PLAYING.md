@@ -101,7 +101,8 @@
 ### 下载页的特殊处理
 
 同一首歌可以下载两档音质（320k / 无损），两行的 `song.id` 相同——用 `song.id` 当 ScrollView 行 id 会撞。
-所以行 id 用 `DownloadItem.id`，`SongLocator` 的重载版本允许传入"下标 → 行 id"的映射。
+所以行 id 用 `DownloadItem.id.uuidString`，`SongLocator` 的另一个重载允许传入与 `songs` 一一对应的
+`rowIDs: [String]`（路由统一用 `String`，避开 `UUID` / `String` 混用时的类型推断歧义）。
 
 ### VoiceOver
 

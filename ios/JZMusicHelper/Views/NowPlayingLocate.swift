@@ -42,17 +42,18 @@ final class SongLocator {
     func locate(current: Song?, songs: [Song], proxy: ScrollViewProxy) {
         locate(current: current,
                songs: songs,
-               rowID: { songs[$0].id },
+               rowIDs: nil,
                scroll: { id in proxy.scrollTo(id, anchor: .center) })
     }
 
     /// 定位一次（行的 `.id()` 不是 `Song.id` 时走这个：下载页按 `DownloadItem.id` 认，
     /// 同一首歌可以有两档音质，用 `song.id` 会撞 id）。
+    /// - Parameter rowIDs: 与 `songs` 一一对应的行 id（缺省/长度不够时回落到 `song.id`）
     @MainActor
-    func locate<ID: Hashable>(current: Song?,
-                              songs: [Song],
-                              rowID: (Int) -> ID,
-                              scroll: @escaping (ID) -> Void) {
+    func locate(current: Song?,
+                songs: [Song],
+                rowIDs: [String]?,
+                scroll: @escaping (String) -> Void) {
         guard let current else {
             flashToast("还没有在播放的歌")
             return
@@ -68,7 +69,12 @@ final class SongLocator {
         }
 
         let song = songs[index]
-        let target = rowID(index)
+        let target: String
+        if let rowIDs, rowIDs.indices.contains(index) {
+            target = rowIDs[index]
+        } else {
+            target = song.id
+        }
 
         highlightTask?.cancel()
         highlightedSongID = song.id
