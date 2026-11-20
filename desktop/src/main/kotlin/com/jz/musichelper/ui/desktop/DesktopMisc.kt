@@ -290,7 +290,7 @@ fun SettingsPage() {
                     }
                     Spacer(Modifier.height(16.dp))
                     SettingsCard("关于") {
-                        Text("JZ Music · Windows 版 v2.1.95", fontSize = 13.sp, color = p.text)
+                        Text("JZ Music · Windows 版 v2.4.35", fontSize = 13.sp, color = p.text)
                         Spacer(Modifier.height(6.dp))
                         Text(
                             "四平台检索（QQ / 网易云 / 酷我 / 酷狗）+ 多后端取流兜底 + 逐字歌词。"
