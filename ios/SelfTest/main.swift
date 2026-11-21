@@ -4309,6 +4309,31 @@ do {
           ByteText.human(500_000) == "500 KB", ByteText.human(500_000))
 }
 
+// MARK: - 下载页多选（r166：老板要多选 + 全选 + 批量删除）
+
+section("批量选择 BatchSelection：全选 / 取消全选 / 清理")
+
+do {
+    let a = UUID(), b = UUID(), c = UUID(), other = UUID()
+
+    check("空列表不算全选", !BatchSelection.isAllSelected(picked: [], visible: []))
+    check("全选上为真", BatchSelection.isAllSelected(picked: [a, b], visible: [a, b]))
+    check("少一个为假", !BatchSelection.isAllSelected(picked: [a], visible: [a, b]))
+    check("有别人不影响（只看可见的）",
+          BatchSelection.isAllSelected(picked: [a, b, other], visible: [a, b]))
+
+    check("没全选 → 并入可见",
+          BatchSelection.togglingAll(picked: [c], visible: [a, b]) == [a, b, c])
+    check("已全选 → 只移除可见（不动搜索过滤掉的选择）",
+          BatchSelection.togglingAll(picked: [a, b, other], visible: [a, b]) == [other])
+
+    check("单行勾选：加上", BatchSelection.toggling([a], b) == [a, b])
+    check("单行勾选：去掉", BatchSelection.toggling([a, b], a) == [b])
+
+    check("清理：只保留还看得见的", BatchSelection.pruning([a, b, c], visible: [a, c]) == [a, c])
+    check("清理：全没了 → 空", BatchSelection.pruning([a, b], visible: []).isEmpty)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

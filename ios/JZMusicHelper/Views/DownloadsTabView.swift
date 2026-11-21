@@ -31,6 +31,10 @@ struct DownloadsTabView: View {
     @State private var showImportBrowser = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
     @State private var notice: String?
+    /// 多选态（2026-11-21 老板：多选 + 全选 + 批量删除）
+    @State private var selectMode = false
+    @State private var picked: Set<UUID> = []
+    @State private var showBatchDeleteConfirm = false
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -93,6 +97,18 @@ struct DownloadsTabView: View {
                     : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
             }
             Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog("删除选中的 \(picked.count) 首？",
+                            isPresented: $showBatchDeleteConfirm, titleVisibility: .visible) {
+            Button("删除（文件一起删掉）", role: .destructive) { deletePicked() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("下载记录和磁盘上的文件都会删掉，删了找不回来。")
+        }
+        // 条目变化（删了一首 / 导入进来一批）后清理选择：别删到看不见的东西
+        .onChange(of: downloads.items.count) { _, _ in
+            picked = BatchSelection.pruning(picked, visible: visibleIDs)
+            if downloads.items.isEmpty { selectMode = false }
         }
         .locateToast(notice)
     }
@@ -300,23 +316,112 @@ struct DownloadsTabView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+            // 批量操作条浮在**迷你条上沿**：迷你条是父视图的 overlay，
+            // 直接把操作条放 safeAreaInset 里会被它盖住（下载页经常在播歌）。
+            .overlay(alignment: .bottom) {
+                if selectMode {
+                    batchBar
+                        .padding(.bottom, CGFloat(MiniPlayerMetrics.listBottomInset(
+                            playing: player.hasCurrentSong)))
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
             .locateToast(locator.toast)
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
                 // 导入/整理的三个点在**外层**（`body` 的 toolbar 里），两个分支共用。
-                ToolbarItem(placement: .topBarTrailing) {
-                    LocateNowPlayingButton {
-                        // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
-                        locator.locate(current: player.currentSong,
-                                       songs: downloads.completedSongs,
-                                       rowIDs: finished.map { $0.id.uuidString },
-                                       scroll: { id in
-                                           proxy.scrollTo(id, anchor: .center)
-                                       })
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if selectMode {
+                        Button(allSelected ? "取消全选" : "全选") {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                picked = BatchSelection.togglingAll(picked: picked,
+                                                                    visible: visibleIDs)
+                            }
+                        }
+                        Button("完成") { exitSelectMode() }
+                    } else {
+                        Button {
+                            enterSelectMode()
+                        } label: {
+                            Image(systemName: "checklist")
+                        }
+                        .accessibilityLabel("多选")
+                        LocateNowPlayingButton {
+                            // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
+                            locator.locate(current: player.currentSong,
+                                           songs: downloads.completedSongs,
+                                           rowIDs: finished.map { $0.id.uuidString },
+                                           scroll: { id in
+                                               proxy.scrollTo(id, anchor: .center)
+                                           })
+                        }
                     }
                 }
             }
         }
+    }
+
+    // MARK: 多选（2026-11-21 老板：多选按钮 + 全选 + 批量删除）
+
+    /// 当前可见（受搜索过滤）的全部行 id —— 「全选」只作用于看得见的这些
+    private var visibleIDs: [UUID] { (ongoing + failed + finished).map(\.id) }
+
+    private var allSelected: Bool {
+        BatchSelection.isAllSelected(picked: picked, visible: visibleIDs)
+    }
+
+    /// 底部批量操作条
+    private var batchBar: some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            Text(picked.isEmpty ? "选择要处理的歌" : "已选 \(picked.count) 首")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button(role: .destructive) {
+                showBatchDeleteConfirm = true
+            } label: {
+                Label("删除", systemImage: "trash")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, Tokens.Spacing.m)
+                    .frame(minHeight: Tokens.Spacing.minTapTarget)
+                    .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.14)))
+            }
+            .buttonStyle(.press)
+            .disabled(picked.isEmpty)
+        }
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.vertical, Tokens.Spacing.xs)
+        .background(.regularMaterial)
+    }
+
+    private func enterSelectMode() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            selectMode = true
+            picked = []
+        }
+    }
+
+    private func exitSelectMode() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            selectMode = false
+            picked = []
+        }
+    }
+
+    /// 批量删除：在飞的下载先叫停（否则删了记录任务还在跑），再删记录 + 文件
+    private func deletePicked() {
+        let ids = picked
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if let item = downloads.items.first(where: { $0.id == id }),
+               item.status == .downloading || item.status == .pending {
+                downloads.cancel(itemID: id)
+            }
+            downloads.remove(itemID: id, deleteFile: true)
+        }
+        picked.removeAll()
+        selectMode = false
+        flash("已删除 \(ids.count) 首")
     }
 
     private func sectionHeader(_ text: String) -> some View {
@@ -407,6 +512,10 @@ struct DownloadsTabView: View {
 
     private func completedRow(_ item: DownloadItem) -> some View {
         Button {
+            if selectMode {
+                picked = BatchSelection.toggling(picked, item.id)
+                return
+            }
             RowTap.afterHighlight {
                 let songs = downloads.completedSongs
                 if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
@@ -418,7 +527,8 @@ struct DownloadsTabView: View {
             }
         } label: {
             SongRow(song: item.song,
-                    showsFavorite: true,
+                    // 多选态里不显示红心：那是个内嵌按钮，会和"点整行勾选"抢手势
+                    showsFavorite: !selectMode,
                     isFavorite: library.isFavorite(item.song),
                     onFavorite: {
                         Haptics.favorite()
@@ -426,7 +536,8 @@ struct DownloadsTabView: View {
                             library.toggleFavorite(item.song)
                         }
                     },
-                    subtitle: "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)")
+                    subtitle: "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)",
+                    isSelected: selectMode ? picked.contains(item.id) : nil)
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)
@@ -457,6 +568,10 @@ struct DownloadsTabView: View {
         }
         .padding(.vertical, Tokens.Spacing.xs)
         .contentShape(Rectangle())
+        .onTapGesture {
+            // 多选态：点整行 = 勾选/取消（平时这一行没有点击行为，只有长按菜单）
+            if selectMode { picked = BatchSelection.toggling(picked, item.id) }
+        }
         .contextMenu {
             Button(role: .destructive) {
                 downloads.cancel(itemID: item.id)
@@ -483,6 +598,9 @@ struct DownloadsTabView: View {
         }
         .padding(.vertical, Tokens.Spacing.xs)
         .contentShape(Rectangle())
+        .onTapGesture {
+            if selectMode { picked = BatchSelection.toggling(picked, item.id) }
+        }
         .contextMenu {
             Button {
                 downloads.retry(itemID: item.id, useBackground: true)
@@ -497,9 +615,16 @@ struct DownloadsTabView: View {
         }
     }
 
-    /// 封面 + 歌名 + 状态 + 歌手（无底色）
+    /// 封面 + 歌名 + 状态 + 歌手（无底色）；多选态行首多一个勾选圈
     private func rowHeadline(item: DownloadItem, subtitle: String, tint: Color) -> some View {
         HStack(spacing: Tokens.Spacing.s) {
+            if selectMode {
+                Image(systemName: picked.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(picked.contains(item.id)
+                                     ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                    .accessibilityHidden(true)
+            }
             SongArtwork(song: item.song)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.song.name)

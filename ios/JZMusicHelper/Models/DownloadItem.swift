@@ -119,6 +119,39 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - 批量选择（2026-11-21 老板：下载 tab 要多选 + 全选 + 批量删除）
+
+/// 多选的纯逻辑：只决定"全选按钮该做什么"和"结果集合长什么样"，
+/// 方便在 CI 里钉断言（视图里只剩调用）。
+enum BatchSelection {
+
+    /// 当前可见的行是不是**已经全选**（决定按钮显示「全选」还是「取消全选」）
+    static func isAllSelected(picked: Set<UUID>, visible: [UUID]) -> Bool {
+        guard !visible.isEmpty else { return false }
+        return visible.allSatisfy { picked.contains($0) }
+    }
+
+    /// 点「全选 / 取消全选」之后的新集合：
+    /// 已经全选 → 只把这些可见的移出（不动搜索过滤掉的其它选择）；
+    /// 否则 → 并入全部可见项（保留已选的其它项，翻页/搜索后不会丢）。
+    static func togglingAll(picked: Set<UUID>, visible: [UUID]) -> Set<UUID> {
+        if isAllSelected(picked: picked, visible: visible) {
+            return picked.subtracting(visible)
+        }
+        return picked.union(visible)
+    }
+
+    /// 单行点一下：有则去掉，无则加上
+    static func toggling(_ picked: Set<UUID>, _ id: UUID) -> Set<UUID> {
+        picked.contains(id) ? picked.subtracting([id]) : picked.union([id])
+    }
+
+    /// 只保留还在列表里的（删除/导入后清理残留选择，避免"删了看不见的东西"）
+    static func pruning(_ picked: Set<UUID>, visible: [UUID]) -> Set<UUID> {
+        picked.intersection(visible)
+    }
+}
+
 // MARK: - 体积文案（2026-11-21 老板：> 1GB 用 GB，< 1GB 用 MB，< 1MB 再降级，升级同理）
 
 /// 一处统一的"人看的体积"：自动选档位，不再到处写 `%.1f MB`。

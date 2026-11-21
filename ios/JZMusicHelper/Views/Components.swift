@@ -89,9 +89,19 @@ struct SongRow: View {
     /// 第二十轮（老板："榜单页太丑、太细了"）：榜单页改回用这个统一行样式，
     /// 名次作为行首的小字——不再另写一套更瘦的榜单行。
     var leadingRank: Int?
+    /// 多选态：nil = 不在多选（不占位）；true/false = 显示勾选圈并给状态
+    /// （2026-11-21 老板："下载 tab 加多选，支持全选和批量删除"）
+    var isSelected: Bool? = nil
 
     var body: some View {
         HStack(spacing: Tokens.Spacing.s) {
+            if let isSelected {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(isSelected ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                    .transition(.opacity)
+                    .accessibilityHidden(true)
+            }
             if let leadingRank {
                 // 第二十轮（老板 r83：榜单最后一行"100"横向挤不下、被折成了两行）：
                 // 名次槽 20 → 26，并且 `lineLimit(1)` + `minimumScaleFactor` 双保险——
@@ -152,7 +162,7 @@ struct SongRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(song.name)，\(song.singer)，\(song.durationText)")
-        .accessibilityHint("轻点播放")
+        .accessibilityHint(isSelected == nil ? "轻点播放" : (isSelected == true ? "轻点取消选择" : "轻点选择"))
     }
 
     private var secondaryText: String {
