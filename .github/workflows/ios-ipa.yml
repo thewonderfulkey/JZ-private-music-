@@ -60,6 +60,7 @@ jobs:
             ios/JZMusicHelper/Services/SearchAdapters.swift \
             ios/JZMusicHelper/Services/SearchRanker.swift \
             ios/JZMusicHelper/Services/NameMatch.swift \
+            ios/JZMusicHelper/Services/MetadataMatcher.swift \
             ios/JZMusicHelper/Services/ListLocate.swift \
             ios/JZMusicHelper/Services/StudioPick.swift \
             ios/JZMusicHelper/Services/KuwoParser.swift \

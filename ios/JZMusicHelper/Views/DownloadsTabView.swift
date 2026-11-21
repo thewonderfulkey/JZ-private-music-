@@ -35,6 +35,12 @@ struct DownloadsTabView: View {
     @State private var selectMode = false
     @State private var picked: Set<UUID> = []
     @State private var showBatchDeleteConfirm = false
+    /// 第 44 轮：长按 →「编辑歌曲信息」的目标条目（nil = 不弹）
+    @State private var editingItem: DownloadItem?
+    /// 批量编辑（只改歌手/专辑）
+    @State private var showBatchEdit = false
+    /// 补全缺口计数（未匹配 / 缺封面 / 缺歌词）—— 后台统计，不在 body 里查磁盘
+    @State private var gaps = DownloadManager.CompanionGaps()
 
     /// 第 41 轮 P0-2：首屏只建这么多行，滚到底/点「继续加载」再追加。
     /// 第 42 轮（真机 perf.log：80 行要 507–813ms ≈ 7–10ms/行）：**首帧只建 8 行**，
@@ -101,6 +107,18 @@ struct DownloadsTabView: View {
             }
             .environmentObject(downloads)
         }
+        // 第 44 轮：长按行 → 编辑歌曲信息（歌名/歌手/专辑/封面）
+        .sheet(item: $editingItem, onDismiss: {
+            Task { gaps = await downloads.companionGapCounts() }
+        }) { item in
+            SongMetadataEditor(item: item)
+        }
+        // 批量编辑：只允许统一改歌手/专辑（歌名、封面不批量）
+        .sheet(isPresented: $showBatchEdit, onDismiss: {
+            Task { gaps = await downloads.companionGapCounts() }
+        }) {
+            BatchMetadataEditor(items: downloads.items.filter { picked.contains($0.id) })
+        }
         .alert("导入", isPresented: Binding(
             get: { downloads.lastImportReport != nil },
             set: { if !$0 { downloads.lastImportReport = nil } })) {
@@ -137,6 +155,11 @@ struct DownloadsTabView: View {
             fillScheduled = false
             scheduleFill()
         }
+        // 第 44 轮：缺口计数（662 次 stat）延后 1.2 秒再查，绝不抢首帧
+        .task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            gaps = await downloads.companionGapCounts()
+        }
         .locateToast(notice)
     }
 
@@ -158,6 +181,17 @@ struct DownloadsTabView: View {
             } label: {
                 Label("整理重复（同曲留最高音质）", systemImage: "rectangle.stack.badge.minus")
             }
+            // 第 44 轮 B7：批量补全入口（计数来自后台统计，不在渲染路径查磁盘）
+            Button {
+                let n = downloads.backfillAllMissing()
+                flash(n == 0 ? "没有需要补全的" : "开始补全 \(n) 首（并发 \(DownloadManager.companionConcurrency)）…")
+            } label: {
+                Label(gaps.isClear
+                      ? "补全封面/歌词/信息"
+                      : "补全信息（未匹配 \(gaps.noMatch) · 缺封面 \(gaps.noCover) · 缺歌词 \(gaps.noLyrics)）",
+                      systemImage: "wand.and.stars")
+            }
+            .disabled(gaps.isClear)
         } label: {
             Image(systemName: "ellipsis.circle")
         }
@@ -542,6 +576,16 @@ struct DownloadsTabView: View {
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
+            // 第 44 轮：批量编辑（只改歌手/专辑；歌名与封面不批量）
+            Button {
+                showBatchEdit = true
+            } label: {
+                Label("编辑", systemImage: "pencil")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, Tokens.Spacing.m)
+            }
+            .buttonStyle(.press)
+            .disabled(picked.isEmpty)
             Button(role: .destructive) {
                 showBatchDeleteConfirm = true
             } label: {
@@ -709,9 +753,11 @@ struct DownloadsTabView: View {
         .buttonStyle(.rowPress)
         // 第 42 轮：左滑删除 / 长按菜单只在"露过脸的行"上挂。
         // 每行少挂 2 个交互修饰符，80 行就是 160 份开销；而真正会被左滑的只有看得见的那些。
-        .modifier(DownloadRowActions(itemID: item.id, enabled: interactive) { id in
+        .modifier(DownloadRowActions(itemID: item.id, enabled: interactive, onDelete: { id in
             downloads.remove(itemID: id, deleteFile: true)
-        })
+        }, onEdit: { id in
+            editingItem = downloads.items.first(where: { $0.id == id })
+        }))
     }
 
     // MARK: 正在下载（唯一会画进度条的行）
@@ -843,8 +889,24 @@ private struct DownloadRow: View {
     let onFavorite: () -> Void
     let isSelected: Bool?
 
-    private var subtitle: String {
-        "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)"
+    /// 副行 = **歌手 · 专辑**（第 44 轮 B6：跟全 App 其它列表一致）。
+    ///
+    /// 以前这里写的是「本地导入 · 无损 FLAC · 27.3 MB」，占了歌手的位置 —— 老板看图后的原话是
+    /// "歌手显示本地导入、专辑显示无损 FLAC"，实际是信息位错位，不是数据被写脏。
+    /// 音质/大小改到右侧小字（`qualityLine`），来源只留一个「本地」胶囊感的细字。
+    private var artistLine: String {
+        let singer = item.song.singer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let album = item.song.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        if singer.isEmpty && album.isEmpty { return "未知歌手" }
+        if album.isEmpty { return singer }
+        if singer.isEmpty { return album }
+        return "\(singer) · \(album)"
+    }
+
+    /// 右侧小字：`无损 FLAC · 27.3 MB`（本地导入再加个"本地"前缀，信息不丢）
+    private var qualityLine: String {
+        let head = item.origin == "import" ? "本地 · " : ""
+        return "\(head)\(item.quality.displayName) · \(item.sizeText)"
     }
 
     var body: some View {
@@ -852,7 +914,8 @@ private struct DownloadRow: View {
             if let isSelected {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(isSelected ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                    .foregroundStyle(isSelected
+                                     ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
                     .accessibilityHidden(true)
             }
 
@@ -862,7 +925,7 @@ private struct DownloadRow: View {
                 Text(item.song.name)
                     .font(FontRole.songTitle)
                     .lineLimit(1)
-                Text(subtitle)
+                Text(artistLine)
                     .font(FontRole.songSubtitle)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -870,12 +933,17 @@ private struct DownloadRow: View {
 
             Spacer(minLength: Tokens.Spacing.xs)
 
-            Text(item.song.durationText)
-                .font(FontRole.metadata)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(minWidth: 36, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(item.song.durationText)
+                    .font(FontRole.metadata)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .frame(minWidth: 36, alignment: .trailing)
+                Text(qualityLine)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
 
             if showsFavorite {
                 Button(action: onFavorite) {
@@ -905,6 +973,9 @@ private struct DownloadRowActions: ViewModifier {
     let itemID: UUID
     let enabled: Bool
     let onDelete: (UUID) -> Void
+    /// 第 44 轮：长按「编辑歌曲信息」。**放在这个 modifier 里**（而不是行上再挂一个
+    /// `.contextMenu`）—— 它只对"露过脸的行"（`armed`）生效，80 行的首帧成本不变。
+    let onEdit: (UUID) -> Void
 
     func body(content: Content) -> some View {
         if enabled {
@@ -917,6 +988,11 @@ private struct DownloadRowActions: ViewModifier {
                     }
                 }
                 .contextMenu {
+                    Button {
+                        onEdit(itemID)
+                    } label: {
+                        Label("编辑歌曲信息", systemImage: "pencil")
+                    }
                     Button(role: .destructive) {
                         onDelete(itemID)
                     } label: {

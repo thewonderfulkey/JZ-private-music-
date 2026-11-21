@@ -1,3 +1,55 @@
+## iOS v2.4.54（232）· 2026-11-21 深夜（导入歌：元数据联网匹配 + 手动编辑 + 补料队列）
+
+老板两轮拍板（现象 → 根因）：
+① 导入后封面 6/662、歌词 503/662；② 下载页副行写着「本地导入 · 无损 FLAC」，
+被读成"歌手 = 本地导入、专辑 = 无损 FLAC"（实际是 `DownloadRow.subtitle` 的信息位错位，
+`Song.singer/album` 从来是标签值）；③ 导入链路**从来没有联网匹配**这一步。
+
+### 一、根因（代码 + 真机日志）
+
+| 现象 | 根因 | 位置 |
+|---|---|---|
+| 封面 6/662 | 补料只认 `song.picURL`，导入时 `picURL = nil` → **0 次封面请求**；`Cover/` 那 6 个是内嵌封面抽的 | `DownloadManager.fillCompanion` / `fetchCoverData` |
+| 歌词 503/662 | 662 条取词链同时开跑（无并发闸门），每首只试一次 + 8s 死线，失败不重试不落盘 | `startCompanionFill` |
+| 歌手/专辑"像占位" | 下载页瘦行把"来源·音质·大小"放在了歌手位；v2.4.52 的同一页右边还是真歌手 | `DownloadsTabView.DownloadRow` |
+| 元数据是假值 | 无 tag 时 `parseFileName` 固定按「歌手 - 歌名」拆，老板库里两种命名混着 → 拆反 | `NameMatch.parseFileName` |
+| 改不了/补不了 | 没有任何"补抓/编辑"入口；重导按 hash 跳过，不会重触发 | — |
+
+### 二、改动（699+/98−，13 文件 + 3 新文件）
+
+1. **`Song` 加 `meta`（MetaProvenance）**：出处 `tag / filenameGuess / matched / manual / unmatched` +
+   **字段级锁** + 命中 id + 置信分 + `coverRevision`；`Song.with(...)` 造新实例，`platformID` 永不变。
+2. **`MetadataMatcher`（新，纯逻辑）**：A/B 两解（仅本地导入 + 猜的歌手才允许对调）→ 打分
+   歌名 0.5 / 歌手 0.25 / 专辑 0.1 / 时长 0.15 → 硬闸门（歌名 ≥0.85、歌手不冲突、时长差 ≤8s）
+   → 阈值 **≥0.85 自动写 / 0.6–0.85 待确认 / <0.6 留空**。
+3. **`MetadataWriter`（新）**：唯一写回通道 —— 四处快照（downloads.json / 收藏 / 导入歌单 / 播放队列）+ 三处缓存
+   （CoverImageCache 的 `file://` key、rowFacts、NowPlayingCenter 的封面判重）一起刷；播放器靠通知收。
+4. **补料队列**：并发 **4** + 3 次退避（2/8/30s）+ 状态落盘（`companionState/Attempts/Reason`）+ **冷启动断点续抓**；
+   导入只入队，不再 662 并发。
+5. **封面**：匹配到的 albummid 图优先，失败再走 `CoverResolver`（酷我 rid → QQ 严格匹配 → iTunes 最后）。
+6. **歌词**：本地导入歌补到 QQ songmid 后走**官方词（①b 位置不变，r74 顺序不动）**。
+7. **B6**：下载页副行改回「歌手 · 专辑」，音质/大小移到右侧小字。
+8. **手动编辑**：长按行 → Sheet（歌名必填 / 歌手 / 专辑 / 相册封面 / 重新匹配 / 恢复自动）；
+   批量多选 → 只改歌手/专辑；改过的字段锁住，自动匹配不再覆盖。
+9. **补全入口**：下载页「⋯ → 补全信息（未匹配 N · 缺封面 N · 缺歌词 N）」；**`诊断/metadata.log`** 每首一行。
+
+### 三、自测
+
+- 纯逻辑（WSL swiftc，`tools/dev/r2k4d54_mini_assertions.swift`）：**36 条断言全绿**
+  （A/B 拆解 4 / 打分 7 / 阈值边界 4 / 硬闸门 3 / 写回锁定 5 / 手动编辑 6 / 封面代次 1 / 恢复自动 3 / 其它 3）。
+- 真机前实测（同一份源码在 Linux 跑真实 QQ 搜索）：
+  `Avril Lavigne / When You're Gone` → **auto 0.95（A/B 对调命中）**；
+  `到此为止 / 徐佳莹` → auto 0.95；`炎 / LiSA` → auto 0.88；
+  `Converted with FlexClip`（AI 剪辑产物）→ **reject（不误配）**。
+- `python tools/ios/check_pbxproj.py` / `check_ui_hygiene.py` 均通过；3 个新文件已注册进 pbxproj 与 CI 逻辑测试清单。
+
+### 四、没动的东西（回归口径）
+
+- 下载页 **首帧 8 行 + 分块补行**（`DownloadListPaging` 未改）；行内只多了右侧一个小 VStack，
+  缺口计数延后 1.2s 且在线程池里查，不进首帧。
+- 播放链（≤320k / 同曲换源 / 占位闸门）**一行未动**；`AudioPlayer` 只加了"元数据写回"的接收方法。
+---
+
 ## iOS v2.4.53（231）· 2026-11-21 晚（下载 Tab：首帧压到 8 行 + 分块补行 + 交互懒挂载）
 
 老板真机（v2.4.52 / 230，`诊断/perf.log` 六次）：
