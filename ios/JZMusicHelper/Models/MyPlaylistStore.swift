@@ -60,6 +60,28 @@ final class MyPlaylistStore {
         save()
     }
 
+    /// 元数据写回（第 44 轮）：导入歌单是**一次性快照**，但老板改了某首歌的名字/歌手/封面之后，
+    /// 快照里那一份也要跟着换（否则发现页「我的歌单」还显示旧名字）。
+    /// `ImportedPlaylist` 的字段是 let，所以是"整条歌单重建"，不是原地改。
+    func applySongMetadata(_ song: Song) {
+        var changed = false
+        for i in playlists.indices {
+            guard let j = playlists[i].songs.firstIndex(where: { $0.id == song.id }) else { continue }
+            let current = playlists[i].songs[j]
+            guard current.name != song.name || current.singer != song.singer
+                || current.album != song.album || current.picURL != song.picURL
+                || current.meta != song.meta else { continue }
+            var songs = playlists[i].songs
+            songs[j] = song
+            let p = playlists[i]
+            playlists[i] = ImportedPlaylist(platform: p.platform, sourceID: p.sourceID,
+                                            name: p.name, creator: p.creator, cover: p.cover,
+                                            songs: songs, importedAt: p.importedAt)
+            changed = true
+        }
+        if changed { save() }
+    }
+
     func remove(_ id: String) {
         playlists.removeAll { $0.id == id }
         save()

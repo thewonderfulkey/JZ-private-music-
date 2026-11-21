@@ -92,6 +92,28 @@ final class DownloadManager: NSObject, ObservableObject {
     private var companionRunning: Set<UUID> = []
     private var companionCancelled: Set<UUID> = []
 
+    // MARK: 补料队列（第 44 轮）
+    //
+    // 老板拍板：662 首不能再一次全起（那是"662 条取词链同时开跑，把接口打爆、失败还不重试"），
+    // 改成**队列 + 并发 ≤4 + 退避重试 + 状态落盘（断点续抓）**。
+    //
+    // 全部只在主线程读写（`items` 本来就只有主线程能动），所以不用再加锁；
+    // 真正的网络/写盘在 `Task.detached` 里跑，回来时 `MainActor.run` 收尾。
+    /// 补料并发上限（QQ 搜索与搜索页同域，>4 会把搜索打超时 —— 老板刚修过那一轮）
+    static let companionConcurrency = 4
+    /// 每首最多自动重试几次（超过就停下，等用户点「补全信息」）
+    static let companionMaxAttempts = 3
+    /// 退避：第 1 次失败 2s 后再试，第 2 次 8s，第 3 次 30s
+    static let companionBackoff: [TimeInterval] = [2, 8, 30]
+
+    /// 等着补的条目（按入队顺序）
+    private var fillQueue: [UUID] = []
+    /// 正在补的条目
+    private var fillInFlight: Set<UUID> = []
+    /// 这一批补料的总数 / 已完成数（给 UI 显示进度）
+    private(set) var companionBatchTotal = 0
+    private(set) var companionBatchDone = 0
+
     /// 下载记录的落盘路径（原来借 HistoryStore，现在 Downloads 自己存，避免两个 store 互相依赖）
     private var recordsURL: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -110,6 +132,9 @@ final class DownloadManager: NSObject, ObservableObject {
         backgroundSession = URLSession(configuration: bgConfig, delegate: self, delegateQueue: nil)
 
         loadPersisted()
+        // 第 44 轮：断点续抓 —— 上次没补完（被杀进程 / 切后台 / 网络断了）的条目接着补。
+        // 只捡"有状态记录且没跑完"的，不会把 662 首全库重新搜一遍（那是批量补全入口的事）。
+        DispatchQueue.main.async { [weak self] in self?.resumeCompanionBackfill() }
         // 第四十轮补丁 4：把旧版 `Documents/Music` 里的文件搬进新的三个子目录，搬空后删掉这个文件夹
         // （老板："后台文件既然全都存在 Downloads 中了，为什么还留着 Music 文件夹，可以删了"）
         migrateLegacyMusicFolderIfNeeded()
@@ -605,98 +630,328 @@ final class DownloadManager: NSObject, ObservableObject {
         task.resume()
     }
 
-    // MARK: - 歌词/封面补料（老板反馈 ⑧）
+    // MARK: - 元数据匹配 + 歌词/封面补料（老板反馈 ⑧ + 第 44 轮）
 
-    /// 下载成功后异步补料：取词 → 取封面 → 写旁车 → 能内嵌就内嵌 → 把结果写回条目。
+    /// 一次补料的结论（给队列收尾用：要不要重试、写回什么、UI 上标什么）
+    struct CompanionFillResult {
+        /// 匹配/编辑之后的歌（要经 `MetadataWriter` 写回四处快照）
+        var song: Song?
+        var lyricsOK = false
+        var coverOK = false
+        var embedded = false
+        var note: String?
+        /// 0.6–0.85 的待确认候选
+        var suggestion: Song?
+        var verdict: MatchVerdict = .reject
+        /// 人话原因（UI 直接显示）
+        var reason: String?
+        /// 网络/超时类失败 → 值得退避重试
+        var retryable = false
+        /// 启动时用的歌名+歌手，用于判断"跑的过程中用户改了信息"
+        var startedWith = ""
+    }
+
+    /// 入口：导入完成 / 下载完成后把条目**放进队列**（第 44 轮起不再原地起一个 detached 任务）。
     ///
-    /// 为什么用 detached 后台任务：补料包含网络请求（歌词接口 + 封面 CDN）和一次可能的
-    /// 音频文件重写，放主线程会把 UI 卡住；`.utility` 让它不去抢下载/播放的 CPU。
-    /// 为什么每个 item 只跑一次：`companionRunning` 去重；`finish` 成功后理论上只调一次，
-    /// 但重试/极端时序下仍要防止同一 item 两条补料任务互相覆盖。
-    private func startCompanionFill(itemID: UUID, song: Song, audioURL: URL) {
-        companionLock.lock()
-        if companionRunning.contains(itemID) || companionCancelled.contains(itemID) {
-            companionLock.unlock()
+    /// 旧实现是 662 首 = 662 条并发取词链，把酷狗/LRCLIB/网易一起打满，8 秒死线一到全判失败，
+    /// 而且失败没有任何记录 —— 这就是 `Lyrics 503/662` 的直接来源。
+    func startCompanionFill(itemID: UUID, song: Song, audioURL: URL) {
+        enqueueCompanionFill(itemID: itemID)
+    }
+
+    /// 入队（去重；已在队/在飞/已取消的忽略）
+    func enqueueCompanionFill(itemID: UUID) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.enqueueCompanionFill(itemID: itemID) }
             return
         }
-        companionRunning.insert(itemID)
+        companionLock.lock()
+        let cancelled = companionCancelled.contains(itemID)
+        let running = companionRunning.contains(itemID)
         companionLock.unlock()
+        guard !cancelled, !running, !fillQueue.contains(itemID) else { return }
+        fillQueue.append(itemID)
+        pumpCompanionQueue()
+    }
 
-        Task.detached(priority: .utility) { [weak self] in
-            guard let self else { return }
-            await self.fillCompanion(itemID: itemID, song: song, audioURL: audioURL)
-            self.finishCompanionBookkeeping(itemID)
+    /// 起任务：同时最多 `companionConcurrency` 个
+    private func pumpCompanionQueue() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.pumpCompanionQueue() }
+            return
+        }
+        while fillInFlight.count < Self.companionConcurrency, !fillQueue.isEmpty {
+            let id = fillQueue.removeFirst()
+            guard let idx = items.firstIndex(where: { $0.id == id }),
+                  items[idx].status == .completed,
+                  let path = items[idx].localPath else {
+                companionBatchDone += 1
+                continue
+            }
+            let song = items[idx].song
+            items[idx].companionState = .running
+            items[idx].companionAttempts = (items[idx].companionAttempts ?? 0) + 1
+            let attempt = items[idx].companionAttempts ?? 1
+            fillInFlight.insert(id)
+            companionLock.lock()
+            companionRunning.insert(id)
+            companionLock.unlock()
+            persist()
+
+            let audio = URL(fileURLWithPath: path)
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self else { return }
+                var result = await self.fillCompanion(itemID: id, song: song, audioURL: audio)
+                result.startedWith = "\(song.name)|\(song.singer)"
+                await MainActor.run {
+                    self.completeCompanion(id, result: result, attempt: attempt)
+                }
+            }
+        }
+        // 全空了就把这一批的进度收尾（UI 上"补全中"的指示器据此消失）
+        if fillQueue.isEmpty, fillInFlight.isEmpty {
+            companionBatchTotal = 0
+            companionBatchDone = 0
         }
     }
 
-    /// 补料主流程。任何一步失败都只是"少了歌词/封面"（或者没内嵌成功），
-    /// 绝不能反过来影响"歌已经下好、能播"这件事。
-    private func fillCompanion(itemID: UUID, song: Song, audioURL: URL) async {
-        // 条目还在（没被删）才有补料的必要
-        guard await isCompletedDownload(itemID) else { return }
+    /// 收尾：写状态、决定要不要退避重试、继续泵队列
+    @MainActor
+    private func completeCompanion(_ id: UUID, result: CompanionFillResult, attempt: Int) {
+        fillInFlight.remove(id)
+        companionLock.lock()
+        companionRunning.remove(id)
+        companionLock.unlock()
+        companionBatchDone += 1
 
-        // ① 歌词：QRC/KRC 的逐字时间不落 LRC，落盘只保留行级时间（离线够看，见 lrcText 注释）
-        var lines: [LyricLine] = []
-        if let result = await LyricsService.shared.fetch(song) {
-            lines = result.lines
+        guard let idx = items.firstIndex(where: { $0.id == id }) else {
+            pumpCompanionQueue()
+            return
         }
-        if isCompanionCancelled(itemID) { return }
+
+        // ① 匹配/编辑后的歌要写回四处快照（元数据变了，界面才会跟着变）
+        if let newSong = result.song, !Self.sameMetadata(newSong, items[idx].song) {
+            MetadataWriter.apply(newSong)
+        }
+        // ② 状态与原因
+        items[idx].companionsNote = result.note ?? items[idx].companionsNote
+        items[idx].companionReason = result.reason
+        items[idx].matchSuggest = result.suggestion
+        if result.verdict == .confirm {
+            items[idx].companionState = .confirm
+        } else if result.retryable, attempt < Self.companionMaxAttempts {
+            let backoff = Self.companionBackoff[min(attempt - 1, Self.companionBackoff.count - 1)]
+            items[idx].companionState = .failed
+            items[idx].companionNextAt = Date().addingTimeInterval(backoff)
+            scheduleCompanionRetry(id: id, after: backoff)
+        } else {
+            items[idx].companionState = .done
+            items[idx].companionNextAt = nil
+        }
+        persist()
+        if result.coverOK { markDirectoryCacheDirty() }
+
+        // ③ 跑的过程中用户改了信息 → 用新信息再跑一趟（不覆盖手填字段，靠 meta.locked 保证）
+        let now = "\(items[idx].song.name)|\(items[idx].song.singer)"
+        if !result.startedWith.isEmpty, now != result.startedWith {
+            enqueueCompanionFill(itemID: id)
+        }
+        pumpCompanionQueue()
+    }
+
+    private func scheduleCompanionRetry(id: UUID, after seconds: TimeInterval) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0.2, seconds) * 1_000_000_000))
+            await MainActor.run { self?.enqueueCompanionFill(itemID: id) }
+        }
+    }
+
+    /// 冷启动续抓：把"上次没跑完"的条目重新排队（`running` 是进程被杀留下的，一律当 pending）
+    func resumeCompanionBackfill() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.resumeCompanionBackfill() }
+            return
+        }
+        let pending = items.filter {
+            $0.status == .completed && $0.localPath != nil
+                && ($0.companionState == .pending || $0.companionState == .running
+                    || ($0.companionState == .failed
+                        && ($0.companionAttempts ?? 0) < Self.companionMaxAttempts))
+        }
+        guard !pending.isEmpty else { return }
+        CrashReporter.logMetadata("resume | \(pending.count) 首待补（断点续抓）")
+        companionBatchTotal = pending.count
+        companionBatchDone = 0
+        for item in pending { enqueueCompanionFill(itemID: item.id) }
+    }
+
+    /// 批量补全（老板要的入口）：把"没匹配 / 没词 / 没封面"的已完成条目全部排队
+    @discardableResult
+    func backfillAllMissing() -> Int {
+        let targets = items.filter { item in
+            guard item.status == .completed, item.localPath != nil else { return false }
+            if item.companionState != nil && item.companionState != .done { return true }
+            if item.companionsNote == nil { return true }
+            return item.song.meta?.matchedID == nil
+        }
+        companionBatchTotal = targets.count
+        companionBatchDone = 0
+        for item in targets { enqueueCompanionFill(itemID: item.id) }
+        CrashReporter.logMetadata("backfill | 入队 \(targets.count) 首（并发 \(Self.companionConcurrency)）")
+        return targets.count
+    }
+
+    /// 缺口计数（给「补全信息」入口显示）：未匹配 / 缺封面 / 缺歌词
+    struct CompanionGaps: Equatable {
+        var noMatch = 0
+        var noCover = 0
+        var noLyrics = 0
+        var total = 0
+        var isClear: Bool { noMatch == 0 && noCover == 0 && noLyrics == 0 }
+    }
+
+    /// 统计缺口。**在后台线程查文件**，不要在 body 里调（662 次 stat 会卡首屏）。
+    func companionGapCounts() async -> CompanionGaps {
+        let snapshot: [DownloadItem] = await MainActor.run { self.items }
+        let covers = coverDirectory
+        let lyrics = lyricsDirectory
+        return await Task.detached(priority: .utility) {
+            var gaps = CompanionGaps()
+            for item in snapshot where item.status == .completed {
+                gaps.total += 1
+                if item.song.meta?.matchedID == nil { gaps.noMatch += 1 }
+                guard let path = item.localPath else {
+                    gaps.noCover += 1
+                    gaps.noLyrics += 1
+                    continue
+                }
+                let audio = URL(fileURLWithPath: path)
+                if Self.coverPath(forAudio: audio, coverDirectory: covers) == nil { gaps.noCover += 1 }
+                let base = DownloadCompanion.baseName(for: audio)
+                let lrc = DownloadCompanion.lyricsURL(in: lyrics, baseName: base)
+                if !FileManager.default.fileExists(atPath: lrc.path) { gaps.noLyrics += 1 }
+            }
+            return gaps
+        }.value
+    }
+
+    /// 匹配之后补料（`MetadataWriter` 调）：直接入队，让队列去取词取图
+    func fillCompanionsAfterMatch(song: Song, preferCoverURL: String?) async {
+        await MainActor.run {
+            guard let item = self.items.first(where: { $0.song.id == song.id }) else { return }
+            self.enqueueCompanionFill(itemID: item.id)
+        }
+    }
+
+    /// 存"待确认"候选（0.6–0.85：不自动写，等用户在看编辑页时点「采用」）
+    func setMatchSuggestion(_ suggestion: Song, for song: Song) async {
+        await MainActor.run {
+            guard let idx = self.items.firstIndex(where: { $0.song.id == song.id }) else { return }
+            self.items[idx].matchSuggest = suggestion
+            self.items[idx].companionState = .confirm
+            self.persist()
+        }
+    }
+
+    /// 补料主流程：匹配 → 取词 → 取封面 → 写旁车 → 能内嵌就内嵌。任何一步失败都只是"少了词/图"。
+    private func fillCompanion(itemID: UUID, song: Song, audioURL: URL) async -> CompanionFillResult {
+        var result = CompanionFillResult(song: song)
+        guard await isCompletedDownload(itemID) else { return result }
+
+        // ① 元数据匹配：只在这一首还没被匹配过时跑（避免每次重试都重新搜一遍）
+        var working = song
+        if song.meta?.matchedID == nil, !song.name.isEmpty {
+            let outcome = await MetadataIQ.match(song)
+            result.verdict = outcome.verdict
+            switch outcome.verdict {
+            case .auto:
+                if let best = outcome.best {
+                    working = MetadataMatcher.merge(into: song, matched: best)
+                    result.song = working
+                }
+            case .confirm:
+                if let best = outcome.best {
+                    result.suggestion = song.with(name: best.name, singer: best.singer,
+                                                  album: best.album, picURL: best.picURL)
+                }
+            case .reject:
+                break
+            }
+            CrashReporter.logMetadata(
+                "match | \(song.platformID) | \(outcome.query) | 候选\(outcome.candidateCount) "
+                + "| \(outcome.verdict.rawValue) | \(outcome.detail)"
+                + (outcome.swapped ? " | A/B对调" : ""))
+        }
+        if isCompanionCancelled(itemID) { return result }
+
+        // ② 歌词：QRC/KRC 的逐字时间不落 LRC，落盘只保留行级时间（离线够看）
+        var lines: [LyricLine] = []
+        if let lyrics = await LyricsService.shared.fetch(working) { lines = lyrics.lines }
         let lyricsText = lines.isEmpty ? nil : DownloadCompanion.lrcText(
-            from: lines, title: song.name, artist: song.singer, durationSec: song.durationSec)
+            from: lines, title: working.name, artist: working.singer,
+            durationSec: working.durationSec)
+        result.lyricsOK = !(lyricsText ?? "").isEmpty
+        if !result.lyricsOK {
+            result.reason = await LyricsService.shared.failureReason()
+            result.retryable = true
+        }
+        if isCompanionCancelled(itemID) { return result }
 
-        // ② 封面：只认 song.picURL；下不到就当没有封面（不拿占位图冒充真封面）
-        let cover = await fetchCoverData(for: song)
-        if isCompanionCancelled(itemID) { return }
+        // ③ 封面：匹配到的图优先；没有就沿兜底链（酷我 rid → QQ 严格匹配 → iTunes）
+        var coverURL = working.picURL
+        if coverURL == nil || coverURL!.isEmpty {
+            coverURL = await CoverResolver.shared.coverURLIgnoringOriginal(for: working)
+        }
+        var cover: CoverPayload?
+        if let raw = coverURL, !raw.isEmpty {
+            cover = await fetchCoverData(urlString: raw)
+        }
+        if cover == nil, coverURL != nil {
+            // 这个地址下不到（404 / CDN 拒绝）：拉黑，下次走下一级兜底
+            await CoverResolver.shared.markDead(coverURL!, for: working)
+        }
+        result.coverOK = !(cover?.data.isEmpty ?? true)
 
-        // 2026-11-21：封面先压到 600px 再落盘/内嵌。
-        // 原图（1500–3000px）写进 Cover/ 后，每次列表解码就是 9–36MB —— 那是 jetsam 的主因之一。
         let coverData: Data? = cover.map {
             CoverImageCache.compressedCoverData($0.data, maxPixel: 600)
         }
 
-        // 写盘前再确认一次：歌词接口 + 封面下载可能花掉几秒，用户完全可能已经删了这条下载
-        guard await isCompletedDownload(itemID) else { return }
+        guard await isCompletedDownload(itemID) else { return result }
 
-        // ③ 旁车：任何容器都能用，是离线播放读取的第一来源。
-        //    第四十轮补丁 3：歌词进 `…/Lyrics`、封面进 `…/Cover`，和音频分开摆。
+        // ④ 旁车（歌词 → Lyrics/，封面 → Cover/，基名与音频一致）
         var sidecars = DownloadCompanion.writeSidecars(audio: audioURL,
                                                        lyricsText: lyricsText,
                                                        coverData: coverData,
                                                        lyricsDirectory: lyricsDirectory,
                                                        coverDirectory: coverDirectory)
 
-        // ④ 内嵌：只有 m4a/mp3 有可靠写法；失败时 AudioTagEmbedder 内部保证保留原文件
+        // ⑤ 内嵌：只有 m4a/mp3 有可靠写法
         var embedded = false
         if lyricsText != nil || cover != nil,
            DownloadCompanion.canEmbed(extension: audioURL.pathExtension) {
             switch audioURL.pathExtension.lowercased() {
             case "m4a", "mp4":
                 embedded = await AudioTagEmbedder.embedM4A(
-                    fileURL: audioURL, title: song.name, artist: song.singer,
-                    album: song.album, coverData: coverData, lyrics: lyricsText ?? "")
+                    fileURL: audioURL, title: working.name, artist: working.singer,
+                    album: working.album, coverData: coverData, lyrics: lyricsText ?? "")
             case "mp3":
                 embedded = await AudioTagEmbedder.embedMP3(
-                    fileURL: audioURL, title: song.name, artist: song.singer,
-                    album: song.album, coverData: coverData,
+                    fileURL: audioURL, title: working.name, artist: working.singer,
+                    album: working.album, coverData: coverData,
                     coverMime: cover?.mime ?? "image/jpeg", lyrics: lyricsText ?? "")
             default:
                 embedded = false
             }
         }
         sidecars.embedded = embedded
-
-        // ⑤ 回填说明。内嵌会重写音频文件，写完再确认条目还在：别给已删除的条目写说明。
-        let note = Self.companionsNote(lyricsText: lyricsText, coverData: coverData,
-                                       sidecars: sidecars)
-        guard await isCompletedDownload(itemID) else { return }
-        await MainActor.run {
-            guard let idx = self.items.firstIndex(where: { $0.id == itemID }),
-                  self.items[idx].status == .completed else { return }
-            if self.items[idx].companionsNote != note {
-                self.items[idx].companionsNote = note
-                self.persist()
-            }
+        result.embedded = embedded
+        result.note = Self.companionsNote(lyricsText: lyricsText, coverData: coverData,
+                                          sidecars: sidecars)
+        if result.note == nil {
+            result.reason = result.reason ?? (result.verdict == .reject
+                                             ? "没匹配到，也没取到词/图" : "没取到词/图")
         }
+        return result
     }
 
     /// 清理补料状态（成功/失败/被取消都要清，否则这个 UUID 永远占着 running）
@@ -735,11 +990,11 @@ final class DownloadManager: NSObject, ObservableObject {
         let mime: String
     }
 
-    /// 直接下 `song.picURL`（不走 CoverResolver 的 QQ 兜底：下载完成后不再为了封面多搜一次接口）。
-    /// 无 picURL / 超时 / 非 2xx / 空 body 全部返回 nil —— 结果只是"没有封面"，不影响别的。
-    private func fetchCoverData(for song: Song, timeout: TimeInterval = 20) async -> CoverPayload? {
-        guard let raw = song.picURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty, let url = URL(string: raw) else { return nil }
+    /// 下载一张封面字节（URL 由调用方决定：匹配到的 albummid 图 / 兜底链给的结果 / 手选图不走这里）。
+    /// 无 URL / 超时 / 非 2xx / 空 body 全部返回 nil —— 结果只是"没有封面"，不影响别的。
+    private func fetchCoverData(urlString: String, timeout: TimeInterval = 20) async -> CoverPayload? {
+        let raw = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, let url = URL(string: raw) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         // 与音频下载同一套头：部分 CDN 不带 Referer 会直接 403
@@ -837,6 +1092,37 @@ final class DownloadManager: NSObject, ObservableObject {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
             try? data.write(to: url, options: .atomic)
         }
+    }
+
+    /// 元数据写回（第 44 轮）：只换 `Song`，**不动 id、文件名、音频文件**。
+    /// 由唯一通道 `MetadataWriter.apply` 调用（四处快照 + 三处缓存一起刷）。
+    func applySongMetadata(_ song: Song) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.applySongMetadata(song) }
+            return
+        }
+        guard let idx = items.firstIndex(where: { $0.song.id == song.id }) else { return }
+        let previous = items[idx].song
+        guard !Self.sameMetadata(previous, song) else { return }
+        items[idx].song = song
+
+        // 换过封面（代次变了）→ 作废这条路的内存缓存：
+        // 旁车封面是以 `file://…/Cover/<基名>.jpg` 为 key 的，同名覆盖后 key 没变，不清就一直显示旧图。
+        if song.coverRevision != previous.coverRevision, let path = items[idx].localPath {
+            let audio = URL(fileURLWithPath: path)
+            if let coverPath = Self.coverPath(forAudio: audio, coverDirectory: coverDirectory) {
+                CoverImageCache.shared.invalidate(url: URL(fileURLWithPath: coverPath))
+            }
+        }
+        // 行状态表（含封面路径）重建；落盘
+        markDirectoryCacheDirty()
+        persist()
+    }
+
+    /// 两份 Song 的元数据是不是完全一样（`Song` 的 == 故意不看 meta，所以这里单独比）
+    static func sameMetadata(_ a: Song, _ b: Song) -> Bool {
+        a.name == b.name && a.singer == b.singer && a.album == b.album
+            && a.picURL == b.picURL && a.meta == b.meta
     }
 
     private func appendOrUpdate(_ item: DownloadItem) {
@@ -1368,7 +1654,9 @@ enum CrashReporter {
         }
         Task { @MainActor in
             while true {
-                log("mem \(String(format: "%.0f", residentMB()))MB · covers \(coverCount())")
+                // 第 44 轮：这里原来写 `covers N`，但 `coverCount()` 其实是"已完成条目数"——
+                // 名字骗人（老板看图时还以为封面有 662 张）。改成 `done`，口径写在函数注释里。
+                log("mem \(String(format: "%.0f", residentMB()))MB · done \(coverCount())")
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
@@ -1397,6 +1685,16 @@ enum CrashReporter {
     /// 落一份分步日志，下一次复现就能一眼定位死在哪一步。
     static func logImport(_ line: String) {
         append("\(stamp()) \(line)\n", to: "import.log")
+    }
+
+    /// 元数据匹配 / 写回日志（`诊断/metadata.log`，第 44 轮）。
+    ///
+    /// 老板要的口径：**每首一行**，能直接统计"抓了多少、失败多少、失败原因分布"：
+    ///   `match | imp_xxx | 歌名 歌手 | 候选 6 | auto/confirm/reject | 分项 | A/B对调`
+    ///   `write | imp_xxx | manual | 新歌名 | 新歌手 | 新专辑 | locked= | cover r2`
+    ///   `backfill | 入队 662 首（并发 4）`
+    static func logMetadata(_ line: String) {
+        append("\(stamp()) \(line)\n", to: "metadata.log")
     }
 
     /// 把 PlaybackTrace 的每一行写到 `诊断/trace.log`（崩了内存里那 200 条会一起消失）
@@ -1681,10 +1979,14 @@ extension DownloadManager {
             let container = (g.ext == "m4a" || g.ext == "m4b" || g.ext == "aac") ? "m4a" : g.ext
             let quality = QualityFacts.quality(container: container, kbps: kbps)
 
+            // 第 44 轮：元数据出处 —— 标签齐的是 tag，靠文件名猜的是 filenameGuess。
+            // 后者允许匹配时把「歌名/歌手」对调再搜一次（老板库里两种命名混着，拆反过一批）。
+            let importedMeta = MetaProvenance(source: meta.guessed ? .filenameGuess : .tag)
+
             let incoming = Song.make(platform: .local,
                                      platformID: "imp_" + String(meta.hash.prefix(12)),
                                      name: meta.title, singer: meta.artist, album: meta.album,
-                                     duration: meta.duration, picURL: nil)
+                                     duration: meta.duration, picURL: nil, meta: importedMeta)
 
             // ② 同一首（同一条录音）→ 留音质更高的一条
             if let dup = known.first(where: {
@@ -1743,7 +2045,7 @@ extension DownloadManager {
             let song = Song.make(platform: .local,
                                  platformID: "imp_" + String(meta.hash.prefix(12)),
                                  name: meta.title, singer: meta.artist, album: meta.album,
-                                 duration: meta.duration, picURL: nil)
+                                 duration: meta.duration, picURL: nil, meta: importedMeta)
             let item = DownloadItem(id: id, song: song, streamURL: dest.absoluteString,
                                     backendName: "本地导入", quality: quality,
                                     fileName: dest.lastPathComponent, localPath: dest.path,
@@ -1753,9 +2055,15 @@ extension DownloadManager {
                                     createdAt: Date(), finishedAt: Date(),
                                     actualNote: "导入 · \(kbps) kbps",
                                     companionsNote: meta.artwork != nil ? "封面已存旁车" : nil,
-                                    origin: "import", contentHash: meta.hash)
+                                    origin: "import", contentHash: meta.hash,
+                                    companionState: .pending, companionAttempts: 0)
+            // 每首一行的元数据日志（老板要的 `文件名｜tag?｜歌名｜歌手｜专辑`）
+            CrashReporter.logMetadata(
+                "import | \(g.original) | tag=\(meta.guessed ? "no" : "yes") "
+                + "| \(meta.title) | \(meta.artist) | \(meta.album.isEmpty ? "-" : meta.album)")
             await MainActor.run {
                 self.appendOrUpdate(item)
+                // 第 44 轮：入队补料（并发 ≤4），不再原地起 662 个任务
                 self.startCompanionFill(itemID: id, song: song, audioURL: dest)
             }
             known.append(item)
@@ -1944,6 +2252,9 @@ extension DownloadManager {
         var artwork: Data?
         var hash = ""
         var bytes: Int64 = 0
+        /// 歌名/歌手/专辑有任何一个不是标签给的（文件名兜底或干脆没有）
+        /// —— 第 44 轮：这决定 `metaSource = filenameGuess` 还是 `tag`，也决定匹配时允不允许 A/B 对调
+        var guessed = false
     }
 
     /// 读本地音频的标签与时长（异步）。
@@ -1991,14 +2302,16 @@ extension DownloadManager {
             }
         }
 
-        // 标签缺失 → 用文件名兜底（并标记为"推测"，UI 不显示成确定信息）
+        // 标签缺失 → 用文件名兜底（第 44 轮起会**标记成 filenameGuess**，不再冒充真标签）
         //
         // 注意：暂存副本的名字是 UUID（避免撞名），所以**必须用原始文件名**兜底，
         // 否则整个库的歌名会变成一串 UUID。
+        var guessed = false
         if title.isEmpty || artist.isEmpty {
             let parsed = ImportRules.parseFileName(originalName)
             if title.isEmpty { title = parsed.title }
             if artist.isEmpty { artist = parsed.artist }
+            guessed = true
         }
         if title.isEmpty { title = (originalName as NSString).deletingPathExtension }
         if duration <= 0 {
@@ -2013,6 +2326,7 @@ extension DownloadManager {
         meta.artwork = artwork
         meta.hash = hash
         meta.bytes = bytes
+        meta.guessed = guessed || album.isEmpty
         return (meta, "")
     }
 

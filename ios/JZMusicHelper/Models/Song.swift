@@ -112,8 +112,67 @@ struct Song: Identifiable, Codable, Hashable, Sendable {
     let album: String
     let duration: TimeInterval
     let picURL: String?
+    /// 元数据出处（标签 / 文件名推测 / 联网匹配 / 手动编辑）+ 字段锁（第 44 轮）
+    ///
+    /// 为什么挂在 `Song` 上而不是只挂 `DownloadItem`：这份 `Song` 会被**四处快照各存一份**
+    /// （downloads.json / 收藏 / 导入歌单 / 播放队列），挂在 Song 上等于让出处跟着值走，
+    /// 不会出现"下载页已经手改了、收藏里还是旧的、也不知道哪个是手填的"。
+    /// 可选类型：旧 JSON 没有这个键，解码不能失败。
+    let meta: MetaProvenance?
 
     var id: String { "\(platform.rawValue)_\(platformID)" }
+
+    /// 全参构造（`meta` 有默认值，老调用点一行都不用改）
+    init(platform: MusicPlatform, platformID: String, name: String, singer: String,
+         album: String, duration: TimeInterval, picURL: String?,
+         meta: MetaProvenance? = nil) {
+        self.platform = platform
+        self.platformID = platformID
+        self.name = name
+        self.singer = singer
+        self.album = album
+        self.duration = duration
+        self.picURL = picURL
+        self.meta = meta
+    }
+
+    /// 造一份只改了元数据的副本：**`platformID` 永远不变**（它是收藏/队列/去重的主键），
+    /// 音频文件名与旁车基名也不受影响（旁车靠磁盘文件名推导，不靠这些字段）。
+    func with(name: String? = nil, singer: String? = nil, album: String? = nil,
+              picURL: String?? = nil, meta: MetaProvenance? = nil) -> Song {
+        Song(platform: platform,
+             platformID: platformID,
+             name: name ?? self.name,
+             singer: singer ?? self.singer,
+             album: album ?? self.album,
+             duration: duration,
+             picURL: picURL ?? self.picURL,
+             meta: meta ?? self.meta)
+    }
+
+    /// 封面代次（没 meta 就是 0）：列表行与锁屏判重都要带它，否则"图换了但界面还是旧的"
+    var coverRevision: Int { meta?.coverRevision ?? 0 }
+
+    /// 元数据出处（老数据没有 meta → 按"未匹配"处理，不冒充标签）
+    var metaSource: MetaSource { meta?.source ?? .unmatched }
+
+    var metaSourceLabel: String { meta?.source.label ?? MetaSource.unmatched.label }
+
+    // 相等/哈希**不看 meta**：同一首歌换个封面不该变成"另一首歌"（收藏去重、Set 都靠这个）
+    static func == (lhs: Song, rhs: Song) -> Bool {
+        lhs.platform == rhs.platform && lhs.platformID == rhs.platformID
+            && lhs.name == rhs.name && lhs.singer == rhs.singer
+            && lhs.album == rhs.album && lhs.duration == rhs.duration
+            && lhs.picURL == rhs.picURL
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(platform.rawValue)
+        hasher.combine(platformID)
+        hasher.combine(name)
+        hasher.combine(singer)
+        hasher.combine(album)
+    }
 
     /// 秒数（整数口径，与 Android `Song.durationSec` 对齐：时长判定、码率换算都用它）
     var durationSec: Int { Int(duration.rounded()) }
@@ -140,16 +199,20 @@ struct Song: Identifiable, Codable, Hashable, Sendable {
     // MARK: 构造（统一清洗文本）
 
     /// 解析层唯一入口：文本字段先过 `TextClean`，避免脏字符漏进任何一处 UI。
+    ///
+    /// `meta`：元数据出处（第 44 轮）。网络搜索出来的歌不需要它（nil = 不是本地导入），
+    /// 只有本地导入才标 `tag` / `filenameGuess`。
     static func make(platform: MusicPlatform, platformID: String, name: String,
                      singer: String, album: String, duration: TimeInterval,
-                     picURL: String?) -> Song {
+                     picURL: String?, meta: MetaProvenance? = nil) -> Song {
         Song(platform: platform,
              platformID: platformID,
              name: TextClean.text(name),
              singer: TextClean.text(singer),
              album: TextClean.text(album),
              duration: duration,
-             picURL: picURL)
+             picURL: picURL,
+             meta: meta)
     }
 }
 

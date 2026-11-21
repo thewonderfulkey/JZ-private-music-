@@ -34,7 +34,9 @@ struct SongArtwork: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .task(id: song.id) { await load() }
+        // 第 44 轮：id 里带上封面代次 —— 用户换了封面 / 补料把图写进来之后，
+        // `song.id` 不变但图变了；只按 id 判重就会一直显示旧图（"改了没反应"）。
+        .task(id: "\(song.id)#\(song.coverRevision)") { await load() }
     }
 
     /// 封面走内存缓存：滚动离开再回来不重新下载（AsyncImage 会重下）

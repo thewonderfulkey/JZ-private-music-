@@ -59,6 +59,18 @@ final class CoverImageCache: @unchecked Sendable {
         cache.object(forKey: url as NSURL)
     }
 
+    /// 作废某个 URL 的内存缓存（第 44 轮：用户换了封面 / 重新匹配换了图）。
+    ///
+    /// 为什么必须有：本地旁车封面是以 `file://…/Cover/<基名>.jpg` 为 key 的，
+    /// 同一个基名换了字节、**key 却没变** —— 不清掉就会一直显示旧图（"改了没反应"）。
+    func invalidate(url: URL) {
+        cache.removeObject(forKey: url as NSURL)
+        lock.lock()
+        inFlight[url]?.cancel()
+        inFlight[url] = nil
+        lock.unlock()
+    }
+
     /// 本地文件封面（`Download/Cover/<基名>.jpg`）：已下载/导入的歌离线也要有图。
     /// 走同一套内存缓存，key 用文件 URL，互不干扰。
     func image(forFile url: URL) async -> UIImage? {

@@ -36,10 +36,29 @@ enum DownloadStatus: String, Codable {
     case cancelled
 }
 
+// MARK: - 补料状态（第 44 轮）
+//
+// 为什么要落盘：662 首一次导入，补料要跑好几分钟；中途被杀进程/切后台/断网之后，
+// 以前是"永远不再补"（没有任何记录说这首还没补）。现在状态跟着记录走，冷启动能接着跑。
+enum CompanionState: String, Codable {
+    /// 在队列里，还没轮到
+    case pending
+    /// 正在跑（被杀的进程会留下这个值，冷启动一律当 pending 重跑）
+    case running
+    /// 这一轮跑完了（可能仍然没词/没封面，原因在 `companionReason`）
+    case done
+    /// 这一轮失败了，等退避重试
+    case failed
+    /// 匹配到 0.6–0.85，不自动写，等人工确认
+    case confirm
+}
+
 // MARK: - 下载条目
 struct DownloadItem: Identifiable, Codable, Hashable {
     let id: UUID
-    let song: Song
+    /// 元数据可改（第 44 轮：自动匹配 / 手动编辑都要写回）。
+    /// 以前是 let —— 那意味着"改歌名"只能整条重建，漏一个字段就把条目弄坏。
+    var song: Song
     let streamURL: String
     let backendName: String
     /// 标注档位。落盘后会按实测结果改写（例：接口说有损，文件其实是 320k mp3），所以是 var。
@@ -68,6 +87,17 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var origin: String?
     /// 导入文件的 SHA-256（同文件判重用；下载记录暂时为 nil）
     var contentHash: String?
+    /// 补料（匹配 + 词 + 图）进行到哪一步了（第 44 轮：要能断点续抓、要能在 UI 上标"未匹配"）。
+    /// 全部可选：旧 downloads.json 没有这些键，解码不能失败。
+    var companionState: CompanionState?
+    /// 已经试过几次（≥ `CompanionFillRules.maxAttempts` 就不再自动重试，等用户点"补全"）
+    var companionAttempts: Int?
+    /// 下次可以再试的时间（指数退避；断点续抓按它排队）
+    var companionNextAt: Date?
+    /// 最后一次失败的**人话原因**（UI 直接显示，别再只写"没词"）
+    var companionReason: String?
+    /// 0.6–0.85 的"待确认"候选：不自动写，等用户在看编辑页时点「采用」
+    var matchSuggest: Song?
 
     init(id: UUID = UUID(),
          song: Song,
@@ -87,7 +117,12 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          actualNote: String? = nil,
          companionsNote: String? = nil,
          origin: String? = nil,
-         contentHash: String? = nil) {
+         contentHash: String? = nil,
+         companionState: CompanionState? = nil,
+         companionAttempts: Int? = nil,
+         companionNextAt: Date? = nil,
+         companionReason: String? = nil,
+         matchSuggest: Song? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -107,6 +142,11 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.companionsNote = companionsNote
         self.origin = origin
         self.contentHash = contentHash
+        self.companionState = companionState
+        self.companionAttempts = companionAttempts
+        self.companionNextAt = companionNextAt
+        self.companionReason = companionReason
+        self.matchSuggest = matchSuggest
     }
 
     var progressText: String {

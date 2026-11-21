@@ -159,6 +159,22 @@ final class LibraryStore {
         refreshDuplicateGroups()
     }
 
+    /// 元数据写回（第 44 轮）：自动匹配 / 手动编辑改了一个 Song 的 name/singer/album/封面之后，
+    /// 收藏里那一份必须跟着换，否则"下载页改了、收藏里还是旧的"。
+    ///
+    /// 只按 `id` 找、只换整条 Song（`Song` 的字段是 let，所以是"造新实例替换"，见 `Song.with`）。
+    /// 收藏里没有这首就什么都不做（不新增）。
+    func applySongMetadata(_ song: Song) {
+        guard let idx = favorites.firstIndex(where: { $0.id == song.id }) else { return }
+        let current = favorites[idx]
+        guard current.name != song.name || current.singer != song.singer
+            || current.album != song.album || current.picURL != song.picURL
+            || current.meta != song.meta else { return }
+        favorites[idx] = song
+        persistFavorites()
+        refreshDuplicateGroups()
+    }
+
     /// 收藏落盘 + 失效判定缓存（所有改动都走这里，避免漏掉缓存）
     private func persistFavorites() {
         favoriteMatchCache.removeAll()

@@ -191,8 +191,17 @@ extension LyricsService {
             if let official = await neteaseOfficial(song) { return official }
             noteBox.add("①b 网易官方 \(elapsed())ms 无词")
         case .qq:
-            if let official = await qqOfficial(song) { return official }
+            if let official = await qqOfficial(song: song) { return official }
             noteBox.add("①b QQ官方 \(elapsed())ms 无词")
+        case .local:
+            // 第 44 轮（老板拍板：**不动 r74 的 ①②③④ 顺序**，只把这一档扩到本地导入）：
+            // 导入歌自己没有平台 id，但自动匹配会给它补一个 QQ songmid —— 有它就按 id 精确取官方词，
+            // 位置与 `.qq` 歌完全一样（①b），不是新加优先级。
+            if let mid = song.meta?.matchedID, !mid.isEmpty,
+               song.meta?.matchedPlatform == MusicPlatform.qq.rawValue {
+                if let official = await qqOfficial(song: song, mid: mid) { return official }
+                noteBox.add("①b QQ官方（导入歌 songmid）\(elapsed())ms 无词")
+            }
         default:
             break
         }
@@ -244,8 +253,11 @@ extension LyricsService {
     }
 
     /// QQ 歌曲：`fcg_query_lyric_new` 按 songmid 精确取词（公开接口，匿名可用，行级 LRC）
-    private static func qqOfficial(_ song: Song) async -> LyricsResult? {
-        let mid = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
+    ///
+    /// `mid` 显式传入时按它取（第 44 轮：本地导入的歌用**匹配到的** songmid，
+    /// 位置仍是 ①b，不改老板 r74 定的顺序）。
+    private static func qqOfficial(song: Song, mid explicitMid: String? = nil) async -> LyricsResult? {
+        let mid = (explicitMid ?? song.platformID).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !mid.isEmpty else { return nil }
         let url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
             + "?songmid=\(APIClient.encode(mid))&format=json&nobase64=1"

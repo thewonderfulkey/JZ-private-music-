@@ -197,8 +197,11 @@ final class NowPlayingCenter {
     /// （老板截屏里那条系统卡片就是空的）。现在跟列表行、播放页共用
     /// `CoverImageCache.image(for:)`：本地封面 → picURL → CoverResolver 兜底。
     private func loadArtworkIfNeeded(for song: Song) {
-        guard song.id != lastArtworkSongID else { return }
-        lastArtworkSongID = song.id
+        // 判重键带上封面代次（第 44 轮）：用户换了封面 / 重新匹配换了图时 `song.id` 不变，
+        // 只按 id 判重就会"锁屏永远是旧封面"。
+        let key = "\(song.id)#\(song.coverRevision)"
+        guard key != lastArtworkSongID else { return }
+        lastArtworkSongID = key
         artworkTask?.cancel()
         artworkTask = Task { [weak self] in
             guard let image = await CoverImageCache.shared.image(for: song) else { return }
@@ -206,7 +209,7 @@ final class NowPlayingCenter {
             await MainActor.run {
                 guard let self else { return }
                 // 期间又切歌了：这张图属于上一首，丢掉
-                guard self.lastArtworkSongID == song.id else { return }
+                guard self.lastArtworkSongID == key else { return }
                 self.artwork = art
                 if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
                     info[MPMediaItemPropertyArtwork] = art

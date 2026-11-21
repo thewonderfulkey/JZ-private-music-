@@ -328,6 +328,34 @@ final class PlayerEngine {
         // （老用户存过的低档值一并忽略，不再把"以前调过 128k"带着走）。
         quality = .lossless
         heartbeat = HeartbeatEngine()
+        // 第 44 轮：元数据写回的唯一广播口（`MetadataWriter` 发，这里收）。
+        // 不直接持有 DownloadManager：播放器不该依赖下载库，反过来也一样。
+        NotificationCenter.default.addObserver(
+            forName: .songMetadataUpdated, object: nil, queue: .main) { [weak self] note in
+                guard let song = note.object as? Song else { return }
+                MainActor.assumeIsolated { self?.applySongMetadata(song) }
+            }
+    }
+
+    /// 元数据写回（第 44 轮）：队列里那一份 + 当前这首一起换。
+    ///
+    /// 为什么必须有这一步：老板明确要求"不许出现列表改了、播放页还是旧的"。
+    /// 播放页读的是 `currentSong`、播放列表读的是 `queue`，两者各存一份 Song 副本。
+    /// 歌名/歌手真变了就连锁屏信息和歌词一起刷（旧的词是按旧名字取的，留着就是错的）。
+    func applySongMetadata(_ song: Song) {
+        for i in queue.indices where queue[i].id == song.id {
+            if queue[i].name != song.name || queue[i].singer != song.singer
+                || queue[i].album != song.album || queue[i].picURL != song.picURL
+                || queue[i].meta != song.meta {
+                queue[i] = song
+            }
+        }
+        guard let current = currentSong, current.id == song.id else { return }
+        let renamed = current.name != song.name || current.singer != song.singer
+        currentSong = song
+        // 锁屏/灵动岛：`NowPlayingCenter` 的封面判重带 coverRevision，换图会自己重取
+        updateNowPlaying()
+        if renamed { prepareLyrics(for: song) }
     }
 
     private var systemAttached = false
