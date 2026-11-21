@@ -41,8 +41,7 @@ enum DownloadGuard {
     /// 体积文案：未探到体积时给"待核对"，不要显示 0 MB 假装知道
     static func sizeText(_ bytes: Int64) -> String {
         guard bytes > 0 else { return "待核对" }
-        let mb = Double(bytes) / 1_000_000
-        return mb >= 1 ? String(format: "%.1f MB", mb) : String(format: "%.0f KB", mb * 1000)
+        return ByteText.human(bytes)
     }
 
     // MARK: 落盘后的实测档位（老板反馈 ⑥：标着无损、下下来是 320k）

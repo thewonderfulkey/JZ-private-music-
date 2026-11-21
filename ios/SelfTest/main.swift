@@ -4287,6 +4287,28 @@ do {
           !ImportRules.hasOnlyUndecodableExtensions(["a.lexClip"]))
 }
 
+// MARK: - 体积档位（r165：老板要 >1GB 用 GB、<1MB 再降级）
+
+section("体积文案 ByteText：GB / MB / KB / B")
+
+do {
+    check("1.5 GB", ByteText.human(1_500_000_000) == "1.5 GB", ByteText.human(1_500_000_000))
+    check("正好 1GB 走 GB", ByteText.human(1_000_000_000) == "1 GB", ByteText.human(1_000_000_000))
+    check("999.9MB 还是 MB", ByteText.human(999_900_000) == "999.9 MB", ByteText.human(999_900_000))
+    check("正好 1MB 走 MB", ByteText.human(1_000_000) == "1 MB", ByteText.human(1_000_000))
+    check("999KB 走 KB", ByteText.human(999_000) == "999 KB", ByteText.human(999_000))
+    check("999B 走 B", ByteText.human(999) == "999 B", ByteText.human(999))
+    check("0 给 0 MB", ByteText.human(0) == "0 MB", ByteText.human(0))
+    check("GB 整数不带 .00", !ByteText.human(2_000_000_000).contains(".00"),
+          ByteText.human(2_000_000_000))
+    check("MB 整数不带 .0", !ByteText.human(10_000_000).contains(".0"),
+          ByteText.human(10_000_000))
+    check("GB 两位小数保留", ByteText.human(1_250_000_000) == "1.25 GB",
+          ByteText.human(1_250_000_000))
+    check("下载条目：<1MB 也有文案（旧实现给空串）",
+          ByteText.human(500_000) == "500 KB", ByteText.human(500_000))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

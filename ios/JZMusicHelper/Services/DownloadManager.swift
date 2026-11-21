@@ -22,8 +22,23 @@ final class DownloadManager: NSObject, ObservableObject {
     static let shared = DownloadManager()
 
     /// 主线程发布：下载列表
-    @Published var items: [DownloadItem] = []
+    @Published var items: [DownloadItem] = [] {
+        didSet {
+            // 任何条目变化都让"本地路径/封面"缓存失效（2026-11-21 老板："打开下载 tab 会卡一下"）
+            localFileCache.removeAll()
+            localCoverCache.removeAll()
+        }
+    }
     @Published var backgroundTaskCount: Int = 0
+
+    /// `song.id` → 本地音频路径（空串 = 查过、没有）。
+    ///
+    /// `localFileURL` / `localCoverURL` 原来每次都线性扫 `items`、还各做 1–3 次 `fileExists`；
+    /// 下载页**每一行封面**都要走这条路 → N 首就是 O(N²) + 上千次磁盘 stat，
+    /// 打开下载页/刚导入完（列表变大）时就会卡一下。
+    private var localFileCache: [String: String] = [:]
+    /// `song.id` → 本地封面路径（空串 = 查过、没有）
+    private var localCoverCache: [String: String] = [:]
     /// 最近一次导入的结果（挂在 manager 上，而不是 View 的 @State —— 否则
     /// 从 Task.detached 里写不回去，用户看不到任何提示）
     @Published var lastImportReport: String?
@@ -261,18 +276,31 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 文件夹被移动过）。这时按"文件名 → 同基名"在 `Download/Music` 里找一次，
     /// 找到就把记录改过来——否则会出现"列表里显示已下载，点播放却只有封面"的现象。
     func localFileURL(for song: Song) -> URL? {
+        // 缓存命中：不再线性扫 items、不再 stat 磁盘（下载页每行都要问一次）
+        if let cached = localFileCache[song.id] {
+            guard !cached.isEmpty else { return nil }
+            let url = URL(fileURLWithPath: cached)
+            DownloadLocation.openScope(forFile: url)
+            return url
+        }
         guard let idx = items.firstIndex(where: { $0.song.id == song.id && $0.status == .completed }) else {
+            localFileCache[song.id] = ""
             return nil
         }
         if let path = items[idx].localPath, FileManager.default.fileExists(atPath: path) {
             let url = URL(fileURLWithPath: path)
             // 文件可能在用户自选的外部目录里：每次取用前确认作用域开着（同目录只开一次）
             DownloadLocation.openScope(forFile: url)
+            localFileCache[song.id] = path
             return url
         }
-        guard let found = findExistingAudioFile(for: items[idx]) else { return nil }
+        guard let found = findExistingAudioFile(for: items[idx]) else {
+            localFileCache[song.id] = ""
+            return nil
+        }
         DownloadLocation.openScope(forFile: found)
         items[idx].localPath = found.path
+        localFileCache[song.id] = found.path
         persist()
         return found
     }
@@ -309,11 +337,23 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 第四十轮补丁 3 起封面在 `…/Cover`；旧版仍在音频同目录（`readCover` 里自带回退）。
     /// 只在主线程调用（`items` 只在主线程改）。
     func localCoverURL(for song: Song) -> URL? {
-        guard let audio = localFileURL(for: song) else { return nil }
+        if let cached = localCoverCache[song.id] {
+            guard !cached.isEmpty else { return nil }
+            return URL(fileURLWithPath: cached)
+        }
+        guard let audio = localFileURL(for: song) else {
+            localCoverCache[song.id] = ""
+            return nil
+        }
         let base = DownloadCompanion.baseName(for: audio)
         let candidates = [DownloadCompanion.coverURL(in: coverDirectory, baseName: base),
                           DownloadCompanion.legacyCoverURL(for: audio)]
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+        guard let hit = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            localCoverCache[song.id] = ""
+            return nil
+        }
+        localCoverCache[song.id] = hit.path
+        return hit
     }
 
     /// 已下载完成的歌（按下载顺序）：从下载页点一首时，**整列**就是播放队列。
@@ -359,7 +399,8 @@ final class DownloadManager: NSObject, ObservableObject {
             try? FileManager.default.removeItem(at: audio)
         }
         items.remove(at: idx)
-        persist()
+        // 删除立刻落盘（节流窗口里丢一次删除，重启后歌会"复活"）
+        flushPersist()
     }
 
     /// 重试失败/取消的下载（沿用原条目 id，保留下载记录上下文）
@@ -575,9 +616,48 @@ final class DownloadManager: NSObject, ObservableObject {
         items = saved
     }
 
+    /// 落盘：JSON 编码 + 写盘都丢到后台串行队列（2026-11-21 老板："导入的时候会卡一下"）
+    ///
+    /// 原来每次条目变化都在主线程 `JSONEncoder().encode(items)` + 原子写整个文件；
+    /// 导入 100 首就是 100 次全量编码 + 100 次磁盘写，列表越大越卡。
+    private let persistQueue = DispatchQueue(label: "com.jz.downloads.persist", qos: .utility)
+    private var lastPersistAt = Date.distantPast
+    private var persistScheduled = false
+
     private func persist() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        try? data.write(to: recordsURL, options: .atomic)
+        // 节流：0.6 秒内只写一次（第一次立即写，之后合并成一次尾写）
+        let now = Date()
+        let since = now.timeIntervalSince(lastPersistAt)
+        if since < 0.6 || persistScheduled {
+            guard !persistScheduled else { return }
+            persistScheduled = true
+            let wait = max(0.05, 0.6 - since)
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                guard let self else { return }
+                self.persistScheduled = false
+                self.lastPersistAt = Date()
+                self.writeRecords()
+            }
+            return
+        }
+        lastPersistAt = now
+        writeRecords()
+    }
+
+    /// 立刻落盘（进后台 / 退出前 / 用户删条目时调用，别让节流窗口吞掉一次删除）
+    func flushPersist() {
+        persistScheduled = false
+        lastPersistAt = Date()
+        writeRecords()
+    }
+
+    private func writeRecords() {
+        let snapshot = items          // 主线程取快照，编码与写盘在后台
+        let url = recordsURL
+        persistQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     private func appendOrUpdate(_ item: DownloadItem) {
@@ -815,11 +895,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        // 下载记录是节流落盘的：进后台先强行写一次，别让系统随时收走进程时丢进度
+        DownloadManager.shared.flushPersist()
+    }
+
     func applicationWillTerminate(_ application: UIApplication) {
         // 用户/系统正在收掉 App：把"音乐软件留在系统里的东西"一次性清干净。
         // `assumeIsolated`：UIKit 一定在主线程调 willTerminate，而这里要碰的
         // NowPlayingCenter 是 @MainActor —— 同步执行，不排进队列
         // （排进队列的话进程可能已经没了，清理根本不会跑）。
+        DownloadManager.shared.flushPersist()
         MainActor.assumeIsolated {
             NowPlayingCenter.shared.teardown()
         }

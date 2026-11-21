@@ -607,10 +607,10 @@ enum ImportRules {
         return r == .orderedAscending
     }
 
-    /// 文件大小文案（列表里给一眼能看的体积）
+    /// 文件大小文案（列表里给一眼能看的体积；档位规则见 `ByteText`）
     static func browserSizeText(_ bytes: Int64) -> String {
         if bytes <= 0 { return "" }
-        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return ByteText.human(bytes)
     }
 
     // MARK: 导入结果文案（2026-11-21：老板问"为什么有些歌导不进去"）

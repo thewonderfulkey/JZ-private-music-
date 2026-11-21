@@ -63,8 +63,13 @@ final class CoverImageCache: @unchecked Sendable {
     /// 走同一套内存缓存，key 用文件 URL，互不干扰。
     func image(forFile url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
-        guard let data = try? Data(contentsOf: url),
-              let img = Self.downsample(data, maxPixel: Self.maxDisplayPixel) else { return nil }
+        // 读盘 + 降采样都放到后台：这个方法是列表每一行的 `.task`（主线程）里调的，
+        // 在主线程读几 MB 的 jpg 再降采样，就是"打开下载页 / 刚导入完卡一下"的直接来源。
+        let decoded: UIImage? = await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return Self.downsample(data, maxPixel: Self.maxDisplayPixel)
+        }.value
+        guard let img = decoded else { return nil }
         store(img, for: url)
         return img
     }
@@ -164,10 +169,9 @@ final class CoverImageCache: @unchecked Sendable {
     /// 旧版播放页只读 `song.picURL`，所以"列表里有封面、进播放页却是空占位"
     /// （网易/酷我大量歌曲 picURL 为空，全靠 CoverResolver 才有图）。
     func image(for song: Song) async -> UIImage? {
-        if let path = DownloadManager.shared.localCoverURL(for: song)?.path,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-           let local = UIImage(data: data) {
-            return local
+        if let local = DownloadManager.shared.localCoverURL(for: song),
+           let img = await image(forFile: local) {
+            return img
         }
 
         let resolved = await CoverResolver.shared.coverURL(for: song)

@@ -509,8 +509,7 @@ struct DownloadsTabView: View {
     }
 
     private func sizeText(_ bytes: Int64) -> String {
-        let mb = Double(bytes) / 1_000_000
-        return String(format: "%.1f MB", mb)
+        ByteText.human(bytes)
     }
 }
 
@@ -537,12 +536,18 @@ struct ImportBrowserView: View {
     @State private var entries: [Entry] = []
     @State private var selected: Set<String> = []
     @State private var hint: String?
+    /// 正在后台扫目录（列表先空着，别在主线程上扫）
+    @State private var scanning = false
+    /// 只认最后一次扫描的结果（边翻目录边返回时，旧结果不能盖新的）
+    @State private var scanToken = UUID()
 
     private let root = DownloadLocation.documentsDirectory()
 
     struct Entry: Identifiable {
         let url: URL
         let kind: ImportRules.BrowserKind
+        /// 体积在**扫描时**就取好（以前是在 body 里 stat，行一多就卡）
+        let sizeBytes: Int64
         var id: String { url.path }
         var isFolder: Bool { kind == .folder }
     }
@@ -551,15 +556,21 @@ struct ImportBrowserView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("把歌放进「文件 › JZ 音乐」（「文件」App、LocalSend、隔空投送都行），再回来点「刷新」。系统选择器在这台机器上点「打开」不生效，所以这里直接列 App 自己的文件夹。")
+                    Text("两条路：① 把歌放进「文件 › JZ 音乐」（用下面的按钮打开「文件」App、或 LocalSend/隔空投送存到这个文件夹）；② 在「文件」里长按这首歌 →「共享」→「JZ 音乐」，回来自动导入。系统选择器在这台机器上点「打开」不生效，所以这里直接列 App 自己的文件夹。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Button {
+                        openFilesApp()
+                    } label: {
+                        Label("打开「文件」App（去放歌）", systemImage: "folder")
+                    }
                     HStack(spacing: Tokens.Spacing.s) {
                         Button {
                             reload()
                         } label: {
-                            Label("刷新", systemImage: "arrow.clockwise")
+                            Label(scanning ? "正在读取…" : "刷新", systemImage: "arrow.clockwise")
                         }
+                        .disabled(scanning)
                         Spacer(minLength: 0)
                         if !audioEntries.isEmpty {
                             Button("全选本页 \(audioEntries.count) 首") {
@@ -572,11 +583,6 @@ struct ImportBrowserView: View {
                         scanWholeContainer()
                     } label: {
                         Label("扫描整个「JZ 音乐」并导入", systemImage: "wand.and.stars")
-                    }
-                    Button {
-                        openSystemPicker()
-                    } label: {
-                        Label("还是用系统文件选择器…", systemImage: "folder.badge.plus")
                     }
                     if let hint {
                         Text(hint)
@@ -598,7 +604,8 @@ struct ImportBrowserView: View {
                         }
                     }
                     if entries.isEmpty {
-                        Text("这个文件夹里没有可导入的音频文件")
+                        Text(scanning ? "正在读取这个文件夹…"
+                                      : "这个文件夹里没有可导入的音频文件。用上面的「打开「文件」App」把歌放进 JZ 音乐，再点「刷新」。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -607,6 +614,21 @@ struct ImportBrowserView: View {
                     }
                 } header: {
                     Text(pathText)
+                }
+
+                // 系统选择器只作"其他方式"放最后：这台机器上它点「打开」没反应，
+                // 放在主位置会被当成"我们又退化了"。留着是为了别的机器还能用。
+                Section {
+                    Button {
+                        openSystemPicker()
+                    } label: {
+                        Label("其他方式：系统文件选择器…", systemImage: "folder.badge.plus")
+                    }
+                    Text("这条路依赖系统选择器。如果点「打开」没反应，是这台机器上系统没把选择结果交回来（不是文件的问题），用上面的列表导入就行。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } footer: {
+                    Text("")
                 }
             }
             .listStyle(.insetGrouped)
@@ -710,7 +732,7 @@ struct ImportBrowserView: View {
             return "文件夹"
         case .audio:
             let ext = entry.url.pathExtension.uppercased()
-            let size = sizeText(entry.url)
+            let size = ImportRules.browserSizeText(entry.sizeBytes)
             return size.isEmpty ? ext : "\(ext) · \(size)"
         case .unsupported:
             return "iOS 不支持这种格式（\(entry.url.pathExtension.uppercased())）"
@@ -719,33 +741,46 @@ struct ImportBrowserView: View {
         }
     }
 
-    private func sizeText(_ url: URL) -> String {
-        guard let num = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size]
-                as? NSNumber else { return "" }
-        return ImportRules.browserSizeText(num.int64Value)
-    }
-
     // MARK: 动作
 
+    /// 目录扫描 + 体积 stat 全在后台：以前在主线程上做，歌一多（几百个）就会"卡一下"
     private func reload() {
-        let fm = FileManager.default
-        let urls = (try? fm.contentsOfDirectory(at: folder,
-                                                includingPropertiesForKeys: [.isDirectoryKey],
-                                                options: [.skipsHiddenFiles])) ?? []
+        let dir = folder
+        let token = UUID()
+        let label = pathText
+        scanToken = token
+        scanning = true
+        Task.detached(priority: .userInitiated) {
+            let list = Self.scan(dir)
+            await MainActor.run {
+                guard scanToken == token else { return }
+                entries = list
+                selected = selected.intersection(Set(list.map { $0.url.path }))
+                scanning = false
+                CrashReporter.logImport("browser: \(label) → \(list.count) 个条目")
+            }
+        }
+    }
+
+    /// 后台线程执行：列目录 + 取每个条目的体积（`resourceValues` 一次拿全，不再逐行 stat）
+    private static func scan(_ dir: URL) -> [Entry] {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
         var list: [Entry] = []
         for url in urls {
-            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            let values = try? url.resourceValues(forKeys: keys)
+            let isDir = values?.isDirectory ?? false
             let kind = ImportRules.browserKind(name: url.lastPathComponent, isDirectory: isDir)
             guard kind != .other else { continue }
-            list.append(Entry(url: url, kind: kind))
+            let size = Int64(values?.fileSize ?? 0)
+            list.append(Entry(url: url, kind: kind, sizeBytes: size))
         }
         list.sort {
             ImportRules.browserComesBefore($0.url.lastPathComponent, $0.isFolder,
                                            $1.url.lastPathComponent, $1.isFolder)
         }
-        entries = list
-        selected = selected.intersection(Set(list.map { $0.url.path }))
-        CrashReporter.logImport("browser: \(pathText) → \(list.count) 个条目")
+        return list
     }
 
     private func toggle(_ url: URL) {
@@ -774,14 +809,28 @@ struct ImportBrowserView: View {
 
     /// 不管用户把歌丢在哪一层子文件夹，一次全扫进来
     private func scanWholeContainer() {
-        let files = DownloadManager.audioFilesInDocuments()
-        guard !files.isEmpty else {
-            hint = "「JZ 音乐」里没找到能导入的音频。先把歌放进这个文件夹（用「文件」App 或 LocalSend），再回来点这一项。"
-            return
+        hint = "正在扫描「JZ 音乐」…"
+        Task.detached(priority: .userInitiated) {
+            let files = DownloadManager.audioFilesInDocuments()
+            await MainActor.run {
+                guard !files.isEmpty else {
+                    hint = "「JZ 音乐」里没找到能导入的音频。先把歌放进这个文件夹（用「文件」App 或 LocalSend），再回来点这一项。"
+                    return
+                }
+                CrashReporter.logImport("browser: 全容器 \(files.count) 首 → 交给导入流程")
+                hint = nil
+                dismiss()
+                onImport(files)
+            }
         }
-        CrashReporter.logImport("browser: 全容器 \(files.count) 首 → 交给导入流程")
-        dismiss()
-        onImport(files)
+    }
+
+    /// 直接跳到「文件」App：把歌拖进 JZ 音乐这一步不用用户自己找路径
+    private func openFilesApp() {
+        guard let url = URL(string: "shareddocuments://") else { return }
+        UIApplication.shared.open(url, options: [:]) { ok in
+            CrashReporter.logImport("browser: 打开「文件」App → \(ok ? "成功" : "失败")")
+        }
     }
 
     private func openSystemPicker() {

@@ -115,8 +115,36 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     }
 
     var sizeText: String {
-        let mb = Double(totalBytes) / 1_000_000.0
-        return mb >= 1 ? String(format: "%.1f MB", mb) : ""
+        ByteText.human(totalBytes)
+    }
+}
+
+// MARK: - 体积文案（2026-11-21 老板：> 1GB 用 GB，< 1GB 用 MB，< 1MB 再降级，升级同理）
+
+/// 一处统一的"人看的体积"：自动选档位，不再到处写 `%.1f MB`。
+///
+/// 老板原话："把下载那里的内存显示改为 GB 单位，一旦大于 1GB 就用 GB 单位，小于的话用 MB，
+/// 小于 1MB 再降级用更小的单位，升级同理。"
+/// 用 1000 进制（和 iOS「设置 › 通用 › iPhone 储存空间」一致，也和以前下载页的 MB 口径一致）。
+enum ByteText {
+
+    /// 档位：≥1GB → GB；≥1MB → MB；≥1KB → KB；否则 B。
+    /// 小数位：GB 两位（1.25 GB）、MB 一位（8.2 MB）、KB 与 B 取整 —— 一眼能读，不拖一串 0。
+    static func human(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "0 MB" }
+        let value = Double(bytes)
+        if value >= 1_000_000_000 { return trim(String(format: "%.2f", value / 1_000_000_000)) + " GB" }
+        if value >= 1_000_000 { return trim(String(format: "%.1f", value / 1_000_000)) + " MB" }
+        if value >= 1_000 { return String(format: "%.0f", value / 1_000) + " KB" }
+        return "\(bytes) B"
+    }
+
+    /// 去掉 `1.00` 这种多余的 0（GB 档只有一位小数时不显示两位）
+    private static func trim(_ s: String) -> String {
+        var out = s
+        while out.contains("."), out.hasSuffix("0") { out.removeLast() }
+        if out.hasSuffix(".") { out.removeLast() }
+        return out
     }
 }
 
