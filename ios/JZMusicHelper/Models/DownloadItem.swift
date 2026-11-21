@@ -69,6 +69,74 @@ enum SongFileState: String, Codable {
     case unsupported
 }
 
+/// 单个字段在**文件里**的状态（第 52 轮：老板 2026-11-22 说"有些歌词没内嵌成功、有些没专辑，
+/// 但都显示绿的"——绿点把五件事糊成一件，这一版拆开）。
+enum FieldTruth: String, Codable {
+    /// 文件里有，且和列表/旁车一致
+    case ok
+    /// 文件里有，但是旧值（和列表/旁车不同）
+    case differs
+    /// 应该有，文件里却没有
+    case missing
+    /// 这一项本来就没有（比如没有专辑、没有歌词）——不算问题
+    case empty
+}
+
+/// 一首歌「文件里到底写了什么」的逐字段结论。
+/// 界面的圆点、编辑页的「文件里现在是」、批量写回的逐首日志、失败清单，全读它。
+struct SongFileTruth: Codable, Hashable {
+    var title: FieldTruth = .empty
+    var artist: FieldTruth = .empty
+    var album: FieldTruth = .empty
+    var cover: FieldTruth = .empty
+    var lyrics: FieldTruth = .empty
+    /// 旁车有没有图 / 词（"文件里没有"和"哪儿都没有"要能分开）
+    var hasCoverSidecar = false
+    var hasLyricsSidecar = false
+    /// 容器本身写不了标签（wav / ape / ogg…）
+    var unsupported = false
+
+    /// 有问题的字段，人话（空数组 = 真的对齐了）
+    var problems: [String] {
+        if unsupported { return ["这个容器写不了标签（只能靠旁车）"] }
+        var out: [String] = []
+        func note(_ field: FieldTruth, _ name: String) {
+            switch field {
+            case .missing: out.append("\(name)没写进文件")
+            case .differs: out.append("\(name)还是旧值")
+            case .ok, .empty: break
+            }
+        }
+        note(title, "歌名")
+        note(artist, "歌手")
+        note(album, "专辑")
+        note(cover, "封面")
+        note(lyrics, "歌词")
+        return out
+    }
+
+    var isAligned: Bool { problems.isEmpty }
+
+    /// 界面上的四种状态（圆点颜色由它决定；只有全部字段都 ok/empty 才是绿）
+    var state: SongFileState {
+        if unsupported { return .unsupported }
+        if isAligned { return .inSync }
+        if cover != .ok, !hasCoverSidecar { return .missing }
+        return .sidecarOnly
+    }
+
+    /// 一行紧凑描述（逐首日志 / 失败清单用）
+    var compact: String {
+        "title=\(title.rawValue) artist=\(artist.rawValue) album=\(album.rawValue)"
+            + " cover=\(cover.rawValue) lyrics=\(lyrics.rawValue)"
+    }
+
+    /// 给"文件里现在是"那一屏用：只有 ok/empty 的字段才算没问题
+    var fieldRows: [(name: String, truth: FieldTruth)] {
+        [("歌名", title), ("歌手", artist), ("专辑", album), ("封面", cover), ("歌词", lyrics)]
+    }
+}
+
 struct DownloadItem: Identifiable, Codable, Hashable {
     let id: UUID
     /// 元数据可改（第 44 轮：自动匹配 / 手动编辑都要写回）。
@@ -113,9 +181,12 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var companionReason: String?
     /// 0.6–0.85 的"待确认"候选：不自动写，等用户在看编辑页时点「采用」
     var matchSuggest: Song?
-    /// 第 51 轮 A 方案：文件内标签与列表是否一致（nil = 还没检查过）。
+    /// 第 51/52 轮 A 方案：文件里到底写了什么（逐字段）。
     /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
-    var fileState: SongFileState?
+    var fileTruth: SongFileTruth?
+
+    /// 圆点用：由逐字段结论推出来（只是"懒得跑检查"时的兜底，不存盘）
+    var fileState: SongFileState? { fileTruth?.state }
 
     init(id: UUID = UUID(),
          song: Song,
@@ -141,7 +212,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          companionNextAt: Date? = nil,
          companionReason: String? = nil,
          matchSuggest: Song? = nil,
-         fileState: SongFileState? = nil) {
+         fileTruth: SongFileTruth? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -166,7 +237,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.companionNextAt = companionNextAt
         self.companionReason = companionReason
         self.matchSuggest = matchSuggest
-        self.fileState = fileState
+        self.fileTruth = fileTruth
     }
 
     var progressText: String {

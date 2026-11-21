@@ -35,6 +35,8 @@ struct SongMetadataEditor: View {
     @State private var suggestion: Song?
     /// 第 51 轮 A 方案：从**音频文件里读出来**的那一套（文件是真相，列表只是显示）
     @State private var fileFields: DownloadCompanion.ID3Tags.Fields?
+    /// 第 52 轮：逐字段结论（哪个字段没内嵌、哪个是旧值）
+    @State private var fileTruth: SongFileTruth?
     /// 文件读不出来（容器不支持 / 读失败）时置 true，界面上直说"读不了"
     @State private var fileUnreadable = false
 
@@ -195,11 +197,11 @@ struct SongMetadataEditor: View {
         return URL(fileURLWithPath: path).lastPathComponent
     }
 
-    // MARK: 文件里现在是（第 51 轮 A 方案）
+    // MARK: 文件里现在是（第 51/52 轮 A 方案）
 
-    /// 只读展示**音频文件里**现有的标签，并提供「以文件为准」。
-    /// 为什么要有这一块：以前这里只有输入框，改完保存只能靠"相信"写回成功；
-    /// 现在文件里的值和列表上的值并排放着，不一致一眼就能看见。
+    /// 只读展示**音频文件里**现有的标签 + **逐字段**的状态。
+    /// 第 52 轮（老板："有些歌词没内嵌成功、有些没专辑，但都显示绿的"）：每个字段都单独标 ✓/✗，
+    /// "没有专辑"这种正常情况标成灰色「没有这一项」，不再和"没写进去"混在一起。
     @ViewBuilder
     private var fileTruthSection: some View {
         Section {
@@ -207,12 +209,12 @@ struct SongMetadataEditor: View {
                 Text("这个容器读不出标签（wav / ape / ogg 之类），文件里写了什么只能靠 Cover / Lyrics 旁车。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else if let f = fileFields {
-                LabeledContent("歌名", value: f.title.isEmpty ? "（空）" : f.title)
-                LabeledContent("歌手", value: f.artist.isEmpty ? "（空）" : f.artist)
-                LabeledContent("专辑", value: f.album.isEmpty ? "（空）" : f.album)
-                LabeledContent("封面", value: (f.cover?.isEmpty == false) ? "已内嵌" : "没有")
-                LabeledContent("歌词", value: (f.lyrics?.isEmpty == false) ? "已内嵌" : "没有")
+            } else if let f = fileFields, let truth = fileTruth {
+                fieldRow("歌名", truth.title, f.title.isEmpty ? "（空）" : f.title)
+                fieldRow("歌手", truth.artist, f.artist.isEmpty ? "（空）" : f.artist)
+                fieldRow("专辑", truth.album, f.album.isEmpty ? "（空）" : f.album)
+                fieldRow("封面", truth.cover, (f.cover?.isEmpty == false) ? "已内嵌" : "没有")
+                fieldRow("歌词", truth.lyrics, (f.lyrics?.isEmpty == false) ? "已内嵌" : "没有")
                 Button("以文件为准（覆盖列表）") { adoptFileTruth(f) }
             } else {
                 HStack(spacing: Tokens.Spacing.xs) {
@@ -225,8 +227,52 @@ struct SongMetadataEditor: View {
         } header: {
             Text("文件里现在是")
         } footer: {
-            Text("A 方案：音频文件里的标签是真相，列表只是显示。「以文件为准」会用上面的值覆盖列表，"
-                 + "并把文件里的封面/歌词同步成 Cover / Lyrics 旁车（旁车只是缓存）。空着的项不会清空列表。")
+            Text("A 方案：音频文件里的标签是真相，列表只是显示。✓=一致 · 灰=这一项本来就没有 · "
+                 + "橙=没写进文件 · 蓝=文件里还是旧值。「以文件为准」会用文件里的值覆盖列表，"
+                 + "并把文件里的封面/歌词同步成 Cover / Lyrics 旁车。")
+        }
+    }
+
+    /// 一行"字段 + 文件里的值 + 状态图标"
+    @ViewBuilder
+    private func fieldRow(_ name: String, _ truth: FieldTruth, _ value: String) -> some View {
+        LabeledContent(name) {
+            HStack(spacing: 5) {
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: fieldSymbol(truth))
+                    .foregroundStyle(fieldColor(truth))
+                    .accessibilityLabel(fieldWord(truth))
+            }
+        }
+    }
+
+    private func fieldSymbol(_ truth: FieldTruth) -> String {
+        switch truth {
+        case .ok: return "checkmark.circle.fill"
+        case .missing: return "exclamationmark.triangle.fill"
+        case .differs: return "arrow.triangle.2.circlepath"
+        case .empty: return "minus.circle"
+        }
+    }
+
+    private func fieldColor(_ truth: FieldTruth) -> Color {
+        switch truth {
+        case .ok: return .green
+        case .missing: return .orange
+        case .differs: return .blue
+        case .empty: return .secondary
+        }
+    }
+
+    private func fieldWord(_ truth: FieldTruth) -> String {
+        switch truth {
+        case .ok: return "已内嵌且一致"
+        case .missing: return "没写进文件"
+        case .differs: return "文件里是旧值"
+        case .empty: return "这一项本来就没有"
         }
     }
 
@@ -236,11 +282,12 @@ struct SongMetadataEditor: View {
             fileUnreadable = true
             return
         }
-        if let fields = await AudioTagEmbedder.readFields(fileURL: URL(fileURLWithPath: path)) {
-            fileFields = fields
-        } else {
+        guard let fields = await AudioTagEmbedder.readFields(fileURL: URL(fileURLWithPath: path)) else {
             fileUnreadable = true
+            return
         }
+        fileFields = fields
+        fileTruth = await DownloadManager.shared.fileTruth(for: item)
     }
 
     /// 用文件里的值覆盖列表（A 方案："以文件为准"这条路必须真的存在，不能只是口号）

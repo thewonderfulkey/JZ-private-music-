@@ -31,6 +31,8 @@ struct DownloadsTabView: View {
     @State private var showDedupeConfirm = false
     /// 第 48/49 轮：把歌曲信息写回音频文件（老板：前台换了封面/信息，文件里还是旧的，要对齐）
     @State private var showSongInfoWriteConfirm = false
+    /// 第 52 轮：未对齐明细（名单 + 可复制 + 可只重跑这些）
+    @State private var showUnresolved = false
     /// 导入面板（内置浏览器；不经过系统选择器）
     @State private var showImportBrowser = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
@@ -513,8 +515,22 @@ struct DownloadsTabView: View {
                 get: { activeReport != nil },
                 set: { if !$0 { clearReports() } })) {
                 Button("好") { clearReports() }
+                if !downloads.lastUnresolved.isEmpty {
+                    Button("查看明细（\(downloads.lastUnresolved.count) 首）") {
+                        clearReports()
+                        // alert 自己要点一下才消失，等它退场再弹 sheet
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            showUnresolved = true
+                        }
+                    }
+                }
             } message: {
                 Text(activeReport?.message ?? "")
+            }
+            // 第 52 轮：未对齐名单（可复制给开发、可只重跑这些）
+            .sheet(isPresented: $showUnresolved) {
+                UnresolvedListSheet()
+                    .environmentObject(downloads)
             }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
@@ -1071,6 +1087,70 @@ private struct DownloadRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .onAppear { PerfProbe.firstRow("downloads") }
+    }
+}
+
+/// 未对齐名单（第 52 轮）：每首一行「歌名 + 原因 + 字段明细」——
+/// 可以整段复制发给开发，也可以**只重跑这些**（不再全库 662 首重来）。
+private struct UnresolvedListSheet: View {
+
+    @EnvironmentObject private var downloads: DownloadManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(downloads.lastUnresolved) { issue in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(issue.name)
+                                .font(FontRole.songTitle)
+                                .lineLimit(1)
+                            Text(issue.reason.isEmpty ? "没对齐" : issue.reason)
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                                .lineLimit(2)
+                            Text(issue.fields)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                } footer: {
+                    Text("「只重跑这些」只动上面 \(downloads.lastUnresolved.count) 首，不碰其它歌。"
+                         + "字段明细里 ok=一致 · differs=旧值 · missing=没写进去 · empty=本来就没有。")
+                }
+            }
+            .navigationTitle("未对齐 \(downloads.lastUnresolved.count) 首")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        copyAll()
+                    } label: {
+                        Label(copied ? "已复制" : "复制",
+                              systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    Button("只重跑这些") {
+                        _ = downloads.retryUnresolvedSongInfo()
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func copyAll() {
+        let text = downloads.lastUnresolved
+            .map { "\($0.name)\t\($0.reason)\t\($0.fields)" }
+            .joined(separator: "\n")
+        UIPasteboard.general.string = text
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
     }
 }
 

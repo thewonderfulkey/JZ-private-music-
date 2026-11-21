@@ -174,104 +174,131 @@ enum AudioTagEmbedder {
         }
     }
 
-    /// mp3：只替换那几帧。音频体（标签之后的所有字节）一个字节不改，
-    /// 所以这里**不需要**再跑一遍 AVAsset 可播放校验（那一步 662 首要多花好几分钟）；
-    /// 校验只看"临时文件体积等于算出来的字节数"和"头真的是 ID3v2.3/2.4"。
+    /// mp3：只替换那几帧，**音频体走流式拷贝**（第 52 轮：不再把整首读进内存，
+    /// 真机峰值从 815MB 降下来）。结构校验：新标签头必须是 ID3v2.3/2.4、体积必须对得上。
     private static func writeMP3(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
         async -> CoverEmbedOutcome {
-        let fm = FileManager.default
-        guard let original = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
-              !original.isEmpty else { return .failed }
-
-        if DownloadCompanion.ID3Tags.matches(fields, inFileData: original) { return .already }
-        let hadCover = DownloadCompanion.ID3Tags.hasImage(inFileData: original)
-        guard let output = DownloadCompanion.ID3Tags.rewriting(inFileData: original,
-                                                               fields: fields) else {
-            return .failed
+        guard let head = firstBytes(of: fileURL, count: 10),
+              let tagLength = DownloadCompanion.ID3Tags.tagLength(headBytes: head) else { return .failed }
+        var tagBytes: [UInt8] = []
+        if tagLength > 0 {
+            guard let bytes = firstBytes(of: fileURL, count: tagLength),
+                  bytes.count == tagLength else { return .failed }
+            tagBytes = bytes
         }
 
-        let tempURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent(".tags-\(UUID().uuidString).mp3")
-        defer { try? fm.removeItem(at: tempURL) }
-        do {
-            try output.write(to: tempURL, options: .atomic)
-        } catch {
-            return .failed
-        }
+        let current = DownloadCompanion.ID3Tags.reading(inFileData: Data(tagBytes))
+        if DownloadCompanion.ID3Tags.satisfied(fields, by: current) { return .already }
+        let hadCover = !(current.cover?.isEmpty ?? true)
 
-        guard let size = (try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? Int64,
-              size == Int64(output.count),
-              let head = firstBytes(of: tempURL, count: 4), head.count == 4,
-              head[0] == 0x49, head[1] == 0x44, head[2] == 0x33,
-              (head[3] == 0x03 || head[3] == 0x04) else {
-            return .failed
-        }
+        guard let newTag = DownloadCompanion.ID3Tags.rewriting(tagBytes: Data(tagBytes),
+                                                               fields: fields) else { return .failed }
+        let newHead = [UInt8](newTag.prefix(4))
+        guard newHead.count == 4, newHead[0] == 0x49, newHead[1] == 0x44, newHead[2] == 0x33,
+              (newHead[3] == 0x03 || newHead[3] == 0x04) else { return .failed }
 
-        do {
-            _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
-            return hadCover ? .replaced : .added
-        } catch {
-            return .failed
-        }
+        guard await streamRewrite(fileURL: fileURL, header: newTag,
+                                  copyFrom: tagLength, suffix: "mp3") else { return .failed }
+        return hadCover ? .replaced : .added
     }
 
-    /// flac：重建元数据块（STREAMINFO 保留、VORBIS_COMMENT 重写、front cover PICTURE 换掉），
-    /// 音频帧原样搬。和 mp3 同理不需要 AVAsset 再判一次可播 —— 音频字节没动。
+    /// flac：重建元数据区（STREAMINFO 保留、VORBIS_COMMENT 重写、front cover PICTURE 换掉），
+    /// 音频帧流式拷贝；前置 ID3v2 按设计丢掉。
     private static func writeFLAC(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
         async -> CoverEmbedOutcome {
-        let fm = FileManager.default
-        guard let original = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
-              !original.isEmpty else { return .failed }
+        guard let prefixBytes = firstBytes(of: fileURL, count: metadataProbeLimit) else { return .failed }
+        let prefix = Data(prefixBytes)
 
-        if DownloadCompanion.FlacTags.matches(fields, inFileData: original) { return .already }
-        let hadCover = DownloadCompanion.FlacTags.hasImage(inFileData: original)
-        guard let output = DownloadCompanion.FlacTags.rewriting(inFileData: original,
-                                                                fields: fields) else {
-            return .failed
-        }
+        let current = DownloadCompanion.FlacTags.reading(inFileData: prefix)
+        if DownloadCompanion.FlacTags.matches(fields, inFileData: prefix) { return .already }
+        let hadCover = !(current.cover?.isEmpty ?? true)
+
+        guard let plan = DownloadCompanion.FlacTags.rewritingMetadata(prefix: prefix,
+                                                                      fields: fields) else { return .failed }
+        let newHead = [UInt8](plan.metadata.prefix(4))
+        guard newHead == [0x66, 0x4C, 0x61, 0x43] else { return .failed }
+
+        guard await streamRewrite(fileURL: fileURL, header: plan.metadata,
+                                  copyFrom: plan.audioStart, suffix: "flac") else { return .failed }
+        return hadCover ? .replaced : .added
+    }
+
+    /// 流式写盘：先把 `header`（新标签/新元数据）写到临时文件，再把源文件从 `copyFrom` 起
+    /// 1MB 一块拷过去，体积校验通过后原子替换。
+    ///
+    /// 为什么要流式：662 首里不少是 20–100MB 的 FLAC，以前每首都要"整文件读进内存 + 再拼一份"，
+    /// 三首并发就能把峰值顶到 800MB（`诊断/life.log` 实测），既容易被系统杀，也容易写失败。
+    private static func streamRewrite(fileURL: URL, header: Data,
+                                      copyFrom: Int, suffix: String) async -> Bool {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
+              let size = attrs[.size] as? Int64, size > 0,
+              Int64(copyFrom) <= size,
+              let source = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? source.close() }
 
         let tempURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent(".tags-\(UUID().uuidString).flac")
-        defer { try? fm.removeItem(at: tempURL) }
+            .appendingPathComponent(".tags-\(UUID().uuidString).\(suffix)")
+        fm.createFile(atPath: tempURL.path, contents: nil)
+        guard let sink = try? FileHandle(forWritingTo: tempURL) else {
+            try? fm.removeItem(at: tempURL)
+            return false
+        }
         do {
-            try output.write(to: tempURL, options: .atomic)
+            try sink.write(contentsOf: header)
+            try source.seek(toOffset: UInt64(copyFrom))
+            while true {
+                guard let chunk = try source.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
+                try sink.write(contentsOf: chunk)
+            }
+            try sink.synchronize()
+            try sink.close()
         } catch {
-            return .failed
+            try? sink.close()
+            try? fm.removeItem(at: tempURL)
+            return false
         }
 
-        // 校验：体积一致 + 头必须是 `fLaC`（前置的 ID3v2 已按设计丢掉）
-        guard let size = (try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? Int64,
-              size == Int64(output.count),
-              let head = firstBytes(of: tempURL, count: 4), head.count == 4,
-              head[0] == 0x66, head[1] == 0x4C, head[2] == 0x61, head[3] == 0x43 else {
-            return .failed
+        // 体积必须 = 新头 + 原音频长度（防止拷一半）
+        let expected = Int64(header.count) + (size - Int64(copyFrom))
+        guard let written = (try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? Int64,
+              written == expected else {
+            try? fm.removeItem(at: tempURL)
+            return false
         }
 
         do {
             _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
-            return hadCover ? .replaced : .added
+            return true
         } catch {
-            return .failed
+            try? fm.removeItem(at: tempURL)
+            return false
         }
     }
 
     /// 从文件里**读**出那一套字段（A 方案：文件是真相）。
-    /// 读不出 / 容器不支持 → nil（调用方当"文件里没有可用标签"处理，不要去写）。
+    /// 第 52 轮起只读文件开头（最多 16MB / 标签区），不再把整个文件读进内存。
     static func readFields(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         switch fileURL.pathExtension.lowercased() {
         case "mp3":
-            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { return nil }
-            return DownloadCompanion.ID3Tags.reading(inFileData: data)
+            guard let head = firstBytes(of: fileURL, count: 10),
+                  let length = DownloadCompanion.ID3Tags.tagLength(headBytes: head) else { return nil }
+            guard length > 0 else { return DownloadCompanion.ID3Tags.Fields() }
+            guard let tag = firstBytes(of: fileURL, count: length), tag.count == length else { return nil }
+            return DownloadCompanion.ID3Tags.reading(inFileData: Data(tag))
         case "flac":
-            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { return nil }
-            return DownloadCompanion.FlacTags.reading(inFileData: data)
+            guard let prefix = firstBytes(of: fileURL, count: metadataProbeLimit) else { return nil }
+            return DownloadCompanion.FlacTags.reading(inFileData: Data(prefix))
         case "m4a", "mp4":
             return await readM4A(fileURL: fileURL)
         default:
             return nil
         }
     }
+
+    /// 读元数据时最多读这么多（封面 + 歌词 + 其它块都在里面；512KB 的封面也就这个量级）
+    static let metadataProbeLimit = 16 << 20
 
     private static func readM4A(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
         let asset = AVURLAsset(url: fileURL)

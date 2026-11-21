@@ -401,49 +401,80 @@ enum DownloadCompanion {
 
         /// 文件里是不是**已经就是要写的这一套**（只比对传进来的非空项）。
         static func matches(_ want: Fields, inFileData data: Data) -> Bool {
-            let have = reading(inFileData: data)
-            if !trim(want.title).isEmpty, trim(have.title) != trim(want.title) { return false }
-            if !trim(want.artist).isEmpty, trim(have.artist) != trim(want.artist) { return false }
-            if !trim(want.album).isEmpty, trim(have.album) != trim(want.album) { return false }
-            // 时长差 ≤1.5s 当同一首（时长来自标签/容器，各家算法差几百毫秒很正常）
+            satisfied(want, by: reading(inFileData: data))
+        }
+
+        /// `have` 是不是已经满足 `want`（只比对 want 里非空的项）。
+        /// 第 52 轮拆出来：流式写盘时手里只有"标签部分的读结果"，没有整个文件。
+        static func satisfied(_ want: Fields, by have: Fields) -> Bool {
+            func ok(_ w: String, _ h: String) -> Bool {
+                let a = trim(w)
+                return a.isEmpty || trim(h) == a
+            }
+            if !ok(want.title, have.title) { return false }
+            if !ok(want.artist, have.artist) { return false }
+            if !ok(want.album, have.album) { return false }
             if want.durationMs > 0, abs(have.durationMs - want.durationMs) > 1_500 { return false }
             if let cover = want.cover, !cover.isEmpty, have.cover != cover { return false }
-            if !trim(want.lyrics ?? "").isEmpty, trim(have.lyrics ?? "") != trim(want.lyrics ?? "") {
-                return false
-            }
+            if !trim(want.lyrics ?? "").isEmpty,
+               trim(have.lyrics ?? "") != trim(want.lyrics ?? "") { return false }
             return true
         }
 
-        /// 写整套字段，返回**完整的新文件字节**；无法安全处理 → nil。
-        static func rewriting(inFileData data: Data, fields want: Fields) -> Data? {
+        /// 旧标签总长度（含 10 字节头）；没有 ID3 标签 → 0；开头是 ID3 但解析不了 → nil
+        /// （调用方据此保持原文件不动）。
+        static func tagLength(headBytes head: [UInt8]) -> Int? {
+            guard head.count >= 10 else { return 0 }
+            guard head[0] == 0x49, head[1] == 0x44, head[2] == 0x33 else { return 0 }
+            let version = head[3]
+            let flags = head[5]
+            guard version == 3 || version == 4 else { return nil }
+            guard flags & 0x80 == 0, flags & 0x40 == 0 else { return nil }
+            if version >= 4, flags & 0x10 != 0 { return nil }
+            let size = syncsafeValue(head, at: 6)
+            guard size >= 0 else { return nil }
+            return 10 + size
+        }
+
+        /// 只重写**标签区**，返回新标签字节（音频体由调用方流式拷贝，不再整文件进内存）。
+        /// - Parameter tagBytes: 现有标签的原始字节（空 = 这个文件没有 ID3 标签）
+        static func rewriting(tagBytes: Data, fields want: Fields) -> Data? {
             guard !want.isEmpty else { return nil }
             let replace = replacedIDs(want)
+            let bytes = [UInt8](tagBytes)
 
-            guard let tag = tagInfo(data) else {
-                // 没有 ID3v2 标签 → 造一条新的 v2.4 标签前置，音频体原样跟在后面。
-                // 但"开头是 ID3 却解析不了"（v2.2 / unsync / 长度越界）不能走这条路：
-                // 那会在旧标签前面再糊一条新标签，两个标签叠着，解码方读哪个都不算错。
-                guard !startsWithID3(data) else { return nil }
+            guard let tag = tagInfo(tagBytes) else {
+                guard !startsWithID3(tagBytes) else { return nil }
                 let frames = newFrames(want, version: 4)
                 guard !frames.isEmpty else { return nil }
                 var out = tagHeader(version: 4, framesLength: frames.count)
                 out.append(frames)
-                out.append(data)
                 return out
             }
 
-            let bytes = [UInt8](data)
             guard let list = frames(bytes, tag: tag) else { return nil }
             var kept = Data()
             for frame in list where !replace.contains(frame.id) {
-                kept.append(data.subdata(in: frame.start..<frame.end))
+                kept.append(tagBytes.subdata(in: frame.start..<frame.end))
             }
             kept.append(newFrames(want, version: tag.version))
             guard !kept.isEmpty else { return nil }
 
             var out = tagHeader(version: tag.version, framesLength: kept.count)
             out.append(kept)
-            out.append(data.subdata(in: tag.end..<data.count))
+            return out
+        }
+
+        /// 写整套字段，返回**完整的新文件字节**（测试/小文件用；App 里走流式，见 `rewriting(tagBytes:)`）。
+        static func rewriting(inFileData data: Data, fields want: Fields) -> Data? {
+            guard !want.isEmpty else { return nil }
+            let head = [UInt8](data.prefix(10))
+            guard let oldLength = tagLength(headBytes: head) else { return nil }
+            guard oldLength <= data.count else { return nil }
+            let oldTag = data.subdata(in: 0..<oldLength)
+            guard let newTag = rewriting(tagBytes: oldTag, fields: want) else { return nil }
+            var out = newTag
+            out.append(data.subdata(in: oldLength..<data.count))
             return out
         }
 
@@ -819,12 +850,24 @@ enum DownloadCompanion {
             return true
         }
 
-        /// 写整套字段，返回**完整的新文件字节**；无法安全处理 → nil。
+        /// 写整套字段，返回**完整的新文件字节**（测试/小文件用；App 里走流式 `rewritingMetadata`）
         static func rewriting(inFileData data: Data, fields want: ID3Tags.Fields) -> Data? {
+            guard let rewritten = rewritingMetadata(prefix: data, fields: want) else { return nil }
+            var out = rewritten.metadata
+            out.append(data.subdata(in: rewritten.audioStart..<data.count))
+            return out
+        }
+
+        /// 只重写**元数据区**（第 52 轮：音频帧流式拷贝，不再整文件进内存）。
+        /// - Parameter prefix: 文件开头的字节（含可能挂在最前面的 ID3v2）
+        /// - Returns: (新元数据字节, 音频帧起点)；元数据区超出 prefix / 结构不认识 → nil
+        static func rewritingMetadata(prefix: Data, fields want: ID3Tags.Fields)
+            -> (metadata: Data, audioStart: Int)? {
             guard !want.isEmpty else { return nil }
-            let bytes = [UInt8](data)
+            let bytes = [UInt8](prefix)
             guard let layout = layout(bytes),
-                  let first = layout.blocks.first, first.type == 0 else { return nil }
+                  let first = layout.blocks.first, first.type == 0,
+                  layout.audioStart <= prefix.count else { return nil }
 
             var kept: [(type: Int, payload: Data)] = []
             var existingPairs: [Comment] = []
@@ -882,9 +925,7 @@ enum DownloadCompanion {
                 out.append(UInt8(payload.count & 0xFF))
                 out.append(payload)
             }
-            guard layout.audioStart <= data.count else { return nil }
-            out.append(data.subdata(in: layout.audioStart..<data.count))
-            return out
+            return (out, layout.audioStart)
         }
 
         /// 图片宽高（PICTURE 块要求；解不出来就写 0，播放器仍能显示）
@@ -1118,34 +1159,62 @@ enum DownloadCompanion {
     // 界面上的那个小圆点、编辑页里的"文件里现在是…"、以及批量检查的计数，全都走它。
     enum FileTruth {
 
+        /// 逐字段比对（第 52 轮：老板说"有些歌词没内嵌成功、有些没专辑，但都显示绿的"——
+        /// 所以这里不再给一个笼统的"对/不对"，而是把五个字段各自的结论摊开）。
+        ///
         /// - Parameters:
         ///   - file: 从音频文件里**读出来**的那一套（不是我们想写的）
         ///   - song: 列表上显示的那一套
-        ///   - hasCoverSidecar: `Cover/<基名>.jpg` 在不在
-        ///   - hasLyricsSidecar: `Lyrics/<基名>.lrc` 在不在
-        static func state(file: ID3Tags.Fields, song: Song,
-                          hasCoverSidecar: Bool, hasLyricsSidecar: Bool) -> SongFileState {
-            let wantTitle = ID3Tags.trim(song.name)
-            let wantArtist = ID3Tags.trim(song.singer)
-            let wantAlbum = ID3Tags.trim(song.album)
-            let fileTitle = ID3Tags.trim(file.title)
-            let fileArtist = ID3Tags.trim(file.artist)
-            let fileAlbum = ID3Tags.trim(file.album)
+        ///   - coverSidecar: `Cover/<基名>.jpg` 的字节（没有就 nil）
+        ///   - lyricsSidecar: `Lyrics/<基名>.lrc` 的文本（没有就 nil）
+        static func truth(file: ID3Tags.Fields, song: Song,
+                          coverSidecar: Data?, lyricsSidecar: String?) -> SongFileTruth {
+            var out = SongFileTruth()
+            out.hasCoverSidecar = !(coverSidecar?.isEmpty ?? true)
+            out.hasLyricsSidecar = !ID3Tags.trim(lyricsSidecar ?? "").isEmpty
 
-            // ① 文字对不对（空值不参与比较：列表没有专辑时，文件里空着不算错）
-            if !wantTitle.isEmpty, fileTitle != wantTitle { return .sidecarOnly }
-            if !wantArtist.isEmpty, fileArtist != wantArtist { return .sidecarOnly }
-            if !wantAlbum.isEmpty, fileAlbum != wantAlbum { return .sidecarOnly }
+            func textTruth(_ want: String, _ have: String) -> FieldTruth {
+                let w = ID3Tags.trim(want)
+                let h = ID3Tags.trim(have)
+                if w.isEmpty { return .empty }       // 列表本来没有这一项，不算错
+                if h.isEmpty { return .missing }     // 该有，文件里没有
+                return h == w ? .ok : .differs       // 有，但是旧的
+            }
 
-            // ② 图对不对：文件里没有图 → 只有旁车（旁车也没有才是真"没有"）
-            let hasFileCover = !(file.cover?.isEmpty ?? true)
-            if !hasFileCover { return hasCoverSidecar ? .sidecarOnly : .missing }
+            out.title = textTruth(song.name, file.title)
+            out.artist = textTruth(song.singer, file.artist)
+            out.album = textTruth(song.album, file.album)
 
-            // ③ 词：旁车有词、文件里没写进去 → 仍然算没对齐
-            let hasFileLyrics = !ID3Tags.trim(file.lyrics ?? "").isEmpty
-            if hasLyricsSidecar && !hasFileLyrics { return .sidecarOnly }
+            let fileCover = file.cover.flatMap { $0.isEmpty ? nil : $0 }
+            switch (fileCover, coverSidecar) {
+            case (nil, _):
+                out.cover = .missing                  // 文件里没有图（旁车有没有看 hasCoverSidecar）
+            case (let f?, let s?) where !s.isEmpty:
+                out.cover = (f == s) ? .ok : .differs // 有图，但和旁车那张不是同一张
+            case (_?, _):
+                out.cover = .ok                       // 只有文件里有图，也算对齐
+            }
 
-            return .inSync
+            let wantLyrics = ID3Tags.trim(lyricsSidecar ?? "")
+            let haveLyrics = ID3Tags.trim(file.lyrics ?? "")
+            if wantLyrics.isEmpty {
+                out.lyrics = haveLyrics.isEmpty ? .empty : .ok
+            } else if haveLyrics.isEmpty {
+                out.lyrics = .missing
+            } else {
+                out.lyrics = haveLyrics == wantLyrics ? .ok : .differs
+            }
+
+            return out
+        }
+
+        /// 容器写不了标签时的结论（wav / ape / ogg…）
+        static func unsupported(coverSidecar: Data?, lyricsSidecar: String?) -> SongFileTruth {
+            var out = SongFileTruth()
+            out.unsupported = true
+            out.hasCoverSidecar = !(coverSidecar?.isEmpty ?? true)
+            out.hasLyricsSidecar = !ID3Tags.trim(lyricsSidecar ?? "").isEmpty
+            return out
         }
 
         /// 一句话说明（界面/弹窗直接用，别再各写一套文案）

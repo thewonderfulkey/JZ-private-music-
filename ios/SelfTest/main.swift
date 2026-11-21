@@ -4824,17 +4824,18 @@ do {
                                                fields: DownloadCompanion.ID3Tags.Fields()) == nil)
 }
 
-// MARK: - 第 51 轮 A 方案：对齐判定（文件里 vs 列表上）
+// MARK: - 第 51/52 轮 A 方案：对齐判定（逐字段）
 //
-// 老板 2026-11-22："继续按 A 方案往下走"。A 方案第一条：**音频文件里的标签是真相**，
-// 旁车（Cover/Lyrics）只是 App 的读取缓存。这条判定是界面上那个小圆点、
-// 编辑页"文件里现在是…"、以及批量检查计数的唯一口径。
+// 老板 2026-11-22 02:35：「有些是没有歌词内嵌成功的，有些内嵌成功了，有些歌曲没有专辑（这个有时候正常），
+// 但是都显示是绿的」——所以判定必须**逐字段**：没专辑是 empty（不算问题），
+// 旁车有词但文件里没词是 missing（必须变灰），图不一样是 differs。
 
-section("对齐判定：文件里 vs 列表上（第 51 轮 A 方案）")
+section("对齐判定：文件里 vs 列表上（第 51/52 轮 A 方案）")
 
 do {
     let target = song(.local, "晴天", "周杰伦", album: "叶惠美")
     let cover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x22, count: 32))
+    let otherCover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x33, count: 32))
 
     var good = DownloadCompanion.ID3Tags.Fields()
     good.title = "晴天"
@@ -4842,46 +4843,80 @@ do {
     good.album = "叶惠美"
     good.cover = cover
 
-    check("文件里文字+封面都对、没有旁车词 → 已对齐",
-          DownloadCompanion.FileTruth.state(file: good, song: target,
-                                            hasCoverSidecar: true,
-                                            hasLyricsSidecar: false) == .inSync)
+    let aligned = DownloadCompanion.FileTruth.truth(file: good, song: target,
+                                                    coverSidecar: cover, lyricsSidecar: nil)
+    check("五个字段都一致 → 已对齐", aligned.state == .inSync && aligned.isAligned)
+    check("…逐字段都是 ok / empty",
+          aligned.title == .ok && aligned.artist == .ok && aligned.album == .ok
+              && aligned.cover == .ok && aligned.lyrics == .empty)
 
-    var noCover = good
-    noCover.cover = nil
-    check("文件里没封面、旁车有 → 只在旁车",
-          DownloadCompanion.FileTruth.state(file: noCover, song: target,
-                                            hasCoverSidecar: true,
-                                            hasLyricsSidecar: false) == .sidecarOnly)
-    check("文件里没封面、旁车也没有 → 没封面",
-          DownloadCompanion.FileTruth.state(file: noCover, song: target,
-                                            hasCoverSidecar: false,
-                                            hasLyricsSidecar: false) == .missing)
+    // 老板 02:35 的原话：旁车有词、文件里没词，以前显示绿的
+    let noLyrics = DownloadCompanion.FileTruth.truth(file: good, song: target,
+                                                     coverSidecar: cover,
+                                                     lyricsSidecar: "[00:01.00]故事的小黄花")
+    check("旁车有词、文件里没有 → 不再算已对齐", noLyrics.state != .inSync)
+    check("…歌词标成 missing", noLyrics.lyrics == .missing)
+    check("…原因里点出歌词", noLyrics.problems.contains { $0.contains("歌词") })
 
-    var wrongTitle = good
-    wrongTitle.title = "旧歌名"
-    check("文件里的歌名是旧的 → 只在旁车（没对齐）",
-          DownloadCompanion.FileTruth.state(file: wrongTitle, song: target,
-                                            hasCoverSidecar: true,
-                                            hasLyricsSidecar: false) == .sidecarOnly)
+    // 没有专辑是"正常情况"，不能被判成问题
+    let noAlbum = DownloadCompanion.FileTruth.truth(file: good,
+                                                    song: song(.local, "晴天", "周杰伦", album: ""),
+                                                    coverSidecar: cover, lyricsSidecar: nil)
+    check("列表本来没有专辑 → empty，不算问题", noAlbum.album == .empty && noAlbum.isAligned)
 
-    check("旁车有词、文件里没词 → 只在旁车",
-          DownloadCompanion.FileTruth.state(file: good, song: target,
-                                            hasCoverSidecar: true,
-                                            hasLyricsSidecar: true) == .sidecarOnly)
+    let oldCover = DownloadCompanion.FileTruth.truth(file: good, song: target,
+                                                     coverSidecar: otherCover, lyricsSidecar: nil)
+    check("文件里的图和旁车不是同一张 → cover differs", oldCover.cover == .differs)
+    check("…状态不是已对齐", oldCover.state != .inSync)
 
-    var withLyrics = good
-    withLyrics.lyrics = "[00:01.00]故事的小黄花"
-    check("文件里词也写了 → 已对齐",
-          DownloadCompanion.FileTruth.state(file: withLyrics, song: target,
-                                            hasCoverSidecar: true,
-                                            hasLyricsSidecar: true) == .inSync)
+    var noCoverFile = good
+    noCoverFile.cover = nil
+    check("文件没图、旁车也没图 → missing",
+          DownloadCompanion.FileTruth.truth(file: noCoverFile, song: target,
+                                            coverSidecar: nil,
+                                            lyricsSidecar: nil).state == .missing)
+    check("文件没图、旁车有图 → 只在旁车",
+          DownloadCompanion.FileTruth.truth(file: noCoverFile, song: target,
+                                            coverSidecar: cover,
+                                            lyricsSidecar: nil).state == .sidecarOnly)
+
+    let unsupported = DownloadCompanion.FileTruth.unsupported(coverSidecar: cover, lyricsSidecar: nil)
+    check("容器不支持 → 单独一个状态", unsupported.state == .unsupported && !unsupported.isAligned)
 
     check("四种状态都有中文说明",
-          !DownloadCompanion.FileTruth.label(.inSync).isEmpty
-          && !DownloadCompanion.FileTruth.label(.sidecarOnly).isEmpty
-          && !DownloadCompanion.FileTruth.label(.missing).isEmpty
-          && !DownloadCompanion.FileTruth.label(.unsupported).isEmpty)
+          [SongFileState.inSync, .sidecarOnly, .missing, .unsupported].allSatisfy {
+              !DownloadCompanion.FileTruth.label($0).isEmpty
+          })
+
+    // 第 52 轮流式写盘用的两个纯函数：标签长度 / 只写标签区 / 满足判定
+    check("tagLength：不是 ID3 → 0",
+          DownloadCompanion.ID3Tags.tagLength(headBytes: [0xFF, 0xFB, 0x90]) == 0)
+    var head24: [UInt8] = Array("ID3".utf8)
+    head24.append(contentsOf: [0x04, 0x00, 0x00, 0x00, 0x00, 0x02, 0x2C]) // size = 300（syncsafe）
+    check("tagLength：v2.4 长度 = 10 + size",
+          DownloadCompanion.ID3Tags.tagLength(headBytes: head24) == 310)
+    var head22: [UInt8] = Array("ID3".utf8)
+    head22.append(contentsOf: [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    check("tagLength：v2.2 不冒险（nil）",
+          DownloadCompanion.ID3Tags.tagLength(headBytes: head22) == nil)
+
+    check("satisfied：字段全对 → true", DownloadCompanion.ID3Tags.satisfied(good, by: good))
+    var half = good
+    half.album = ""
+    check("satisfied：文件里缺专辑 → false", !DownloadCompanion.ID3Tags.satisfied(good, by: half))
+    check("satisfied：什么都没要求 → true",
+          DownloadCompanion.ID3Tags.satisfied(DownloadCompanion.ID3Tags.Fields(), by: good))
+
+    // 只写标签区 == 整文件写回的头部（流式写盘靠这条等价）
+    let oldTag = DownloadCompanion.id3Tag(title: "旧", artist: "旧", album: "旧",
+                                          coverData: nil, coverMime: "image/jpeg", lyrics: "")
+    let body = Data((0..<128).map { UInt8($0) })
+    let whole = oldTag + body
+    let full = DownloadCompanion.ID3Tags.rewriting(inFileData: whole, fields: good)
+    let tagLength = DownloadCompanion.ID3Tags.tagLength(headBytes: [UInt8](whole.prefix(10))) ?? 0
+    let tagOnly = DownloadCompanion.ID3Tags.rewriting(tagBytes: whole.prefix(tagLength), fields: good)
+    check("只写标签区 = 整文件结果的头部",
+          full != nil && tagOnly != nil && full!.prefix(tagOnly!.count) == tagOnly!)
 }
 
 // MARK: - 汇总
