@@ -71,6 +71,27 @@ struct SettingsView: View {
                      : "已关闭（默认）：不占 iCloud、不拖慢备份；**重装 App 或换机会丢本地文件**（在线收藏和歌单不受影响）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // 排查用：把收藏 JSON 复制到「诊断/」，从「文件」App 直接发出来
+                Button {
+                    let ok = LibraryStore.shared.exportDiagnosticsCopy()
+                    exportNote = ok
+                        ? "已导出到「文件 › JZ 音乐 › 诊断」，把里面最新那几个 JSON 发给开发即可。"
+                        : "导出失败：还没有收藏数据？"
+                } label: {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        Text("导出收藏数据（排查重复用）")
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: Tokens.Spacing.xs)
+                        Image(systemName: "square.and.arrow.up")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let exportNote {
+                    Text(exportNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             // 导入歌单（老板 2026-11-19）：入口只放设置页。导入过以后发现页才会出现「我的歌单」模块，

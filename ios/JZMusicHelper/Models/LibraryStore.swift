@@ -387,6 +387,26 @@ final class LibraryStore {
 
     private let dismissedURL = LibraryStore.docURL("favorite_review_dismissed.json")
 
+    /// 排查用：把收藏相关 JSON 复制到 `诊断/`（老板从「文件」App 里直接发出来就能定位）
+    @discardableResult
+    func exportDiagnosticsCopy() -> Bool {
+        let dir = CrashReporter.directory()
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        var ok = false
+        let pairs: [(URL, String)] = [
+            (favoritesURL, "favorites-\(stamp).json"),
+            (aliasesURL, "favorite-aliases-\(stamp).json"),
+            (fingerprintsURL, "favorite-fingerprints-\(stamp).json")
+        ]
+        for (src, name) in pairs {
+            guard let data = try? Data(contentsOf: src) else { continue }
+            let dest = dir.appendingPathComponent(name)
+            if (try? data.write(to: dest, options: .atomic)) != nil { ok = true }
+        }
+        return ok
+    }
+
     /// 重算疑似重复组（收藏变了 / 进入收藏页时调；按歌名首字分桶，避免 n² 全量比）
     func refreshDuplicateGroups() {
         guard favorites.count >= 2 else {

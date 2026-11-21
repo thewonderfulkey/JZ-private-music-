@@ -11,9 +11,9 @@ enum NameMatch {
 
     private static let bracket = Pattern.make("（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】")
 
-    private static let punct = Pattern.make("[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+]")
+    private static let punct = Pattern.make("[\\s·・\\-—_.,，、'\"“”‘’!！?？:：/\\\\&*+|]")
 
-    private static let singerSep = Pattern.make("[/&、,，\\s]+")
+    private static let singerSep = Pattern.make("[/&、,，|\\\\\\s]+")
 
     /// 纯歌名归一化：去版本括号 + 去标点空白
     static func normTitle(_ raw: String) -> String {
@@ -390,11 +390,15 @@ enum FavoriteRules {
 // 用户点进去逐组决定。这里只放纯逻辑：什么算灰区、合并时保留哪条。
 enum FavoriteReview {
 
-    /// 灰区歌名相似度下限（自动合并是 `FavoriteRules.titleSimilarityFloor` = 0.75）
-    static let minTitleSimilarity = 0.6
+    /// 人工审核用的**宽口径**（自动合并是 0.75；这里放到 0.3 —— 老板 2026-11-21：
+    /// "实在难写出来的，就用宽规则 + 人工去重"）
+    static let minTitleSimilarity = 0.3
+
+    /// 宽口径的时长窗口：同一首跨平台翻录通常 ≤2s；超过 3s 就不进人工列表了（太吵）
+    static let reviewDurationGapSec = 3
 
     /// 灰区允许的最大时长差（超过这个基本是两首不同的歌，不值得打扰用户）
-    static let maxDurationGapSec = 12
+    static let maxDurationGapSec = 3
 
     /// 这一对是不是"值得让用户看一眼"的疑似重复（纯函数，CI 断言）
     ///
@@ -415,7 +419,7 @@ enum FavoriteReview {
             return false
         }
 
-        // 歌名：等值（说明是时长把一级挡住了）或相似度落在灰区
+        // 歌曲名：等值 / 包含 / 相似度 ≥0.3（宽口径，交给用户判断）
         let ka = keyA ?? FavoriteRules.titleKey(a.name)
         let kb = keyB ?? FavoriteRules.titleKey(b.name)
         guard !ka.isEmpty, !kb.isEmpty else { return false }

@@ -4137,7 +4137,8 @@ do {
 
     let base = s(.kuwo, "晴天", "周杰伦", dur: 269, id: "g1")
     let shorter = s(.qq, "晴天", "周杰伦", dur: 258, id: "g2")
-    check("同名同歌手、时长差 11s → 灰区", FavoriteReview.isGreyPair(base, shorter))
+    check("同名同歌手、时长差 11s → 不进灰区（宽口径只收 ≤3s，减少噪音）",
+          !FavoriteReview.isGreyPair(base, shorter))
     check("但一级不会合并它（差 11s > 4s）", !FavoriteRules.isSameRecording(base, shorter))
 
     check("时长差 40s → 不是灰区（基本是两首歌）",
@@ -4148,6 +4149,8 @@ do {
           !FavoriteReview.isGreyPair(base, s(.qq, "晴天 (Live)", "周杰伦", dur: 269, id: "g5")))
     check("一级已经合并的完全同曲 → 不重复提示",
           !FavoriteReview.isGreyPair(base, s(.kugou, "晴天", "周杰伦", dur: 269, id: "g6")))
+    check("同名同歌手、时长差 2s → 一级已自动合并，不进灰区",
+          !FavoriteReview.isGreyPair(base, s(.qq, "晴天", "周杰伦", dur: 267, id: "g2b")))
     check("歌名只差一点（相似度 0.67）→ 灰区",
           FavoriteReview.isGreyPair(s(.kuwo, "我的天空", "南征北战", dur: 200, id: "g7"),
                                     s(.qq, "我的天空啊呀", "南征北战", dur: 200, id: "g8")))

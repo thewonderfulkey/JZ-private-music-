@@ -185,7 +185,7 @@ struct FavoritesView: View {
                         Button {
                             showDuplicates = true
                         } label: {
-                            Label("整理重复 · \(library.duplicateGroups.count) 组",
+                            Label("疑似重复 \(library.duplicateGroups.reduce(0) { $0 + $1.count }) 首",
                                   systemImage: "rectangle.stack.badge.minus")
                                 .font(.caption.weight(.medium))
                                 .padding(.horizontal, 10)

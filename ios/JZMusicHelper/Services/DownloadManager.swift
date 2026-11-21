@@ -870,6 +870,26 @@ enum CrashReporter {
         NSSetUncaughtExceptionHandler(jzUncaughtExceptionHandler)
 
         log("app launched · v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+
+        // 信号崩溃取证：预创建 4 个文件各留一个 fd，handler 里只 write 一个字节
+        // （Swift 的越界/断言是 SIGTRAP，NSException 收不到 —— life.log 已证明不是内存问题）
+        for (sig, name) in [(SIGTRAP, "signal-TRAP.log"), (SIGSEGV, "signal-SEGV.log"),
+                            (SIGABRT, "signal-ABRT.log"), (SIGBUS, "signal-BUS.log")] {
+            let url = directory().appendingPathComponent(name)
+            try? Data().write(to: url, options: .atomic)
+            let fd = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+                guard let path else { return -1 }
+                return open(path, O_WRONLY | O_APPEND)
+            }
+            switch sig {
+            case SIGTRAP: gFDtrap = fd
+            case SIGSEGV: gFDsegv = fd
+            case SIGABRT: gFDabrt = fd
+            case SIGBUS: gFDbus = fd
+            default: break
+            }
+            signal(sig, jzSignalHandler)
+        }
         for name in [UIApplication.didEnterBackgroundNotification,
                      UIApplication.willEnterForegroundNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -886,6 +906,29 @@ enum CrashReporter {
 
     static func log(_ line: String) {
         append("\(stamp()) \(line)\n", to: "life.log")
+    }
+
+    // MARK: - trace 落盘（播放动作的"最后遗言"）
+
+    private static let traceQueue = DispatchQueue(label: "com.jz.diagnostics.trace", qos: .utility)
+
+    /// 把 PlaybackTrace 的每一行写到 `诊断/trace.log`（崩了内存里那 200 条会一起消失）
+    static func trace(_ line: String) {
+        let url = directory().appendingPathComponent("trace.log")
+        traceQueue.async {
+            let text = line + "\n"
+            guard let data = text.data(using: .utf8) else { return }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+                if let size = try? handle.offsetInFile, size > 200_000 {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            } else {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
     }
 
     // MARK: - 内部
@@ -1296,4 +1339,27 @@ private func jzUncaughtExceptionHandler(_ ex: NSException) {
 
     """
     CrashReporter.append(text, to: "crash-\(CrashReporter.stamp()).log")
+}
+
+// MARK: - 信号取证用的全局（文件级：C 函数指针不能捕获上下文）
+
+private var gFDtrap: Int32 = -1
+private var gFDsegv: Int32 = -1
+private var gFDabrt: Int32 = -1
+private var gFDbus: Int32 = -1
+
+/// 只做一件事：往"该信号对应的文件"里写 1 个字节。
+/// 不用 Swift 字符串拼接/格式化（信号上下文里可能死锁）—— 文件存在即证明是哪种信号。
+private func jzSignalHandler(_ sig: Int32) {
+    var fd: Int32 = -1
+    if sig == SIGTRAP { fd = gFDtrap }
+    else if sig == SIGSEGV { fd = gFDsegv }
+    else if sig == SIGABRT { fd = gFDabrt }
+    else if sig == SIGBUS { fd = gFDbus }
+    if fd >= 0 {
+        var byte: UInt8 = 0x31
+        _ = withUnsafePointer(to: &byte) { write(fd, $0, 1) }
+    }
+    signal(sig, SIG_DFL)
+    raise(sig)
 }

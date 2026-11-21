@@ -32,6 +32,9 @@ struct SearchView: View {
     @State private var canLoadMore = true
     @State private var seenKeys: Set<String> = []
     private let pageSize = 20
+    /// 一屏结果最多累到这个数就不再往下翻（2026-11-21：真机上翻到近千行后崩，
+    /// 列表太长时 SwiftUI 的布局/封面加载会把主线程压垮）
+    private let maxRows = 400
 
     private var visibleSongs: [Song] {
         songs.filter { !player.deadSongKeys.contains($0.id) }
@@ -352,6 +355,10 @@ struct SearchView: View {
     /// 再取一页：四个平台同时翻页，合并排序后只留下没显示过的那些
     private func loadMore() {
         guard !isLoadingMore, canLoadMore else { return }
+        guard songs.count < maxRows else {
+            canLoadMore = false
+            return
+        }
         let trimmed = trimmedKeyword
         guard !trimmed.isEmpty else { return }
         isLoadingMore = true

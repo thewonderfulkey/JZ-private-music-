@@ -54,6 +54,9 @@ final class PlaybackTrace: @unchecked Sendable {
         buffer.append(entry)
         if buffer.count > Self.limit { buffer.removeFirst(buffer.count - Self.limit) }
         lock.unlock()
+        // 2026-11-21：同时写进 `诊断/trace.log`。崩溃时内存里的 200 条会一起消失，
+        // 落盘之后至少能看到"崩之前最后在做什么"（信号崩溃没有栈时这是唯一线索）。
+        CrashReporter.trace(Self.line(entry))
         #if DEBUG
         print("[PlaybackTrace] \(Self.line(entry))")
         #endif

@@ -63,24 +63,13 @@ struct DownloadsTabView: View {
                 list
             }
         }
-        // 2026-11-21：`allowedContentTypes` 原来是 [.audio, .folder]，对方 App 用自定义扩展名存的歌
-        // 会被系统置灰/不可选。现在放开成 `.item`（任何文件都能选，文件夹也能选），
-        // 真正的格式判断交给我们自己（按扩展名 + 按文件头嗅探）。
-        .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [.item],
-                      allowsMultipleSelection: true) { result in
-            switch result {
-            case .success(let urls):
+        // 2026-11-21：SwiftUI 的 `.fileImporter` 在真机上"打开"点了没反应（菜单动作里直接 present，
+        // 选择器的委托连线被吞）。换成自己包的 UIDocumentPickerViewController：自己收回调、自己 dismiss。
+        .sheet(isPresented: $showImporter) {
+            DocumentPicker { urls in
+                showImporter = false
                 guard !urls.isEmpty else { return }
-                downloads.importCancelled = false
-                // **必须 detached**：哈希与复制是重活，放主线程会把选择器卡死（这就是"打开没反应"）
-                Task.detached(priority: .userInitiated) {
-                    let report = await downloads.importAudioFiles(urls)
-                    await MainActor.run { importAlert = report.detail }
-                }
-            case .failure(let error):
-                // 以前这里是静默 return —— 用户什么都看不到，以为是"点了没反应"
-                importAlert = "打开文件失败：\(error.localizedDescription)"
+                startImport(urls)
             }
         }
         .alert("导入", isPresented: Binding(
@@ -129,10 +118,23 @@ struct DownloadsTabView: View {
         }
     }
 
+    /// 真正开始导入：**必须 detached**（哈希/复制是重活，放主线程会把选择器与界面卡死）
+    private func startImport(_ urls: [URL]) {
+        downloads.importCancelled = false
+        Task.detached(priority: .userInitiated) {
+            let report = await downloads.importAudioFiles(urls)
+            await MainActor.run { importAlert = report.detail }
+        }
+    }
+
     private var list: some View {
         ScrollViewReader { proxy in
             List {
                 header
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+
                 importProgressBanner
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
@@ -467,5 +469,40 @@ struct DownloadsTabView: View {
     private func sizeText(_ bytes: Int64) -> String {
         let mb = Double(bytes) / 1_000_000
         return String(format: "%.1f MB", mb)
+    }
+}
+
+// MARK: - 系统文件选择器（UIKit 包装）
+
+/// 为什么不用 SwiftUI 的 `.fileImporter`：2026-11-21 真机上它 present 之后，
+/// "打开"按钮点了完全没反应（从 Menu 动作里直接 present，选择器的 delegate 连线被吞）。
+/// UIKit 这条路我们自己控制 dismiss 与回调，且能显示扩展名。
+struct DocumentPicker: UIViewControllerRepresentable {
+
+    var onPick: ([URL]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        // `.item` = 任何文件都能选（对方 App 的自定义扩展名也能选）；文件夹同样可选
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
+        picker.allowsMultipleSelection = true
+        picker.shouldShowFileExtensions = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: ([URL]) -> Void
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
+            onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {}
     }
 }

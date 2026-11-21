@@ -133,8 +133,8 @@ func gfp(_ bytes: Int64, _ kbps: Int64) -> FavoriteFingerprint {
                         capturedAt: Date(timeIntervalSince1970: 0))
 }
 let gbase = gs(.kuwo, "晴天", "周杰伦", dur: 269, id: "g1")
-check("同名同歌手时长差 11s → 灰区",
-      FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "周杰伦", dur: 258, id: "g2")))
+check("同名同歌手时长差 11s → 不进灰区（宽口径 ≤3s）",
+      !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "周杰伦", dur: 258, id: "g2")))
 check("一级不合并它", !FavoriteRules.isSameRecording(gbase, gs(.qq, "晴天", "周杰伦", dur: 258, id: "g2")))
 check("时长差 40s → 不是灰区", !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "周杰伦", dur: 309, id: "g3")))
 check("不同歌手 → 不是灰区", !FavoriteReview.isGreyPair(gbase, gs(.qq, "晴天", "某翻唱", dur: 269, id: "g4")))
