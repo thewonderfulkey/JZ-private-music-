@@ -1,3 +1,51 @@
+## iOS v2.4.55（233）· 2026-11-21 傍晚（编辑歌曲信息三件事：封面不显示 / 保存不关页 / 看不到原文件名）
+
+老板在 IPA 交付群发录屏（`11-21 17:54`，28 秒，装的是 v2.4.54 / r171）+ 三条要求：
+① 手动改完歌曲信息点保存，**封面在编辑页明明加载出来了、保存后列表那一行还是音符占位**；
+② **点保存后还停在编辑页**，"属实是用户体验不好"；
+③ 编辑时**显示原文件名**，方便照着改。
+
+### 一、根因（录屏逐帧 + 代码）
+
+拿 cv2 把 28 秒录屏按 1fps 抽了 29 帧（本机有 cv2 / imageio_ffmpeg，不必再靠截图猜），关键三帧：
+
+| 时点 | 看到什么 |
+|---|---|
+| t=2.0s | 列表行 `レイラ / 40mP miri · …` + **音符占位封面** |
+| t=13.5s / 19.0s | 编辑页**有封面（落日图）**、专辑 `レイラ`，底部还写着「已保存，并按新名字补全了专辑/封面/歌词。」 |
+| t=24.5s | 回到列表，同一行**封面仍是占位、副行仍被截成 `40mP miri · …`** |
+
+| 现象 | 根因 | 位置 |
+|---|---|---|
+| 编辑页有图、列表行没图 | `SongArtwork` 的 `.task(id:)` 只认 `song.id#coverRevision`，而**真正换图的两条路径都不 +1 代次**：`MetadataMatcher.merge` 换 picURL、补料把图写进 `Cover/<基名>.jpg`。`ForEach` 里的行 identity 不变 → `.task` 从不重跑 → `@State image` 永远 nil。编辑页是**新视图**（跑一次就有图），所以只有它正常 | `Components.swift` `SongArtwork`、`MetadataMatcher.merge`、`DownloadManager.completeCompanion` |
+| 磁盘有图也不刷新 | 行状态表 `rowFacts` 不是 `@Published`，补料写完封面重建后**没人通知列表重算取图指纹** | `DownloadManager.rowFacts` |
+| 保存后停在原地 | `save()` 里 `await rematch(...)` 跑完**根本不 `dismiss()`**，只在表单底部写一句话；而"补全"其实只是**入队**，图还没落盘 → 老板看到的就是"一切都停在原地" | `SongMetadataEditor.save` |
+| 专辑"看不到" | 数据没丢，是**被右侧音质小字挤没了**：`本地 · 无损 FLAC · 27.3 MB` 不限宽，把「歌手 · 专辑」压成 `40mP miri · …`（副行里那个 `·` 还在，说明专辑字段有值） | `DownloadsTabView.DownloadRow` |
+
+### 二、改动（6 文件）
+
+1. **`SongArtwork` 取图指纹**：`id#代次#picURL#本地旁车封面路径` 四段合一 —— 三个封面来源任一变化都重取，
+   不再只靠"代次"这一个开关（老行也能自己换图）。
+2. **`MetadataMatcher.merge`**：picURL 变了 → `coverRevision + 1`（同一张图再匹配**不**抖）。
+3. **`MetadataMatcher.markingCoverLanded`（新，纯逻辑）+ `MetadataWriter.coverLanded`**：补料把图落盘后
+   代次 +1、清 `coverStale`、**不加锁**（补料不算"用户换封面"），并写回四处快照。
+4. **`DownloadManager`**：`rowFacts` 改 `@Published`（行状态表落地那一拍让列表重算指纹）；
+   `completeCompanion` 在 `coverOK` 时调 `coverLanded`（`sameMetadata` 会跳过"元数据没变只是取到图"的情形，
+   所以必须单独补一次）。
+5. **`SongMetadataEditor.save()`**：改成**同步**——先把字段/自选封面写进列表 → **立刻 `dismiss()`** →
+   联网匹配与补图补词全转后台；结果用列表页 `flash()` 轻提示回话（"已保存，正在补全专辑/封面/歌词"）。
+6. **编辑页新增「文件」段**：只读显示**原文件名**（等宽字体、可选中），老板照着改；不显示/不允许改文件名
+   （旁车 LRC/封面按基名关联）。
+7. **`DownloadRow` 左列 `.layoutPriority(1)`**：「歌手 · 专辑」优先拿宽度，右侧音质/大小放不下时自己截断。
+
+### 三、断言（`tools/dev/r172_mini_assertions.swift`，16 条全过）
+
+picURL 变 → 代次 +1；同一张图再匹配 → 代次不动；`markingCoverLanded` → 代次 +1 / 清 stale / **不加锁** /
+出处不变；手改专辑 → 锁住且自动匹配不覆盖；只改歌名 → 专辑仍可自动补；恢复自动 → 解锁。
+另跑：`check_ui_hygiene.py` ✅ 31 个界面文件、`check_pbxproj.py` ✅ 240 对象、6 个改动文件 `swiftc -parse` ✅。
+
+---
+
 ### 出包记录（v2.4.54 / 232）
 
 | 项 | 值 |

@@ -111,7 +111,8 @@ struct DownloadsTabView: View {
         .sheet(item: $editingItem, onDismiss: {
             Task { gaps = await downloads.companionGapCounts() }
         }) { item in
-            SongMetadataEditor(item: item)
+            // 保存后编辑页立刻关，结果用列表页的轻提示回话（第 45 轮）
+            SongMetadataEditor(item: item, onSaved: { message in flash(message) })
         }
         // 批量编辑：只允许统一改歌手/专辑（歌名、封面不批量）
         .sheet(isPresented: $showBatchEdit, onDismiss: {
@@ -930,6 +931,10 @@ private struct DownloadRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            // 第 45 轮（老板：改完信息"专辑还是看不到"）：右侧那串 `本地 · 无损 FLAC · 27.3 MB`
+            // 没有宽度上限，会把「歌手 · 专辑」挤成 `40mP miri · …`。左列是歌的**身份**，
+            // 该优先拿宽度；右侧放不下时自己截断（音质/大小仍可读个大概）。
+            .layoutPriority(1)
 
             Spacer(minLength: Tokens.Spacing.xs)
 

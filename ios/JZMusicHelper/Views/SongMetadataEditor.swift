@@ -19,6 +19,8 @@ import UIKit
 struct SongMetadataEditor: View {
 
     let item: DownloadItem
+    /// 保存结果的一句话（页面已经关了，靠列表页的轻提示告诉老板成不成）
+    var onSaved: (String) -> Void = { _ in }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -35,6 +37,21 @@ struct SongMetadataEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                // 第 45 轮（老板 2026-11-21）：**把原文件名露出来**。
+                // 导入的歌常是 `Converted… [SUNO V5]…` 这种，改信息时看不到原名就只能靠猜；
+                // 只读展示（不许改），因为歌词/封面旁车是按这个基名关联的。
+                Section {
+                    LabeledContent("原文件名") {
+                        Text(fileName)
+                            .font(.footnote.monospaced())
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("文件")
+                }
+
                 Section {
                     TextField("歌名（必填）", text: $name)
                     TextField("歌手", text: $singer)
@@ -133,7 +150,7 @@ struct SongMetadataEditor: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { Task { await save() } }
+                    Button("保存") { save() }
                         .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -161,6 +178,14 @@ struct SongMetadataEditor: View {
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.artworkSmall, style: .continuous))
     }
 
+    // MARK: 文件
+
+    /// 磁盘上的原始文件名（含扩展名）。找不到本地文件就说明还没落盘。
+    private var fileName: String {
+        guard let path = item.localPath, !path.isEmpty else { return "（还没有本地文件）" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
     // MARK: 相册
 
     @MainActor
@@ -180,38 +205,46 @@ struct SongMetadataEditor: View {
 
     // MARK: 保存
 
+    /// 保存：**先把字段写进列表，再立刻关页面**，联网补全全部转后台。
+    ///
+    /// 老板 2026-11-21 录屏原话："点击保存后还停留在当前页面属实是用户体验不好"。
+    /// 以前这里是 `await rematch(...)` 跑完仍不 `dismiss()`，只在表单底部写一句
+    /// "已保存，并按新名字补全了专辑/封面/歌词。"——而补料其实只是**入队**，图还没落盘，
+    /// 页面又不关，老板看到的就是"一切都停在原地"。现在：写字段 → 关页面 → 后台补图补词。
     @MainActor
-    private func save() async {
+    private func save() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { message = "歌名不能为空。"; return }
-        busy = true
-        defer { busy = false }
 
         var edited = MetadataMatcher.applyingManualEdit(to: item.song, name: trimmed,
-                                                         singer: singer, album: album,
-                                                         cover: pickedCover != nil ? .cover : nil)
+                                                        singer: singer, album: album,
+                                                        cover: pickedCover != nil ? .cover : nil)
+        var coverWriteFailed = false
         if let data = pickedCover {
-            // 写旁车（基名不变）；代次 +1 让列表/锁屏/内存缓存一起换图
+            // 自选封面：先落盘（基名不变），代次 +1 让列表/锁屏/内存缓存一起换图
             if let path = item.localPath,
                let url = MetadataCoverImage.writeSidecar(data, audioPath: path) {
                 CoverImageCache.shared.invalidate(url: url)
+                edited = MetadataWriter.coverChanged(edited, picURL: nil)
             } else {
-                message = "封面写盘失败（路径不可写），信息已保存。"
+                coverWriteFailed = true
+                MetadataWriter.apply(edited)
             }
-            edited = MetadataWriter.coverChanged(edited, picURL: nil)
         } else {
             MetadataWriter.apply(edited)
         }
 
-        let outcome = await MetadataWriter.rematch(edited, force: false)
-        switch outcome.verdict {
-        case .auto: message = "已保存，并按新名字补全了专辑/封面/歌词。"
-        case .confirm: message = "已保存。匹配到一个可能的版本，回来这里可以「采用」。"
-        case .reject: message = "已保存（未匹配到，仅手动信息）。"
-        }
-        if outcome.verdict == .confirm, let best = outcome.best {
-            suggestion = edited.with(name: best.name, singer: best.singer,
-                                     album: best.album, picURL: best.picURL)
+        // 关页面（不等网络）。列表这一行立刻能看到新的歌名/歌手/专辑。
+        dismiss()
+        if coverWriteFailed { onSaved("封面写盘失败，歌曲信息已保存") }
+
+        Task { @MainActor in
+            let outcome = await MetadataWriter.rematch(edited, force: false)
+            switch outcome.verdict {
+            case .auto: onSaved("已保存，正在补全专辑/封面/歌词")
+            case .confirm: onSaved("已保存，匹配到一个版本，可再点开确认")
+            case .reject: onSaved("已保存（词源里没匹配到这一版）")
+            }
         }
     }
 

@@ -105,6 +105,14 @@ enum MetadataWriter {
         return await rematch(reset, force: true)
     }
 
+    /// 补料把新封面写进磁盘之后调：代次 +1 并写回四处快照（**不加锁**）。
+    /// 已建好的行 / 播放页 / 迷你条靠代次重新取图，否则"磁盘有图、界面还是占位"。
+    static func coverLanded(_ song: Song) -> Song {
+        let next = MetadataMatcher.markingCoverLanded(song)
+        apply(next)
+        return next
+    }
+
     /// 换封面（用户自选图写完旁车之后调）：代次 +1，三处缓存一起失效
     static func coverChanged(_ song: Song, picURL: String?) -> Song {
         var meta = song.meta ?? MetaProvenance()

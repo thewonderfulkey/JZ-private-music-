@@ -56,7 +56,10 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 第 41 轮 P0-3：下载页每一行的 `SongArtwork` 都会问一次 `localCoverURL`，
     /// 以前那一步是**主线程同步**的线性查找 + 多次 `stat`（文件缺失时还会退化成逐首列目录）。
     /// 现在改成：`items` 一变就让后台把整张表算好（目录只列一次），渲染路径**只读内存、零磁盘**。
-    private(set) var rowFacts: [String: DownloadRowFacts] = [:]
+    /// 第 45 轮：改成 `@Published` —— `SongArtwork` 的取图指纹里带着这一行的封面路径，
+    /// 补料把 `Cover/<基名>.jpg` 写进磁盘后，行状态表落地的那一拍必须让列表重算指纹，
+    /// 否则"图已经在磁盘上了，界面还是音符占位"（老板 2026-11-21 录屏）。
+    @Published private(set) var rowFacts: [String: DownloadRowFacts] = [:]
     private var rowFactsToken = UUID()
     private let factsQueue = DispatchQueue(label: "com.jz.downloads.rowfacts", qos: .userInitiated)
 
@@ -749,7 +752,15 @@ final class DownloadManager: NSObject, ObservableObject {
             items[idx].companionNextAt = nil
         }
         persist()
-        if result.coverOK { markDirectoryCacheDirty() }
+        if result.coverOK {
+            markDirectoryCacheDirty()
+            // 第 45 轮：封面刚落盘 → 代次 +1。列表行/播放页/迷你条靠代次判重，
+            // 不 +1 的话"磁盘上有图、界面还是占位"（老板 2026-11-21 录屏的两个问题之一）。
+            // 注意 `result.song` 的元数据可能和现有的完全一样（这次只是取到了图），
+            // 上面第 ① 步的 `sameMetadata` 会直接跳过，所以这里必须单独补一次。
+            // `coverLanded` 内部已经写回四处快照，别再套一层 apply。
+            _ = MetadataWriter.coverLanded(items[idx].song)
+        }
 
         // ③ 跑的过程中用户改了信息 → 用新信息再跑一趟（不覆盖手填字段，靠 meta.locked 保证）
         let now = "\(items[idx].song.name)|\(items[idx].song.singer)"

@@ -267,6 +267,9 @@ enum MetadataMatcher {
         let album = meta.isLocked(.album) ? current.album
             : (matched.album.isEmpty ? current.album : matched.album)
         let pic = meta.isLocked(.cover) ? current.picURL : (matched.picURL ?? current.picURL)
+        // 第 45 轮：换封面地址也算"换图"，代次 +1 —— 列表行/播放页/迷你条都拿代次判重
+        // （`SongArtwork` 的 `.task(id:)` 里就带它）。不 +1 的话匹配到了新封面、界面还是旧占位。
+        if pic != current.picURL { meta.coverRevision += 1 }
 
         let nameChanged = name != current.name
         let singerChanged = singer != current.singer
@@ -319,6 +322,18 @@ enum MetadataMatcher {
         // `.some(nil)` = 明确把封面地址清空（普通 `nil` 在 `String??` 里表示"不改"，会留在旧图）
         return current.with(name: current.name, singer: current.singer,
                             album: current.album, picURL: .some(nil), meta: meta)
+    }
+
+    /// 封面刚落盘（补料取到图 / 自选图写完旁车）：代次 +1，**不加锁**
+    ///
+    /// 和 `markingCoverChanged` 的区别：那个是"用户换了封面"（要把 cover 锁住，
+    /// 免得自动匹配又换回去）；这个是"自动补料终于把图取回来了"，只负责让界面重新取图。
+    static func markingCoverLanded(_ current: Song) -> Song {
+        var meta = current.meta ?? MetaProvenance()
+        meta.coverRevision += 1
+        meta.coverStale = false
+        return current.with(name: current.name, singer: current.singer,
+                            album: current.album, picURL: current.picURL, meta: meta)
     }
 
     /// 换封面（用户自选图 / 下载到新图）：代次 +1，让三处缓存全部失效

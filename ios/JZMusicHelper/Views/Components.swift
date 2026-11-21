@@ -34,9 +34,21 @@ struct SongArtwork: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        // 第 44 轮：id 里带上封面代次 —— 用户换了封面 / 补料把图写进来之后，
-        // `song.id` 不变但图变了；只按 id 判重就会一直显示旧图（"改了没反应"）。
-        .task(id: "\(song.id)#\(song.coverRevision)") { await load() }
+        .task(id: coverKey) { await load() }
+    }
+
+    /// 封面指纹：**只有这串变了才重新取图**（`song.id` 不变，但图可能换了）。
+    ///
+    /// 第 44 轮起这里只有 `id#coverRevision`，但真正换图的路径一个都不 +1 代次：
+    ///   · `MetadataMatcher.merge` 用联网匹配的 picURL 覆盖 `song.picURL`；
+    ///   · 补料把图写进 `Cover/<基名>.jpg`（`markDirectoryCacheDirty()` 只重建行状态表）。
+    /// 于是 `ForEach` 里的老行（identity 不变）`.task` 从不重跑，`@State image` 一直是 nil
+    /// ——老板 2026-11-21 录屏里"编辑页明明有封面、保存后那一行还是音符占位"就是这条。
+    /// 编辑页是新视图，`.task` 会跑一次，所以只有它显示正常。
+    /// 现在把「封面地址 + 本地旁车封面路径 + 代次」一起算进指纹，三个来源任一变化都会重取。
+    private var coverKey: String {
+        let local = DownloadManager.shared.rowFacts[song.id]?.coverPath ?? ""
+        return "\(song.id)#\(song.coverRevision)#\(song.picURL ?? "-")#\(local)"
     }
 
     /// 封面走内存缓存：滚动离开再回来不重新下载（AsyncImage 会重下）
