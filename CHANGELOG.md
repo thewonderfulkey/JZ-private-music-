@@ -1,5 +1,16 @@
 ## iOS v2.4.44（222）· 2026-11-21 下午（SIGABRT 取证补齐 + 连点保护 + 导入原因可解释）
 
+### 出包（v2.4.44 / 222）
+
+| 项 | 值 |
+|---|---|
+| CI | run **#158**（`2aaefe4`）· logic-tests ✅ · build ✅ · **出包闸 ✅** |
+| 产物 | `JZ-Music-v2.4.44-2aaefe4-r158-ios-unsigned.ipa` · **2,925,682 B** · sha256 `594317da2449b9db0dabeed6d0715d2f39b163a7d978845a41d0e7607eadebd3` |
+| 包内 | `2.4.44 (222)` · 主二进制 **10,786,536 B / sha256 `e9aff9ae…`**（r157 是 `d3b231b3…`，不同 ✅） |
+| 分发 | 飞书群已收到（12:45:26）· `releases/` 已留档 |
+
+包里已确认含：`freopen`（stderr 捕获）、`backtrace`、`signal-TRAP`、`import-sniff.log`、`lastImportReport`。
+
 ### 一、闪退：抓到信号了 —— **SIGABRT**
 
 `诊断/signal-ABRT.log` 有内容（TRAP/SEGV/BUS 全空），`life.log` 显示 12:27:36 启动 → 12:29:18 重新启动，
