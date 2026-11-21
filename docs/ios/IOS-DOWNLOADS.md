@@ -176,3 +176,25 @@
 | pbxproj / 界面卫生 | `tools/ios/check_pbxproj.py`、`check_ui_hygiene.py` | ✅ 通过 |
 | m4a 分支（AVFoundation 导出） | CI `build-ipa` 编译 + 真机 | ⚠️ 编译由 CI 保证；**真机行为待老板验证** |
 | 662 首实际写回 | 老板装机点一次 | ⏳ 待验证（预计 1–3 分钟，留在 App 前台） |
+
+### 8.4 第 50 轮：补上 FLAC（老板库里有 642 首是 FLAC）
+
+老板 2026-11-22 01:05 的真机结果：**改写 6 · 新增 14 · 格式不支持 642**。
+那 642 首全是 **FLAC** —— 上一版只做了 mp3/m4a，判它们"格式不支持"，是我的判断失误
+（不是文件坏了，旁车封面/歌词当时已经写好了）。截屏同时给了 `Cover 662 / Lyrics 638 / Music 662`。
+
+这一版按 FLAC 标准写法补齐（`DownloadCompanion.FlacTags`）：
+
+| 项 | 写到哪里 |
+|---|---|
+| 歌名 / 歌手 / 专辑 | `VORBIS_COMMENT` 的 `TITLE=` / `ARTIST=` / `ALBUM=`（文件里原有的 `DATE=` / `TRACKNUMBER=` 等**原样保留**） |
+| 歌词 | `VORBIS_COMMENT` 的 `UNSYNCEDLYRICS=` |
+| 封面 | `PICTURE` 块（type 3 = front cover），旧封面块替换掉；宽高从 JPEG/PNG 头里读 |
+| 音频 | 元数据块之后的所有字节**原样搬** |
+| 开头挂的 ID3v2 | 丢掉（非标准前缀、常带旧封面；解码仍从 `fLaC` 开始） |
+
+另外把"看不明白"的地方补上了：写回结果现在多报一行 **目录：Music 662 · Cover 662 · Lyrics 638** ——
+`Lyrics` 比 `Music` 少，是"这首歌本来没取到词"，不是写回失败；`Cover` 与 `Music` 相等就说明建联齐了。
+
+断言：`ios/SelfTest/main.swift` 第 50 轮再加 20 条（读旧值、写新值、`DATE` 保留、音频帧不变、
+前置 ID3 处理、非 FLAC 拒绝、空字段不写），本机 53/53 全绿。

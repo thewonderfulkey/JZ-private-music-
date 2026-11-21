@@ -153,8 +153,9 @@ enum AudioTagEmbedder {
     /// 把一首歌的字段写进音频文件本身（**只动我们认识的那几帧**，别的标签原样保留）。
     ///
     /// - mp3：`DownloadCompanion.ID3Tags`（只替换 TIT2/TPE1/TALB/TLEN/APIC/USLT，音频体原样搬）；
+    /// - flac：`DownloadCompanion.FlacTags`（Vorbis Comment + PICTURE，音频帧原样搬）；
     /// - m4a/mp4：AVFoundation 读出现有 metadata，换掉同名项后 passthrough 导出；
-    /// - 其它容器（flac/ogg/wav…）：`.unsupported`（旁车仍是兜底，见 `DownloadCompanion` 头注释）。
+    /// - 其它容器（wav/ape/ogg…）：`.unsupported`（旁车仍是兜底，见 `DownloadCompanion` 头注释）。
     ///
     /// 任何一步失败都**保留原文件**（先写临时文件、校验通过才原子替换），调用方据此计数。
     static func writeTags(fileURL: URL,
@@ -164,6 +165,8 @@ enum AudioTagEmbedder {
         switch fileURL.pathExtension.lowercased() {
         case "mp3":
             return await writeMP3(fileURL: fileURL, fields: fields)
+        case "flac":
+            return await writeFLAC(fileURL: fileURL, fields: fields)
         case "m4a", "mp4":
             return await writeM4A(fileURL: fileURL, fields: fields)
         default:
@@ -201,6 +204,46 @@ enum AudioTagEmbedder {
               let head = firstBytes(of: tempURL, count: 4), head.count == 4,
               head[0] == 0x49, head[1] == 0x44, head[2] == 0x33,
               (head[3] == 0x03 || head[3] == 0x04) else {
+            return .failed
+        }
+
+        do {
+            _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
+            return hadCover ? .replaced : .added
+        } catch {
+            return .failed
+        }
+    }
+
+    /// flac：重建元数据块（STREAMINFO 保留、VORBIS_COMMENT 重写、front cover PICTURE 换掉），
+    /// 音频帧原样搬。和 mp3 同理不需要 AVAsset 再判一次可播 —— 音频字节没动。
+    private static func writeFLAC(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
+        async -> CoverEmbedOutcome {
+        let fm = FileManager.default
+        guard let original = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
+              !original.isEmpty else { return .failed }
+
+        if DownloadCompanion.FlacTags.matches(fields, inFileData: original) { return .already }
+        let hadCover = DownloadCompanion.FlacTags.hasImage(inFileData: original)
+        guard let output = DownloadCompanion.FlacTags.rewriting(inFileData: original,
+                                                                fields: fields) else {
+            return .failed
+        }
+
+        let tempURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".tags-\(UUID().uuidString).flac")
+        defer { try? fm.removeItem(at: tempURL) }
+        do {
+            try output.write(to: tempURL, options: .atomic)
+        } catch {
+            return .failed
+        }
+
+        // 校验：体积一致 + 头必须是 `fLaC`（前置的 ID3v2 已按设计丢掉）
+        guard let size = (try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? Int64,
+              size == Int64(output.count),
+              let head = firstBytes(of: tempURL, count: 4), head.count == 4,
+              head[0] == 0x66, head[1] == 0x4C, head[2] == 0x61, head[3] == 0x43 else {
             return .failed
         }
 

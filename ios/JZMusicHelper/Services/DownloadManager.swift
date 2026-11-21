@@ -2516,7 +2516,8 @@ extension DownloadManager {
                 lines.append("没信息可写 \(empty) 首：既没有本地封面，也没取到在线封面（歌名/歌手仍会写入）。")
             }
             if unsupported > 0 {
-                lines.append("格式不支持 \(unsupported) 首：flac / wav / ogg 这类容器没有可靠写法，只写了旁车。")
+                lines.append("格式不支持 \(unsupported) 首：wav / ape / ogg 这类容器没有可靠写法，只写了旁车。"
+                             + "（flac / mp3 / m4a 都支持了）")
             }
             if failed > 0 {
                 lines.append("失败 \(failed) 首：原文件一个字节都没动（先写临时文件、校验通过才替换）。")
@@ -2593,10 +2594,15 @@ extension DownloadManager {
             }
 
             let summary = report.summary
-            CrashReporter.logMetadata("song-info | 结束 → \(summary)")
+            // 三个目录的当前数量：老板看 Cover/Lyrics/Music 三个数字对不上会以为"失败"，
+            // 直接把这三个数摊在同一句里（Lyrics 少就是"这首歌本来没词"，不是写回失败）。
+            let folders = "目录：Music \(Self.fileCount(in: self.musicDirectory))"
+                + " · Cover \(Self.fileCount(in: self.coverDirectory))"
+                + " · Lyrics \(Self.fileCount(in: self.lyricsDirectory))"
+            CrashReporter.logMetadata("song-info | 结束 → \(summary) | \(folders)")
             await MainActor.run {
                 self.songInfoWriteProgress = nil
-                self.lastSongInfoWriteReport = [summary, report.note].compactMap { $0 }
+                self.lastSongInfoWriteReport = [summary, folders, report.note].compactMap { $0 }
                     .joined(separator: "\n")
             }
         }
@@ -2690,6 +2696,11 @@ extension DownloadManager {
             return text
         }
         return nil
+    }
+
+    /// 目录里的文件数（写回结果里报一句，免得老板对着三个数字猜）
+    static func fileCount(in directory: URL) -> Int {
+        (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?.count ?? 0
     }
 
     /// 封面字节 → MIME（只给 mp3 的 APIC 帧用；旁车文件名固定 .jpg，播放端按内容解码）

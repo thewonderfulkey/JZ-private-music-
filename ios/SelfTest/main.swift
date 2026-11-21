@@ -4697,6 +4697,130 @@ do {
           DownloadCompanion.ID3Tags.rewriting(inFileData: unsync, fields: want) == nil)
 }
 
+// MARK: - 第 50 轮：FLAC 写回（Vorbis Comment + PICTURE）
+//
+// 老板 2026-11-22 01:05：点完写回，结果是「改写 6 · 新增 14 · 格式不支持 642」——
+// 他的库几乎全是 FLAC，而上一版只做了 mp3/m4a。这一节把 FLAC 的标准写法钉住：
+//   · TITLE/ARTIST/ALBUM/UNSYNCEDLYRICS 写进 VORBIS_COMMENT，**原有的其它键（DATE）保留**；
+//   · 封面写 PICTURE（type 3 = front cover），旧封面块被替换；
+//   · 音频帧一个字节不改；前置 ID3v2 被丢掉（解码从 fLaC 开始）。
+
+section("FLAC 写回：Vorbis Comment + PICTURE（第 50 轮）")
+
+do {
+    // 造一个最小可解析的 FLAC：fLaC + STREAMINFO(34B) + VORBIS_COMMENT(旧值+DATE) + 假音频帧
+    func be32(_ v: Int) -> [UInt8] {
+        [UInt8((v >> 24) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+    }
+    func le32(_ v: Int) -> [UInt8] {
+        [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
+    }
+    func vcBlock(_ pairs: [(String, String)]) -> Data {
+        var payload = Data()
+        let vendor = Array("old-writer".utf8)
+        payload.append(contentsOf: le32(vendor.count))
+        payload.append(contentsOf: vendor)
+        payload.append(contentsOf: le32(pairs.count))
+        for (k, v) in pairs {
+            let text = Array("\(k)=\(v)".utf8)
+            payload.append(contentsOf: le32(text.count))
+            payload.append(contentsOf: text)
+        }
+        return payload
+    }
+    func blockHeader(type: Int, last: Bool, len: Int) -> Data {
+        var h = Data([UInt8((last ? 0x80 : 0x00) | UInt8(type))])
+        h.append(contentsOf: [UInt8((len >> 16) & 0xFF), UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF)])
+        return h
+    }
+    func picturePayload(type: Int, image: Data) -> Data {
+        var payload = Data()
+        payload.append(contentsOf: be32(type))
+        payload.append(contentsOf: be32(10)) // "image/jpeg" 是 10 字节
+        payload.append(contentsOf: Array("image/jpeg".utf8))
+        payload.append(contentsOf: be32(0))
+        payload.append(contentsOf: be32(0))
+        payload.append(contentsOf: be32(0))
+        payload.append(contentsOf: be32(24))
+        payload.append(contentsOf: be32(0))
+        payload.append(contentsOf: be32(image.count))
+        payload.append(image)
+        return payload
+    }
+
+    let audioFrames = Data((0..<512).map { UInt8(($0 * 7) % 251) })
+    let streamInfo = Data(repeating: 0x11, count: 34)
+    let oldCover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x33, count: 300))
+    let newCover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x44, count: 700))
+    let vc = vcBlock([("TITLE", "旧标题"), ("ARTIST", "旧歌手"), ("DATE", "2003")])
+    let pic = picturePayload(type: 3, image: oldCover)
+
+    var flac = Data("fLaC".utf8)
+    flac.append(blockHeader(type: 0, last: false, len: streamInfo.count))
+    flac.append(streamInfo)
+    flac.append(blockHeader(type: 4, last: false, len: vc.count))
+    flac.append(vc)
+    flac.append(blockHeader(type: 6, last: true, len: pic.count))
+    flac.append(pic)
+    flac.append(audioFrames)
+
+    let before = DownloadCompanion.FlacTags.reading(inFileData: flac)
+    check("FLAC 读得出旧标题", before.title == "旧标题", before.title)
+    check("FLAC 读得出旧封面", before.cover == oldCover)
+    check("FLAC hasImage = true", DownloadCompanion.FlacTags.hasImage(inFileData: flac))
+
+    var want = DownloadCompanion.ID3Tags.Fields()
+    want.title = "晴天"
+    want.artist = "周杰伦"
+    want.album = "叶惠美"
+    want.cover = newCover
+    want.coverMime = "image/jpeg"
+    want.lyrics = "[00:01.00]故事的小黄花"
+
+    check("FLAC 还没写时 matches = false",
+          !DownloadCompanion.FlacTags.matches(want, inFileData: flac))
+    if let out = DownloadCompanion.FlacTags.rewriting(inFileData: flac, fields: want) {
+        check("FLAC 写出来还是 fLaC 打头", out.prefix(4) == Data("fLaC".utf8))
+        let read = DownloadCompanion.FlacTags.reading(inFileData: out)
+        check("FLAC 歌名写进去了", read.title == "晴天", read.title)
+        check("FLAC 歌手写进去了", read.artist == "周杰伦", read.artist)
+        check("FLAC 专辑写进去了", read.album == "叶惠美", read.album)
+        check("FLAC 歌词写进去了", (read.lyrics ?? "").contains("故事的小黄花"))
+        check("FLAC 封面换成了新图", read.cover == newCover)
+        check("FLAC 旧的 DATE=2003 保留着", out.range(of: Data("DATE=2003".utf8)) != nil)
+        check("FLAC 旧标题字节不在了", out.range(of: Data("旧标题".utf8)) == nil)
+        check("FLAC 音频帧一个字节没动", out.suffix(audioFrames.count) == audioFrames)
+        check("FLAC 同一套再写 → matches 为真",
+              DownloadCompanion.FlacTags.matches(want, inFileData: out))
+        let twice = DownloadCompanion.FlacTags.rewriting(inFileData: out, fields: want)
+        check("FLAC 重复写不会叠块", twice?.count == out.count)
+    } else {
+        check("FLAC 能写回", false)
+    }
+
+    // 前置 ID3v2 的 FLAC（老工具常见）：写回后应当只剩 fLaC，音频帧不变
+    var id3 = Data("ID3".utf8)
+    id3.append(contentsOf: [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    id3.append(flac)
+    if let fixed = DownloadCompanion.FlacTags.rewriting(inFileData: id3, fields: want) {
+        check("前置 ID3 的 FLAC 写回后从 fLaC 开始", fixed.prefix(4) == Data("fLaC".utf8))
+        check("前置 ID3 丢掉后音频帧仍原样", fixed.suffix(audioFrames.count) == audioFrames)
+        check("前置 ID3 版本也能读出字段",
+              DownloadCompanion.FlacTags.reading(inFileData: fixed).title == "晴天")
+    } else {
+        check("前置 ID3 的 FLAC 也能写", false)
+    }
+
+    // 不是 FLAC 就别碰
+    check("不是 FLAC 的文件返回 nil",
+          DownloadCompanion.FlacTags.rewriting(inFileData: Data("not a flac".utf8),
+                                               fields: want) == nil)
+    // 空字段 = 不动
+    check("FLAC 空字段 → 不写",
+          DownloadCompanion.FlacTags.rewriting(inFileData: flac,
+                                               fields: DownloadCompanion.ID3Tags.Fields()) == nil)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

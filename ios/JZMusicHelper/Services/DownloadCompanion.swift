@@ -298,12 +298,13 @@ enum DownloadCompanion {
     ///
     /// m4a/mp4：AVFoundation metadata（`AudioTagEmbedder.embedM4A`）
     /// mp3    ：ID3v2.4（`AudioTagEmbedder.embedMP3`）
-    /// 其它（flac/ogg/wav…）：不能，只能写旁车 —— 理由见文件头注释。
+    /// flac   ：Vorbis Comment + PICTURE（`FlacTags`）
+    /// 其它（wav/ape/ogg 等）：不能，只能写旁车 —— 理由见文件头注释。
     static func canEmbed(extension ext: String) -> Bool {
         var e = ext.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if e.hasPrefix(".") { e.removeFirst() }
         switch e {
-        case "m4a", "mp4", "mp3":
+        case "m4a", "mp4", "mp3", "flac":
             return true
         default:
             return false
@@ -746,6 +747,368 @@ enum DownloadCompanion {
         }
     }
 
+
+    // MARK: - FLAC（Vorbis Comment + PICTURE）
+    //
+    // 老板的库几乎全是 FLAC：2026-11-22 01:05 那次写回的结果是「改写 6 · 新增 14 · 格式不支持 642」，
+    // 而「格式不支持」写的是 flac —— 上一版只做了 mp3/m4a，是我的判断失误，不是文件坏了。
+    //
+    // FLAC 的标准写法比 ID3 更简单：
+    //   · 元数据是一串 block（4 字节头：最后一块标志 + 类型 + 24 位长度），第一块必须是 STREAMINFO；
+    //   · 文字走 VORBIS_COMMENT（`TITLE=` / `ARTIST=` / `ALBUM=` / `UNSYNCEDLYRICS=`），
+    //     **文件里原有的其它键（DATE/TRACKNUMBER/GENRE…）原样保留**，只替换我们管的那几个；
+    //   · 封面走 PICTURE（type 3 = front cover），替换旧的同类型块；
+    //   · 音频帧（最后一个元数据块之后的所有字节）原样搬，一个字节不改。
+    //
+    // 老工具会在 FLAC 前面挂一条 ID3v2（`ID3…fLaC`）。写回时**把那条 ID3 丢掉**：
+    // 它是非标准前缀，里面常带着旧封面；丢掉不影响解码（解码从 `fLaC` 开始），
+    // 反而让"文件里只有一套标签"。解码器/播放器仍按 FLAC 读。
+    enum FlacTags {
+
+        /// 有没有内嵌封面（front cover）
+        static func hasImage(inFileData data: Data) -> Bool {
+            reading(inFileData: data).cover != nil
+        }
+
+        /// 读出文件里现有的字段（只认 front cover，其次任何一张图）
+        static func reading(inFileData data: Data) -> ID3Tags.Fields {
+            var out = ID3Tags.Fields()
+            let bytes = [UInt8](data)
+            guard let layout = layout(bytes) else { return out }
+
+            for block in layout.blocks where block.type == 4 {
+                guard let pairs = comments(in: bytes, block: block) else { continue }
+                for pair in pairs {
+                    switch pair.key.uppercased() {
+                    case "TITLE":
+                        if out.title.isEmpty { out.title = pair.value }
+                    case "ARTIST":
+                        if out.artist.isEmpty { out.artist = pair.value }
+                    case "ALBUM":
+                        if out.album.isEmpty { out.album = pair.value }
+                    case "UNSYNCEDLYRICS", "LYRICS":
+                        if out.lyrics == nil { out.lyrics = pair.value }
+                    default:
+                        break
+                    }
+                }
+            }
+
+            var fallback: Data?
+            for block in layout.blocks where block.type == 6 {
+                guard let pic = picture(in: bytes, block: block) else { continue }
+                if pic.type == 3 { out.cover = pic.image; break }
+                if fallback == nil { fallback = pic.image }
+            }
+            if out.cover == nil { out.cover = fallback }
+            return out
+        }
+
+        /// 文件里是不是**已经就是要写的这一套**（只比对传进来的非空项；FLAC 没有标准时长字段，不比对）
+        static func matches(_ want: ID3Tags.Fields, inFileData data: Data) -> Bool {
+            let have = reading(inFileData: data)
+            if !ID3Tags.trim(want.title).isEmpty,
+               ID3Tags.trim(have.title) != ID3Tags.trim(want.title) { return false }
+            if !ID3Tags.trim(want.artist).isEmpty,
+               ID3Tags.trim(have.artist) != ID3Tags.trim(want.artist) { return false }
+            if !ID3Tags.trim(want.album).isEmpty,
+               ID3Tags.trim(have.album) != ID3Tags.trim(want.album) { return false }
+            if let cover = want.cover, !cover.isEmpty, have.cover != cover { return false }
+            if !ID3Tags.trim(want.lyrics ?? "").isEmpty,
+               ID3Tags.trim(have.lyrics ?? "") != ID3Tags.trim(want.lyrics ?? "") { return false }
+            return true
+        }
+
+        /// 写整套字段，返回**完整的新文件字节**；无法安全处理 → nil。
+        static func rewriting(inFileData data: Data, fields want: ID3Tags.Fields) -> Data? {
+            guard !want.isEmpty else { return nil }
+            let bytes = [UInt8](data)
+            guard let layout = layout(bytes),
+                  let first = layout.blocks.first, first.type == 0 else { return nil }
+
+            var kept: [(type: Int, payload: Data)] = []
+            var existingPairs: [Comment] = []
+            var vendor: String?
+
+            for block in layout.blocks {
+                switch block.type {
+                case 0: // STREAMINFO 原样
+                    kept.append((0, Data(bytes[(block.start + 4)..<block.end])))
+                case 1: // PADDING：丢掉（我们重排整段元数据，不需要）
+                    continue
+                case 4: // VORBIS_COMMENT：内容取出来，块重写
+                    if existingPairs.isEmpty { existingPairs = comments(in: bytes, block: block) ?? [] }
+                    if vendor == nil { vendor = vendorString(in: bytes, block: block) }
+                    continue
+                case 6: // PICTURE：front cover 换掉，其它类型（封底/艺人照）保留
+                    if pictureType(in: bytes, block: block) == 3 { continue }
+                    kept.append((6, Data(bytes[(block.start + 4)..<block.end])))
+                default:
+                    kept.append((block.type, Data(bytes[(block.start + 4)..<block.end])))
+                }
+            }
+
+            let managed = ["TITLE", "ARTIST", "ALBUM", "UNSYNCEDLYRICS", "LYRICS"]
+            var pairs = existingPairs.filter { !managed.contains($0.key.uppercased()) }
+            if !ID3Tags.trim(want.title).isEmpty {
+                pairs.append(Comment(key: "TITLE", value: ID3Tags.trim(want.title)))
+            }
+            if !ID3Tags.trim(want.artist).isEmpty {
+                pairs.append(Comment(key: "ARTIST", value: ID3Tags.trim(want.artist)))
+            }
+            if !ID3Tags.trim(want.album).isEmpty {
+                pairs.append(Comment(key: "ALBUM", value: ID3Tags.trim(want.album)))
+            }
+            if let lyrics = want.lyrics, !ID3Tags.trim(lyrics).isEmpty {
+                pairs.append(Comment(key: "UNSYNCEDLYRICS", value: lyrics))
+            }
+            kept.append((4, vorbisComment(vendor: vendor ?? "JZ Music", pairs: pairs)))
+
+            if let cover = want.cover, !cover.isEmpty {
+                kept.append((6, pictureBlock(cover: cover, mime: want.coverMime)))
+            }
+            guard !kept.isEmpty else { return nil }
+
+            var out = Data()
+            out.append(contentsOf: Array("fLaC".utf8))
+            for (index, block) in kept.enumerated() {
+                let isLast = index == kept.count - 1
+                let payload = block.payload
+                // 单块上限 2^24-1；封面远小于这个量级，超了说明数据已经不对，直接放弃
+                guard payload.count < 0x100_0000 else { return nil }
+                out.append(UInt8((isLast ? 0x80 : 0x00) | UInt8(block.type & 0x7F)))
+                out.append(UInt8((payload.count >> 16) & 0xFF))
+                out.append(UInt8((payload.count >> 8) & 0xFF))
+                out.append(UInt8(payload.count & 0xFF))
+                out.append(payload)
+            }
+            guard layout.audioStart <= data.count else { return nil }
+            out.append(data.subdata(in: layout.audioStart..<data.count))
+            return out
+        }
+
+        /// 图片宽高（PICTURE 块要求；解不出来就写 0，播放器仍能显示）
+        static func imageSize(_ data: Data) -> (width: Int, height: Int)? {
+            let b = [UInt8](data)
+            // PNG：8 字节签名 + 4 字节长度 + "IHDR" + 宽 4 + 高 4
+            if b.count > 24, b[0] == 0x89, b[1] == 0x50, b[2] == 0x4E, b[3] == 0x47 {
+                let w = int32BE(b, at: 16), h = int32BE(b, at: 20)
+                return (w > 0 && h > 0) ? (w, h) : nil
+            }
+            // JPEG：逐段走，碰到 SOF0/1/2… 取宽高
+            guard b.count > 9, b[0] == 0xFF, b[1] == 0xD8 else { return nil }
+            var i = 2
+            while i + 9 < b.count {
+                guard b[i] == 0xFF else { i += 1; continue }
+                let marker = b[i + 1]
+                if marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7) {
+                    i += 2
+                    continue
+                }
+                guard i + 4 <= b.count else { return nil }
+                let len = (Int(b[i + 2]) << 8) | Int(b[i + 3])
+                guard len >= 2, i + 2 + len <= b.count else { return nil }
+                let isSOF = (marker >= 0xC0 && marker <= 0xCF)
+                    && marker != 0xC4 && marker != 0xC8 && marker != 0xCC
+                if isSOF {
+                    let h = (Int(b[i + 5]) << 8) | Int(b[i + 6])
+                    let w = (Int(b[i + 7]) << 8) | Int(b[i + 8])
+                    return (w > 0 && h > 0) ? (w, h) : nil
+                }
+                i += 2 + len
+            }
+            return nil
+        }
+
+        // MARK: 解析
+
+        private struct Block {
+            var type: Int
+            var start: Int   // 含 4 字节块头的起点
+            var end: Int
+        }
+
+        private struct Layout {
+            var magic: Int
+            var audioStart: Int
+            var blocks: [Block]
+        }
+
+        private struct Comment {
+            var key: String
+            var value: String
+        }
+
+        private struct Picture {
+            var type: Int
+            var image: Data
+        }
+
+        /// 找到 `fLaC` 与所有元数据块；开头挂的 ID3v2 允许多跳一段（写回时会丢掉它）。
+        private static func layout(_ bytes: [UInt8]) -> Layout? {
+            var magic = 0
+            if bytes.count >= 10, bytes[0] == 0x49, bytes[1] == 0x44, bytes[2] == 0x33 {
+                let version = bytes[3]
+                var size = 0
+                if version < 3 {
+                    size = (Int(bytes[6] & 0x7F) << 14) | (Int(bytes[7] & 0x7F) << 7)
+                        | Int(bytes[8] & 0x7F)
+                } else {
+                    size = (Int(bytes[6] & 0x7F) << 21) | (Int(bytes[7] & 0x7F) << 14)
+                        | (Int(bytes[8] & 0x7F) << 7) | Int(bytes[9] & 0x7F)
+                }
+                var total = 10 + size
+                if version >= 4, bytes[5] & 0x10 != 0 { total += 10 }
+                guard total >= 10, total < bytes.count else { return nil }
+                magic = total
+            }
+            guard magic + 4 <= bytes.count,
+                  bytes[magic] == 0x66, bytes[magic + 1] == 0x4C,
+                  bytes[magic + 2] == 0x61, bytes[magic + 3] == 0x43 else { return nil }
+
+            var blocks: [Block] = []
+            var i = magic + 4
+            var last = false
+            var guardCount = 0
+            while !last {
+                guardCount += 1
+                guard guardCount <= 64, i + 4 <= bytes.count else { return nil }
+                let head = bytes[i]
+                last = (head & 0x80) != 0
+                let type = Int(head & 0x7F)
+                let len = (Int(bytes[i + 1]) << 16) | (Int(bytes[i + 2]) << 8) | Int(bytes[i + 3])
+                let end = i + 4 + len
+                guard end <= bytes.count else { return nil }
+                blocks.append(Block(type: type, start: i, end: end))
+                i = end
+            }
+            return Layout(magic: magic, audioStart: i, blocks: blocks)
+        }
+
+        private static func vendorString(in bytes: [UInt8], block: Block) -> String? {
+            var i = block.start + 4
+            guard i + 4 <= block.end else { return nil }
+            let len = int32LE(bytes, at: i)
+            guard len >= 0, i + 4 + len <= block.end else { return nil }
+            i += 4
+            return String(decoding: bytes[i..<(i + len)], as: UTF8.self)
+        }
+
+        private static func comments(in bytes: [UInt8], block: Block) -> [Comment]? {
+            var i = block.start + 4
+            let end = block.end
+            guard i + 4 <= end else { return nil }
+            let vendorLen = int32LE(bytes, at: i)
+            guard vendorLen >= 0, i + 4 + vendorLen + 4 <= end else { return nil }
+            i += 4 + vendorLen
+            let count = int32LE(bytes, at: i)
+            guard count >= 0, count <= 20_000 else { return nil }
+            i += 4
+            var out: [Comment] = []
+            for _ in 0..<count {
+                guard i + 4 <= end else { return nil }
+                let len = int32LE(bytes, at: i)
+                guard len >= 0, i + 4 + len <= end else { return nil }
+                let raw = String(decoding: bytes[(i + 4)..<(i + 4 + len)], as: UTF8.self)
+                if let eq = raw.firstIndex(of: "=") {
+                    out.append(Comment(key: String(raw[..<eq]),
+                                       value: String(raw[raw.index(after: eq)...])))
+                }
+                i += 4 + len
+            }
+            return out
+        }
+
+        private static func pictureType(in bytes: [UInt8], block: Block) -> Int? {
+            guard block.start + 8 <= block.end else { return nil }
+            return int32BE(bytes, at: block.start + 4)
+        }
+
+        private static func picture(in bytes: [UInt8], block: Block) -> Picture? {
+            var i = block.start + 4
+            let end = block.end
+            guard i + 4 <= end else { return nil }
+            let type = int32BE(bytes, at: i)
+            i += 4
+            guard i + 4 <= end else { return nil }
+            let mimeLen = int32BE(bytes, at: i)
+            i += 4
+            guard mimeLen >= 0, i + mimeLen <= end else { return nil }
+            i += mimeLen
+            guard i + 4 <= end else { return nil }
+            let descLen = int32BE(bytes, at: i)
+            i += 4
+            guard descLen >= 0, i + descLen <= end else { return nil }
+            i += descLen
+            i += 16 // width / height / depth / colors
+            guard i + 4 <= end else { return nil }
+            let dataLen = int32BE(bytes, at: i)
+            i += 4
+            guard dataLen >= 0, i + dataLen <= end else { return nil }
+            return Picture(type: type, image: Data(bytes[i..<(i + dataLen)]))
+        }
+
+        // MARK: 生成
+
+        private static func vorbisComment(vendor: String, pairs: [Comment]) -> Data {
+            var out = Data()
+            let vendorBytes = Array(vendor.utf8)
+            appendLE32(&out, vendorBytes.count)
+            out.append(contentsOf: vendorBytes)
+            appendLE32(&out, pairs.count)
+            for pair in pairs {
+                let text = Array("\(pair.key)=\(pair.value)".utf8)
+                appendLE32(&out, text.count)
+                out.append(contentsOf: text)
+            }
+            return out
+        }
+
+        private static func pictureBlock(cover: Data, mime: String) -> Data {
+            let mimeBytes = Array(normalizedMime(mime).utf8)
+            let size = imageSize(cover) ?? (0, 0)
+            var out = Data()
+            appendBE32(&out, 3)               // 图片类型：3 = front cover
+            appendBE32(&out, mimeBytes.count)
+            out.append(contentsOf: mimeBytes)
+            appendBE32(&out, 0)               // 描述为空
+            appendBE32(&out, size.width)
+            appendBE32(&out, size.height)
+            appendBE32(&out, 24)              // 位深（播放器基本不看）
+            appendBE32(&out, 0)               // 索引色数量
+            appendBE32(&out, cover.count)
+            out.append(cover)
+            return out
+        }
+
+        private static func appendLE32(_ data: inout Data, _ value: Int) {
+            let v = max(0, min(value, 0x00FF_FFFF))
+            data.append(UInt8(v & 0xFF))
+            data.append(UInt8((v >> 8) & 0xFF))
+            data.append(UInt8((v >> 16) & 0xFF))
+            data.append(UInt8((v >> 24) & 0xFF))
+        }
+
+        private static func appendBE32(_ data: inout Data, _ value: Int) {
+            let v = max(0, min(value, 0x7FFF_FFFF))
+            data.append(UInt8((v >> 24) & 0xFF))
+            data.append(UInt8((v >> 16) & 0xFF))
+            data.append(UInt8((v >> 8) & 0xFF))
+            data.append(UInt8(v & 0xFF))
+        }
+
+        private static func int32LE(_ bytes: [UInt8], at index: Int) -> Int {
+            guard index + 3 < bytes.count else { return -1 }
+            return Int(bytes[index]) | (Int(bytes[index + 1]) << 8)
+                | (Int(bytes[index + 2]) << 16) | (Int(bytes[index + 3]) << 24)
+        }
+
+        private static func int32BE(_ bytes: [UInt8], at index: Int) -> Int {
+            guard index + 3 < bytes.count else { return -1 }
+            return (Int(bytes[index]) << 24) | (Int(bytes[index + 1]) << 16)
+                | (Int(bytes[index + 2]) << 8) | Int(bytes[index + 3])
+        }
+    }
 
     // MARK: - ID3 内部
 
