@@ -1327,6 +1327,32 @@ enum DownloadCompanion {
         }
     }
 
+    // MARK: - 导入时先看文件里有没有（第 54 轮）
+    //
+    // 老板 2026-11-22 03:53：「这样下次导入后就可以自动解析不用再一个个换封面了对吗，
+    // 也不用请求 api 联网查询了，会优先查找文件内置的信息」。
+    //
+    // 这一层就是那个判断：文件里**自带**歌名 + 歌手 + 封面 → 导入后**不再联网**。
+    // 少一首联网，就少一次"平台信息把你手动改的名字/封面盖回去"的机会。
+    // 缺词不算"不完整"（很多歌本来就没词）—— 歌词只有在文件里**有**的时候才顺带写旁车。
+    enum LocalTagRules {
+
+        /// 文件里自带够用的一套：歌名、歌手、封面都有（专辑可有可无）
+        static func isSelfContained(fields: ID3Tags.Fields?) -> Bool {
+            guard let fields else { return false }
+            let title = ID3Tags.trim(fields.title)
+            let artist = ID3Tags.trim(fields.artist)
+            let hasCover = !(fields.cover?.isEmpty ?? true)
+            return !title.isEmpty && !artist.isEmpty && hasCover
+        }
+
+        /// 自带完整 + 还有词（"这首歌连词都在文件里"的更严格版本，日志/统计用）
+        static func isFullySelfContained(fields: ID3Tags.Fields?) -> Bool {
+            guard isSelfContained(fields: fields) else { return false }
+            return !ID3Tags.trim(fields?.lyrics ?? "").isEmpty
+        }
+    }
+
     // MARK: - ID3 内部
 
     private static func addTextFrame(_ id: String, _ value: String, to frames: inout Data) {

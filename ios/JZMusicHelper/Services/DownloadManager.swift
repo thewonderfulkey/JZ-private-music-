@@ -815,7 +815,11 @@ final class DownloadManager: NSObject, ObservableObject {
             guard item.status == .completed, item.localPath != nil else { return false }
             if item.companionState != nil && item.companionState != .done { return true }
             if item.companionsNote == nil { return true }
-            return item.song.meta?.matchedID == nil
+            if item.song.meta?.matchedID == nil { return true }
+            // 第 54 轮：文件里已经自带完整信息的，**自动**不再联网；
+            // 但老板主动点「补全信息」时，文件里还没有词的那些仍然带上一遍（他点了就是要词）。
+            if let truth = item.fileTruth, truth.lyrics != .ok { return true }
+            return false
         }
         companionBatchTotal = targets.count
         companionBatchDone = 0
@@ -880,6 +884,17 @@ final class DownloadManager: NSObject, ObservableObject {
     private func fillCompanion(itemID: UUID, song: Song, audioURL: URL) async -> CompanionFillResult {
         var result = CompanionFillResult(song: song)
         guard await isCompletedDownload(itemID) else { return result }
+
+        // 第 54 轮（老板："下次导入后自动解析、不用联网"）：文件里自带歌名+歌手+封面 →
+        // **一个网络请求都不发**。这条兜住两种情况：导入时判过但被排进队列的、
+        // 以及老库里"已经写回文件"的歌被「断点续抓」重新捡起来的。
+        if let fields = await AudioTagEmbedder.readFields(fileURL: audioURL),
+           DownloadCompanion.LocalTagRules.isSelfContained(fields: fields) {
+            result.note = "已内置（未联网）"
+            result.verdict = .reject
+            CrashReporter.logMetadata("file-first | \(song.name) | 文件里已自带完整信息，跳过联网")
+            return result
+        }
 
         // ① 元数据匹配：只在这一首还没被匹配过时跑（避免每次重试都重新搜一遍）
         var working = song
@@ -2092,6 +2107,10 @@ extension DownloadManager {
                                  platformID: "imp_" + String(meta.hash.prefix(12)),
                                  name: meta.title, singer: meta.artist, album: meta.album,
                                  duration: meta.duration, picURL: nil, meta: importedMeta)
+            // 第 54 轮（老板："下次导入后就可以自动解析，不用再一个个换封面，也不用联网"）：
+            // 落地后**先读一遍文件自己的标签**，自带歌名+歌手+封面就不再联网补料。
+            let fileFields = await AudioTagEmbedder.readFields(fileURL: dest)
+            let selfContained = DownloadCompanion.LocalTagRules.isSelfContained(fields: fileFields)
             let item = DownloadItem(id: id, song: song, streamURL: dest.absoluteString,
                                     backendName: "本地导入", quality: quality,
                                     fileName: dest.lastPathComponent, localPath: dest.path,
@@ -2100,17 +2119,23 @@ extension DownloadManager {
                                     expectedBytes: meta.bytes,
                                     createdAt: Date(), finishedAt: Date(),
                                     actualNote: "导入 · \(kbps) kbps",
-                                    companionsNote: meta.artwork != nil ? "封面已存旁车" : nil,
+                                    companionsNote: selfContained
+                                        ? "已内置（未联网）"
+                                        : (meta.artwork != nil ? "封面已存旁车" : nil),
                                     origin: "import", contentHash: meta.hash,
-                                    companionState: .pending, companionAttempts: 0)
+                                    companionState: selfContained ? .done : .pending,
+                                    companionAttempts: 0)
             // 每首一行的元数据日志（老板要的 `文件名｜tag?｜歌名｜歌手｜专辑`）
             CrashReporter.logMetadata(
                 "import | \(g.original) | tag=\(meta.guessed ? "no" : "yes") "
                 + "| \(meta.title) | \(meta.artist) | \(meta.album.isEmpty ? "-" : meta.album)")
             await MainActor.run {
                 self.appendOrUpdate(item)
-                // 第 44 轮：入队补料（并发 ≤4），不再原地起 662 个任务
-                self.startCompanionFill(itemID: id, song: song, audioURL: dest)
+                // 第 44 轮：入队补料（并发 ≤4），不再原地起 662 个任务。
+                // 第 54 轮：文件里自带完整信息的不入队 —— 不联网、也不让平台信息盖掉手动改的值。
+                if !selfContained {
+                    self.startCompanionFill(itemID: id, song: song, audioURL: dest)
+                }
             }
             known.append(item)
             report.added += 1

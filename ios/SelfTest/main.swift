@@ -4967,6 +4967,51 @@ do {
               && !DownloadCompanion.AudioContainer.unknown.canWriteTags)
 }
 
+// MARK: - 第 54 轮：文件里自带完整信息就不联网
+//
+// 老板 2026-11-22 03:53：「下次导入后就可以自动解析不用再一个个换封面了对吗，
+// 也不用请求 api 联网查询了，会优先查找文件内置的信息」。
+
+section("导入先用文件里的信息（第 54 轮）")
+
+do {
+    let cover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x22, count: 16))
+
+    var full = DownloadCompanion.ID3Tags.Fields()
+    full.title = "晴天"
+    full.artist = "周杰伦"
+    full.album = "叶惠美"
+    full.cover = cover
+
+    check("歌名+歌手+封面都在 → 自带完整（不联网）",
+          DownloadCompanion.LocalTagRules.isSelfContained(fields: full))
+
+    var noCover = full
+    noCover.cover = nil
+    check("没有封面 → 不算完整（仍需联网找图）",
+          !DownloadCompanion.LocalTagRules.isSelfContained(fields: noCover))
+
+    var noArtist = full
+    noArtist.artist = ""
+    check("没有歌手 → 不算完整", !DownloadCompanion.LocalTagRules.isSelfContained(fields: noArtist))
+
+    check("没有专辑不影响判定（专辑常有缺失）",
+          DownloadCompanion.LocalTagRules.isSelfContained(fields: {
+              var f = full; f.album = ""; return f
+          }()))
+
+    check("连词都在 → 更严格的一档也算完整",
+          !DownloadCompanion.LocalTagRules.isFullySelfContained(fields: full))
+    var withLyrics = full
+    withLyrics.lyrics = "[00:01.00]故事的小黄花"
+    check("…补上词之后成立",
+          DownloadCompanion.LocalTagRules.isFullySelfContained(fields: withLyrics))
+
+    check("空字段 → 肯定不完整",
+          !DownloadCompanion.LocalTagRules.isSelfContained(fields: DownloadCompanion.ID3Tags.Fields()))
+    check("读不出标签（nil）→ 不完整", !DownloadCompanion.LocalTagRules.isSelfContained(fields: nil))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
