@@ -1208,10 +1208,12 @@ enum DownloadCompanion {
             return out
         }
 
-        /// 容器写不了标签时的结论（wav / ape / ogg…）
-        static func unsupported(coverSidecar: Data?, lyricsSidecar: String?) -> SongFileTruth {
+        /// 容器写不了标签时的结论（wav / ape / ogg…），或者读不出文件头
+        static func unsupported(coverSidecar: Data?, lyricsSidecar: String?,
+                                note: String? = nil) -> SongFileTruth {
             var out = SongFileTruth()
             out.unsupported = true
+            out.note = note
             out.hasCoverSidecar = !(coverSidecar?.isEmpty ?? true)
             out.hasLyricsSidecar = !ID3Tags.trim(lyricsSidecar ?? "").isEmpty
             return out
@@ -1225,6 +1227,103 @@ enum DownloadCompanion {
             case .missing: return "没有封面"
             case .unsupported: return "容器不支持"
             }
+        }
+    }
+
+    // MARK: - 按内容识别容器（第 53 轮）
+    //
+    // 老板 2026-11-22 03:35 那份「未对齐明细」里，13 首是**五个字段全 missing**：
+    // 这不是"没写进去"，是**连读都读不出来** —— 文件里根本没有我们认识的那套标签。
+    // 最可能的两种原因：
+    //   ① 扩展名是 `.flac`，内容其实是 mp3 / m4a / ogg（下载站重命名过——r120 踩过同一个坑）；
+    //   ② 文件不在本地（iCloud 没落地）或读失败，开头几个字节都拿不到。
+    // 所以从这一版起：**不再信扩展名，先看文件头**。识别出来是什么，就用什么写；
+    // 识别不出来就如实说"读不出文件头"，而不是含糊地报"没写进文件"。
+    enum AudioContainer: String {
+        case flac
+        case mp3
+        case m4a
+        case ogg
+        case wav
+        case ape
+        case unknown
+
+        /// 我们有可靠写法的容器（其它只能靠旁车）
+        var canWriteTags: Bool {
+            self == .flac || self == .mp3 || self == .m4a
+        }
+
+        var displayName: String {
+            switch self {
+            case .flac: return "FLAC"
+            case .mp3: return "MP3"
+            case .m4a: return "M4A"
+            case .ogg: return "OGG"
+            case .wav: return "WAV"
+            case .ape: return "APE"
+            case .unknown: return "认不出"
+            }
+        }
+    }
+
+    enum AudioSniff {
+
+        /// 看文件头判断真实容器（`prefix` 至少 16 字节，给 4KB 更稳）。
+        /// 开头挂 ID3v2 的（老工具常见）会先跳过它再判断。
+        static func container(prefix: [UInt8]) -> AudioContainer {
+            if isID3(prefix) {
+                let skip = id3Length(prefix) ?? 0
+                if skip > 0, skip < prefix.count {
+                    let inner = containerFrom(prefix, at: skip)
+                    if inner != .unknown { return inner }
+                }
+                // 有 ID3 却看不出后面的内容：ID3 是 mp3 的惯例，按 mp3 处理
+                return .mp3
+            }
+            return containerFrom(prefix, at: 0)
+        }
+
+        private static func isID3(_ bytes: [UInt8]) -> Bool {
+            bytes.count >= 3 && bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33
+        }
+
+        private static func id3Length(_ bytes: [UInt8]) -> Int? {
+            guard bytes.count >= 10 else { return nil }
+            let version = bytes[3]
+            let flags = bytes[5]
+            var size = 0
+            if version < 3 {
+                size = (Int(bytes[6] & 0x7F) << 14) | (Int(bytes[7] & 0x7F) << 7)
+                    | Int(bytes[8] & 0x7F)
+            } else {
+                size = (Int(bytes[6] & 0x7F) << 21) | (Int(bytes[7] & 0x7F) << 14)
+                    | (Int(bytes[8] & 0x7F) << 7) | Int(bytes[9] & 0x7F)
+            }
+            var total = 10 + size
+            if version >= 4, flags & 0x10 != 0 { total += 10 }
+            return total
+        }
+
+        private static func containerFrom(_ b: [UInt8], at i: Int) -> AudioContainer {
+            func byte(_ offset: Int) -> UInt8? {
+                let index = i + offset
+                return index < b.count ? b[index] : nil
+            }
+            // fLaC
+            if byte(0) == 0x66, byte(1) == 0x4C, byte(2) == 0x61, byte(3) == 0x43 { return .flac }
+            // OggS
+            if byte(0) == 0x4F, byte(1) == 0x67, byte(2) == 0x67, byte(3) == 0x53 { return .ogg }
+            // RIFF....WAVE
+            if byte(0) == 0x52, byte(1) == 0x49, byte(2) == 0x46, byte(3) == 0x46,
+               byte(8) == 0x57, byte(9) == 0x41, byte(10) == 0x56, byte(11) == 0x45 { return .wav }
+            // MAC （Monkey's Audio）
+            if byte(0) == 0x4D, byte(1) == 0x41, byte(2) == 0x43, byte(3) == 0x20 { return .ape }
+            // ....ftyp（MP4 / M4A）
+            if byte(4) == 0x66, byte(5) == 0x74, byte(6) == 0x79, byte(7) == 0x70 { return .m4a }
+            // MPEG 帧同步（0xFF Ex/Fx）
+            if let first = byte(0), first == 0xFF, let second = byte(1),
+               (second & 0xE0) == 0xE0 { return .mp3 }
+            return .unknown
         }
     }
 

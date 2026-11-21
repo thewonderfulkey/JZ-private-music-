@@ -93,25 +93,27 @@ struct SongFileTruth: Codable, Hashable {
     /// 旁车有没有图 / 词（"文件里没有"和"哪儿都没有"要能分开）
     var hasCoverSidecar = false
     var hasLyricsSidecar = false
-    /// 容器本身写不了标签（wav / ape / ogg…）
+    /// 容器本身写不了标签（wav / ape / ogg…），或读不出文件头
     var unsupported = false
+    /// 为什么写不了 / 读不出（"实际是 OGG，写不了标签"、"读不出文件头（文件可能不在本地）"）
+    var note: String?
 
     /// 有问题的字段，人话（空数组 = 真的对齐了）
     var problems: [String] {
-        if unsupported { return ["这个容器写不了标签（只能靠旁车）"] }
+        if unsupported { return [note ?? "这个容器写不了标签（只能靠旁车）"] }
         var out: [String] = []
-        func note(_ field: FieldTruth, _ name: String) {
+        func add(_ field: FieldTruth, _ name: String) {
             switch field {
             case .missing: out.append("\(name)没写进文件")
             case .differs: out.append("\(name)还是旧值")
             case .ok, .empty: break
             }
         }
-        note(title, "歌名")
-        note(artist, "歌手")
-        note(album, "专辑")
-        note(cover, "封面")
-        note(lyrics, "歌词")
+        add(title, "歌名")
+        add(artist, "歌手")
+        add(album, "专辑")
+        add(cover, "封面")
+        add(lyrics, "歌词")
         return out
     }
 

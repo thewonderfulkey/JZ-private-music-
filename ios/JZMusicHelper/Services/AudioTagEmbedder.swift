@@ -162,14 +162,15 @@ enum AudioTagEmbedder {
                           fields: DownloadCompanion.ID3Tags.Fields) async -> CoverEmbedOutcome {
         let fm = FileManager.default
         guard fm.fileExists(atPath: fileURL.path), !fields.isEmpty else { return .failed }
-        switch fileURL.pathExtension.lowercased() {
-        case "mp3":
+        // 第 53 轮：按**文件头**选写入器（扩展名可能骗人：.flac 里装的是 mp3/m4a）
+        switch container(of: fileURL) {
+        case .mp3:
             return await writeMP3(fileURL: fileURL, fields: fields)
-        case "flac":
+        case .flac:
             return await writeFLAC(fileURL: fileURL, fields: fields)
-        case "m4a", "mp4":
+        case .m4a:
             return await writeM4A(fileURL: fileURL, fields: fields)
-        default:
+        case .ogg, .wav, .ape, .unknown:
             return .unsupported
         }
     }
@@ -276,23 +277,36 @@ enum AudioTagEmbedder {
         }
     }
 
+    /// 真实容器（**看文件头，不看扩展名**）。第 53 轮：老板那份名单里有 13 首"全 missing"，
+    /// 最可能是「扩展名 .flac、内容其实是 mp3/m4a」——r120 踩过同一个坑。
+    static func container(of fileURL: URL) -> DownloadCompanion.AudioContainer {
+        guard let prefix = firstBytes(of: fileURL, count: 4096) else { return .unknown }
+        return DownloadCompanion.AudioSniff.container(prefix: prefix)
+    }
+
+    /// 这个文件能不能写标签（按**真实容器**判断）
+    static func canWriteTags(fileURL: URL) -> Bool {
+        container(of: fileURL).canWriteTags
+    }
+
     /// 从文件里**读**出那一套字段（A 方案：文件是真相）。
-    /// 第 52 轮起只读文件开头（最多 16MB / 标签区），不再把整个文件读进内存。
+    /// 第 52 轮起只读文件开头（最多 16MB / 标签区），不再把整个文件读进内存；
+    /// 第 53 轮起按**文件头**判断容器（扩展名不再可信）。
     static func readFields(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        switch fileURL.pathExtension.lowercased() {
-        case "mp3":
+        switch container(of: fileURL) {
+        case .mp3:
             guard let head = firstBytes(of: fileURL, count: 10),
                   let length = DownloadCompanion.ID3Tags.tagLength(headBytes: head) else { return nil }
             guard length > 0 else { return DownloadCompanion.ID3Tags.Fields() }
             guard let tag = firstBytes(of: fileURL, count: length), tag.count == length else { return nil }
             return DownloadCompanion.ID3Tags.reading(inFileData: Data(tag))
-        case "flac":
+        case .flac:
             guard let prefix = firstBytes(of: fileURL, count: metadataProbeLimit) else { return nil }
             return DownloadCompanion.FlacTags.reading(inFileData: Data(prefix))
-        case "m4a", "mp4":
+        case .m4a:
             return await readM4A(fileURL: fileURL)
-        default:
+        case .ogg, .wav, .ape, .unknown:
             return nil
         }
     }

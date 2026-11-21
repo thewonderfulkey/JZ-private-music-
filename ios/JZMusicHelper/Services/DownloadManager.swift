@@ -957,7 +957,7 @@ final class DownloadManager: NSObject, ObservableObject {
         // 补料再抹一遍就等于白写。
         var embedded = false
         if lyricsText != nil || cover != nil,
-           DownloadCompanion.canEmbed(extension: audioURL.pathExtension) {
+           AudioTagEmbedder.canWriteTags(fileURL: audioURL) {
             var fields = DownloadCompanion.ID3Tags.Fields()
             fields.title = working.name
             fields.artist = working.singer
@@ -2556,6 +2556,8 @@ extension DownloadManager {
         var kind: SongInfoWriteStep
         var truth: SongFileTruth
         var reason: String?
+        /// "容器=flac ext=.flac（扩展名不符）" —— 逐首日志里带上，下次一看就知道是不是假扩展名
+        var container: String = ""
     }
 
     /// 一次性把全部已完成（下载 / 导入）的歌写回。返回要处理的条数（0 = 没有可处理的）。
@@ -2634,10 +2636,11 @@ extension DownloadManager {
                                 reason: result.reason ?? result.truth.problems.joined(separator: "、"),
                                 fields: result.truth.compact))
                         }
-                        // 第 52 轮：**逐首**落日志（歌名 + 结果 + 五个字段各自的状态 + 原因）。
-                        // 老板要能拿 `诊断/metadata.log` 直接看出"哪首没内嵌成功、缺的是哪一项"。
+                        // 第 52 轮：**逐首**落日志（歌名 + 结果 + 五个字段各自的状态 + 原因）；
+                        // 第 53 轮再带上真实容器（"容器=flac ext=.flac（扩展名不符）"这种一眼就能判）。
                         let detail = "song-info | \(result.name) | \(result.kind.rawValue)"
                             + " | \(result.truth.compact)"
+                            + (result.container.isEmpty ? "" : " | \(result.container)")
                             + (result.reason.map { " | \($0)" } ?? "")
                         CrashReporter.logMetadata(detail)
 
@@ -2754,12 +2757,26 @@ extension DownloadManager {
 
         let lyricsText = Self.sidecarLyricsText(for: audio, in: lyricsDirectory)
 
-        // ③ 容器写不了标签（wav / ape / ogg…）：只写旁车，状态如实标出来
-        guard DownloadCompanion.canEmbed(extension: audio.pathExtension) else {
+        // ③ 容器：**看文件头**（扩展名可能骗人）。读不出 / 写不了 → 只写旁车，状态如实标出来
+        let container = AudioTagEmbedder.container(of: audio)
+        result.container = Self.containerNote(for: audio)
+        if container == .unknown {
+            result.kind = .unsupported
+            result.truth = DownloadCompanion.FileTruth.unsupported(
+                coverSidecar: cover, lyricsSidecar: lyricsText,
+                note: "读不出文件头（文件可能不在本地，或者不是音频）")
+            result.reason = "读不出文件头（文件可能不在本地）"
+            result.container = Self.containerNote(for: audio)
+            return result
+        }
+        guard container.canWriteTags else {
+            let note = "实际是 \(container.displayName)，写不了标签（只能靠旁车）"
             result.kind = .unsupported
             result.truth = DownloadCompanion.FileTruth.unsupported(coverSidecar: cover,
-                                                                   lyricsSidecar: lyricsText)
-            result.reason = "容器不支持写标签（只能靠旁车）"
+                                                                   lyricsSidecar: lyricsText,
+                                                                   note: note)
+            result.reason = note
+            result.container = Self.containerNote(for: audio)
             return result
         }
 
@@ -2838,22 +2855,42 @@ extension DownloadManager {
         }
         guard let path = item.localPath, !path.isEmpty else {
             return DownloadCompanion.FileTruth.unsupported(coverSidecar: coverSidecar,
-                                                           lyricsSidecar: lyricsSidecar)
+                                                           lyricsSidecar: lyricsSidecar,
+                                                           note: "没有本地文件")
         }
         let audio = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: path) else {
             return DownloadCompanion.FileTruth.unsupported(coverSidecar: coverSidecar,
-                                                           lyricsSidecar: lyricsSidecar)
+                                                           lyricsSidecar: lyricsSidecar,
+                                                           note: "本地文件不在了")
         }
-        guard DownloadCompanion.canEmbed(extension: audio.pathExtension) else {
-            return DownloadCompanion.FileTruth.unsupported(coverSidecar: coverSidecar,
-                                                           lyricsSidecar: lyricsSidecar)
+        // 第 53 轮：**按文件头判断容器**。读不出文件头 = 文件不在本地 / 不是音频，
+        // 不能再含糊地报"没写进文件"（老板那份名单里 13 首"全 missing"就是这个症状）。
+        let container = AudioTagEmbedder.container(of: audio)
+        guard container != .unknown else {
+            return DownloadCompanion.FileTruth.unsupported(
+                coverSidecar: coverSidecar, lyricsSidecar: lyricsSidecar,
+                note: "读不出文件头（文件可能不在本地，或者不是音频）")
+        }
+        guard container.canWriteTags else {
+            return DownloadCompanion.FileTruth.unsupported(
+                coverSidecar: coverSidecar, lyricsSidecar: lyricsSidecar,
+                note: "实际是 \(container.displayName)，写不了标签（只能靠旁车）")
         }
         let fields = await AudioTagEmbedder.readFields(fileURL: audio)
             ?? DownloadCompanion.ID3Tags.Fields()
         return DownloadCompanion.FileTruth.truth(file: fields, song: item.song,
                                                  coverSidecar: coverSidecar,
                                                  lyricsSidecar: lyricsSidecar)
+    }
+
+    /// 文件的实际容器 + 扩展名，一行给日志用（"容器=flac ext=.flac"）
+    static func containerNote(for audio: URL) -> String {
+        let container = AudioTagEmbedder.container(of: audio)
+        let ext = audio.pathExtension.lowercased()
+        if container == .unknown { return "容器=认不出 ext=.\(ext)" }
+        let actual = container.rawValue
+        return actual == ext ? "容器=\(actual)" : "容器=\(actual) ext=.\(ext)（扩展名不符）"
     }
 
     /// 全库算一遍逐字段对齐状态，写进记录（`fileTruth`）—— 列表行的小圆点读它。

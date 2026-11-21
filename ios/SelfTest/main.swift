@@ -4919,6 +4919,54 @@ do {
           full != nil && tagOnly != nil && full!.prefix(tagOnly!.count) == tagOnly!)
 }
 
+// MARK: - 第 53 轮：按内容识别容器（扩展名不可信）
+//
+// 老板 2026-11-22 03:35 那份未对齐名单里，13 首是五个字段**全 missing** —— 不是没写进去，
+// 是连读都读不出来。最可能是「扩展名 .flac、内容其实是 mp3/m4a」（r120 踩过同一个坑），
+// 也可能是文件不在本地。判定容器只能看文件头。
+
+section("按内容识别容器（第 53 轮）")
+
+do {
+    func bytes(_ hex: [UInt8]) -> [UInt8] { hex }
+
+    check("fLaC → FLAC",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x66, 0x4C, 0x61, 0x43, 0x00, 0x00, 0x00, 0x22])) == .flac)
+    check("ftyp（MP4/M4A）→ M4A",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70,
+                                                                0x4D, 0x34, 0x41, 0x20])) == .m4a)
+    check("OggS → OGG",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x4F, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00])) == .ogg)
+    check("RIFF…WAVE → WAV",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x52, 0x49, 0x46, 0x46, 0x24, 0x08, 0x00, 0x00,
+                                                                0x57, 0x41, 0x56, 0x45])) == .wav)
+    check("MAC → APE",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x4D, 0x41, 0x43, 0x20, 0x96, 0x0F, 0x00, 0x00])) == .ape)
+    check("裸 MPEG 帧（0xFF 0xFB）→ MP3",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00])) == .mp3)
+    check("认不出的数据 → unknown",
+          DownloadCompanion.AudioSniff.container(prefix: bytes([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])) == .unknown)
+
+    // 开头挂 ID3 的：跳过标签再看后面是什么（老工具常见；r120 的坑）
+    var id3Flac: [UInt8] = Array("ID3".utf8)
+    id3Flac.append(contentsOf: [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // size = 0
+    id3Flac.append(contentsOf: [0x66, 0x4C, 0x61, 0x43, 0x00, 0x00, 0x00, 0x22])
+    check("ID3 + fLaC → FLAC（不能被 ID3 骗成 MP3）",
+          DownloadCompanion.AudioSniff.container(prefix: id3Flac) == .flac)
+
+    var id3Mp3: [UInt8] = Array("ID3".utf8)
+    id3Mp3.append(contentsOf: [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    id3Mp3.append(contentsOf: [0xFF, 0xFB, 0x90, 0x64])
+    check("ID3 + MPEG 帧 → MP3", DownloadCompanion.AudioSniff.container(prefix: id3Mp3) == .mp3)
+
+    check("能写标签的只有 flac / mp3 / m4a",
+          DownloadCompanion.AudioContainer.flac.canWriteTags
+              && DownloadCompanion.AudioContainer.mp3.canWriteTags
+              && DownloadCompanion.AudioContainer.m4a.canWriteTags
+              && !DownloadCompanion.AudioContainer.ogg.canWriteTags
+              && !DownloadCompanion.AudioContainer.unknown.canWriteTags)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
