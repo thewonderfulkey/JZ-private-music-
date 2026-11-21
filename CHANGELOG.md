@@ -1,5 +1,16 @@
 ## iOS v2.4.45（223）· 2026-11-21 下午（闪退真根因：SwiftUI 观察图；导入：系统选择器必须模态呈现）
 
+### 出包（v2.4.45 / 223）
+
+| 项 | 值 |
+|---|---|
+| CI | run **#159**（`0cf869c`）· logic-tests ✅ · build ✅ · **出包闸 ✅** |
+| 产物 | `JZ-Music-v2.4.45-0cf869c-r159-ios-unsigned.ipa` · **2,928,859 B** · sha256 `c2494d14b3ac8871c9d461e707bbbf2048850a28583e96c290cbe6a2e1143630` |
+| 包内 | `2.4.45 (223)` · 主二进制 **10,795,680 B / sha256 `a2f5e3ed…`**（r158 是 `e9aff9ae…`，不同 ✅） |
+| 分发 | 飞书群已收到（13:06:59）· `releases/` 已留档 |
+
+`ObservationIgnored` 是宏属性，不会作为字符串出现在二进制里（正常）；`DocumentPickerPresenter`、`导入本地音乐` 都在包内。
+
 ### 一、闪退：**不是音频、不是内存，是 SwiftUI AttributeGraph 在 flushTransactions 里 abort**
 
 `诊断/signal-ABRT.log` 的栈（backtrace 已生效）：
