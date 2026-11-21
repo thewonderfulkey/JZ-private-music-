@@ -243,6 +243,9 @@ struct DownloadPageSlices: Equatable {
 
     var hasMore: Bool { shown < total }
     var hidden: Int { max(0, total - shown) }
+
+    /// 这一屏所有行的 id（`armed` 必须与它一致，见 `armVisibleRows`）
+    var allIDs: Set<UUID> { Set((ongoing + failed + finished).map(\.id)) }
 }
 
 enum DownloadListPaging {
@@ -307,6 +310,62 @@ enum DownloadListPaging {
     static func nextLimit(_ current: Int, total: Int) -> Int {
         min(max(0, total), max(0, current) + pageStep)
     }
+
+    /// 这一屏**真正要渲染**的行 id（`armed` 必须与它完全一致——见 `armVisibleRows`）。
+    /// 单独抽出来是为了让"arm 的目标"和"渲染的行"在断言里能对得上，
+    /// 不再是两处各写一遍 `slices(...)`。
+    static func renderedIDs(ongoing: [DownloadItem],
+                            failed: [DownloadItem],
+                            finished: [DownloadItem],
+                            limit: Int) -> Set<UUID> {
+        slices(ongoing: ongoing, failed: failed, finished: finished, limit: limit).allIDs
+    }
+}
+
+// MARK: - 下载行的左滑按钮（第 47 轮）
+
+/// 下载行左侧滑出哪些按钮、按什么顺序排。
+///
+/// 老板 2026-11-21 21:35 的截屏：一行左滑后出现**两个一模一样的红色垃圾桶**。
+/// 原因不是"图标画错"，是同一行被挂了两份 `.swipeActions`（`ForEach` 里一份、
+/// `DownloadRowActions` 里一份），SwiftUI 把两份都排出来了，两份都真的删。
+///
+/// 拍板口径（老板 2026-11-21）：
+///   · **删除只留一个**；
+///   · 「编辑歌曲信息」改成**显式按钮**（B 方案：不再依赖长按 `.contextMenu`），
+///     位置就占原先那个多出来的删除位 —— 也就是删除键的**左边**；
+///   · 长按菜单整体下线（它只在 `armed` 的前几行有效，观感是"有的歌能长按、有的不能"）。
+///
+/// 顺序只在这里写一次，视图按 `trailingOrder` 做 `ForEach`，断言钉在
+/// `ios/SelfTest/main.swift` 与 `tools/dev/r174_mini_assertions.swift`。
+///
+/// 注意 SwiftUI 尾侧 `.swipeActions` 的排布方向：**按声明顺序从屏幕右边缘往左排**。
+/// 所以 `.delete` 写在前面 = 贴右边缘，`.edit` 写在后面 = 落在删除键左边。
+enum DownloadRowSwipe: String, CaseIterable {
+
+    case delete
+    case edit
+
+    /// 尾侧按钮的声明顺序（= 从右往左的视觉顺序）
+    static let trailingOrder: [DownloadRowSwipe] = [.delete, .edit]
+
+    var title: String {
+        switch self {
+        case .delete: return "删除"
+        case .edit: return "歌曲信息"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .delete: return "trash"
+        case .edit: return "pencil"
+        }
+    }
+
+    /// 只有删除是破坏性动作（红色）。编辑必须显式 `false`——
+    /// 以前两个按钮都 `role: .destructive`，一对红块正是老板一眼看出重复的原因。
+    var isDestructive: Bool { self == .delete }
 }
 
 // MARK: - 目录索引（一次列目录，别每首歌都列一遍）

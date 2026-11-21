@@ -14,7 +14,10 @@ import UniformTypeIdentifiers
 //     同时把左滑删除/重试/取消**恢复**（和以前一样的用法）；
 //   · 已下载的行只有 `SongRow`（封面/歌名/歌手/平台/时长/❤），**任何情况下都不画进度条**；
 //     只有"正在下载"的行才画进度，而且完成度 ≥99.9% 时也不画（那一瞬间已经在收尾）；
-//   · 长按菜单保留（删除下载），左滑是第二条路——两种都能删。
+//   · 左滑两条动作：「歌曲信息」（灰，左）+「删除」（红，右）。
+//     第 47 轮（老板 2026-11-21）：长按菜单**下线**（它只在 `armed` 的前几行有效，
+//     观感是"有的歌能改、有的不能"），编辑入口改成显式按钮；同时删掉重复的那份
+//     `.swipeActions`（一行滑出两个垃圾桶的根源）。顺序见 `DownloadRowSwipe`。
 struct DownloadsTabView: View {
 
     @EnvironmentObject private var downloads: DownloadManager
@@ -34,7 +37,7 @@ struct DownloadsTabView: View {
     @State private var selectMode = false
     @State private var picked: Set<UUID> = []
     @State private var showBatchDeleteConfirm = false
-    /// 第 44 轮：长按 →「编辑歌曲信息」的目标条目（nil = 不弹）
+    /// 第 47 轮：左滑「歌曲信息」的目标条目（nil = 不弹）
     @State private var editingItem: DownloadItem?
     /// 批量编辑（只改歌手/专辑）
     @State private var showBatchEdit = false
@@ -48,7 +51,7 @@ struct DownloadsTabView: View {
     @State private var visibleLimit = DownloadListPaging.firstFrame
     /// 自动补行是否还在跑
     @State private var fillScheduled = false
-    /// 已经挂上左滑/长按菜单的行（只有"要动手的那些行"才挂，见 `completedRow`）
+    /// 已经挂上左滑按钮的行（只有"要动手的那些行"才挂，见 `completedRow`）
     @State private var armed: Set<UUID> = []
     /// 自动续加载的节流（同一帧里连开好几页就等于没分页）
     @State private var lastAutoLoadAt = Date.distantPast
@@ -106,7 +109,7 @@ struct DownloadsTabView: View {
             }
             .environmentObject(downloads)
         }
-        // 第 44 轮：长按行 → 编辑歌曲信息（歌名/歌手/专辑/封面）
+        // 第 44 轮引入、第 47 轮改为左滑「歌曲信息」→ 编辑歌曲信息（歌名/歌手/专辑/封面）
         .sheet(item: $editingItem, onDismiss: {
             Task { gaps = await downloads.companionGapCounts() }
         }) { item in
@@ -154,6 +157,13 @@ struct DownloadsTabView: View {
             visibleLimit = DownloadListPaging.firstFrame
             fillScheduled = false
             scheduleFill()
+        }
+        // 第 47 轮兜底：**行数一变就 arm**。
+        // 以前 arm 只跟着 `fillStep` / `loadMore` 走，而 `revealRowForCurrentSong()`（「定位」）
+        // 会把 visibleLimit 从 8 一路撑到 104 却完全不 arm —— 那一屏有 84 行能显示、
+        // 只有前 6 行挂了左滑，其余长按/左滑都没反应。挂在这里就不再有"漏 arm"的路径。
+        .onChange(of: visibleLimit) { _, _ in
+            armVisibleRows()
         }
         // 第 44 轮：缺口计数（662 次 stat）延后 1.2 秒再查，绝不抢首帧
         .task {
@@ -354,13 +364,9 @@ struct DownloadsTabView: View {
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        downloads.remove(itemID: item.id, deleteFile: true)
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                }
+                                // 第 47 轮（老板 2026-11-21 截屏：一行两个红色垃圾桶）：
+                                // 这里本来还有一份 `.swipeActions`，和 `DownloadRowActions` 里那份重复，
+                                // 两份都被 SwiftUI 画了出来。现在左滑按钮**只在 `DownloadRowActions` 里定义一次**。
                                 // 第 42 轮：**去掉** `.id(uuidString)`。
                                 // 行本身就是 `ForEach(finished)` 的元素，identity 已经是 `item.id`；
                                 // 再挂一层 String id 等于每行每帧多一次身份重算（真机上这层很贵）。
@@ -391,7 +397,7 @@ struct DownloadsTabView: View {
             // t3（第 41 轮打点）：列表首帧到了
             .onAppear {
                 PerfProbe.pageReady("downloads", rows: paged.shown)
-                // 第 42 轮：首帧挂完，下一拍开始分块补行（并给这几行挂上左滑/长按）
+                // 第 42 轮：首帧挂完，下一拍开始分块补行（并给这几行挂上左滑）
                 DispatchQueue.main.async { armVisibleRows() }
                 scheduleFill()
             }
@@ -511,15 +517,19 @@ struct DownloadsTabView: View {
 
     // MARK: 首帧 8 行 + 分块补行（第 42 轮）
 
-    /// 只给"真的要动手的行"挂左滑/长按菜单。
-    /// 跟 `visibleLimit` 在同一个函数里改，SwiftUI 会合并成一次渲染（不会多付一遍）。
+    /// 只给"真的要动手的行"挂左滑按钮（第 47 轮：长按菜单已下线，这里只剩左滑）。
+    ///
+    /// **不变式（第 47 轮补的账）**：`armed` 必须恒等于 `paged.allIDs`（当前真正渲染的那些行）。
+    /// 以前它只靠三个调用点（`.onAppear` / `fillStep` / `loadMore`）喂，
+    /// 而 `revealRowForCurrentSong()`（「定位」）会把 `visibleLimit` 撑到几百行**却不 arm**——
+    /// 老板 21:16 录屏里「第 1–6 行有菜单、第 7 行往后按住 1.5 秒也没反应」就是这么来的
+    /// （8 行预算里 2 行给了失败区，首帧只 arm 到 6 首；剩下都能显示、都没挂交互）。
+    /// 现在多一条兜底：`visibleLimit` 一变就 arm（见 body 里的 `.onChange(of: visibleLimit)`），
+    /// 任何"行数涨了"的路径都不会漏。
     private func armVisibleRows() {
-        let page = DownloadListPaging.slices(ongoing: ongoing, failed: failed,
-                                             finished: finished, limit: visibleLimit)
-        var next = armed
-        next.formUnion(page.finished.map(\.id))
-        next.formUnion(page.failed.map(\.id))
-        next.formUnion(page.ongoing.map(\.id))
+        let next = armed.union(DownloadListPaging.renderedIDs(ongoing: ongoing, failed: failed,
+                                                              finished: finished,
+                                                              limit: visibleLimit))
         if next.count != armed.count { armed = next }
     }
 
@@ -745,8 +755,10 @@ struct DownloadsTabView: View {
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)
-        // 第 42 轮：左滑删除 / 长按菜单只在"露过脸的行"上挂。
-        // 每行少挂 2 个交互修饰符，80 行就是 160 份开销；而真正会被左滑的只有看得见的那些。
+        // 第 42 轮：左滑按钮只在"露过脸的行"（`armed`）上挂 —— 80 行就是 80 份交互修饰符，
+        // 而真正会被左滑的只有看得见的那些。
+        // 第 47 轮：`armed` 现在由 `.onChange(of: visibleLimit)` 兜底（见 body），
+        // 恒等于 `paged.allIDs`，所以"能看见的行"就一定有左滑，不会再有"这行能、下一行不能"。
         .modifier(DownloadRowActions(itemID: item.id, enabled: interactive, onDelete: { id in
             downloads.remove(itemID: id, deleteFile: true)
         }, onEdit: { id in
@@ -773,7 +785,7 @@ struct DownloadsTabView: View {
         .padding(.vertical, Tokens.Spacing.xs)
         .contentShape(Rectangle())
         .onTapGesture {
-            // 多选态：点整行 = 勾选/取消（平时这一行没有点击行为，只有长按菜单）
+            // 多选态：点整行 = 勾选/取消（平时这一行没有点击行为，只有左滑）
             if selectMode { picked = BatchSelection.toggling(picked, item.id) }
         }
         .contextMenu {
@@ -953,37 +965,44 @@ private struct DownloadRow: View {
     }
 }
 
-/// 左滑删除 + 长按菜单：只有"露过脸"的行才挂（`enabled`）。
+/// 左滑按钮（删除 + 歌曲信息）：只有"露过脸"的行才挂（`enabled`）。
 /// 没挂上的行照样能点、能看，只是暂时没有左滑 —— 行第一次出现的那一拍就会把 `enabled` 打开。
+///
+/// 第 47 轮（老板 2026-11-21，两个 bug 一起收）：
+///   · **长按菜单下线**。它以前挂在这个 modifier 里，而它只在 `armed` 覆盖到的前几行有效
+///     （老板 21:16 的录屏：第 1–6 行长按出菜单，第 7 行往后按住 1.5 秒也只有高亮），
+///     观感就是"有的歌能改、有的歌不能"。改成显式按钮后不再依赖长按。
+///   · **删除只留一个**。这里以前和 `ForEach` 里那份 `.swipeActions` 重复，一行滑出两个垃圾桶。
+///   · 「歌曲信息」占删除键的**左边**（顺序在 `DownloadRowSwipe.trailingOrder` 里定义一次）。
 private struct DownloadRowActions: ViewModifier {
 
     let itemID: UUID
     let enabled: Bool
     let onDelete: (UUID) -> Void
-    /// 第 44 轮：长按「编辑歌曲信息」。**放在这个 modifier 里**（而不是行上再挂一个
-    /// `.contextMenu`）—— 它只对"露过脸的行"（`armed`）生效，80 行的首帧成本不变。
+    /// 第 47 轮：编辑入口从长按菜单改成左滑「歌曲信息」按钮。
     let onEdit: (UUID) -> Void
 
     func body(content: Content) -> some View {
         if enabled {
             content
                 .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        onDelete(itemID)
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                }
-                .contextMenu {
-                    Button {
-                        onEdit(itemID)
-                    } label: {
-                        Label("编辑歌曲信息", systemImage: "pencil")
-                    }
-                    Button(role: .destructive) {
-                        onDelete(itemID)
-                    } label: {
-                        Label("删除下载", systemImage: "trash")
+                    ForEach(DownloadRowSwipe.trailingOrder, id: \.self) { action in
+                        switch action {
+                        case .delete:
+                            Button(role: .destructive) {
+                                onDelete(itemID)
+                            } label: {
+                                Label(action.title, systemImage: action.symbol)
+                            }
+                        case .edit:
+                            Button {
+                                onEdit(itemID)
+                            } label: {
+                                Label(action.title, systemImage: action.symbol)
+                            }
+                            // 灰色而不是红色：和右边那个真删除拉开距离（一对红块正是重复按钮的观感来源）
+                            .tint(Color.gray)
+                        }
                     }
                 }
         } else {

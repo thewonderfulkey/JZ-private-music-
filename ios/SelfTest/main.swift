@@ -4444,6 +4444,64 @@ do {
     check("已经到目标就不涨", DownloadListPaging.nextFillLimit(80, target: 80) == 80)
 }
 
+// MARK: - 下载行左滑按钮（第 47 轮：两个删除键 + 长按唤不出菜单）
+
+do {
+    // 老板 2026-11-21 21:35 截屏：一行左滑后两个一模一样的红垃圾桶。
+    // 根源是同一行挂了两份 `.swipeActions`；现在按钮顺序只在 `DownloadRowSwipe` 里定义一次。
+    check("尾侧顺序：删除在前（贴右边缘）",
+          DownloadRowSwipe.trailingOrder == [.delete, .edit])
+    check("**只有一个删除键**",
+          DownloadRowSwipe.trailingOrder.filter { $0 == .delete }.count == 1)
+    check("歌曲信息在删除键左边（声明序第 2 个）",
+          DownloadRowSwipe.trailingOrder.last == .edit)
+    check("只有删除是破坏性（红色）",
+          DownloadRowSwipe.delete.isDestructive && !DownloadRowSwipe.edit.isDestructive)
+    check("文案/图标：删除=trash，歌曲信息=pencil",
+          DownloadRowSwipe.delete.title == "删除" && DownloadRowSwipe.delete.symbol == "trash"
+          && DownloadRowSwipe.edit.title == "歌曲信息" && DownloadRowSwipe.edit.symbol == "pencil")
+    check("动作集合不重复", Set(DownloadRowSwipe.trailingOrder).count == 2)
+
+    // 「部分歌曲长按唤不出」的算账（第 47 轮根因）：
+    // 首帧预算 8 行，245 条失败记录先吃掉 2 行 → 已下载只 arm 到前 6 首；
+    // 而列表后来被「定位」撑到 104 行（显示 84 首），那 78 首因为没 arm 全都没有交互。
+    let finished662 = (0..<662).map { dlItem($0) }
+    let failed245 = (0..<245).map { dlItem($0, status: .failed, path: nil) }
+    let firstFrame = DownloadListPaging.slices(ongoing: [], failed: failed245,
+                                               finished: finished662, limit: 8)
+    check("首帧 8 行预算：失败区 2 行 + 已下载 6 行",
+          firstFrame.failed.count == 2 && firstFrame.finished.count == 6)
+    let armedFirst = DownloadListPaging.renderedIDs(ongoing: [], failed: failed245,
+                                                    finished: finished662, limit: 8)
+    check("arm 的目标 = 首帧真正渲染的那 8 行", armedFirst.count == 8)
+    check("首帧 arm 的已下载只有 6 首（第 7 首起没有交互 → 老板说的「部分歌曲」）",
+          Set(firstFrame.finished.map(\.id)).count == 6
+          && Set(firstFrame.finished.map(\.id)) == armedFirst.subtracting(Set(firstFrame.failed.map(\.id))))
+
+    // 第 47 轮的兜底：limit 一变就 arm，所以「已渲染」必然是「已 arm」的超集
+    let wide = DownloadListPaging.renderedIDs(ongoing: [], failed: failed245,
+                                              finished: finished662, limit: 104)
+    check("撑到 104 行（定位那条路）时，一屏就是 104 个 id", wide.count == 104)
+    check("**旧的行一个都不能丢**（arm 只许变大）", armedFirst.isSubset(of: wide))
+    check("行数跟着 limit 单调增",
+          DownloadListPaging.renderedIDs(ongoing: [], failed: failed245,
+                                         finished: finished662, limit: 32).isSubset(of: wide))
+
+    let paged = DownloadListPaging.slices(ongoing: [], failed: failed245,
+                                          finished: finished662, limit: 104)
+    check("renderedIDs = slices 的全部 id（arm 与渲染同源）", paged.allIDs == wide)
+    check("失败区按 1/4 配额给（245 条 → 26 条），已下载 78 首",
+          paged.failed.count == 26 && paged.finished.count == 78)
+
+    // 老板 21:16 那天录屏里「已显示 84」：104 行预算 - 20 条失败记录 = 84 首已下载。
+    // 这条只是把那个数字钉死，说明"能显示 84 行、却只有前 6 首挂了交互"。
+    let failed20 = (0..<20).map { dlItem($0, status: .failed, path: nil) }
+    let boss = DownloadListPaging.slices(ongoing: [], failed: failed20,
+                                         finished: finished662, limit: 104)
+    check("104 行预算 + 20 条失败 → 已下载正好显示 84（= 截屏上的「已显示 84」）",
+          boss.failed.count == 20 && boss.finished.count == 84)
+}
+
 section("目录索引：一次列目录，别每首列一遍（P1-1）")
 
 do {

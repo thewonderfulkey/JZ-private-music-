@@ -1,3 +1,76 @@
+## iOS v2.4.57（235）· 2026-11-21 夜（下载页两个 bug：长按唤不出「歌曲信息」+ 一行两个删除键）
+
+老板在 IPA 交付群连发一条 25 秒录屏（`11-21 21:16`，装的是 v2.4.56 / r173）和一张截屏（`21:35`）：
+
+1. 录屏 + 一句「有部分歌曲无法通过长按唤出修改歌曲详细信息，但是其他歌曲可以正常长按唤出」；
+2. 截屏 + 一句「现在每个歌曲都有两个删除键……把歌曲信息那个按钮换到左边那个删除键上」。
+
+拍板：走 **B 方案** —— 编辑入口改成**显式按钮**，长按菜单整个下线；删除只留一个。
+
+### 一、根因（两个，都是第 42 轮「交互懒挂载」的遗留）
+
+**① 长按唤不出，不是「歌曲」的差异，是「行序号」的差异。**
+
+左滑/长按不是无条件挂的，挂在 `armed` 集合上（`DownloadsTabView.swift` 的 `completedRow` →
+`DownloadRowActions(enabled:)`，`if enabled` 才挂 `.contextMenu`）。而 `armed` 只由 `armVisibleRows()` 喂：
+
+| 调用点 | 结果 |
+|---|---|
+| `.onAppear`（`visibleLimit = 8`） | 8 行预算里先给失败区 2 行（`failedQuota(8, …) = max(1, 8/4) = 2`）→ **只 arm 到前 6 首已下载** |
+| `fillStep` | 第一句 `guard …, !PerfProbe.hadLongGap`：本轮只要出现过一次 >150ms 卡顿就整段停手。这台机器 662 首 + 第 44 轮后台补料并发 4，几乎必然已经为真 → **一次都没补、也就一次都没 arm** |
+| `loadMore` | 这轮没被触发 |
+| **`revealRowForCurrentSong()`（「定位」）** | 把 `visibleLimit` 从 8 一路撑到 **104**，**却不调用 `armVisibleRows()`** —— 全文件唯一一条「涨行数但不 arm」的路径 |
+
+于是列表能显示 84 首（104 行预算 − 20 条失败记录，正是截屏与录屏里的「已显示 84」），
+其中只有**前 6 首**挂了菜单。老板的录屏逐帧对得上（cv2 抽帧 + 行高亮/菜单面板特征）：
+
+| 行 | 歌 | 按住 | 弹菜单 |
+|---|---|---|---|
+| 3 / 4 / 5 | 终会与你同行 / Head Above Water / 我恨明月不照我 | 433–533 ms | ✅ |
+| 6 / 8 / 9 / 10 / 11 / 14 | 蔡健雅 / 冬眠 / 那天下雨了 / 庞麦郎 / 跳楼机 / 汪苏泷 | **833–1533 ms（全程静止）** | ❌ 只有高亮 |
+
+按压时长 ≥0.8s 仍不出菜单，所以不是「按太短」，也不是「手指在滑」——**那几行根本没有挂交互**。
+
+**② 一行两个删除键：同一行挂了两份 `.swipeActions`。**
+
+`ForEach(paged.finished)` 里一份（旧的）、`DownloadRowActions` 里一份（第 42 轮搬进去时没删旧的），
+SwiftUI 把两份都排了出来。两处调的是同一个 `downloads.remove(itemID:deleteFile:true)`
+（删记录 + 删文件），所以两个键的功能**完全一样**，不是显示错位。
+
+### 二、改动
+
+- **新增 `DownloadRowSwipe`（`Models/DownloadItem.swift`）**：左滑按钮的顺序/文案/图标只定义一次。
+  `trailingOrder = [.delete, .edit]` —— SwiftUI 尾侧按声明顺序**从右边缘往左**排，
+  所以删除贴右边缘，「歌曲信息」落在它左边（老板指定：占原先多出来的那个删除位）。
+  只有 `.delete` 是 `role: .destructive`，编辑是灰底（不再是两个红块）。
+- **`DownloadRowActions`**：删掉 `.contextMenu`（长按菜单下线），只留一份 `.swipeActions`，
+  按 `DownloadRowSwipe.trailingOrder` 做 `ForEach`。
+- **`ForEach(paged.finished)`**：删掉重复的那份 `.swipeActions`。
+- **arm 兜底**：新增 `.onChange(of: visibleLimit) { armVisibleRows() }`，让 `armed` 恒等于
+  `paged.allIDs`；`armVisibleRows()` 改走新加的 `DownloadListPaging.renderedIDs(...)` /
+  `DownloadPageSlices.allIDs`，不再在视图里另写一遍 `slices(...)`。
+  「定位」那条路以后也不会漏 arm。
+- 版本：`MARKETING_VERSION 2.4.57` / `CURRENT_PROJECT_VERSION 235`（pbxproj 4 处）+
+  `build.gradle.kts` `versionCode 235 / versionName 2.4.57`。
+
+### 三、门禁与断言
+
+- 新断言 15 条：`tools/dev/r174_mini_assertions.swift`（本机 WSL 跑，**15/15 通过**）+
+  同内容进 `ios/SelfTest/main.swift`（CI 第一道门）。钉住：只有一个删除键、歌曲信息在左、
+  只有删除是破坏性、`armed` 与 `paged.allIDs` 同源、arm 只增不减、
+  「8 行预算 → 失败 2 + 已下载 6」「104 行预算 + 20 条失败 → 已下载 84」这两条算账。
+- `python tools/ios/check_pbxproj.py` ✅（240 对象 / 2 target）
+- `python tools/ios/check_ui_hygiene.py` ✅（31 个界面文件）
+- 本地全量 `run-selftest.sh`：`BUILD_EXIT=0`（词解密的 4 条 zlib 断言仍是本机桩的老问题，与本轮无关）
+
+### 四、这一包请验证四条
+
+1. 任意一行左滑，只有**一个**红色「删除」，它左边是灰色「歌曲信息」；
+2. 点「歌曲信息」→ 编辑页（歌名/歌手/专辑/原文件名/封面）能打开；
+3. 第 7 行往后、以及滚到「已显示 84」末尾随便挑一首，左滑都还能出这两个按钮（不再只有前 6 首）；
+4. 编辑后保存：立刻关页、列表封面与信息都变（别把 v2.4.55 的修复改回去）。
+
+---
 ### 出包记录（v2.4.56 / 234）
 
 | 项 | 值 |
