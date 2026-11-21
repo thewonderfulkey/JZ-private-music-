@@ -1294,6 +1294,13 @@ extension DownloadManager {
                 }
                 taken.insert(base)
 
+                // 系统选择器（asCopy: true）会先把选中的文件复制进 `Documents/Inbox` 或 tmp；
+                // 已经复制进 `Music/` 了，就把那份临时副本删掉 —— 否则同一首歌占两份空间。
+                // **只删这两个临时位置**：用户在「JZ 音乐」里自己的文件绝不碰。
+                if Self.isPickerStagingFile(url) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+
                 // 内嵌封面先压到 600px 再写成旁车（原图解码一次就是 9–36MB）
                 if let artwork = meta.artwork, !artwork.isEmpty {
                     let compact = CoverImageCache.compressedCoverData(artwork, maxPixel: 600)
@@ -1540,6 +1547,20 @@ extension DownloadManager {
         if duration <= 0 { return nil }
 
         return (title, artist, album, duration, artwork, hash, bytes)
+    }
+
+    /// 系统选择器（`asCopy: true`）把选中的文件复制进来的临时位置：
+    /// `Documents/Inbox/…` 或 App 的 tmp 目录。导入完成后可以安全删掉这份副本
+    /// （否则同一首歌在 `Music/` 和 `Inbox/` 各占一份）。
+    ///
+    /// 判据写死在**这两个前缀**上，用户在 `文件 › JZ 音乐` 里自己的文件不会被误删。
+    static func isPickerStagingFile(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let docs = DownloadLocation.documentsDirectory().standardizedFileURL.path
+        if path.hasPrefix(docs + "/Inbox/") { return true }
+        let tmp = NSTemporaryDirectory()
+        if !tmp.isEmpty, path.hasPrefix(tmp) { return true }
+        return false
     }
 
     /// 兜底读时长：`AVAudioFile` 走 Core Audio，只读文件头，对大文件也没开销。

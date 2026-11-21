@@ -97,13 +97,18 @@ struct DownloadsTabView: View {
         .locateToast(notice)
     }
 
-    /// 工具栏上的三个点：导入 + 整理重复
+    /// 工具栏上的三个点：导入（系统选择器为主）+ 文件夹导入 + 整理重复
     private var importMenu: some View {
         Menu {
             Button {
+                pickFilesFromMenu()
+            } label: {
+                Label("导入本地音乐（选择文件）", systemImage: "square.and.arrow.down")
+            }
+            Button {
                 showImportBrowser = true
             } label: {
-                Label("导入本地音乐…", systemImage: "square.and.arrow.down")
+                Label("从「JZ 音乐」文件夹导入…", systemImage: "folder")
             }
             Button {
                 showDedupeConfirm = true
@@ -116,6 +121,25 @@ struct DownloadsTabView: View {
         .accessibilityLabel("导入与整理")
     }
 
+    /// 直接弹**系统文件选择器**（老板实测这条路能导成功，所以它是主入口，一步到位）
+    private func pickFiles() {
+        DocumentPickerPresenter.present(onFail: { message in
+            flash(message)
+        }, onPick: { urls in
+            guard !urls.isEmpty else { return }
+            flash("已选 \(urls.count) 个文件，开始导入…")
+            startImport(urls)
+        })
+    }
+
+    /// 从 Menu 里点：等菜单收起动画过去再弹（不然会和菜单抢同一帧，present 失败）
+    private func pickFilesFromMenu() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            pickFiles()
+        }
+    }
+
     /// 空状态：按钮用 `EmptyStateView(action:)`，**不再**是 ContentUnavailableView 后面
     /// 跟一个 Button —— 那个 Button 会被撑满的 ContentUnavailableView 顶到屏幕外，
     /// 老板看到的"没有导入本地按钮"就是这么来的。
@@ -126,8 +150,8 @@ struct DownloadsTabView: View {
                                systemImage: "arrow.down.circle",
                                description: "在播放页点「下载」，选一个音质。\n已有的本地音乐也可以导进来。",
                                actionTitle: "导入本地音乐",
-                               action: { showImportBrowser = true })
-                Text("导入位置：文件 › JZ 音乐　（把歌放进这个文件夹，再回来导入）")
+                               action: { pickFiles() })
+                Text("会打开系统「文件」选择器；也可以点右上角「⋯」从「JZ 音乐」文件夹导入")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -555,8 +579,47 @@ struct ImportBrowserView: View {
     var body: some View {
         NavigationStack {
             List {
+                // 提示条（选择器/扫描遇到问题时显示在最上面，两段入口都能看到）
+                if let hint {
+                    Section {
+                        Text(hint)
+                            .font(.footnote)
+                            .foregroundStyle(Tokens.Palette.vermilion)
+                    }
+                }
+
+                // ① 系统选择器 —— **第一种方式**
+                //
+                // 老板 2026-11-21 实测：这条路（UIKit 模态 + `asCopy: true`）能导成功。
+                // 所以它回到第一位。唯一要提醒的是：点「打开」之后系统是在**复制**文件，
+                // 选得多/文件大时要等几秒，看起来像"没反应"——不是死了。
                 Section {
-                    Text("两条路：① 把歌放进「文件 › JZ 音乐」（用下面的按钮打开「文件」App、或 LocalSend/隔空投送存到这个文件夹）；② 在「文件」里长按这首歌 →「共享」→「JZ 音乐」，回来自动导入。系统选择器在这台机器上点「打开」不生效，所以这里直接列 App 自己的文件夹。")
+                    Button {
+                        openSystemPicker()
+                    } label: {
+                        HStack(spacing: Tokens.Spacing.xs) {
+                            Image(systemName: "square.and.arrow.down.on.square")
+                            Text("选择文件导入")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: Tokens.Spacing.minTapTarget)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .listRowInsets(EdgeInsets(top: Tokens.Spacing.xs,
+                                              leading: Tokens.Spacing.pageMargin,
+                                              bottom: Tokens.Spacing.xs,
+                                              trailing: Tokens.Spacing.pageMargin))
+                    .listRowBackground(Color.clear)
+                    Text("点「打开」后如果像没反应，多半是系统在把文件复制进来（大文件要等几秒，一次选几十首会更久）。选了就等它一下，别反复点；一次十几首最稳。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("从「文件」里选（推荐这条）")
+                }
+
+                // ② 从 App 自己的文件夹导入（不经过系统选择器）
+                Section {
+                    Text("系统选择器那次没成的话：先把歌放进「文件 › JZ 音乐」，这里会直接列出来，勾选后导入。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button {
@@ -584,13 +647,8 @@ struct ImportBrowserView: View {
                     } label: {
                         Label("扫描整个「JZ 音乐」并导入", systemImage: "wand.and.stars")
                     }
-                    if let hint {
-                        Text(hint)
-                            .font(.caption)
-                            .foregroundStyle(Tokens.Palette.vermilion)
-                    }
                 } header: {
-                    Text("怎么放歌进来")
+                    Text("或者从「JZ 音乐」文件夹导入")
                 } footer: {
                     Text("列表里只列能播的音频（mp3 / m4a / flac / wav / aiff…），图片、歌词、压缩包不会被选进来；ape / wma / ogg 这种 iOS 放不了的会灰掉并写明原因。同一个文件（字节一样）和同一首歌（同一条录音）会自动跳过，不会重复占地方。")
                 }
@@ -614,21 +672,6 @@ struct ImportBrowserView: View {
                     }
                 } header: {
                     Text(pathText)
-                }
-
-                // 系统选择器只作"其他方式"放最后：这台机器上它点「打开」没反应，
-                // 放在主位置会被当成"我们又退化了"。留着是为了别的机器还能用。
-                Section {
-                    Button {
-                        openSystemPicker()
-                    } label: {
-                        Label("其他方式：系统文件选择器…", systemImage: "folder.badge.plus")
-                    }
-                    Text("这条路依赖系统选择器。如果点「打开」没反应，是这台机器上系统没把选择结果交回来（不是文件的问题），用上面的列表导入就行。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } footer: {
-                    Text("")
                 }
             }
             .listStyle(.insetGrouped)
@@ -834,6 +877,7 @@ struct ImportBrowserView: View {
     }
 
     private func openSystemPicker() {
+        CrashReporter.logImport("picker: 用户点了「选择文件导入」")
         DocumentPickerPresenter.present(onFail: { message in
             hint = message
         }, onPick: { urls in
