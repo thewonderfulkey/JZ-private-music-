@@ -4542,43 +4542,57 @@ do {
     check("不同歌 → 签名不同", DownloadCacheSignature(base) != DownloadCacheSignature(otherSong))
 }
 
-// MARK: - 第 48 轮：只换封面（内嵌封面替换 / 追加）
+// MARK: - 第 48/49 轮：把歌曲信息写进音频文件（ID3 TIT2/TPE1/TALB/TLEN/APIC/USLT）
 //
-// 老板 2026-11-22：「我已经把导入的歌曲所有封面都替换内置了，本地的后台文件封面并没有和
-// 前端内置的对齐。我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲的封面，
-// 如果该歌曲后台文件中没有封面，那么直接添加进去并建联。」
+// 老板 2026-11-22 两轮：「本地的后台文件封面并没有和前端内置的对齐……把内置的封面下载下来
+// 替换原有文件中该歌曲的封面，如果该歌曲后台文件中没有封面那么直接添加进去并建联」，
+// 随后又问「是否可以同时把封面、歌名、歌手、专辑还有音频信息一起通过这个按钮写入音频文件」。
 //
-// 这一节的断言守三件事：
-//   ① 换封面**不能顺手删歌词/标题**（老板库里 638 首有旁车词，662 个文件都跑一遍）；
-//   ② 音频体一个字节都不能改（"能放"这件事不能赌）；
-//   ③ 解析不了的标签（v2.2 / unsync）一律返回 nil，让调用方保持原文件不动。
+// 这一节的断言守四件事：
+//   ① 写进去的字段**读得回来**（歌名/歌手/专辑/时长/封面/歌词）；
+//   ② 写封面/歌名**不能顺手删别的**（别人写的年份/流派、内嵌歌词都要留着）；
+//   ③ 音频体一个字节都不能改（"能放"这件事不能赌）；
+//   ④ 解析不了就返回 nil（v2.2 / unsync），v2.3 的中文必须走 UTF-16，不能用 latin1 写。
 
-section("只换封面：ID3 内嵌封面替换 / 追加（第 48 轮）")
+section("写回歌曲信息：ID3 只换认识的那几帧（第 48/49 轮）")
 
 do {
-    // 造一个真实的 v2.4 文件：TIT2/TPE1/TALB + APIC(旧图) + USLT(歌词) + 假音频体
     let body = Data((0..<256).map { UInt8($0 % 251) })
     let oldCover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x11, count: 400))
     let newCover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x22, count: 900))
-    let full = DownloadCompanion.id3Tag(title: "晴天", artist: "周杰伦", album: "叶惠美",
+    let lyricLine = "[00:01.00]故事的小黄花"
+
+    // 老文件：旧歌名/歌手/专辑 + 旧封面 + 内嵌歌词（模拟"导入时标签里带的东西"）
+    let file = DownloadCompanion.id3Tag(title: "旧歌名", artist: "旧歌手", album: "旧专辑",
                                         coverData: oldCover, coverMime: "image/jpeg",
-                                        lyrics: "[00:01.00]故事的小黄花") + body
+                                        lyrics: lyricLine) + body
 
-    check("能读出文件里原来的封面",
-          DownloadCompanion.ID3Artwork.image(inFileData: full) == oldCover)
-    check("hasImage 认得出来", DownloadCompanion.ID3Artwork.hasImage(inFileData: full))
+    var want = DownloadCompanion.ID3Tags.Fields()
+    want.title = "晴天"
+    want.artist = "周杰伦"
+    want.album = "叶惠美"
+    want.durationMs = 269_000
+    want.cover = newCover
+    want.coverMime = "image/jpeg"
+    want.lyrics = lyricLine
 
-    let replaced = DownloadCompanion.ID3Artwork.replacing(inFileData: full, cover: newCover,
-                                                          mime: "image/png")
-    check("替换返回了新文件字节", replaced != nil)
-    if let out = replaced {
-        check("第一张封面 = 新图",
-              DownloadCompanion.ID3Artwork.image(inFileData: out) == newCover)
-        check("旧图字节一个都不剩", out.range(of: oldCover) == nil)
-        check("标题还在", out.range(of: Data("晴天".utf8)) != nil)
-        check("歌手还在", out.range(of: Data("周杰伦".utf8)) != nil)
-        check("专辑还在", out.range(of: Data("叶惠美".utf8)) != nil)
-        check("内嵌歌词还在（不能顺手删词）", out.range(of: Data("故事的小黄花".utf8)) != nil)
+    check("读得出文件里原来的那一套",
+          DownloadCompanion.ID3Tags.reading(inFileData: file).title == "旧歌名")
+    check("还没写的时候 matches = false",
+          !DownloadCompanion.ID3Tags.matches(want, inFileData: file))
+
+    let out = DownloadCompanion.ID3Tags.rewriting(inFileData: file, fields: want)
+    check("写回返回了新文件字节", out != nil)
+    if let out {
+        let read = DownloadCompanion.ID3Tags.reading(inFileData: out)
+        check("歌名换成新的", read.title == "晴天", read.title)
+        check("歌手换成新的", read.artist == "周杰伦", read.artist)
+        check("专辑换成新的", read.album == "叶惠美", read.album)
+        check("时长写进 TLEN（毫秒）", read.durationMs == 269_000, "\(read.durationMs)")
+        check("封面换成新的", read.cover == newCover)
+        check("内嵌歌词还在（不能顺手删词）", (read.lyrics ?? "").contains("故事的小黄花"))
+        check("旧歌名的字节一个都不剩", out.range(of: Data("旧歌名".utf8)) == nil)
+        check("旧封面字节也不剩", out.range(of: oldCover) == nil)
         check("音频体原样跟在标签后面", out.suffix(body.count) == body)
         check("头还是 ID3v2.4", out.prefix(4) == Data([0x49, 0x44, 0x33, 0x04]))
         let sizeBytes = [UInt8](out[6..<10])
@@ -4586,45 +4600,45 @@ do {
             | (Int(sizeBytes[2]) << 7) | Int(sizeBytes[3])
         check("标签长度字段 = 帧区真实长度", out.count == 10 + framesLen + body.count,
               "count=\(out.count) framesLen=\(framesLen) body=\(body.count)")
-        // 再写一张同样的图：结果仍是"这张图"，不会叠出第二个 APIC
-        let twice = DownloadCompanion.ID3Artwork.replacing(inFileData: out, cover: newCover,
-                                                           mime: "image/png")
-        check("重复写同一张不会叠帧",
-              twice.map { DownloadCompanion.ID3Artwork.image(inFileData: $0) } == newCover)
-        check("重复写两次的字节数不变（帧没叠）", twice?.count == out.count)
+        check("同一套再写一次 → matches 为真（第二次不会再重写）",
+              DownloadCompanion.ID3Tags.matches(want, inFileData: out))
+        // 再写一遍：字节数不变（帧没有叠加）
+        let twice = DownloadCompanion.ID3Tags.rewriting(inFileData: out, fields: want)
+        check("重复写不会叠帧", twice?.count == out.count)
     }
 
-    // 没有 ID3 标签的裸文件（老板库里不少本地导入的 mp3 就是这样）
-    check("无标签文件读不出封面",
-          DownloadCompanion.ID3Artwork.image(inFileData: body) == nil)
-    check("无标签文件 hasImage = false",
-          !DownloadCompanion.ID3Artwork.hasImage(inFileData: body))
-    let added = DownloadCompanion.ID3Artwork.replacing(inFileData: body, cover: newCover,
-                                                       mime: "image/jpeg")
-    check("无标签 → 直接加一条只含封面的标签", added?.prefix(3) == Data("ID3".utf8))
-    check("新增后能读出这张封面",
-          added.flatMap { DownloadCompanion.ID3Artwork.image(inFileData: $0) } == newCover)
-    check("新增后音频体一个字节没动", added.map { $0.suffix(body.count) == body } == true)
+    // 只给封面（老板的第一次要求）：歌名/歌手/专辑一律不动
+    var coverOnly = DownloadCompanion.ID3Tags.Fields()
+    coverOnly.cover = newCover
+    if let done = DownloadCompanion.ID3Tags.rewriting(inFileData: file, fields: coverOnly) {
+        let read = DownloadCompanion.ID3Tags.reading(inFileData: done)
+        check("只给封面时，歌名/歌手/专辑一个都没动",
+              read.title == "旧歌名" && read.artist == "旧歌手" && read.album == "旧专辑")
+        check("只给封面时，新图进去了", read.cover == newCover)
+    } else {
+        check("只给封面也能写", false)
+    }
 
-    // 解析不了就不碰：v2.2 / 带 unsynchronisation
-    var v22 = Data("ID3".utf8)
-    v22.append(contentsOf: [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-    v22.append(body)
-    check("ID3v2.2 不冒险（返回 nil，原文件不动）",
-          DownloadCompanion.ID3Artwork.replacing(inFileData: v22, cover: newCover,
-                                                 mime: "image/jpeg") == nil)
-    var unsync = Data("ID3".utf8)
-    unsync.append(contentsOf: [0x04, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00])
-    unsync.append(body)
-    check("带 unsynchronisation 的标签不碰",
-          DownloadCompanion.ID3Artwork.replacing(inFileData: unsync, cover: newCover,
-                                                 mime: "image/jpeg") == nil)
-    check("空封面不写（不能造出没有图的 APIC）",
-          DownloadCompanion.ID3Artwork.replacing(inFileData: full, cover: Data(),
-                                                 mime: "image/jpeg") == nil)
+    // 空字段 = 不动，不是"清空"
+    check("什么都没给 → 不返回新文件（不能把标签清空）",
+          DownloadCompanion.ID3Tags.rewriting(inFileData: file,
+                                              fields: DownloadCompanion.ID3Tags.Fields()) == nil)
 
-    // v2.3：别的工具（下载站/老播放器）写的老标签，帧长度是普通 32 位大端，不是 syncsafe。
-    // 老板库里 662 个文件来自各种来源，这条分支必须跟着走一遍。
+    // 没有 ID3 标签的裸文件（本地导入的 mp3 不少是这样）
+    let bare = body
+    if let added = DownloadCompanion.ID3Tags.rewriting(inFileData: bare, fields: want) {
+        check("无标签 → 直接加一条完整标签", added.prefix(3) == Data("ID3".utf8))
+        let read = DownloadCompanion.ID3Tags.reading(inFileData: added)
+        check("新增后歌名/歌手/专辑/封面都在",
+              read.title == "晴天" && read.artist == "周杰伦"
+                  && read.album == "叶惠美" && read.cover == newCover)
+        check("新增后音频体一个字节没动", added.suffix(bare.count) == bare)
+    } else {
+        check("无标签文件也能写", false)
+    }
+
+    // v2.3：别的工具（下载站/老播放器）写的老标签 —— 帧长度是普通 32 位大端；
+    // 中文必须 UTF-16，拿 latin1/UTF-8 硬写就是乱码。
     func v23Frame(_ id: String, _ payload: Data) -> Data {
         var d = Data(id.utf8)
         let n = payload.count
@@ -4639,8 +4653,10 @@ do {
     apic23.append(0x03) // front cover
     apic23.append(0x00) // 空描述
     apic23.append(oldCover)
-    var frames23 = v23Frame("TIT2", Data([0x00]) + Data("Sunny".utf8))
+    var frames23 = v23Frame("TIT2", Data([0x00]) + Data("Old Title".utf8))
     frames23.append(v23Frame("APIC", apic23))
+    // 一个我们"不认识"的帧（年份 TDRC）：写回时不许把它弄丢
+    frames23.append(v23Frame("TDRC", Data([0x00]) + Data("2003".utf8)))
     var file23 = Data("ID3".utf8)
     file23.append(contentsOf: [0x03, 0x00, 0x00])
     let n23 = frames23.count
@@ -4649,21 +4665,36 @@ do {
     file23.append(frames23)
     file23.append(body)
 
-    check("v2.3 也能读出原封面",
-          DownloadCompanion.ID3Artwork.image(inFileData: file23) == oldCover)
-    if let out23 = DownloadCompanion.ID3Artwork.replacing(inFileData: file23, cover: newCover,
-                                                          mime: "image/jpeg") {
+    check("v2.3 也能读出原歌名",
+          DownloadCompanion.ID3Tags.reading(inFileData: file23).title == "Old Title")
+    if let out23 = DownloadCompanion.ID3Tags.rewriting(inFileData: file23, fields: want) {
         check("v2.3 换完还是 v2.3", out23.prefix(4) == Data([0x49, 0x44, 0x33, 0x03]))
-        check("v2.3 新封面读得回来",
-              DownloadCompanion.ID3Artwork.image(inFileData: out23) == newCover)
-        check("v2.3 标题还在", out23.range(of: Data("Sunny".utf8)) != nil)
+        let read = DownloadCompanion.ID3Tags.reading(inFileData: out23)
+        check("v2.3 中文歌名读得回来（UTF-16 写对了）", read.title == "晴天", read.title)
+        check("v2.3 中文歌手读得回来", read.artist == "周杰伦", read.artist)
+        check("v2.3 新封面读得回来", read.cover == newCover)
+        check("v2.3 不认识的帧（年份 2003）还在", out23.range(of: Data("2003".utf8)) != nil)
         check("v2.3 音频体没动", out23.suffix(body.count) == body)
         let sb = [UInt8](out23[6..<10])
         let fl = (Int(sb[0]) << 21) | (Int(sb[1]) << 14) | (Int(sb[2]) << 7) | Int(sb[3])
         check("v2.3 标签长度字段正确", out23.count == 10 + fl + body.count)
+        check("v2.3 中文走 UTF-16（带 BOM）",
+              out23.range(of: Data([0x01, 0xFF, 0xFE])) != nil)
     } else {
-        check("v2.3 替换返回了新文件字节", false)
+        check("v2.3 也能写回", false)
     }
+
+    // 解析不了就不碰：v2.2 / 带 unsynchronisation
+    var v22 = Data("ID3".utf8)
+    v22.append(contentsOf: [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    v22.append(body)
+    check("ID3v2.2 不冒险（返回 nil，原文件不动）",
+          DownloadCompanion.ID3Tags.rewriting(inFileData: v22, fields: want) == nil)
+    var unsync = Data("ID3".utf8)
+    unsync.append(contentsOf: [0x04, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00])
+    unsync.append(body)
+    check("带 unsynchronisation 的标签不碰",
+          DownloadCompanion.ID3Tags.rewriting(inFileData: unsync, fields: want) == nil)
 }
 
 // MARK: - 汇总

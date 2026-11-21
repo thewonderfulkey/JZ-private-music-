@@ -138,9 +138,9 @@ enum AudioTagEmbedder {
         }
     }
 
-    // MARK: - 只换封面（把"前端显示的那张图"写回文件本身）
+    // MARK: - 把歌曲信息写进音频文件（封面 + 歌名/歌手/专辑/时长/歌词）
 
-    /// 封面写回的结果：换了 / 补了 / 本来就是同一张 / 容器不支持 / 失败。
+    /// 写回的结果：换了 / 补了（原来没有标签或封面）/ 本来就是这一套 / 容器不支持 / 失败。
     /// 分开计数是有意义的 —— 老板要能看出"到底补进去几张、跳过几张"。
     enum CoverEmbedOutcome: String, Sendable {
         case replaced
@@ -150,46 +150,45 @@ enum AudioTagEmbedder {
         case failed
     }
 
-    /// 把一张封面写进音频文件（**只动封面**，标题/歌手/专辑/歌词原样保留）。
+    /// 把一首歌的字段写进音频文件本身（**只动我们认识的那几帧**，别的标签原样保留）。
     ///
-    /// - mp3：`DownloadCompanion.ID3Artwork` 只换 APIC 帧，音频体原样搬；
-    /// - m4a/mp4：AVFoundation 读出现有 metadata，去掉旧 artwork 换新的，passthrough 导出；
+    /// - mp3：`DownloadCompanion.ID3Tags`（只替换 TIT2/TPE1/TALB/TLEN/APIC/USLT，音频体原样搬）；
+    /// - m4a/mp4：AVFoundation 读出现有 metadata，换掉同名项后 passthrough 导出；
     /// - 其它容器（flac/ogg/wav…）：`.unsupported`（旁车仍是兜底，见 `DownloadCompanion` 头注释）。
     ///
     /// 任何一步失败都**保留原文件**（先写临时文件、校验通过才原子替换），调用方据此计数。
-    static func alignArtwork(fileURL: URL, coverData: Data, coverMime: String) async -> CoverEmbedOutcome {
+    static func writeTags(fileURL: URL,
+                          fields: DownloadCompanion.ID3Tags.Fields) async -> CoverEmbedOutcome {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: fileURL.path), !coverData.isEmpty else { return .failed }
+        guard fm.fileExists(atPath: fileURL.path), !fields.isEmpty else { return .failed }
         switch fileURL.pathExtension.lowercased() {
         case "mp3":
-            return await alignMP3(fileURL: fileURL, cover: coverData, mime: coverMime)
+            return await writeMP3(fileURL: fileURL, fields: fields)
         case "m4a", "mp4":
-            return await alignM4A(fileURL: fileURL, cover: coverData)
+            return await writeM4A(fileURL: fileURL, fields: fields)
         default:
             return .unsupported
         }
     }
 
-    /// mp3：只替换 APIC 帧。音频体（标签之后的所有字节）一个字节不改，
+    /// mp3：只替换那几帧。音频体（标签之后的所有字节）一个字节不改，
     /// 所以这里**不需要**再跑一遍 AVAsset 可播放校验（那一步 662 首要多花好几分钟）；
     /// 校验只看"临时文件体积等于算出来的字节数"和"头真的是 ID3v2.3/2.4"。
-    private static func alignMP3(fileURL: URL, cover: Data, mime: String)
+    private static func writeMP3(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
         async -> CoverEmbedOutcome {
         let fm = FileManager.default
         guard let original = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
               !original.isEmpty else { return .failed }
 
-        if let existing = DownloadCompanion.ID3Artwork.image(inFileData: original), existing == cover {
-            return .already
-        }
-        let hadArtwork = DownloadCompanion.ID3Artwork.hasImage(inFileData: original)
-        guard let output = DownloadCompanion.ID3Artwork.replacing(inFileData: original,
-                                                                  cover: cover, mime: mime) else {
+        if DownloadCompanion.ID3Tags.matches(fields, inFileData: original) { return .already }
+        let hadCover = DownloadCompanion.ID3Tags.hasImage(inFileData: original)
+        guard let output = DownloadCompanion.ID3Tags.rewriting(inFileData: original,
+                                                               fields: fields) else {
             return .failed
         }
 
         let tempURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent(".align-\(UUID().uuidString).mp3")
+            .appendingPathComponent(".tags-\(UUID().uuidString).mp3")
         defer { try? fm.removeItem(at: tempURL) }
         do {
             try output.write(to: tempURL, options: .atomic)
@@ -201,50 +200,94 @@ enum AudioTagEmbedder {
               size == Int64(output.count),
               let head = firstBytes(of: tempURL, count: 4), head.count == 4,
               head[0] == 0x49, head[1] == 0x44, head[2] == 0x33,
-              head[3] == 0x03 || head[3] == 0x04 else {
+              (head[3] == 0x03 || head[3] == 0x04) else {
             return .failed
         }
 
         do {
             _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
-            return hadArtwork ? .replaced : .added
+            return hadCover ? .replaced : .added
         } catch {
             return .failed
         }
     }
 
-    /// m4a：读出现有 metadata，剔掉旧 artwork、换成新的，再 passthrough 导出（不重编码）。
-    /// 这个容器要真的重写一遍，所以保留原来那条 `isReadableAudioFile` 闸门。
-    private static func alignM4A(fileURL: URL, cover: Data) async -> CoverEmbedOutcome {
+    /// m4a：读出现有 metadata，换掉同名项（标题/歌手/专辑/封面/歌词），其余项原样保留，
+    /// 再 passthrough 导出（不重编码）。这个容器要真的重写一遍，所以保留可播放性闸门。
+    private static func writeM4A(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
+        async -> CoverEmbedOutcome {
         let fm = FileManager.default
         let asset = AVURLAsset(url: fileURL)
         let existing = (try? await asset.load(.metadata)) ?? []
 
-        var hadArtwork = false
+        let replaced = replacedCommonKeys(fields)
+        var hadCover = false
         var items: [AVMetadataItem] = []
+        var sameAsWanted = true
+
         for item in existing {
             if isArtworkItem(item) {
-                hadArtwork = true
-                if let data = item.dataValue, data == cover { return .already }
+                hadCover = true
+                if let data = item.dataValue, let cover = fields.cover, data == cover {
+                    // 图一样，继续看文字项
+                } else {
+                    sameAsWanted = false
+                }
+                continue
+            }
+            if let key = item.key as? String, replaced.contains(key), item.keySpace == .common {
+                // 这一项我们要重写：顺便看看值是不是已经一样
+                if let want = wantedText(for: key, fields: fields),
+                   item.stringValue != want {
+                    sameAsWanted = false
+                }
                 continue
             }
             if let copy = mutableCopy(of: item) { items.append(copy) }
         }
+        if hadCover == false, fields.cover != nil { sameAsWanted = false }
+        if sameAsWanted { return .already }
 
-        let artwork = AVMutableMetadataItem()
-        artwork.keySpace = AVMetadataKeySpace.common
-        artwork.key = AVMetadataKey.commonKeyArtwork.rawValue as NSString
-        artwork.value = cover as NSData
-        // 不写 dataType 时部分非 Apple 播放器不认这张封面；按文件头标 JPEG/PNG
-        if cover.starts(with: [0xFF, 0xD8, 0xFF]) {
-            artwork.dataType = kCMMetadataBaseDataType_JPEG as String
-        } else if cover.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            artwork.dataType = kCMMetadataBaseDataType_PNG as String
+        // 文字项：空值不写（"缺这一项"比"写一个空字符串"友好）
+        func addText(_ key: AVMetadataKey, _ value: String) {
+            let text = value.replacingOccurrences(of: "\u{0000}", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            let item = AVMutableMetadataItem()
+            item.keySpace = AVMetadataKeySpace.common
+            item.key = key.rawValue as NSString
+            item.value = text as NSString
+            items.append(item)
         }
-        items.append(artwork)
+        addText(.commonKeyTitle, fields.title)
+        addText(.commonKeyArtist, fields.artist)
+        addText(.commonKeyAlbumName, fields.album)
+
+        if let cover = fields.cover, !cover.isEmpty {
+            let artwork = AVMutableMetadataItem()
+            artwork.keySpace = AVMetadataKeySpace.common
+            artwork.key = AVMetadataKey.commonKeyArtwork.rawValue as NSString
+            artwork.value = cover as NSData
+            // 不写 dataType 时部分非 Apple 播放器不认这张封面；按文件头标 JPEG/PNG
+            if cover.starts(with: [0xFF, 0xD8, 0xFF]) {
+                artwork.dataType = kCMMetadataBaseDataType_JPEG as String
+            } else if cover.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+                artwork.dataType = kCMMetadataBaseDataType_PNG as String
+            }
+            items.append(artwork)
+        }
+
+        if let lyrics = fields.lyrics,
+           !DownloadCompanion.ID3Tags.trim(lyrics).isEmpty {
+            let item = AVMutableMetadataItem()
+            item.keySpace = AVMetadataKeySpace.iTunes
+            item.key = AVMetadataKey.iTunesMetadataKeyLyrics.rawValue as NSString
+            item.value = DownloadCompanion.ID3Tags.trim(lyrics) as NSString
+            items.append(item)
+        }
 
         let tempURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent(".align-\(UUID().uuidString).m4a")
+            .appendingPathComponent(".tags-\(UUID().uuidString).m4a")
         defer { try? fm.removeItem(at: tempURL) }
 
         guard let session = AVAssetExportSession(asset: asset,
@@ -264,9 +307,38 @@ enum AudioTagEmbedder {
 
         do {
             _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
-            return hadArtwork ? .replaced : .added
+            return hadCover ? .replaced : .added
         } catch {
             return .failed
+        }
+    }
+
+    /// 这次要重写的 common 键（m4a）
+    private static func replacedCommonKeys(_ fields: DownloadCompanion.ID3Tags.Fields) -> Set<String> {
+        var keys: Set<String> = []
+        if !DownloadCompanion.ID3Tags.trim(fields.title).isEmpty {
+            keys.insert(AVMetadataKey.commonKeyTitle.rawValue)
+        }
+        if !DownloadCompanion.ID3Tags.trim(fields.artist).isEmpty {
+            keys.insert(AVMetadataKey.commonKeyArtist.rawValue)
+        }
+        if !DownloadCompanion.ID3Tags.trim(fields.album).isEmpty {
+            keys.insert(AVMetadataKey.commonKeyAlbumName.rawValue)
+        }
+        return keys
+    }
+
+    private static func wantedText(for key: String,
+                                   fields: DownloadCompanion.ID3Tags.Fields) -> String? {
+        switch key {
+        case AVMetadataKey.commonKeyTitle.rawValue:
+            return DownloadCompanion.ID3Tags.trim(fields.title)
+        case AVMetadataKey.commonKeyArtist.rawValue:
+            return DownloadCompanion.ID3Tags.trim(fields.artist)
+        case AVMetadataKey.commonKeyAlbumName.rawValue:
+            return DownloadCompanion.ID3Tags.trim(fields.album)
+        default:
+            return nil
         }
     }
 
@@ -287,7 +359,6 @@ enum AudioTagEmbedder {
         copy.dataType = item.dataType
         return copy
     }
-
     // MARK: - metadata 组装
 
     /// m4a 的 metadata：common 键（标题/歌手/专辑/封面）+ iTunes 歌词键。

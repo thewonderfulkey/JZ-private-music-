@@ -75,12 +75,12 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var importProgress: ImportProgress?
     /// 取消标记（导入循环每首检查一次）
     var importCancelled = false
-    /// 封面写回（把前端显示的封面写进音频文件）进度；nil = 没在跑
-    @Published var coverAlignProgress: CoverAlignProgress?
-    /// 最近一次封面写回的结果（列表页弹窗用，不静默吞）
-    @Published var lastCoverAlignReport: String?
-    /// 封面写回的取消标记（每首检查一次）
-    var coverAlignCancelled = false
+    /// 歌曲信息写回（歌名/歌手/专辑/封面/时长/歌词写进音频文件）进度；nil = 没在跑
+    @Published var songInfoWriteProgress: SongInfoWriteProgress?
+    /// 最近一次写回的结果（列表页弹窗用，不静默吞）
+    @Published var lastSongInfoWriteReport: String?
+    /// 写回的取消标记（每首检查一次）
+    var songInfoWriteCancelled = false
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -943,21 +943,44 @@ final class DownloadManager: NSObject, ObservableObject {
                                                        coverDirectory: coverDirectory)
 
         // ⑤ 内嵌：只有 m4a/mp3 有可靠写法
+        //
+        // 第 49 轮起先走**外科手术式**的 `writeTags`（只替换 TIT2/TPE1/TALB/TLEN/APIC/USLT，
+        // 文件里别的帧——年份/流派/音轨号——原样保留）；只有在它判"处理不了"（老 v2.2 标签、
+        // 带 unsynchronisation 等）时才退回老的"整条重建"（`embedMP3`/`embedM4A`）。
+        // 为什么要换：老路径会把不认识的帧一起抹掉，而老板刚点过「把歌曲信息写进音频文件」，
+        // 补料再抹一遍就等于白写。
         var embedded = false
         if lyricsText != nil || cover != nil,
            DownloadCompanion.canEmbed(extension: audioURL.pathExtension) {
-            switch audioURL.pathExtension.lowercased() {
-            case "m4a", "mp4":
-                embedded = await AudioTagEmbedder.embedM4A(
-                    fileURL: audioURL, title: working.name, artist: working.singer,
-                    album: working.album, coverData: coverData, lyrics: lyricsText ?? "")
-            case "mp3":
-                embedded = await AudioTagEmbedder.embedMP3(
-                    fileURL: audioURL, title: working.name, artist: working.singer,
-                    album: working.album, coverData: coverData,
-                    coverMime: cover?.mime ?? "image/jpeg", lyrics: lyricsText ?? "")
-            default:
+            var fields = DownloadCompanion.ID3Tags.Fields()
+            fields.title = working.name
+            fields.artist = working.singer
+            fields.album = working.album
+            fields.durationMs = Int((working.duration * 1000).rounded())
+            fields.cover = coverData
+            fields.coverMime = cover?.mime ?? "image/jpeg"
+            fields.lyrics = lyricsText
+            let outcome = await AudioTagEmbedder.writeTags(fileURL: audioURL, fields: fields)
+            switch outcome {
+            case .replaced, .added, .already:
+                embedded = true
+            case .unsupported:
                 embedded = false
+            case .failed:
+                // 外科手术式写不进去（老标签结构）：退回整条重建，至少把词和图写进去
+                switch audioURL.pathExtension.lowercased() {
+                case "m4a", "mp4":
+                    embedded = await AudioTagEmbedder.embedM4A(
+                        fileURL: audioURL, title: working.name, artist: working.singer,
+                        album: working.album, coverData: coverData, lyrics: lyricsText ?? "")
+                case "mp3":
+                    embedded = await AudioTagEmbedder.embedMP3(
+                        fileURL: audioURL, title: working.name, artist: working.singer,
+                        album: working.album, coverData: coverData,
+                        coverMime: cover?.mime ?? "image/jpeg", lyrics: lyricsText ?? "")
+                default:
+                    embedded = false
+                }
             }
         }
         sidecars.embedded = embedded
@@ -2433,59 +2456,64 @@ extension DownloadManager {
     }
 }
 
-// MARK: - 封面写回音频文件（第 48 轮，2026-11-22）
+// MARK: - 把歌曲信息写回音频文件（第 48/49 轮，2026-11-22）
 //
-// 老板原话：「我已经把导入的歌曲所有封面都替换内置了，那么本地的后台文件封面并没有和
-// 前端内置的对齐。我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲的封面，
-// 如果该歌曲后台文件中没有封面，那么直接添加进去并建联就行了。」
+// 老板两轮原话：
+//   · 「我已经把导入的歌曲所有封面都替换内置了，那么本地的后台文件封面并没有和前端内置的对齐。
+//      我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲的封面，如果该歌曲后台文件中
+//      没有封面，那么直接添加进去并建联就行了。」（11-22 00:17）
+//   · 「是否可以同时把封面、歌名、歌手、专辑还有音频信息一起通过这个按钮写入音频文件，
+//      直接改动音频本地文件的信息」（11-22 00:47）
 //
-// 现状（第 47 轮为止）是**两条各走各的路**：
+// 现状（第 47 轮为止）是两条各走各的路：
 //   · 前端显示读的是旁车 `Cover/<基名>.jpg`（`SongArtwork` 先读它，没有才走 picURL / 兜底链）；
-//   · 音频文件自己内嵌的封面只在「下载完成 / 补料取到图」时写过一次，
-//     老板后来在编辑页换的封面**只写了旁车** —— 文件里还是旧图，或者干脆没有；
-//   · 结果：把歌拷到别的播放器、或旁车丢了，封面就是老的/空的。这就是"没对齐"。
+//   · 音频文件自己的标签只在「下载完成 / 补料取到图」那一次写过 —— 之后老板在编辑页改的
+//     封面、歌名、歌手、专辑全都没进文件。歌拷到别的播放器，看到的就是旧的，甚至没有。
 //
-// 这一层给一条**对齐通道**，两件事一次做完：
+// 这一层给一条**写回通道**，一次写完：
 //   ① 旁车：哪首没有 `Cover/<基名>.jpg`，就用 song.picURL（→ `CoverResolver` 兜底链）下一张写进去（建联）；
-//   ② 内嵌：把这张图写进音频文件本身（mp3 只换 APIC 帧 / m4a 换 artwork 元数据）。
-// 只动封面：标题/歌手/专辑/歌词帧与音频字节全部原样（见 `DownloadCompanion.ID3Artwork`）。
+//   ② 内嵌：歌名 / 歌手 / 专辑 / 时长 / 封面 / 歌词 写进音频文件本身。
+// 只动这几帧，其它标签与音频字节全部原样（见 `DownloadCompanion.ID3Tags`）。
+//
+// 不写"码率 / 格式"：那不是标签，是从字节算出来的属性；硬塞进备注字段只会变成一行
+// 播放器里看不懂的文字。下载页那一行（`actualNote`）仍然负责显示它。
 extension DownloadManager {
 
-    /// 封面写回进度（后台写、主线程读）
-    struct CoverAlignProgress: Equatable {
+    /// 写回进度（后台写、主线程读）
+    struct SongInfoWriteProgress: Equatable {
         var done: Int
         var total: Int
         var name: String
     }
 
-    /// 一次封面写回的结果。"替换/新增/本来一致"必须分开算 —— 老板要能看出补进去了几张。
-    struct CoverAlignReport: Equatable {
+    /// 一次写回的结果。"替换/新增/本来一致"必须分开算 —— 老板要能看出补进去了几首。
+    struct SongInfoWriteReport: Equatable {
         var total = 0
         var replaced = 0
         var added = 0
         var already = 0
-        var noCover = 0
+        var empty = 0
         var unsupported = 0
         var failed = 0
         var cancelled = false
 
         var summary: String {
             var parts: [String] = []
-            if replaced > 0 { parts.append("替换 \(replaced)") }
+            if replaced > 0 { parts.append("改写 \(replaced)") }
             if added > 0 { parts.append("新增 \(added)") }
             if already > 0 { parts.append("本来一致 \(already)") }
-            if noCover > 0 { parts.append("没图 \(noCover)") }
+            if empty > 0 { parts.append("没信息可写 \(empty)") }
             if unsupported > 0 { parts.append("格式不支持 \(unsupported)") }
             if failed > 0 { parts.append("失败 \(failed)") }
-            let head = cancelled ? "已停止" : "封面已写回文件"
+            let head = cancelled ? "已停止" : "歌曲信息已写回文件"
             return parts.isEmpty ? "\(head)：没有可写的" : "\(head)：\(parts.joined(separator: " · "))"
         }
 
         /// 给弹窗用的一句补充（只有真有问题才提）
         var note: String? {
             var lines: [String] = []
-            if noCover > 0 {
-                lines.append("没图 \(noCover) 首：旁车和在线兜底都没取到封面（可以点「补全信息」再试一次）。")
+            if empty > 0 {
+                lines.append("没信息可写 \(empty) 首：既没有本地封面，也没取到在线封面（歌名/歌手仍会写入）。")
             }
             if unsupported > 0 {
                 lines.append("格式不支持 \(unsupported) 首：flac / wav / ogg 这类容器没有可靠写法，只写了旁车。")
@@ -2497,53 +2525,49 @@ extension DownloadManager {
         }
     }
 
-    private enum CoverAlignStep {
-        case replaced, added, already, noCover, unsupported, failed, cancelled
+    private enum SongInfoWriteStep {
+        case replaced, added, already, empty, unsupported, failed, cancelled
     }
 
-    /// 一次性把全部已完成（下载 / 导入）的歌对齐。返回要处理的条数（0 = 没有可处理的）。
+    /// 一次性把全部已完成（下载 / 导入）的歌写回。返回要处理的条数（0 = 没有可处理的）。
     ///
-    /// 并发 3：这是 IO + CPU（读整文件、写整文件），不是网络；4 会用同一个文件的读写抢带宽，
-    /// 再高在真机上只会更慢。`coverAlignProgress` 每完成一首刷新一次，界面据此显示进度。
+    /// 一拍 3 首：每首都要读整文件 + 写整文件，全丢进任务组等于把磁盘队列打满，真机只会更慢；
+    /// 分批还能每拍检查一次取消。`songInfoWriteProgress` 每完成一首刷新一次。
     @discardableResult
-    func alignAllCoverArtwork() -> Int {
+    func writeSongInfoToFiles() -> Int {
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in _ = self?.alignAllCoverArtwork() }
+            DispatchQueue.main.async { [weak self] in _ = self?.writeSongInfoToFiles() }
             return 0
         }
         let targets = items.filter { $0.status == .completed && $0.localPath != nil }
         guard !targets.isEmpty else {
-            lastCoverAlignReport = "还没有下载或导入的歌"
+            lastSongInfoWriteReport = "还没有下载或导入的歌"
             return 0
         }
-        coverAlignCancelled = false
-        lastCoverAlignReport = nil
-        coverAlignProgress = CoverAlignProgress(done: 0, total: targets.count, name: "")
-        CrashReporter.logMetadata("cover-align | 开始，\(targets.count) 首")
+        songInfoWriteCancelled = false
+        lastSongInfoWriteReport = nil
+        songInfoWriteProgress = SongInfoWriteProgress(done: 0, total: targets.count, name: "")
+        CrashReporter.logMetadata("song-info | 开始，\(targets.count) 首")
 
         Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
-            var report = CoverAlignReport()
+            var report = SongInfoWriteReport()
             report.total = targets.count
             var done = 0
-
-            // 一拍 3 首：`withTaskGroup` 每拍等齐再开下一拍。
-            // 为什么不一次把 662 首全丢进组：每首都要读+写整文件，全丢进去等于把磁盘队列打满，
-            // 真机上只会更慢，而且中途没有进度；分批还能每拍检查一次取消。
             let concurrency = 3
             var start = 0
             while start < targets.count {
-                if self.coverAlignCancelled {
+                if self.songInfoWriteCancelled {
                     report.cancelled = true
                     break
                 }
                 let end = min(start + concurrency, targets.count)
                 let chunk = Array(targets[start..<end])
-                await withTaskGroup(of: (CoverAlignStep, String).self) { group in
+                await withTaskGroup(of: (SongInfoWriteStep, String).self) { group in
                     for item in chunk {
                         group.addTask { [weak self] in
                             guard let self else { return (.cancelled, item.song.name) }
-                            return (await self.alignCoverStep(for: item), item.song.name)
+                            return (await self.writeSongInfoStep(for: item), item.song.name)
                         }
                     }
                     for await (step, name) in group {
@@ -2552,16 +2576,16 @@ extension DownloadManager {
                         case .replaced: report.replaced += 1
                         case .added: report.added += 1
                         case .already: report.already += 1
-                        case .noCover: report.noCover += 1
+                        case .empty: report.empty += 1
                         case .unsupported: report.unsupported += 1
                         case .failed: report.failed += 1
                         case .cancelled: report.cancelled = true
                         }
                         let snapshot = (done: done, total: targets.count, name: name)
                         await MainActor.run {
-                            self.coverAlignProgress = CoverAlignProgress(done: snapshot.done,
-                                                                         total: snapshot.total,
-                                                                         name: snapshot.name)
+                            self.songInfoWriteProgress = SongInfoWriteProgress(done: snapshot.done,
+                                                                               total: snapshot.total,
+                                                                               name: snapshot.name)
                         }
                     }
                 }
@@ -2569,10 +2593,10 @@ extension DownloadManager {
             }
 
             let summary = report.summary
-            CrashReporter.logMetadata("cover-align | 结束 → \(summary)")
+            CrashReporter.logMetadata("song-info | 结束 → \(summary)")
             await MainActor.run {
-                self.coverAlignProgress = nil
-                self.lastCoverAlignReport = [summary, report.note].compactMap { $0 }
+                self.songInfoWriteProgress = nil
+                self.lastSongInfoWriteReport = [summary, report.note].compactMap { $0 }
                     .joined(separator: "\n")
             }
         }
@@ -2580,30 +2604,30 @@ extension DownloadManager {
     }
 
     /// 停止（只停还没开始的；在飞的那几首会做完，避免半截文件）
-    func cancelCoverAlign() {
-        coverAlignCancelled = true
+    func cancelSongInfoWrite() {
+        songInfoWriteCancelled = true
     }
 
-    /// 单首对齐：老板在编辑页换完封面后立刻调，后台写回，不挡界面。
-    func alignCoverArtwork(for song: Song) {
+    /// 单首写回：老板在编辑页保存后立刻调，后台写，不挡界面。
+    func writeSongInfo(for song: Song) {
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.alignCoverArtwork(for: song) }
+            DispatchQueue.main.async { [weak self] in self?.writeSongInfo(for: song) }
             return
         }
         guard let item = items.first(where: { $0.song.id == song.id }) else { return }
         Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
-            let step = await self.alignCoverStep(for: item)
-            CrashReporter.logMetadata("cover-align | \(song.name) | \(step)")
+            let step = await self.writeSongInfoStep(for: item)
+            CrashReporter.logMetadata("song-info | \(song.name) | \(step)")
         }
     }
 
-    /// 单首：取"前端显示的那张图" → 写回文件。失败只影响这一首。
-    private func alignCoverStep(for item: DownloadItem) async -> CoverAlignStep {
-        if coverAlignCancelled { return .cancelled }
-        guard let path = item.localPath, !path.isEmpty else { return .noCover }
+    /// 单首：取"前端显示的那一套" → 写回文件。失败只影响这一首。
+    private func writeSongInfoStep(for item: DownloadItem) async -> SongInfoWriteStep {
+        if songInfoWriteCancelled { return .cancelled }
+        guard let path = item.localPath, !path.isEmpty else { return .empty }
         let audio = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: path) else { return .noCover }
+        guard FileManager.default.fileExists(atPath: path) else { return .empty }
 
         // ① 旁车优先（和 `SongArtwork` 同一条口径：前端看到的是它就先对齐它）
         var cover = DownloadCompanion.readCover(from: audio, in: [coverDirectory])
@@ -2625,11 +2649,6 @@ extension DownloadManager {
                 cover = compact
             }
         }
-
-        guard let bytes = cover, !bytes.isEmpty else { return .noCover }
-
-        let outcome = await AudioTagEmbedder.alignArtwork(fileURL: audio, coverData: bytes,
-                                                          coverMime: Self.mimeType(forCover: bytes))
         // 新写进去的旁车要立刻能被列表看到（目录索引 + 封面代次）
         if wroteSidecar {
             await MainActor.run {
@@ -2637,6 +2656,19 @@ extension DownloadManager {
                 _ = MetadataWriter.coverLanded(item.song)
             }
         }
+
+        // ③ 字段：以**前端显示的这一套**为准（歌名/歌手/专辑是 Song 上的值，封面是刚定下来的那张）
+        var fields = DownloadCompanion.ID3Tags.Fields()
+        fields.title = item.song.name
+        fields.artist = item.song.singer
+        fields.album = item.song.album
+        fields.durationMs = Int((item.song.duration * 1000).rounded())
+        fields.cover = cover
+        fields.coverMime = Self.mimeType(forCover: cover ?? Data())
+        fields.lyrics = Self.sidecarLyricsText(for: audio, in: lyricsDirectory)
+        guard !fields.isEmpty else { return .empty }
+
+        let outcome = await AudioTagEmbedder.writeTags(fileURL: audio, fields: fields)
         switch outcome {
         case .replaced: return .replaced
         case .added: return .added
@@ -2644,6 +2676,20 @@ extension DownloadManager {
         case .unsupported: return .unsupported
         case .failed: return .failed
         }
+    }
+
+    /// 旁车歌词原文（`Lyrics/<基名>.lrc`，旧版在音频同目录）。没有 → nil（= 不动文件里已有的词）。
+    static func sidecarLyricsText(for audio: URL, in directory: URL) -> String? {
+        let base = DownloadCompanion.baseName(for: audio)
+        var candidates = [DownloadCompanion.lyricsURL(in: directory, baseName: base)]
+        candidates.append(DownloadCompanion.legacyLyricsURL(for: audio))
+        for url in candidates {
+            guard let data = try? Data(contentsOf: url), !data.isEmpty,
+                  let text = String(data: data, encoding: .utf8),
+                  !DownloadCompanion.ID3Tags.trim(text).isEmpty else { continue }
+            return text
+        }
+        return nil
     }
 
     /// 封面字节 → MIME（只给 mp3 的 APIC 帧用；旁车文件名固定 .jpg，播放端按内容解码）

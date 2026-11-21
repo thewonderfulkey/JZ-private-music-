@@ -310,35 +310,51 @@ enum DownloadCompanion {
         }
     }
 
-    // MARK: - 只换封面（内嵌封面替换 / 追加）
+    // MARK: - 把歌曲信息写进音频文件（ID3v2.3 / v2.4）
     //
-    // 老板 2026-11-22 原话：「我已经把导入的歌曲所有封面都替换内置了，那么本地的后台文件
-    // 封面并没有和前端内置的对齐，我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲
-    // 的封面，如果该歌曲后台文件中没有封面那么直接添加进去并建联就行了。」
+    // 老板 2026-11-22（两轮原话）：
+    //   · 「本地的后台文件封面并没有和前端内置的对齐……自动把内置的封面下载下来替换原有文件中
+    //      该歌曲的封面，如果该歌曲后台文件中没有封面那么直接添加进去并建联」；
+    //   · 「是否可以同时把封面、歌名、歌手、专辑还有音频信息一起通过这个按钮写入音频文件，
+    //      直接改动音频本地文件的信息」。
     //
-    // 这一步的立场是「**只动封面那一帧**」：
-    //   · 除 APIC 以外的帧（TIT2 / TPE1 / TALB / USLT…）原样搬 → 别人写的字段、内嵌歌词一个不丢；
-    //   · 音频体（标签之后的所有字节）**一个字节不改** → "能不能放"这件事天然不变；
-    //   · 无法安全解析（v2.2 / 带 unsynchronisation / 扩展头 / footer / 帧长度越界）→ 返回 nil，
-    //     调用方保持原文件不动。宁可不换封面，也不写坏一首能放的歌。
+    // 所以这一层从"只换封面"扩成"写全套字段"，但三条底线不变：
+    //   · **只动我们认识的那几帧**（TIT2 歌名 / TPE1 歌手 / TALB 专辑 / TLEN 时长 / APIC 封面 /
+    //     USLT 歌词），其余帧原样搬 —— 别人写的年份/流派/音轨号/版权一个不丢；
+    //   · 音频体（标签之后的所有字节）**一个字节不改** → "能不能放"天然不变；
+    //   · 无法安全解析（v2.2 / unsynchronisation / 扩展头 / footer / 帧长度越界）→ 返回 nil，
+    //     调用方保持原文件不动。宁可少写一条信息，也不写坏一首能放的歌。
     //
-    // 为什么不复用上面 `id3Tag(...)` 整条重建：那条路只写 TIT2/TPE1/TALB/APIC/USLT，
-    // 这次若只取到封面、没取到词，文件里原有的 USLT 就被顺手抹掉了（"对齐封面"不该删歌词）。
-    enum ID3Artwork {
+    // 编码口径（不写清楚就会出乱码）：
+    //   · v2.4 → 文本一律 UTF-8（0x03）；
+    //   · v2.3 → 纯 ASCII 用 ISO-8859-1（0x00）；**含中文一律 UTF-16 + BOM（0x01，FF FE）**。
+    //     v2.3 标准里没有 UTF-8，拿 0x03 硬写，部分播放器会把中文显示成方块。
+    enum ID3Tags {
 
-        /// 文件里已内嵌的第一张封面（优先 front cover，type = 3）。
-        /// 只用于「这张图和前端那张是不是同一张」：相同就跳过重写，662 首里能省多少省多少。
-        static func image(inFileData data: Data) -> Data? {
-            guard let tag = tagInfo(data) else { return nil }
-            let bytes = [UInt8](data)
-            guard let list = frames(bytes, tag: tag) else { return nil }
-            var fallback: Data?
-            for frame in list where frame.id == "APIC" {
-                guard let parsed = parseAPIC(bytes, body: frame.body) else { continue }
-                if parsed.type == 3 { return Data(bytes[parsed.image]) }
-                if fallback == nil { fallback = Data(bytes[parsed.image]) }
+        /// 要写进文件的字段。**空字符串 / nil = "这一项不动"**，不是"清空这一项"——
+        /// 清空比缺字段更难恢复（一首歌的歌名被抹掉，就只剩文件名了）。
+        struct Fields: Equatable {
+            var title = ""
+            var artist = ""
+            var album = ""
+            /// 时长（毫秒）。0 = 不写 TLEN。
+            var durationMs = 0
+            /// 封面。nil = 不动文件里已有的封面。
+            var cover: Data?
+            var coverMime = "image/jpeg"
+            /// 歌词。nil = 不动文件里已有的歌词；给了（非空）就替换。
+            var lyrics: String?
+
+            var isEmpty: Bool {
+                ID3Tags.trim(title).isEmpty && ID3Tags.trim(artist).isEmpty
+                    && ID3Tags.trim(album).isEmpty && durationMs <= 0
+                    && (cover?.isEmpty ?? true) && ID3Tags.trim(lyrics ?? "").isEmpty
             }
-            return fallback
+        }
+
+        /// 文件里已内嵌的第一张封面（优先 front cover，type = 3）；没有 → nil。
+        static func image(inFileData data: Data) -> Data? {
+            reading(inFileData: data).cover
         }
 
         /// 有没有内嵌封面（"替换"和"新增"要分开计数，老板要能看出到底补进去了几张）
@@ -346,18 +362,71 @@ enum DownloadCompanion {
             image(inFileData: data) != nil
         }
 
-        /// 把封面替换 / 追加进文件，返回**完整的新文件字节**；无法安全处理 → nil。
-        static func replacing(inFileData data: Data, cover: Data, mime: String) -> Data? {
-            guard !cover.isEmpty else { return nil }
+        /// 把文件里现有的字段读出来（歌名/歌手/专辑/时长/封面/歌词）。
+        /// 用途只有一个：判断"文件里已经是这样了"就不用重写，662 首能省多少 IO 省多少。
+        static func reading(inFileData data: Data) -> Fields {
+            var out = Fields()
+            guard let tag = tagInfo(data) else { return out }
+            let bytes = [UInt8](data)
+            guard let list = frames(bytes, tag: tag) else { return out }
+            var coverFallback: Data?
+            for frame in list {
+                switch frame.id {
+                case "TIT2":
+                    if out.title.isEmpty, let s = parseText(bytes, body: frame.body) { out.title = s }
+                case "TPE1":
+                    if out.artist.isEmpty, let s = parseText(bytes, body: frame.body) { out.artist = s }
+                case "TALB":
+                    if out.album.isEmpty, let s = parseText(bytes, body: frame.body) { out.album = s }
+                case "TLEN":
+                    if out.durationMs == 0, let s = parseText(bytes, body: frame.body),
+                       let ms = Int(s.trimmingCharacters(in: .whitespaces)) { out.durationMs = ms }
+                case "USLT":
+                    if out.lyrics == nil, let s = parseUSLT(bytes, body: frame.body) { out.lyrics = s }
+                case "APIC":
+                    guard let parsed = parseAPIC(bytes, body: frame.body) else { continue }
+                    if parsed.type == 3 {
+                        out.cover = Data(bytes[parsed.image])
+                    } else if coverFallback == nil {
+                        coverFallback = Data(bytes[parsed.image])
+                    }
+                default:
+                    break
+                }
+            }
+            if out.cover == nil { out.cover = coverFallback }
+            return out
+        }
+
+        /// 文件里是不是**已经就是要写的这一套**（只比对传进来的非空项）。
+        static func matches(_ want: Fields, inFileData data: Data) -> Bool {
+            let have = reading(inFileData: data)
+            if !trim(want.title).isEmpty, trim(have.title) != trim(want.title) { return false }
+            if !trim(want.artist).isEmpty, trim(have.artist) != trim(want.artist) { return false }
+            if !trim(want.album).isEmpty, trim(have.album) != trim(want.album) { return false }
+            // 时长差 ≤1.5s 当同一首（时长来自标签/容器，各家算法差几百毫秒很正常）
+            if want.durationMs > 0, abs(have.durationMs - want.durationMs) > 1_500 { return false }
+            if let cover = want.cover, !cover.isEmpty, have.cover != cover { return false }
+            if !trim(want.lyrics ?? "").isEmpty, trim(have.lyrics ?? "") != trim(want.lyrics ?? "") {
+                return false
+            }
+            return true
+        }
+
+        /// 写整套字段，返回**完整的新文件字节**；无法安全处理 → nil。
+        static func rewriting(inFileData data: Data, fields want: Fields) -> Data? {
+            guard !want.isEmpty else { return nil }
+            let replace = replacedIDs(want)
 
             guard let tag = tagInfo(data) else {
-                // 没有 ID3v2 标签 → 造一条只含 APIC 的 v2.4 标签前置，音频体原样跟在后面。
+                // 没有 ID3v2 标签 → 造一条新的 v2.4 标签前置，音频体原样跟在后面。
                 // 但"开头是 ID3 却解析不了"（v2.2 / unsync / 长度越界）不能走这条路：
                 // 那会在旧标签前面再糊一条新标签，两个标签叠着，解码方读哪个都不算错。
                 guard !startsWithID3(data) else { return nil }
-                let frame = apicFrame(cover: cover, mime: mime, version: 4)
-                var out = tagHeader(version: 4, framesLength: frame.count)
-                out.append(frame)
+                let frames = newFrames(want, version: 4)
+                guard !frames.isEmpty else { return nil }
+                var out = tagHeader(version: 4, framesLength: frames.count)
+                out.append(frames)
                 out.append(data)
                 return out
             }
@@ -365,10 +434,11 @@ enum DownloadCompanion {
             let bytes = [UInt8](data)
             guard let list = frames(bytes, tag: tag) else { return nil }
             var kept = Data()
-            for frame in list where frame.id != "APIC" && frame.id != "PIC" {
+            for frame in list where !replace.contains(frame.id) {
                 kept.append(data.subdata(in: frame.start..<frame.end))
             }
-            kept.append(apicFrame(cover: cover, mime: mime, version: tag.version))
+            kept.append(newFrames(want, version: tag.version))
+            guard !kept.isEmpty else { return nil }
 
             var out = tagHeader(version: tag.version, framesLength: kept.count)
             out.append(kept)
@@ -391,7 +461,7 @@ enum DownloadCompanion {
             var body: Range<Int> { (start + 10)..<end }
         }
 
-        private static func startsWithID3(_ data: Data) -> Bool {
+        static func startsWithID3(_ data: Data) -> Bool {
             guard data.count >= 3 else { return false }
             let head = [UInt8](data.prefix(3))
             return head[0] == 0x49 && head[1] == 0x44 && head[2] == 0x33
@@ -455,6 +525,66 @@ enum DownloadCompanion {
                 | Int(bytes[index + 3] & 0x7F)
         }
 
+        // MARK: 读帧体
+
+        /// 文本帧体：编码 1B + 文本（UTF-16 可能带 BOM）
+        private static func parseText(_ bytes: [UInt8], body: Range<Int>) -> String? {
+            guard body.lowerBound < body.upperBound else { return nil }
+            let encoding = bytes[body.lowerBound]
+            return decode(bytes, encoding: encoding,
+                          from: body.lowerBound + 1, to: body.upperBound)
+        }
+
+        /// USLT 帧体：编码 1B + 语言 3B + 描述（0 结尾）+ 歌词正文
+        private static func parseUSLT(_ bytes: [UInt8], body: Range<Int>) -> String? {
+            var i = body.lowerBound
+            guard i + 4 <= body.upperBound else { return nil }
+            let encoding = bytes[i]
+            i += 4
+            if encoding == 1 || encoding == 2 {
+                // UTF-16 描述：双字节对齐找 0x00 0x00
+                while i + 1 < body.upperBound {
+                    if bytes[i] == 0x00, bytes[i + 1] == 0x00 { i += 2; break }
+                    i += 2
+                }
+            } else {
+                while i < body.upperBound, bytes[i] != 0x00 { i += 1 }
+                guard i < body.upperBound else { return nil }
+                i += 1
+            }
+            guard i < body.upperBound else { return nil }
+            return decode(bytes, encoding: encoding, from: i, to: body.upperBound)
+        }
+
+        /// 按 ID3 的四种编码解出字符串；解不出 → nil（调用方当"没有这一项"）
+        private static func decode(_ bytes: [UInt8], encoding: UInt8,
+                                   from start: Int, to end: Int) -> String? {
+            guard start < end else { return nil }
+            var content = Array(bytes[start..<end])
+            switch encoding {
+            case 0: // ISO-8859-1
+                while let last = content.last, last == 0x00 { content.removeLast() }
+                return String(bytes: content, encoding: .isoLatin1)
+            case 1, 2: // UTF-16（可能带 BOM）
+                while content.count >= 2,
+                      content[content.count - 1] == 0x00, content[content.count - 2] == 0x00 {
+                    content.removeLast(2)
+                }
+                if content.count >= 2, content[0] == 0xFF, content[1] == 0xFE {
+                    return String(bytes: content.dropFirst(2), encoding: .utf16LittleEndian)
+                }
+                if content.count >= 2, content[0] == 0xFE, content[1] == 0xFF {
+                    return String(bytes: content.dropFirst(2), encoding: .utf16BigEndian)
+                }
+                return String(bytes: content, encoding: .utf16LittleEndian)
+            case 3: // UTF-8
+                while let last = content.last, last == 0x00 { content.removeLast() }
+                return String(bytes: content, encoding: .utf8)
+            default:
+                return nil
+            }
+        }
+
         /// APIC 帧体 → (图片类型, 图片字节范围)
         /// 帧体布局：编码 1B + MIME\0 + 图片类型 1B + 描述\0 + 图片
         private static func parseAPIC(_ bytes: [UInt8], body: Range<Int>)
@@ -485,6 +615,92 @@ enum DownloadCompanion {
         }
 
         // MARK: 生成
+
+        /// 这一套字段里哪几个帧要**替换**（其余帧一律原样保留）
+        private static func replacedIDs(_ want: Fields) -> Set<String> {
+            var ids: Set<String> = []
+            if !trim(want.title).isEmpty { ids.insert("TIT2") }
+            if !trim(want.artist).isEmpty { ids.insert("TPE1") }
+            if !trim(want.album).isEmpty { ids.insert("TALB") }
+            if want.durationMs > 0 { ids.insert("TLEN") }
+            if let cover = want.cover, !cover.isEmpty {
+                ids.insert("APIC")
+                ids.insert("PIC") // v2.2 的封面帧名（虽然 v2.2 整体不处理，这里仍按"旧封面"对待）
+            }
+            if !trim(want.lyrics ?? "").isEmpty { ids.insert("USLT") }
+            return ids
+        }
+
+        private static func newFrames(_ want: Fields, version: UInt8) -> Data {
+            var out = Data()
+            let texts: [(String, String)] = [("TIT2", want.title),
+                                             ("TPE1", want.artist),
+                                             ("TALB", want.album)]
+            for (id, raw) in texts where !trim(raw).isEmpty {
+                out.append(frameWith(id, textPayload(trim(raw), version: version), version: version))
+            }
+            if want.durationMs > 0 {
+                out.append(frameWith("TLEN", textPayload(String(want.durationMs), version: version),
+                                     version: version))
+            }
+            if let cover = want.cover, !cover.isEmpty {
+                out.append(apicFrame(cover: cover, mime: want.coverMime, version: version))
+            }
+            if let lyrics = want.lyrics, !trim(lyrics).isEmpty {
+                out.append(usltFrame(lyrics, version: version))
+            }
+            return out
+        }
+
+        /// 文本帧体：v2.4 用 UTF-8；v2.3 纯 ASCII 用 latin1，含中文用 UTF-16 + BOM
+        private static func textPayload(_ text: String, version: UInt8) -> Data {
+            if version >= 4 {
+                var payload = Data([0x03])
+                payload.append(contentsOf: Array(text.utf8))
+                return payload
+            }
+            if text.unicodeScalars.allSatisfy({ $0.value < 0x80 }) {
+                var payload = Data([0x00])
+                payload.append(contentsOf: Array(text.utf8))
+                return payload
+            }
+            return utf16Payload(text)
+        }
+
+        /// UTF-16（小端 + BOM）+ 编码字节 0x01
+        private static func utf16Payload(_ text: String) -> Data {
+            var payload = Data([0x01, 0xFF, 0xFE])
+            for unit in text.utf16 {
+                payload.append(UInt8(truncatingIfNeeded: unit))
+                payload.append(UInt8(truncatingIfNeeded: unit >> 8))
+            }
+            return payload
+        }
+
+        /// 歌词帧（USLT）：编码 + 语言 "zho" + 空描述 + 正文
+        private static func usltFrame(_ lyrics: String, version: UInt8) -> Data {
+            var payload: Data
+            if version >= 4 {
+                payload = Data([0x03])
+            } else if lyrics.unicodeScalars.allSatisfy({ $0.value < 0x80 }) {
+                payload = Data([0x00])
+            } else {
+                payload = Data([0x01])
+            }
+            payload.append(contentsOf: Array("zho".utf8))
+            if payload[0] == 0x01 {
+                // UTF-16 的空描述也要两个 0 字节；正文再带一次 BOM
+                payload.append(contentsOf: [0x00, 0x00, 0xFF, 0xFE])
+                for unit in lyrics.utf16 {
+                    payload.append(UInt8(truncatingIfNeeded: unit))
+                    payload.append(UInt8(truncatingIfNeeded: unit >> 8))
+                }
+            } else {
+                payload.append(0x00)
+                payload.append(contentsOf: Array(lyrics.utf8))
+            }
+            return frameWith("USLT", payload, version: version)
+        }
 
         private static func apicFrame(cover: Data, mime: String, version: UInt8) -> Data {
             // v2.3 的标准里没有 UTF-8（只有 0/1），但这里描述是空串 —— 用 0x00 就完全合规；
@@ -522,7 +738,14 @@ enum DownloadCompanion {
             head.append(contentsOf: syncsafe(framesLength))
             return head
         }
+
+        /// 字段清洗：NUL 会截断文本帧；首尾空白去掉（中间换行保留 —— 歌词需要）
+        static func trim(_ raw: String) -> String {
+            raw.replacingOccurrences(of: "\u{0000}", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
+
 
     // MARK: - ID3 内部
 

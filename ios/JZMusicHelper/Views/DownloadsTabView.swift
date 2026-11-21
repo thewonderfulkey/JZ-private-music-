@@ -29,8 +29,8 @@ struct DownloadsTabView: View {
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
     @State private var showDedupeConfirm = false
-    /// 第 48 轮：封面写回音频文件（老板：前台封面换了，文件里还是旧的，要对齐）
-    @State private var showCoverAlignConfirm = false
+    /// 第 48/49 轮：把歌曲信息写回音频文件（老板：前台换了封面/信息，文件里还是旧的，要对齐）
+    @State private var showSongInfoWriteConfirm = false
     /// 导入面板（内置浏览器；不经过系统选择器）
     @State private var showImportBrowser = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
@@ -81,8 +81,8 @@ struct DownloadsTabView: View {
         downloads.items.reduce(0) { $0 + $1.totalBytes }
     }
 
-    /// 封面写回会被处理到的条数（确认弹窗里先告诉老板"要动多少首"）
-    private var coverAlignTargets: Int {
+    /// 写回会被处理到的条数（确认弹窗里先告诉老板"要动多少首"）
+    private var songInfoWriteTargets: Int {
         downloads.items.filter { $0.status == .completed && $0.localPath != nil }.count
     }
 
@@ -146,17 +146,19 @@ struct DownloadsTabView: View {
             }
             Button("取消", role: .cancel) {}
         }
-        // 第 48 轮：封面写回（老板："本地的后台文件封面并没有和前端内置的对齐"）
-        .confirmationDialog("把现在显示的封面写进音频文件？",
-                            isPresented: $showCoverAlignConfirm, titleVisibility: .visible) {
+        // 第 48/49 轮：把歌曲信息写回音频文件（老板："本地的后台文件封面并没有和前端内置的对齐"，
+        // 随后又问"能不能封面、歌名、歌手、专辑还有音频信息一起写进文件"）
+        .confirmationDialog("把现在显示的歌曲信息写进音频文件？",
+                            isPresented: $showSongInfoWriteConfirm, titleVisibility: .visible) {
             Button("开始写回") {
-                let n = downloads.alignAllCoverArtwork()
+                let n = downloads.writeSongInfoToFiles()
                 if n == 0 { flash("没有可写回的歌") }
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将处理 \(coverAlignTargets) 首。只换封面：歌名/歌手/专辑/内嵌歌词和音频本身"
-                 + "一个字节都不动；文件里已经有同一张图的会跳过，没有封面的会补进去。")
+            Text("将处理 \(songInfoWriteTargets) 首：歌名 / 歌手 / 专辑 / 时长 / 封面 / 歌词"
+                 + "一起写进音频文件本身（别的标签和音频本身一个字节都不动）。"
+                 + "文件里已经是这一套的会跳过；没有封面的会顺便补上 Cover 旁车。")
         }
         .confirmationDialog("删除选中的 \(picked.count) 首？",
                             isPresented: $showBatchDeleteConfirm, titleVisibility: .visible) {
@@ -222,11 +224,12 @@ struct DownloadsTabView: View {
             }
             .disabled(gaps.isClear)
             Divider()
-            // 第 48 轮：封面写回音频文件（不是"补全"，是把**已经显示出来的那张图**写进文件本身）
+            // 第 48/49 轮：把**前端显示的这一套**写进文件本身。
+            // 和上面「补全信息」不是一回事：那个是联网去**取**，这个是**把已有的写进文件**。
             Button {
-                showCoverAlignConfirm = true
+                showSongInfoWriteConfirm = true
             } label: {
-                Label("把封面写进音频文件（对齐内置封面）",
+                Label("把歌曲信息写进音频文件（封面/歌名/歌手/专辑）",
                       systemImage: "square.and.arrow.down.on.square")
             }
         } label: {
@@ -316,15 +319,15 @@ struct DownloadsTabView: View {
         }
     }
 
-    /// 封面写回进度（第 48 轮）。662 首要写几分钟，**必须有进度**，
+    /// 歌曲信息写回进度（第 48/49 轮）。662 首要写几分钟，**必须有进度**，
     /// 否则老板会以为"点了没反应"，中途划走 App 也会被系统挂起。
     @ViewBuilder
-    private var coverAlignBanner: some View {
-        if let p = downloads.coverAlignProgress {
+    private var songInfoWriteBanner: some View {
+        if let p = downloads.songInfoWriteProgress {
             HStack(spacing: Tokens.Spacing.xs) {
                 ProgressView().scaleEffect(0.8)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("正在写回封面 \(min(p.done + 1, p.total))/\(p.total)")
+                    Text("正在写回歌曲信息 \(min(p.done + 1, p.total))/\(p.total)")
                         .font(.footnote.weight(.semibold))
                     Text(p.name)
                         .font(.caption2)
@@ -332,7 +335,7 @@ struct DownloadsTabView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Button("停止") { downloads.cancelCoverAlign() }
+                Button("停止") { downloads.cancelSongInfoWrite() }
                     .font(.footnote)
                     .buttonStyle(.press)
             }
@@ -366,7 +369,7 @@ struct DownloadsTabView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
 
-                coverAlignBanner
+                songInfoWriteBanner
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -473,13 +476,13 @@ struct DownloadsTabView: View {
                 }
             }
             .locateToast(locator.toast)
-            // 第 48 轮：封面写回的结果（替换/新增/本来一致/没图/格式不支持/失败，一项都不许吞）
-            .alert("封面写回", isPresented: Binding(
-                get: { downloads.lastCoverAlignReport != nil },
-                set: { if !$0 { downloads.lastCoverAlignReport = nil } })) {
-                Button("好") { downloads.lastCoverAlignReport = nil }
+            // 第 48/49 轮：写回的结果（改写/新增/本来一致/没信息可写/格式不支持/失败，一项都不许吞）
+            .alert("歌曲信息写回", isPresented: Binding(
+                get: { downloads.lastSongInfoWriteReport != nil },
+                set: { if !$0 { downloads.lastSongInfoWriteReport = nil } })) {
+                Button("好") { downloads.lastSongInfoWriteReport = nil }
             } message: {
-                Text(downloads.lastCoverAlignReport ?? "")
+                Text(downloads.lastSongInfoWriteReport ?? "")
             }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
