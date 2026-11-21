@@ -26,8 +26,6 @@ struct DownloadsTabView: View {
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
     @State private var showImporter = false
-    /// 导入/整理共用**一个** alert（同一视图挂多个 alert 会互相吞事件）
-    @State private var importAlert: String?
     @State private var showDedupeConfirm = false
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -73,17 +71,17 @@ struct DownloadsTabView: View {
             }
         }
         .alert("导入", isPresented: Binding(
-            get: { importAlert != nil },
-            set: { if !$0 { importAlert = nil } })) {
-            Button("好") { importAlert = nil }
+            get: { downloads.lastImportReport != nil },
+            set: { if !$0 { downloads.lastImportReport = nil } })) {
+            Button("好") { downloads.lastImportReport = nil }
         } message: {
-            Text(importAlert ?? "")
+            Text(downloads.lastImportReport ?? "")
         }
         .confirmationDialog("把同一首歌的多条合成一条？（只留音质更好的）",
                             isPresented: $showDedupeConfirm, titleVisibility: .visible) {
             Button("整理", role: .destructive) {
                 let r = downloads.dedupeSameRecording()
-                importAlert = r.merged == 0
+                downloads.lastImportReport = r.merged == 0
                     ? "没有需要整理的重复"
                     : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
             }
@@ -121,9 +119,9 @@ struct DownloadsTabView: View {
     /// 真正开始导入：**必须 detached**（哈希/复制是重活，放主线程会把选择器与界面卡死）
     private func startImport(_ urls: [URL]) {
         downloads.importCancelled = false
+        // 结果由 `DownloadManager.lastImportReport` 发布（View 的 @State 在 detached 里写不回去）
         Task.detached(priority: .userInitiated) {
-            let report = await downloads.importAudioFiles(urls)
-            await MainActor.run { importAlert = report.detail }
+            _ = await downloads.importAudioFiles(urls)
         }
     }
 

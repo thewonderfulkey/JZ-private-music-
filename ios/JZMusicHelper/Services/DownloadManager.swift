@@ -24,6 +24,9 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 主线程发布：下载列表
     @Published var items: [DownloadItem] = []
     @Published var backgroundTaskCount: Int = 0
+    /// 最近一次导入的结果（挂在 manager 上，而不是 View 的 @State —— 否则
+    /// 从 Task.detached 里写不回去，用户看不到任何提示）
+    @Published var lastImportReport: String?
     /// 导入进度（nil = 没在导入）。后台写、主线程读。
     @Published var importProgress: ImportProgress?
     /// 取消标记（导入循环每首检查一次）
@@ -871,6 +874,13 @@ enum CrashReporter {
 
         log("app launched · v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
 
+        // SIGABRT 的具体断言文本只写在 stderr（CoreAudio/AVFoundation 的 Assertion failed 都走这里）。
+        // 把它重定向到 `诊断/stderr.log`，下次复现就能看到原文。
+        let errPath = directory().appendingPathComponent("stderr.log").path
+        if let cPath = errPath.cString(using: .utf8) {
+            freopen(cPath, "a", stderr)
+        }
+
         // 信号崩溃取证：预创建 4 个文件各留一个 fd，handler 里只 write 一个字节
         // （Swift 的越界/断言是 SIGTRAP，NSException 收不到 —— life.log 已证明不是内存问题）
         for (sig, name) in [(SIGTRAP, "signal-TRAP.log"), (SIGSEGV, "signal-SEGV.log"),
@@ -911,6 +921,13 @@ enum CrashReporter {
     // MARK: - trace 落盘（播放动作的"最后遗言"）
 
     private static let traceQueue = DispatchQueue(label: "com.jz.diagnostics.trace", qos: .utility)
+
+    /// 导入时被拒/被改名的文件：记"文件名 + 前 16 字节"，用来判断对方 App 的容器格式
+    /// （例如 Light Player 的 `.lexClip` —— 是改名 m4a 还是加密容器，一看便知）
+    static func logImportSniff(_ name: String, head: Data, verdict: String) {
+        let hex = head.map { String(format: "%02x", $0) }.joined(separator: " ")
+        append("\(stamp()) \(name) | \(hex) | \(verdict)\n", to: "import-sniff.log")
+    }
 
     /// 把 PlaybackTrace 的每一行写到 `诊断/trace.log`（崩了内存里那 200 条会一起消失）
     static func trace(_ line: String) {
@@ -1013,7 +1030,12 @@ extension DownloadManager {
         var detail: String {
             var lines: [String] = [summary]
             if !unsupported.isEmpty {
-                lines.append("不支持的格式（iOS 放不了）：" + unsupported.prefix(6).joined(separator: "、"))
+                let exts = Set(unsupported.map { ($0 as NSString).pathExtension.lowercased() })
+                    .filter { !$0.isEmpty }.sorted()
+                let extText = exts.isEmpty ? "未知" : exts.joined(separator: "/")
+                lines.append("不支持：\(unsupported.count) 个文件（格式 \(extText)）")
+                lines.append("如果这是别的音乐 App 自己的容器（例如 Light Player 的 .lexClip），里面通常是加密的，本 App 无法直接导入。")
+                lines.append(unsupported.prefix(5).joined(separator: "、"))
             }
             if !failed.isEmpty {
                 lines.append("读取失败：" + failed.prefix(6).joined(separator: "、"))
@@ -1029,6 +1051,7 @@ extension DownloadManager {
     /// 系统文件选择器的「打开」回调没人处理，表现为"点多少次都没反应"。
     func importAudioFiles(_ urls: [URL]) async -> ImportReport {
         var report = ImportReport()
+        await MainActor.run { self.lastImportReport = nil }
         let musicDir = musicDirectory
         try? FileManager.default.createDirectory(at: musicDir, withIntermediateDirectories: true)
 
@@ -1064,9 +1087,14 @@ extension DownloadManager {
                 var ext = url.pathExtension.lowercased()
                 // 未知扩展名：按**文件内容**嗅探（对方 App 可能只是把 .flac/.m4a 改了名）
                 if !ImportRules.isPlayable(extension: ext) {
+                    let head = Self.headBytes(of: url, count: 16) ?? Data()
                     if let sniffed = Self.sniffAudioExtension(of: url) {
+                        CrashReporter.logImportSniff(url.lastPathComponent, head: head,
+                                                     verdict: "嗅探成 \(sniffed)，按该扩展名导入")
                         ext = sniffed
                     } else {
+                        CrashReporter.logImportSniff(url.lastPathComponent, head: head,
+                                                     verdict: "不认识（判为不支持）")
                         report.unsupported.append(url.lastPathComponent)
                         done += 1
                         continue
@@ -1173,7 +1201,10 @@ extension DownloadManager {
             }
         }
 
-        await MainActor.run { self.importProgress = nil }
+        await MainActor.run {
+            self.importProgress = nil
+            self.lastImportReport = report.detail
+        }
         return report
     }
 
@@ -1182,6 +1213,13 @@ extension DownloadManager {
         var done: Int
         var total: Int
         var name: String
+    }
+
+    /// 读文件前 N 字节（给导入嗅探日志用）
+    static func headBytes(of url: URL, count: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: count)) ?? nil
     }
 
     /// 未知扩展名按文件头嗅探（只为"对方 App 改了后缀"的情况）
@@ -1343,6 +1381,13 @@ private func jzUncaughtExceptionHandler(_ ex: NSException) {
 
 // MARK: - 信号取证用的全局（文件级：C 函数指针不能捕获上下文）
 
+/// 预分配的栈缓冲（信号上下文里不能 malloc）
+private let gFrames: UnsafeMutablePointer<UnsafeMutableRawPointer?>? = {
+    let p = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 64)
+    p.initialize(repeating: nil, count: 64)
+    return p
+}()
+
 private var gFDtrap: Int32 = -1
 private var gFDsegv: Int32 = -1
 private var gFDabrt: Int32 = -1
@@ -1359,6 +1404,11 @@ private func jzSignalHandler(_ sig: Int32) {
     if fd >= 0 {
         var byte: UInt8 = 0x31
         _ = withUnsafePointer(to: &byte) { write(fd, $0, 1) }
+        // 栈也写进同一个文件（backtrace_symbols_fd 是异步信号安全的）
+        if let frames = gFrames {
+            let n = backtrace(frames, Int32(64))
+            backtrace_symbols_fd(frames, n, fd)
+        }
     }
     signal(sig, SIG_DFL)
     raise(sig)

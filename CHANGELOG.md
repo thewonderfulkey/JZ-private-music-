@@ -1,3 +1,38 @@
+## iOS v2.4.44（222）· 2026-11-21 下午（SIGABRT 取证补齐 + 连点保护 + 导入原因可解释）
+
+### 一、闪退：抓到信号了 —— **SIGABRT**
+
+`诊断/signal-ABRT.log` 有内容（TRAP/SEGV/BUS 全空），`life.log` 显示 12:27:36 启动 → 12:29:18 重新启动，
+中间**没有 `→ background`、没有 `crash-*.log`**，内存峰值 174MB。→ 不是内存、不是 ObjC 异常，是 **C 层 abort/断言**。
+
+`trace.log` 里崩前动作：**1 秒内连点 6 首**（`goTo →23/101/87/16/117/52`），每点一次 = 后台任务拆装 + 换 AVPlayerItem
++ 取消/重建歌词任务；随后播了 19 秒，进程消失。SIGABRT 的具体断言文本只写 **stderr**，所以上一版拿不到。
+
+**这版补齐取证 + 消除触发条件**
+1. **stderr 重定向**到 `诊断/stderr.log`（`freopen`）—— CoreAudio/AVFoundation 的 `Assertion failed: …` 会原样落盘；
+2. **信号处理器补栈**：预分配 64 帧缓冲，`backtrace` + `backtrace_symbols_fd`（异步信号安全）写进 `signal-*.log`；
+3. **后台任务复用**：`beginResolveBackgroundTask` 已有任务就复用，不再每次 `end/begin` 拆装；
+4. 切歌链路保持原有代次校验（迟到的 resolve 会被丢弃，不写状态）。
+
+### 二、导入：`.lexClip` 是对方 App 的容器，且"没反应"是我们自己的 bug
+
+录屏里对方目录的文件名全是 `…lexClip` —— Light Player 自己的封装格式，不是标准音频；
+我们的嗅探（`fLaC/ID3/ftyp/RIFF`）认不出来 → 全部判"不支持"。
+
+更关键的是**提示根本没弹**：上一版把结果写进 `Task.detached` 里的 View `@State`（值拷贝，写不回去）。
+
+**这版**
+1. 导入结果挂到 `DownloadManager.@Published lastImportReport`，**一定弹提示**；
+2. 提示里写清楚：多少个文件、什么格式、并说明"别的 App 的容器（如 `.lexClip`）通常是加密的，本 App 无法直接导入"；
+3. 新增 `诊断/import-sniff.log`：每个被拒/被嗅探的文件记 `文件名 + 前 16 字节十六进制 + 判定`——
+   下次一导就知道 `.lexClip` 到底是"改名 m4a"还是"加密容器"（后者按约定只提示、不硬导）。
+
+### 断言
+
+本地 mini **66/66**；全量编译通过。
+
+---
+
 ## iOS v2.4.43（221）· 2026-11-21 中午（去重转人工审核 + 下载页排版 + 导入换系统选择器 + 崩溃取证）
 
 ### 出包（v2.4.43 / 221）

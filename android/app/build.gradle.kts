@@ -12,8 +12,8 @@ android {
         applicationId = "com.jz.musichelper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 221
-        versionName = "2.4.43"
+        versionCode = 222
+        versionName = "2.4.44"
     }
 
     buildTypes {

@@ -708,6 +708,12 @@ final class PlayerEngine {
     /// `beginBackgroundTask` 给的是定时长的豁免（这里 30 秒），足够覆盖"一次完整排名 + 跨源补位"。
     /// 结束必须配对 `endResolveBackgroundTask`，否则到期会被系统强杀。
     private func beginResolveBackgroundTask() {
+        // 连点时不要 end/begin 反复拆装（2026-11-21 SIGABRT 的触发条件之一：
+        // 1 秒内 6 次 goTo = 6 次后台任务拆装 + 6 次换 item）。已经有就复用。
+        if resolveBackgroundTask != .invalid {
+            PlaybackTrace.shared.log("后台任务", "复用")
+            return
+        }
         endResolveBackgroundTask()
         resolveBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "jz-resolve-next") { [weak self] in
             // 到期回调：系统马上要收走执行权，必须自己先结束，不然进程会被强杀
