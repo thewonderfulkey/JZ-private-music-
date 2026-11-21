@@ -54,6 +54,21 @@ enum CompanionState: String, Codable {
 }
 
 // MARK: - 下载条目
+/// 文件内标签与列表是否一致（第 51 轮 A 方案：让"谁说了算"和"现在对不对"都能看见）
+///
+/// 判断标准只有一条：**音频文件里现在写的这一套，和列表上显示的这一套一不一样**。
+/// 旁车（Cover/Lyrics）只是缓存 —— 有旁车但文件里没写进去，仍然是"没对齐"。
+enum SongFileState: String, Codable {
+    /// 文件里的歌名/歌手/专辑/封面/歌词 都和列表一致
+    case inSync
+    /// 文件里不一致，或者文件里没有封面/歌词，只有旁车
+    case sidecarOnly
+    /// 连旁车都没有（既没图也没词，文件里还缺）
+    case missing
+    /// 这个容器写不了标签（wav / ape / ogg…），只能靠旁车
+    case unsupported
+}
+
 struct DownloadItem: Identifiable, Codable, Hashable {
     let id: UUID
     /// 元数据可改（第 44 轮：自动匹配 / 手动编辑都要写回）。
@@ -98,6 +113,9 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var companionReason: String?
     /// 0.6–0.85 的"待确认"候选：不自动写，等用户在看编辑页时点「采用」
     var matchSuggest: Song?
+    /// 第 51 轮 A 方案：文件内标签与列表是否一致（nil = 还没检查过）。
+    /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
+    var fileState: SongFileState?
 
     init(id: UUID = UUID(),
          song: Song,
@@ -122,7 +140,8 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          companionAttempts: Int? = nil,
          companionNextAt: Date? = nil,
          companionReason: String? = nil,
-         matchSuggest: Song? = nil) {
+         matchSuggest: Song? = nil,
+         fileState: SongFileState? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -147,6 +166,7 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.companionNextAt = companionNextAt
         self.companionReason = companionReason
         self.matchSuggest = matchSuggest
+        self.fileState = fileState
     }
 
     var progressText: String {

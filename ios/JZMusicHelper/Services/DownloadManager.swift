@@ -81,6 +81,10 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var lastSongInfoWriteReport: String?
     /// 写回的取消标记（每首检查一次）
     var songInfoWriteCancelled = false
+    /// 对齐检查（文件里 vs 列表上）进度；nil = 没在跑
+    @Published var fileStateScanProgress: SongInfoWriteProgress?
+    /// 最近一次对齐检查的结果（列表页弹窗用）
+    @Published var lastFileStateReport: String?
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -2602,6 +2606,7 @@ extension DownloadManager {
             CrashReporter.logMetadata("song-info | 结束 → \(summary) | \(folders)")
             await MainActor.run {
                 self.songInfoWriteProgress = nil
+                self.persist()
                 self.lastSongInfoWriteReport = [summary, folders, report.note].compactMap { $0 }
                     .joined(separator: "\n")
             }
@@ -2675,6 +2680,23 @@ extension DownloadManager {
         guard !fields.isEmpty else { return .empty }
 
         let outcome = await AudioTagEmbedder.writeTags(fileURL: audio, fields: fields)
+        // A 方案：写成功就把"文件已对齐"记下来（列表上的小圆点立刻变绿）
+        switch outcome {
+        case .replaced, .added, .already:
+            await MainActor.run {
+                if let idx = self.items.firstIndex(where: { $0.id == item.id }) {
+                    self.items[idx].fileState = .inSync
+                }
+            }
+        case .unsupported:
+            await MainActor.run {
+                if let idx = self.items.firstIndex(where: { $0.id == item.id }) {
+                    self.items[idx].fileState = .unsupported
+                }
+            }
+        case .failed:
+            break
+        }
         switch outcome {
         case .replaced: return .replaced
         case .added: return .added
@@ -2701,6 +2723,100 @@ extension DownloadManager {
     /// 目录里的文件数（写回结果里报一句，免得老板对着三个数字猜）
     static func fileCount(in directory: URL) -> Int {
         (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?.count ?? 0
+    }
+
+    // MARK: - A 方案：文件是真相（检查 + 单首读文件）
+
+    /// 从文件里读出这一首现在的标签（编辑页的「文件里现在是…」用它）
+    func readFileFields(for item: DownloadItem) async -> DownloadCompanion.ID3Tags.Fields? {
+        guard let path = item.localPath, !path.isEmpty else { return nil }
+        return await AudioTagEmbedder.readFields(fileURL: URL(fileURLWithPath: path))
+    }
+
+    /// 一首歌"文件里 vs 列表上"的结论（只读，不写文件）
+    func fileState(for item: DownloadItem) async -> SongFileState {
+        guard let path = item.localPath, !path.isEmpty else { return .missing }
+        let audio = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path) else { return .missing }
+        guard DownloadCompanion.canEmbed(extension: audio.pathExtension) else { return .unsupported }
+        let fields = await AudioTagEmbedder.readFields(fileURL: audio)
+            ?? DownloadCompanion.ID3Tags.Fields()
+        let hasCover = Self.coverPath(forAudio: audio, coverDirectory: coverDirectory) != nil
+        let hasLyrics = Self.sidecarLyricsText(for: audio, in: lyricsDirectory) != nil
+        return DownloadCompanion.FileTruth.state(file: fields, song: item.song,
+                                                 hasCoverSidecar: hasCover,
+                                                 hasLyricsSidecar: hasLyrics)
+    }
+
+    /// 全库算一遍对齐状态，结果写进记录（`fileState`）—— 列表行的小圆点读它。
+    /// **只读文件，不写任何音频**：这是"看得见"的那一半；写回是另一个按钮。
+    @discardableResult
+    func scanFileStates() -> Int {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in _ = self?.scanFileStates() }
+            return 0
+        }
+        let targets = items.filter { $0.status == .completed && $0.localPath != nil }
+        guard !targets.isEmpty else {
+            lastFileStateReport = "还没有下载或导入的歌"
+            return 0
+        }
+        lastFileStateReport = nil
+        fileStateScanProgress = SongInfoWriteProgress(done: 0, total: targets.count, name: "")
+        CrashReporter.logMetadata("file-state | 开始检查，\(targets.count) 首")
+
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var counts: [SongFileState: Int] = [:]
+            var results: [(UUID, SongFileState)] = []
+            var done = 0
+            let concurrency = 4
+            var start = 0
+            while start < targets.count {
+                let end = min(start + concurrency, targets.count)
+                let chunk = Array(targets[start..<end])
+                await withTaskGroup(of: (UUID, SongFileState, String).self) { group in
+                    for item in chunk {
+                        group.addTask { [weak self] in
+                            guard let self else { return (item.id, SongFileState.missing, item.song.name) }
+                            return (item.id, await self.fileState(for: item), item.song.name)
+                        }
+                    }
+                    for await (id, state, name) in group {
+                        done += 1
+                        results.append((id, state))
+                        counts[state, default: 0] += 1
+                        let snapshot = (done: done, total: targets.count, name: name)
+                        await MainActor.run {
+                            self.fileStateScanProgress = SongInfoWriteProgress(done: snapshot.done,
+                                                                               total: snapshot.total,
+                                                                               name: snapshot.name)
+                        }
+                    }
+                }
+                start = end
+            }
+
+            let inSync = counts[.inSync] ?? 0
+            let sidecar = counts[.sidecarOnly] ?? 0
+            let missing = counts[.missing] ?? 0
+            let unsupported = counts[.unsupported] ?? 0
+            let summary = "对齐检查（\(targets.count) 首）：文件已对齐 \(inSync)"
+                + " · 只在旁车 \(sidecar) · 没封面 \(missing) · 容器不支持 \(unsupported)"
+            CrashReporter.logMetadata("file-state | 结束 → \(summary)")
+            await MainActor.run {
+                for (id, state) in results {
+                    if let idx = self.items.firstIndex(where: { $0.id == id }) {
+                        self.items[idx].fileState = state
+                    }
+                }
+                self.persist()
+                self.fileStateScanProgress = nil
+                self.lastFileStateReport = summary + "\n"
+                    + "绿点=文件里已经是这一套；灰点=只有旁车；橙点=连图都没有。"
+            }
+        }
+        return targets.count
     }
 
     /// 封面字节 → MIME（只给 mp3 的 APIC 帧用；旁车文件名固定 .jpg，播放端按内容解码）

@@ -33,6 +33,10 @@ struct SongMetadataEditor: View {
     @State private var busy = false
     @State private var message: String?
     @State private var suggestion: Song?
+    /// 第 51 轮 A 方案：从**音频文件里读出来**的那一套（文件是真相，列表只是显示）
+    @State private var fileFields: DownloadCompanion.ID3Tags.Fields?
+    /// 文件读不出来（容器不支持 / 读失败）时置 true，界面上直说"读不了"
+    @State private var fileUnreadable = false
 
     var body: some View {
         NavigationStack {
@@ -105,6 +109,10 @@ struct SongMetadataEditor: View {
                     }
                 }
 
+                // 第 51 轮 A 方案：把"文件里现在到底是什么"摊出来。
+                // 以前这里只有一个输入框，改了以后要猜"文件里有没有跟着变" —— 现在直接对照着看。
+                fileTruthSection
+
                 Section {
                     Button {
                         Task { await runRematch(force: true) }
@@ -156,6 +164,7 @@ struct SongMetadataEditor: View {
             }
             .overlay { if busy { ProgressView().controlSize(.large) } }
             .task(id: photo?.itemIdentifier) { await loadPickedPhoto() }
+            .task { await loadFileTruth() }
             .onAppear {
                 name = item.song.name
                 singer = item.song.singer
@@ -184,6 +193,83 @@ struct SongMetadataEditor: View {
     private var fileName: String {
         guard let path = item.localPath, !path.isEmpty else { return "（还没有本地文件）" }
         return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    // MARK: 文件里现在是（第 51 轮 A 方案）
+
+    /// 只读展示**音频文件里**现有的标签，并提供「以文件为准」。
+    /// 为什么要有这一块：以前这里只有输入框，改完保存只能靠"相信"写回成功；
+    /// 现在文件里的值和列表上的值并排放着，不一致一眼就能看见。
+    @ViewBuilder
+    private var fileTruthSection: some View {
+        Section {
+            if fileUnreadable {
+                Text("这个容器读不出标签（wav / ape / ogg 之类），文件里写了什么只能靠 Cover / Lyrics 旁车。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if let f = fileFields {
+                LabeledContent("歌名", value: f.title.isEmpty ? "（空）" : f.title)
+                LabeledContent("歌手", value: f.artist.isEmpty ? "（空）" : f.artist)
+                LabeledContent("专辑", value: f.album.isEmpty ? "（空）" : f.album)
+                LabeledContent("封面", value: (f.cover?.isEmpty == false) ? "已内嵌" : "没有")
+                LabeledContent("歌词", value: (f.lyrics?.isEmpty == false) ? "已内嵌" : "没有")
+                Button("以文件为准（覆盖列表）") { adoptFileTruth(f) }
+            } else {
+                HStack(spacing: Tokens.Spacing.xs) {
+                    ProgressView().scaleEffect(0.8)
+                    Text("正在读文件里的标签…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("文件里现在是")
+        } footer: {
+            Text("A 方案：音频文件里的标签是真相，列表只是显示。「以文件为准」会用上面的值覆盖列表，"
+                 + "并把文件里的封面/歌词同步成 Cover / Lyrics 旁车（旁车只是缓存）。空着的项不会清空列表。")
+        }
+    }
+
+    @MainActor
+    private func loadFileTruth() async {
+        guard let path = item.localPath, !path.isEmpty else {
+            fileUnreadable = true
+            return
+        }
+        if let fields = await AudioTagEmbedder.readFields(fileURL: URL(fileURLWithPath: path)) {
+            fileFields = fields
+        } else {
+            fileUnreadable = true
+        }
+    }
+
+    /// 用文件里的值覆盖列表（A 方案："以文件为准"这条路必须真的存在，不能只是口号）
+    @MainActor
+    private func adoptFileTruth(_ f: DownloadCompanion.ID3Tags.Fields) {
+        var edited = MetadataMatcher.applyingManualEdit(
+            to: item.song,
+            name: f.title.isEmpty ? item.song.name : f.title,
+            singer: f.artist.isEmpty ? item.song.singer : f.artist,
+            album: f.album.isEmpty ? item.song.album : f.album,
+            cover: nil)
+        var coverSynced = false
+        if let path = item.localPath, !path.isEmpty {
+            let audio = URL(fileURLWithPath: path)
+            let sidecars = DownloadCompanion.writeSidecars(
+                audio: audio,
+                lyricsText: (f.lyrics?.isEmpty == false) ? f.lyrics : nil,
+                coverData: (f.cover?.isEmpty == false) ? f.cover : nil,
+                lyricsDirectory: DownloadManager.shared.lyricsDirectory,
+                coverDirectory: DownloadManager.shared.coverDirectory)
+            coverSynced = sidecars.coverURL != nil
+        }
+        if coverSynced {
+            edited = MetadataWriter.coverChanged(edited, picURL: nil)
+        } else {
+            MetadataWriter.apply(edited)
+        }
+        onSaved("已按文件里的信息更新列表")
+        dismiss()
     }
 
     // MARK: 相册

@@ -1110,6 +1110,55 @@ enum DownloadCompanion {
         }
     }
 
+    // MARK: - 对齐判定（A 方案：文件里那一套 vs 列表上那一套）
+    //
+    // 老板 2026-11-22 拍板 A 方案后，第一条就是"谁说了算"：
+    //   **音频文件里的标签是真相，旁车（Cover/Lyrics）只是 App 的读取缓存。**
+    // 这条判定是"现在到底对不对"的唯一口径 —— 纯函数，CI 里钉死断言，
+    // 界面上的那个小圆点、编辑页里的"文件里现在是…"、以及批量检查的计数，全都走它。
+    enum FileTruth {
+
+        /// - Parameters:
+        ///   - file: 从音频文件里**读出来**的那一套（不是我们想写的）
+        ///   - song: 列表上显示的那一套
+        ///   - hasCoverSidecar: `Cover/<基名>.jpg` 在不在
+        ///   - hasLyricsSidecar: `Lyrics/<基名>.lrc` 在不在
+        static func state(file: ID3Tags.Fields, song: Song,
+                          hasCoverSidecar: Bool, hasLyricsSidecar: Bool) -> SongFileState {
+            let wantTitle = ID3Tags.trim(song.name)
+            let wantArtist = ID3Tags.trim(song.singer)
+            let wantAlbum = ID3Tags.trim(song.album)
+            let fileTitle = ID3Tags.trim(file.title)
+            let fileArtist = ID3Tags.trim(file.artist)
+            let fileAlbum = ID3Tags.trim(file.album)
+
+            // ① 文字对不对（空值不参与比较：列表没有专辑时，文件里空着不算错）
+            if !wantTitle.isEmpty, fileTitle != wantTitle { return .sidecarOnly }
+            if !wantArtist.isEmpty, fileArtist != wantArtist { return .sidecarOnly }
+            if !wantAlbum.isEmpty, fileAlbum != wantAlbum { return .sidecarOnly }
+
+            // ② 图对不对：文件里没有图 → 只有旁车（旁车也没有才是真"没有"）
+            let hasFileCover = !(file.cover?.isEmpty ?? true)
+            if !hasFileCover { return hasCoverSidecar ? .sidecarOnly : .missing }
+
+            // ③ 词：旁车有词、文件里没写进去 → 仍然算没对齐
+            let hasFileLyrics = !ID3Tags.trim(file.lyrics ?? "").isEmpty
+            if hasLyricsSidecar && !hasFileLyrics { return .sidecarOnly }
+
+            return .inSync
+        }
+
+        /// 一句话说明（界面/弹窗直接用，别再各写一套文案）
+        static func label(_ state: SongFileState) -> String {
+            switch state {
+            case .inSync: return "文件已对齐"
+            case .sidecarOnly: return "只在旁车"
+            case .missing: return "没有封面"
+            case .unsupported: return "容器不支持"
+            }
+        }
+    }
+
     // MARK: - ID3 内部
 
     private static func addTextFrame(_ id: String, _ value: String, to frames: inout Data) {

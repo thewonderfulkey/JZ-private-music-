@@ -86,6 +86,19 @@ struct DownloadsTabView: View {
         downloads.items.filter { $0.status == .completed && $0.localPath != nil }.count
     }
 
+    /// 同一时刻只弹一个结果框（写回 / 对齐检查），谁先到弹谁 —— 两个 `.alert` 挂同一个视图
+    /// 在 SwiftUI 里会互相打架，所以这里合成一个。
+    private var activeReport: (title: String, message: String)? {
+        if let text = downloads.lastFileStateReport { return ("文件对齐检查", text) }
+        if let text = downloads.lastSongInfoWriteReport { return ("歌曲信息写回", text) }
+        return nil
+    }
+
+    private func clearReports() {
+        downloads.lastFileStateReport = nil
+        downloads.lastSongInfoWriteReport = nil
+    }
+
     /// 这一帧真正要建的行（第 41 轮 P0-2）。顺序/预算口径见 `DownloadListPaging`。
     /// 顺手在这里打 t2（body 首次求值一定先算它）—— 见 `PerfProbe`。
     private var paged: DownloadPageSlices {
@@ -224,7 +237,15 @@ struct DownloadsTabView: View {
             }
             .disabled(gaps.isClear)
             Divider()
-            // 第 48/49 轮：把**前端显示的这一套**写进文件本身。
+            // 第 51 轮 A 方案：只读检查（不写文件），给每行算出"文件里 vs 列表上"的小圆点
+            Button {
+                let n = downloads.scanFileStates()
+                flash(n == 0 ? "没有可检查的歌" : "开始检查 \(n) 首…")
+            } label: {
+                Label("检查文件对齐（封面/标签/歌词）", systemImage: "doc.text.magnifyingglass")
+            }
+            Divider()
+            // 第 48/49 轮：把**列表上显示的这一套**写进音频文件本身。
             // 和上面「补全信息」不是一回事：那个是联网去**取**，这个是**把已有的写进文件**。
             Button {
                 showSongInfoWriteConfirm = true
@@ -319,32 +340,43 @@ struct DownloadsTabView: View {
         }
     }
 
-    /// 歌曲信息写回进度（第 48/49 轮）。662 首要写几分钟，**必须有进度**，
-    /// 否则老板会以为"点了没反应"，中途划走 App 也会被系统挂起。
+    /// 写回 / 对齐检查的进度条（第 48/49 轮 + 第 51 轮）。662 首要跑几十秒到几分钟，
+    /// **必须有进度**，否则老板会以为"点了没反应"，中途划走 App 也会被系统挂起。
     @ViewBuilder
     private var songInfoWriteBanner: some View {
         if let p = downloads.songInfoWriteProgress {
-            HStack(spacing: Tokens.Spacing.xs) {
-                ProgressView().scaleEffect(0.8)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("正在写回歌曲信息 \(min(p.done + 1, p.total))/\(p.total)")
-                        .font(.footnote.weight(.semibold))
-                    Text(p.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Button("停止") { downloads.cancelSongInfoWrite() }
+            writeProgressRow(title: "正在写回歌曲信息", progress: p,
+                             onStop: { downloads.cancelSongInfoWrite() })
+        } else if let p = downloads.fileStateScanProgress {
+            writeProgressRow(title: "正在检查文件对齐", progress: p, onStop: nil)
+        }
+    }
+
+    private func writeProgressRow(title: String,
+                                  progress p: DownloadManager.SongInfoWriteProgress,
+                                  onStop: (() -> Void)?) -> some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            ProgressView().scaleEffect(0.8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(title) \(min(p.done + 1, p.total))/\(p.total)")
+                    .font(.footnote.weight(.semibold))
+                Text(p.name)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let onStop {
+                Button("停止", action: onStop)
                     .font(.footnote)
                     .buttonStyle(.press)
             }
-            .padding(.horizontal, Tokens.Spacing.pageMargin)
-            .padding(.vertical, Tokens.Spacing.xs)
-            .listRowInsets(EdgeInsets())
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
         }
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.vertical, Tokens.Spacing.xs)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     /// 真正开始导入：**必须 detached**（哈希/复制是重活，放主线程会把选择器与界面卡死）
@@ -476,13 +508,13 @@ struct DownloadsTabView: View {
                 }
             }
             .locateToast(locator.toast)
-            // 第 48/49 轮：写回的结果（改写/新增/本来一致/没信息可写/格式不支持/失败，一项都不许吞）
-            .alert("歌曲信息写回", isPresented: Binding(
-                get: { downloads.lastSongInfoWriteReport != nil },
-                set: { if !$0 { downloads.lastSongInfoWriteReport = nil } })) {
-                Button("好") { downloads.lastSongInfoWriteReport = nil }
+            // 第 48/49 轮：写回结果；第 51 轮：对齐检查结果也走这一个框（一项都不许吞）
+            .alert(activeReport?.title ?? "结果", isPresented: Binding(
+                get: { activeReport != nil },
+                set: { if !$0 { clearReports() } })) {
+                Button("好") { clearReports() }
             } message: {
-                Text(downloads.lastSongInfoWriteReport ?? "")
+                Text(activeReport?.message ?? "")
             }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
@@ -1015,11 +1047,17 @@ private struct DownloadRow: View {
             Spacer(minLength: Tokens.Spacing.xs)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(item.song.durationText)
-                    .font(FontRole.metadata)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .frame(minWidth: 36, alignment: .trailing)
+                HStack(spacing: 3) {
+                    // 第 51 轮 A 方案：文件里的标签与列表是否一致（点它之前先「检查文件对齐」）
+                    if let state = item.fileState {
+                        FileStateDot(state: state)
+                    }
+                    Text(item.song.durationText)
+                        .font(FontRole.metadata)
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                        .frame(minWidth: 36, alignment: .trailing)
+                }
                 Text(qualityLine)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -1033,6 +1071,31 @@ private struct DownloadRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .onAppear { PerfProbe.firstRow("downloads") }
+    }
+}
+
+/// 文件对齐状态的小圆点（第 51 轮 A 方案）。
+///
+/// 只做一件事：把 `SongFileState` 变成一个**不用解释**的视觉信号 ——
+/// 绿 = 文件里已经是这一套、灰 = 只有旁车、橙 = 连图都没有、淡灰点 = 这个容器写不了标签。
+/// 文案在无障碍标签里（VoiceOver 会读"文件已对齐 / 只在旁车…"）。
+private struct FileStateDot: View {
+    let state: SongFileState
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .accessibilityLabel(DownloadCompanion.FileTruth.label(state))
+    }
+
+    private var color: Color {
+        switch state {
+        case .inSync: return Color.green.opacity(0.85)
+        case .sidecarOnly: return Color.secondary.opacity(0.55)
+        case .missing: return Color.orange.opacity(0.9)
+        case .unsupported: return Color.secondary.opacity(0.25)
+        }
     }
 }
 

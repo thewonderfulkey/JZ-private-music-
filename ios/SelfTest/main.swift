@@ -2219,9 +2219,12 @@ do {
           && DownloadCompanion.canEmbed(extension: "mp3")
           && DownloadCompanion.canEmbed(extension: "MP4")
           && DownloadCompanion.canEmbed(extension: ".mp3"))
-    check("只能写旁车的容器：flac/ogg/wav",
-          !DownloadCompanion.canEmbed(extension: "flac")
-          && !DownloadCompanion.canEmbed(extension: "ogg")
+    // 第 50 轮起 flac 也能写（Vorbis Comment + PICTURE），这条口径跟着改
+    check("flac 也是能内嵌的容器",
+          DownloadCompanion.canEmbed(extension: "flac")
+          && DownloadCompanion.canEmbed(extension: "FLAC"))
+    check("只能写旁车的容器：ogg/wav",
+          !DownloadCompanion.canEmbed(extension: "ogg")
           && !DownloadCompanion.canEmbed(extension: "wav"))
 
     // 旧下载记录（downloads.json 没有 companionsNote 键）必须仍能解码
@@ -4819,6 +4822,66 @@ do {
     check("FLAC 空字段 → 不写",
           DownloadCompanion.FlacTags.rewriting(inFileData: flac,
                                                fields: DownloadCompanion.ID3Tags.Fields()) == nil)
+}
+
+// MARK: - 第 51 轮 A 方案：对齐判定（文件里 vs 列表上）
+//
+// 老板 2026-11-22："继续按 A 方案往下走"。A 方案第一条：**音频文件里的标签是真相**，
+// 旁车（Cover/Lyrics）只是 App 的读取缓存。这条判定是界面上那个小圆点、
+// 编辑页"文件里现在是…"、以及批量检查计数的唯一口径。
+
+section("对齐判定：文件里 vs 列表上（第 51 轮 A 方案）")
+
+do {
+    let target = song(.local, "晴天", "周杰伦", album: "叶惠美")
+    let cover = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array(repeating: 0x22, count: 32))
+
+    var good = DownloadCompanion.ID3Tags.Fields()
+    good.title = "晴天"
+    good.artist = "周杰伦"
+    good.album = "叶惠美"
+    good.cover = cover
+
+    check("文件里文字+封面都对、没有旁车词 → 已对齐",
+          DownloadCompanion.FileTruth.state(file: good, song: target,
+                                            hasCoverSidecar: true,
+                                            hasLyricsSidecar: false) == .inSync)
+
+    var noCover = good
+    noCover.cover = nil
+    check("文件里没封面、旁车有 → 只在旁车",
+          DownloadCompanion.FileTruth.state(file: noCover, song: target,
+                                            hasCoverSidecar: true,
+                                            hasLyricsSidecar: false) == .sidecarOnly)
+    check("文件里没封面、旁车也没有 → 没封面",
+          DownloadCompanion.FileTruth.state(file: noCover, song: target,
+                                            hasCoverSidecar: false,
+                                            hasLyricsSidecar: false) == .missing)
+
+    var wrongTitle = good
+    wrongTitle.title = "旧歌名"
+    check("文件里的歌名是旧的 → 只在旁车（没对齐）",
+          DownloadCompanion.FileTruth.state(file: wrongTitle, song: target,
+                                            hasCoverSidecar: true,
+                                            hasLyricsSidecar: false) == .sidecarOnly)
+
+    check("旁车有词、文件里没词 → 只在旁车",
+          DownloadCompanion.FileTruth.state(file: good, song: target,
+                                            hasCoverSidecar: true,
+                                            hasLyricsSidecar: true) == .sidecarOnly)
+
+    var withLyrics = good
+    withLyrics.lyrics = "[00:01.00]故事的小黄花"
+    check("文件里词也写了 → 已对齐",
+          DownloadCompanion.FileTruth.state(file: withLyrics, song: target,
+                                            hasCoverSidecar: true,
+                                            hasLyricsSidecar: true) == .inSync)
+
+    check("四种状态都有中文说明",
+          !DownloadCompanion.FileTruth.label(.inSync).isEmpty
+          && !DownloadCompanion.FileTruth.label(.sidecarOnly).isEmpty
+          && !DownloadCompanion.FileTruth.label(.missing).isEmpty
+          && !DownloadCompanion.FileTruth.label(.unsupported).isEmpty)
 }
 
 // MARK: - 汇总

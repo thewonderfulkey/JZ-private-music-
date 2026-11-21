@@ -255,6 +255,55 @@ enum AudioTagEmbedder {
         }
     }
 
+    /// 从文件里**读**出那一套字段（A 方案：文件是真相）。
+    /// 读不出 / 容器不支持 → nil（调用方当"文件里没有可用标签"处理，不要去写）。
+    static func readFields(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        switch fileURL.pathExtension.lowercased() {
+        case "mp3":
+            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { return nil }
+            return DownloadCompanion.ID3Tags.reading(inFileData: data)
+        case "flac":
+            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else { return nil }
+            return DownloadCompanion.FlacTags.reading(inFileData: data)
+        case "m4a", "mp4":
+            return await readM4A(fileURL: fileURL)
+        default:
+            return nil
+        }
+    }
+
+    private static func readM4A(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
+        let asset = AVURLAsset(url: fileURL)
+        guard let items = try? await asset.load(.metadata) else { return nil }
+        var out = DownloadCompanion.ID3Tags.Fields()
+        for item in items {
+            if isArtworkItem(item) {
+                if out.cover == nil, let data = item.dataValue, !data.isEmpty { out.cover = data }
+                continue
+            }
+            let key = item.key as? String
+            if item.keySpace == .common, let key {
+                switch key {
+                case AVMetadataKey.commonKeyTitle.rawValue:
+                    if let text = item.stringValue, out.title.isEmpty { out.title = text }
+                case AVMetadataKey.commonKeyArtist.rawValue:
+                    if let text = item.stringValue, out.artist.isEmpty { out.artist = text }
+                case AVMetadataKey.commonKeyAlbumName.rawValue:
+                    if let text = item.stringValue, out.album.isEmpty { out.album = text }
+                default:
+                    break
+                }
+                continue
+            }
+            if item.keySpace == .iTunes, key == AVMetadataKey.iTunesMetadataKeyLyrics.rawValue,
+               let text = item.stringValue, !text.isEmpty {
+                out.lyrics = text
+            }
+        }
+        return out
+    }
+
     /// m4a：读出现有 metadata，换掉同名项（标题/歌手/专辑/封面/歌词），其余项原样保留，
     /// 再 passthrough 导出（不重编码）。这个容器要真的重写一遍，所以保留可播放性闸门。
     private static func writeM4A(fileURL: URL, fields: DownloadCompanion.ID3Tags.Fields)
