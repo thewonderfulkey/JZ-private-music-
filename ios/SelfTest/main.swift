@@ -4382,6 +4382,100 @@ do {
     check("清理：全没了 → 空", BatchSelection.pruning([a, b], visible: []).isEmpty)
 }
 
+// MARK: - 下载页分页（第 41 轮：首屏 80 行，滚到底继续加载）
+
+func dlItem(_ i: Int, status: DownloadStatus = .completed,
+            path: String? = "/tmp/x.flac") -> DownloadItem {
+    DownloadItem(song: song(.qq, "第\(i)首", "歌手\(i % 7)"),
+                 streamURL: "file:///\(i).flac",
+                 backendName: "import",
+                 quality: .lossless,
+                 fileName: "歌手\(i % 7) - 第\(i)首.flac",
+                 localPath: path,
+                 status: status,
+                 totalBytes: 40_000_000,
+                 origin: "import")
+}
+
+section("下载页分页：预算怎么分（P0-2）")
+
+do {
+    check("首屏 80 行 / 每次再加 80",
+          DownloadListPaging.firstPage == 80 && DownloadListPaging.pageStep == 80)
+
+    let finished = (0..<662).map { dlItem($0) }
+    let one = DownloadListPaging.slices(ongoing: [], failed: [], finished: finished,
+                                        limit: DownloadListPaging.firstPage)
+    check("662 首只建 80 行", one.finished.count == 80 && one.shown == 80)
+    check("总数报全量（不是分页后的）", one.total == 662)
+    check("还有没显示的", one.hasMore && one.hidden == 582)
+
+    let all = DownloadListPaging.slices(ongoing: [], failed: [], finished: finished, limit: 10_000)
+    check("limit 够大时全展开", all.finished.count == 662 && !all.hasMore && all.hidden == 0)
+
+    // 失败区不能把已下载整片挤出首屏（老板机器上真有 245 条失败记录）
+    let failed = (0..<245).map { dlItem($0, status: .failed, path: nil) }
+    let mixed = DownloadListPaging.slices(ongoing: Array(finished.prefix(5)), failed: failed,
+                                          finished: finished, limit: 80)
+    check("失败区只占 1/4（20 条），已下载还能露 55 条",
+          mixed.failed.count == 20 && mixed.finished.count == 55)
+    check("正在下载永远全显示", mixed.ongoing.count == 5)
+    check("一屏总数仍受预算约束", mixed.shown == 80 && mixed.total == 5 + 245 + 662)
+
+    check("失败区不足配额时按实际给",
+          DownloadListPaging.failedQuota(budget: 80, failedCount: 3) == 3)
+    check("预算为 0 时不给失败区",
+          DownloadListPaging.failedQuota(budget: 0, failedCount: 10) == 0)
+
+    check("继续加载：80 → 160", DownloadListPaging.nextLimit(80, total: 662) == 160)
+    check("继续加载不越界", DownloadListPaging.nextLimit(640, total: 662) == 662)
+    check("到底了不再涨", DownloadListPaging.nextLimit(662, total: 662) == 662)
+
+    let empty = DownloadListPaging.slices(ongoing: [], failed: [], finished: [], limit: 80)
+    check("空列表：没有更多、不显示负的 hidden",
+          !empty.hasMore && empty.hidden == 0 && empty.shown == 0)
+}
+
+section("目录索引：一次列目录，别每首列一遍（P1-1）")
+
+do {
+    let index = DownloadFileIndex.build(names: ["晴天.flac", "晴天.m4a", "七里香.mp3"])
+    check("同基名两份都进索引", index["晴天"]?.count == 2)
+    check("精确同名优先", DownloadFileIndex.match(fileName: "晴天.m4a", in: index) == "晴天.m4a")
+    check("扩展名变了按基名找",
+          DownloadFileIndex.match(fileName: "晴天.wav", in: index) == "晴天.flac")
+    check("找不到就是没有", DownloadFileIndex.match(fileName: "发如雪.flac", in: index) == nil)
+    check("空文件名直接 nil", DownloadFileIndex.match(fileName: "", in: index) == nil)
+    check("空目录不炸", DownloadFileIndex.build(names: []).isEmpty)
+}
+
+section("缓存按 id 失效：进度不算变化（P0-4）")
+
+do {
+    let base = dlItem(1)
+    var progressed = base
+    progressed.progress = 0.87
+    progressed.receivedBytes = 12_345
+    check("只是进度变了 → 签名不变（缓存不该被清）",
+          DownloadCacheSignature(base) == DownloadCacheSignature(progressed))
+
+    var failedItem = base
+    failedItem.status = .failed
+    check("状态变了 → 签名变", DownloadCacheSignature(base) != DownloadCacheSignature(failedItem))
+
+    var movedItem = base
+    movedItem.localPath = "/tmp/y.flac"
+    check("本地路径变了 → 签名变", DownloadCacheSignature(base) != DownloadCacheSignature(movedItem))
+
+    var renamed = base
+    renamed.fileName = "别的名字.flac"
+    check("文件名变了 → 签名变", DownloadCacheSignature(base) != DownloadCacheSignature(renamed))
+
+    let otherSong = DownloadItem(song: song(.qq, "另一首", "别人"), streamURL: "x",
+                                 backendName: "import", quality: .lossless, status: .completed)
+    check("不同歌 → 签名不同", DownloadCacheSignature(base) != DownloadCacheSignature(otherSong))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

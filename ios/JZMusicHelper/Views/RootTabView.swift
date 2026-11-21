@@ -82,6 +82,9 @@ struct RootTabView: View {
         }
         .onChange(of: router.tab) { _, newValue in
             visited.insert(newValue)
+            // t1（第 41 轮打点）：页插入这一帧提交完成。与 t0（点按钮）、t2（目标页 body 首次求值）
+            // 一起判断"卡在容器/动画事务"还是"卡在整页构建"。
+            PerfProbe.tabCommitted(newValue.rawValue)
         }
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
@@ -119,9 +122,13 @@ struct RootTabView: View {
                 }
             }
         }
-        // 交叉淡变：新页 0.985 → 1，旧页 1 → 0。不左右滑，避免 Android 味。
-        .animation(reduceMotion ? .easeOut(duration: 0.15) : Tokens.Motion.tabContent,
-                   value: router.tab)
+        // 第 41 轮 P0-1：这里**不再**挂 `.animation(_:value: router.tab)`。
+        //
+        // 原来那句会把"新页插入"也算进切 Tab 的动画事务：下载页有几百上千行，
+        // 必须在动画第一帧之前建好 → 主线程被整页构建占住，底部栏的按压回弹/胶囊滑动
+        // 跟着一起冻住（老板录屏里"点下载那一瞬间按钮变小一下"就是这么来的）。
+        // 现在页面切换是即时的；首次进页的淡入仍由 `FirstVisitReveal` 自己负责（独立、很轻）。
+        // 底部栏的动画在 JZTabBar 内部按 `selection` 值驱动，只作用于栏自身。
     }
 
     @ViewBuilder

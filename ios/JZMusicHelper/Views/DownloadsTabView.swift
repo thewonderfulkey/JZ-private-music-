@@ -36,6 +36,12 @@ struct DownloadsTabView: View {
     @State private var picked: Set<UUID> = []
     @State private var showBatchDeleteConfirm = false
 
+    /// 第 41 轮 P0-2：首屏只建这么多行，滚到底/点「继续加载」再追加。
+    /// 老板这台机器 662 首已下载 + 245 条失败，一次性建 900+ 行就是那 2–3 秒的来源。
+    @State private var visibleLimit = DownloadListPaging.firstPage
+    /// 自动续加载的节流（同一帧里连开好几页就等于没分页）
+    @State private var lastAutoLoadAt = Date.distantPast
+
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private func hit(_ item: DownloadItem) -> Bool {
@@ -57,6 +63,14 @@ struct DownloadsTabView: View {
 
     private var totalBytes: Int64 {
         downloads.items.reduce(0) { $0 + $1.totalBytes }
+    }
+
+    /// 这一帧真正要建的行（第 41 轮 P0-2）。顺序/预算口径见 `DownloadListPaging`。
+    /// 顺手在这里打 t2（body 首次求值一定先算它）—— 见 `PerfProbe`。
+    private var paged: DownloadPageSlices {
+        PerfProbe.pageBody("downloads")
+        return DownloadListPaging.slices(ongoing: ongoing, failed: failed, finished: finished,
+                                         limit: visibleLimit)
     }
 
     var body: some View {
@@ -109,6 +123,10 @@ struct DownloadsTabView: View {
         .onChange(of: downloads.items.count) { _, _ in
             picked = BatchSelection.pruning(picked, visible: visibleIDs)
             if downloads.items.isEmpty { selectMode = false }
+        }
+        // 换了搜索词就回到第一页（否则上一轮的"加载到 400 行"会带过来，白白多建行）
+        .onChange(of: queryKey) { _, _ in
+            visibleLimit = DownloadListPaging.firstPage
         }
         .locateToast(notice)
     }
@@ -242,7 +260,7 @@ struct DownloadsTabView: View {
 
                 if !ongoing.isEmpty {
                     Section {
-                        ForEach(ongoing) { item in
+                        ForEach(paged.ongoing) { item in
                             activeRow(item)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
@@ -260,9 +278,9 @@ struct DownloadsTabView: View {
                     }
                 }
 
-                if !failed.isEmpty {
+                if !paged.failed.isEmpty {
                     Section {
-                        ForEach(failed) { item in
+                        ForEach(paged.failed) { item in
                             failedRow(item)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
@@ -282,13 +300,13 @@ struct DownloadsTabView: View {
                                 }
                         }
                     } header: {
-                        sectionHeader("失败（\(failed.count)）")
+                        sectionHeader(failedHeaderText)
                     }
                 }
 
-                if !finished.isEmpty {
+                if !paged.finished.isEmpty {
                     Section {
-                        ForEach(finished) { item in
+                        ForEach(paged.finished) { item in
                             completedRow(item)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
@@ -305,8 +323,17 @@ struct DownloadsTabView: View {
                                 .id(item.id.uuidString)
                         }
                     } header: {
-                        sectionHeader("已下载（\(finished.count)）")
+                        sectionHeader(finishedHeaderText)
                     }
+                }
+
+                // 第 41 轮 P0-2：还没显示完时的「继续加载」。滚到底自动续，
+                // 也留一个能点的按钮（老板明确要"已显示 N / 总 M"的反馈，不能让人以为丢歌）。
+                if paged.hasMore {
+                    loadMoreRow
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
 
                 Color.clear
@@ -317,6 +344,8 @@ struct DownloadsTabView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // t3（第 41 轮打点）：列表首帧到了
+            .onAppear { PerfProbe.pageReady("downloads", rows: paged.shown) }
             .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
             // 批量操作条浮在**迷你条上沿**：迷你条是父视图的 overlay，
             // 直接把操作条放 safeAreaInset 里会被它盖住（下载页经常在播歌）。
@@ -349,18 +378,102 @@ struct DownloadsTabView: View {
                         }
                         .accessibilityLabel("多选")
                         LocateNowPlayingButton {
-                            // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
-                            locator.locate(current: player.currentSong,
-                                           songs: downloads.completedSongs,
-                                           rowIDs: finished.map { $0.id.uuidString },
-                                           scroll: { id in
-                                               proxy.scrollTo(id, anchor: .center)
-                                           })
+                            // 行可能还在"未加载区"：先把 limit 撑到那一行，再滚（下一帧才有这行）
+                            let revealed = revealRowForCurrentSong()
+                            let scrollToCurrent = {
+                                // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
+                                locator.locate(current: player.currentSong,
+                                               songs: downloads.completedSongs,
+                                               rowIDs: finished.map { $0.id.uuidString },
+                                               scroll: { id in
+                                                   proxy.scrollTo(id, anchor: .center)
+                                               })
+                            }
+                            if revealed {
+                                DispatchQueue.main.async(execute: scrollToCurrent)
+                            } else {
+                                scrollToCurrent()
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    // MARK: 分页（第 41 轮 P0-2）
+
+    private var failedHeaderText: String {
+        let shown = paged.failed.count
+        return shown < failed.count ? "失败（\(failed.count) · 已显示 \(shown)）" : "失败（\(failed.count)）"
+    }
+
+    private var finishedHeaderText: String {
+        let shown = paged.finished.count
+        return shown < finished.count
+            ? "已下载（\(finished.count) · 已显示 \(shown)）"
+            : "已下载（\(finished.count)）"
+    }
+
+    /// 还没显示完时的那一行：给明确反馈（已显示 N / 总 M），能点，也能滚到底自动续。
+    private var loadMoreRow: some View {
+        VStack(spacing: Tokens.Spacing.xs) {
+            Text("已显示 \(paged.shown) / \(paged.total) 首")
+                .font(FontRole.metadata)
+                .foregroundStyle(.secondary)
+            Button {
+                loadMore()
+            } label: {
+                Label("继续加载 \(min(DownloadListPaging.pageStep, paged.hidden)) 首（还有 \(paged.hidden) 首没显示）",
+                      systemImage: "arrow.down.circle")
+                    .font(FontRole.songSubtitle)
+                    .padding(.horizontal, Tokens.Spacing.m)
+                    .frame(minHeight: Tokens.Spacing.minTapTarget)
+                    .background(Capsule().fill(Tokens.Palette.paperElevated))
+            }
+            .buttonStyle(.press)
+            if !queryKey.isEmpty {
+                Text("搜索命中的歌里还有 \(paged.hidden) 首没显示，点上面继续加载")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Tokens.Spacing.m)
+        .onAppear {
+            // 滚到底自动续：延迟一拍，别在布局过程中改状态。
+            // 节流 0.4s：List 插入 80 行后这一行会被挤出可视区，
+            // 万一 SwiftUI 连着触发 onAppear，也不会一口气把 662 行全建回来（那就等于没分页）。
+            let now = Date()
+            guard now.timeIntervalSince(lastAutoLoadAt) > 0.4 else { return }
+            lastAutoLoadAt = now
+            DispatchQueue.main.async { loadMore() }
+        }
+    }
+
+    private func loadMore() {
+        guard paged.hasMore else { return }
+        visibleLimit = DownloadListPaging.nextLimit(visibleLimit, total: paged.total)
+    }
+
+    /// 「定位到正在播放」：目标行可能还在未加载区，先把 limit 撑到那一行。
+    /// 返回 true = 这一帧还滚不了，要等下一帧（调用方负责延迟滚动）。
+    private func revealRowForCurrentSong() -> Bool {
+        guard let current = player.currentSong, !finished.isEmpty else { return false }
+        guard let idx = ListLocate.index(of: current, in: finished.map(\.song)) else { return false }
+        if paged.finished.count > idx { return false }
+
+        var limit = visibleLimit
+        while limit < paged.total {
+            limit = DownloadListPaging.nextLimit(limit, total: paged.total)
+            let probe = DownloadListPaging.slices(ongoing: ongoing, failed: failed,
+                                                   finished: finished, limit: limit)
+            if probe.finished.count > idx { break }
+        }
+        visibleLimit = limit
+        return true
     }
 
     // MARK: 多选（2026-11-21 老板：多选按钮 + 全选 + 批量删除）
@@ -457,7 +570,8 @@ struct DownloadsTabView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("我的下载")
                         .font(.title3.weight(.bold))
-                    Text("\(finished.count) 首 · \(sizeText(totalBytes))")
+                    Text("\(finished.count) 首 · \(sizeText(totalBytes))"
+                         + (paged.hasMore ? " · 已显示 \(paged.shown)" : ""))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     HStack(spacing: Tokens.Spacing.s) {

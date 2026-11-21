@@ -24,9 +24,13 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 主线程发布：下载列表
     @Published var items: [DownloadItem] = [] {
         didSet {
-            // 任何条目变化都让"本地路径/封面"缓存失效（2026-11-21 老板："打开下载 tab 会卡一下"）
-            localFileCache.removeAll()
-            localCoverCache.removeAll()
+            // 第 41 轮 P0-4：**不再 `removeAll()`**。
+            //
+            // 以前任何条目变化都清空两个缓存——包括下载中每秒一次的进度更新（`.downloading` 的
+            // progress 从 0.31 跳到 0.32）。于是下载页每一行隔一秒就重新走一次
+            // 「线性找记录 + stat 磁盘 + 找旁车封面」，列表越大越明显。
+            // 现在按 id 比签名：只把「状态 / 本地路径 / 文件名」真的变了的歌摘掉，其余保持命中。
+            invalidateCachesForChangedItems()
         }
     }
     @Published var backgroundTaskCount: Int = 0
@@ -39,6 +43,28 @@ final class DownloadManager: NSObject, ObservableObject {
     private var localFileCache: [String: String] = [:]
     /// `song.id` → 本地封面路径（空串 = 查过、没有）
     private var localCoverCache: [String: String] = [:]
+
+    /// 上一次算缓存时每条记录的签名（`DownloadItem.id` → 签名）。只在主线程读写。
+    /// 见 `invalidateCachesForChangedItems()`（第 41 轮 P0-4）。
+    private var cacheSignatures: [UUID: DownloadCacheSignature] = [:]
+    /// 当前列表里出现过的 `song.id`。渲染路径先用它做 O(1) 判否，
+    /// 不用为了"这首歌根本不是下载项"去线性扫一遍 + 碰磁盘。
+    private var itemSongIDs: Set<String> = []
+
+    /// 每行的「本地音频 / 本地封面」预计算结果（`song.id` → facts）。
+    ///
+    /// 第 41 轮 P0-3：下载页每一行的 `SongArtwork` 都会问一次 `localCoverURL`，
+    /// 以前那一步是**主线程同步**的线性查找 + 多次 `stat`（文件缺失时还会退化成逐首列目录）。
+    /// 现在改成：`items` 一变就让后台把整张表算好（目录只列一次），渲染路径**只读内存、零磁盘**。
+    private(set) var rowFacts: [String: DownloadRowFacts] = [:]
+    private var rowFactsToken = UUID()
+    private let factsQueue = DispatchQueue(label: "com.jz.downloads.rowfacts", qos: .userInitiated)
+
+    /// 目录快照缓存（第 41 轮 P1-1）：`dir.path` → (文件名清单, 基名索引) + 取的时刻。
+    /// `findExistingAudioFile` 以前每首列一次目录；现在 TTL 内复用，写盘/删除后主动作废。
+    private var dirIndexCache: [String: ([String], [String: [String]])] = [:]
+    private var dirIndexCacheAt: [String: Date] = [:]
+    private let dirIndexTTL: TimeInterval = 5
     /// 最近一次导入的结果（挂在 manager 上，而不是 View 的 @State —— 否则
     /// 从 Task.detached 里写不回去，用户看不到任何提示）
     @Published var lastImportReport: String?
@@ -276,7 +302,22 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 文件夹被移动过）。这时按"文件名 → 同基名"在 `Download/Music` 里找一次，
     /// 找到就把记录改过来——否则会出现"列表里显示已下载，点播放却只有封面"的现象。
     func localFileURL(for song: Song) -> URL? {
-        // 缓存命中：不再线性扫 items、不再 stat 磁盘（下载页每行都要问一次）
+        let started = CFAbsoluteTimeGetCurrent()
+        defer { PerfProbe.noteFileLookup(CFAbsoluteTimeGetCurrent() - started) }
+
+        // ① 第 41 轮 P0-3：先用后台算好的结果（纯内存，零磁盘）。
+        if let facts = rowFacts[song.id] {
+            guard let path = facts.filePath else { return nil }
+            let url = URL(fileURLWithPath: path)
+            DownloadLocation.openScope(forFile: url)
+            return url
+        }
+        // ② 这首歌根本不是下载项（搜索结果、歌单里没下过的歌）：O(1) 判否，
+        //    不再为了"确认没有"去线性扫一遍 items（那是每行一次 O(N)）。
+        if !itemSongIDs.isEmpty, !itemSongIDs.contains(song.id) {
+            return nil
+        }
+        // ③ 缓存命中：不再线性扫 items、不再 stat 磁盘
         if let cached = localFileCache[song.id] {
             guard !cached.isEmpty else { return nil }
             let url = URL(fileURLWithPath: cached)
@@ -306,20 +347,43 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     /// 按记录在 `Download/Music`（以及旧版 `Music`）里找回音频文件
+    ///
+    /// 第 41 轮 P1-1：不再每首 `contentsOfDirectory` 一次。
+    /// 662 首 × 单次 3.4ms = 2278ms（本机微基准），就是"打开下载页卡一下"的秒级来源之一。
+    /// 现在走 `directorySnapshot(_:)` 的 TTL 缓存（同一目录 5 秒内只列一次），写盘/删除后主动作废。
     private func findExistingAudioFile(for item: DownloadItem) -> URL? {
+        PerfProbe.noteFileFallback()
         let candidates = [DownloadLocation.musicDirectory(),
                           DownloadLocation.documentsDirectory().appendingPathComponent("Music", isDirectory: true)]
-        let base = (item.fileName as NSString).deletingPathExtension
         for dir in candidates {
-            let exact = dir.appendingPathComponent(item.fileName)
-            if FileManager.default.fileExists(atPath: exact.path) { return exact }
-            guard let files = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
-            if let hit = files.first(where: { $0.deletingPathExtension().lastPathComponent == base }) {
-                return hit
-            }
+            let (names, index) = directorySnapshot(dir)
+            guard let name = DownloadFileIndex.match(fileName: item.fileName, in: index),
+                  names.contains(name) else { continue }
+            let url = dir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
         }
         return nil
+    }
+
+    /// 目录快照（文件名清单 + 基名索引）。同一目录 TTL 内复用；`markDirectoryCacheDirty()` 主动作废。
+    private func directorySnapshot(_ dir: URL) -> ([String], [String: [String]]) {
+        let key = dir.path
+        if let at = dirIndexCacheAt[key], Date().timeIntervalSince(at) < dirIndexTTL,
+           let hit = dirIndexCache[key] {
+            return hit
+        }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: key)) ?? []
+        let snapshot = (names, DownloadFileIndex.build(names: names))
+        dirIndexCache[key] = snapshot
+        dirIndexCacheAt[key] = Date()
+        return snapshot
+    }
+
+    /// 文件增删之后调用：下次查目录重新列一次（只为"变了"付一次钱）。
+    private func markDirectoryCacheDirty() {
+        dirIndexCache.removeAll()
+        dirIndexCacheAt.removeAll()
+        scheduleRowFactsRebuild()
     }
 
     /// 离线歌词（播放页在无网络时调用）：已下载完成 + 旁车 .lrc 存在才返回。
@@ -337,6 +401,12 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 第四十轮补丁 3 起封面在 `…/Cover`；旧版仍在音频同目录（`readCover` 里自带回退）。
     /// 只在主线程调用（`items` 只在主线程改）。
     func localCoverURL(for song: Song) -> URL? {
+        // 第 41 轮 P0-3：先用后台算好的结果（纯内存，零磁盘）
+        if let facts = rowFacts[song.id] {
+            guard let path = facts.coverPath else { return nil }
+            return URL(fileURLWithPath: path)
+        }
+        if !itemSongIDs.isEmpty, !itemSongIDs.contains(song.id) { return nil }
         if let cached = localCoverCache[song.id] {
             guard !cached.isEmpty else { return nil }
             return URL(fileURLWithPath: cached)
@@ -345,15 +415,21 @@ final class DownloadManager: NSObject, ObservableObject {
             localCoverCache[song.id] = ""
             return nil
         }
-        let base = DownloadCompanion.baseName(for: audio)
-        let candidates = [DownloadCompanion.coverURL(in: coverDirectory, baseName: base),
-                          DownloadCompanion.legacyCoverURL(for: audio)]
-        guard let hit = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+        guard let path = Self.coverPath(forAudio: audio, coverDirectory: coverDirectory) else {
             localCoverCache[song.id] = ""
             return nil
         }
-        localCoverCache[song.id] = hit.path
-        return hit
+        localCoverCache[song.id] = path
+        return URL(fileURLWithPath: path)
+    }
+
+    /// 旁车封面路径判定（`Cover/<基名>.jpg` → 旧版音频同目录）。
+    /// 纯查文件、不碰实例状态：渲染路径与后台预计算共用同一份口径，别再各写一套。
+    static func coverPath(forAudio audio: URL, coverDirectory: URL) -> String? {
+        let base = DownloadCompanion.baseName(for: audio)
+        let candidates = [DownloadCompanion.coverURL(in: coverDirectory, baseName: base),
+                          DownloadCompanion.legacyCoverURL(for: audio)]
+        return candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })?.path
     }
 
     /// 已下载完成的歌（按下载顺序）：从下载页点一首时，**整列**就是播放队列。
@@ -361,6 +437,107 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 只把点中的那一首塞进队列。只在主线程调用（`items` 只在主线程改）。
     var completedSongs: [Song] {
         items.filter { $0.status == .completed }.map(\.song)
+    }
+
+    // MARK: - 缓存按 id 失效（P0-4）与行状态预计算（P0-3）
+
+    /// 只摘掉"本地状态真的变了"的那几首，不再整表清空。
+    private func invalidateCachesForChangedItems() {
+        var next: [UUID: DownloadCacheSignature] = [:]
+        next.reserveCapacity(items.count)
+        var songs: Set<String> = []
+        songs.reserveCapacity(items.count)
+        var changed = false
+
+        for item in items {
+            songs.insert(item.song.id)
+            let sig = DownloadCacheSignature(item)
+            next[item.id] = sig
+            if cacheSignatures[item.id] != sig {
+                localFileCache.removeValue(forKey: item.song.id)
+                localCoverCache.removeValue(forKey: item.song.id)
+                changed = true
+            }
+        }
+        // 被删掉的条目：缓存跟着摘掉（否则删了歌还留着路径，同名的新歌会命中旧路径）
+        for (id, old) in cacheSignatures where next[id] == nil {
+            if !songs.contains(old.songID) {
+                localFileCache.removeValue(forKey: old.songID)
+                localCoverCache.removeValue(forKey: old.songID)
+            }
+            changed = true
+        }
+
+        cacheSignatures = next
+        itemSongIDs = songs
+        if changed { scheduleRowFactsRebuild() }
+    }
+
+    /// 后台把"每行有没有本地文件 / 有没有本地封面"整张表算好。
+    /// 目录只列一次（不是每首一次），算完在主线程一次性发布；渲染路径只读这张表。
+    private func scheduleRowFactsRebuild() {
+        let token = UUID()
+        rowFactsToken = token
+        let snapshot = items
+        let music = musicDirectory
+        let legacy = DownloadLocation.documentsDirectory().appendingPathComponent("Music", isDirectory: true)
+        let covers = coverDirectory
+
+        factsQueue.async { [weak self] in
+            guard let self else { return }
+            let musicIndex = DownloadFileIndex.build(
+                names: (try? FileManager.default.contentsOfDirectory(atPath: music.path)) ?? [])
+            let legacyIndex = DownloadFileIndex.build(
+                names: (try? FileManager.default.contentsOfDirectory(atPath: legacy.path)) ?? [])
+
+            var table: [String: DownloadRowFacts] = [:]
+            table.reserveCapacity(snapshot.count)
+            var repairs: [UUID: String] = [:]
+
+            for item in snapshot {
+                guard item.status == .completed else {
+                    table[item.song.id] = DownloadRowFacts(filePath: nil, coverPath: nil)
+                    continue
+                }
+                var filePath: String?
+                if let p = item.localPath, FileManager.default.fileExists(atPath: p) {
+                    filePath = p
+                } else if let name = DownloadFileIndex.match(fileName: item.fileName, in: musicIndex) {
+                    let candidate = music.appendingPathComponent(name).path
+                    if FileManager.default.fileExists(atPath: candidate) { filePath = candidate }
+                }
+                if filePath == nil,
+                   let name = DownloadFileIndex.match(fileName: item.fileName, in: legacyIndex) {
+                    let candidate = legacy.appendingPathComponent(name).path
+                    if FileManager.default.fileExists(atPath: candidate) { filePath = candidate }
+                }
+                // 记录里的路径失效但文件找到了：修记录（后台算、主线程改），下一轮就命中第一分支
+                if let path = filePath, path != item.localPath { repairs[item.id] = path }
+
+                var coverPath: String?
+                if let path = filePath {
+                    coverPath = Self.coverPath(forAudio: URL(fileURLWithPath: path), coverDirectory: covers)
+                }
+                table[item.song.id] = DownloadRowFacts(filePath: filePath, coverPath: coverPath)
+            }
+
+            DispatchQueue.main.async {
+                guard self.rowFactsToken == token else { return }
+                self.rowFacts = table
+                if !repairs.isEmpty { self.applyFactsRepairs(repairs) }
+            }
+        }
+    }
+
+    /// 把后台找到的正确路径写回记录（旧口径里这一步发生在渲染路径上，会卡住列表）
+    private func applyFactsRepairs(_ repairs: [UUID: String]) {
+        var changed = false
+        for idx in items.indices {
+            guard let newPath = repairs[items[idx].id], items[idx].localPath != newPath else { continue }
+            items[idx].localPath = newPath
+            changed = true
+        }
+        if changed { persist() }
     }
 
     /// 取消下载
@@ -399,6 +576,8 @@ final class DownloadManager: NSObject, ObservableObject {
             try? FileManager.default.removeItem(at: audio)
         }
         items.remove(at: idx)
+        // 删掉的文件：目录索引作废一次（不然 5 秒 TTL 内还可能把刚删的歌"找回来"）
+        markDirectoryCacheDirty()
         // 删除立刻落盘（节流窗口里丢一次删除，重启后歌会"复活"）
         flushPersist()
     }
@@ -812,6 +991,8 @@ extension DownloadManager: URLSessionDownloadDelegate {
         item.errorMessage = nil
         items[idx] = item
         persist()
+        // 新文件落盘：目录索引作废一次（下次查目录重列，之后 TTL 内复用）
+        markDirectoryCacheDirty()
         notifyCompletion(item)
         // 音频落盘、记录落库之后才补词和图（老板反馈 ⑧）：
         // 补料是纯附加值，异步做，失败绝不影响"歌已经能播"这件事。
@@ -938,6 +1119,155 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 
+// MARK: - 性能打点（第 41 轮：下载 Tab 卡顿取证）
+//
+// 老板 2026-11-21："本地导入到几百上千首后，点「下载」Tab 卡 2–3 秒"。
+// 本机是 Windows、没有真机，App 里此前也**一条 signpost 都没有** —— 所以这一版把关键段全部打点，
+// 装一次包就能拿到确切数字，写进 `诊断/perf.log`（下次「导出诊断」一起带回来）。
+//
+// 口径（与诊断报告 §5 一一对应）：
+//   t0 点按钮 → t1 页插入提交 → t2 下载页 body 首次求值 → t3 列表首帧
+//   t4 封面/本地文件查询：次数 + 累计耗时（**同步部分**，主线程）
+//   t5 `findExistingAudioFile` 触发次数 —— 逐首列目录的唯一入口，秒级元凶就在这
+//   t6 主线程最大停顿（看门狗，100ms 一跳）—— 直接就是老板体感的那个数
+//
+// 怎么读（三种结果）：
+//   A `commit→body`/`tap→ready` 占大头、`fallback=0`  → 整页构建慢 → 分页继续收紧
+//   B `fallback` 几十上百、`file=…ms` 上千             → 逐行碰磁盘 → 行状态预计算没生效
+//   C `tap→commit` 就慢                                 → 容器/动画事务 → 查 RootTabView
+enum PerfProbe {
+
+    private static let queue = DispatchQueue(label: "com.jz.diagnostics.perf", qos: .utility)
+
+    private static var tapAt: CFAbsoluteTime?
+    private static var tapTab = ""
+    private static var commitAt: CFAbsoluteTime?
+    private static var bodyAt: CFAbsoluteTime?
+    private static var readyAt: CFAbsoluteTime?
+    private static var readyLogged = false
+
+    private static var fileLookupCount = 0
+    private static var fileLookupMs = 0.0
+    private static var fallbackCount = 0
+    private static var artworkCount = 0
+
+    private static var lastTick = CFAbsoluteTimeGetCurrent()
+    private static var maxGapMs = 0.0
+    private static var gapCount = 0
+    private static var watchdog: DispatchSourceTimer?
+
+    // MARK: 打点
+
+    /// t0：底部栏按钮真的被点到（每次换 Tab 都会重置本轮计数）
+    static func tabTapped(_ tab: String) {
+        tapAt = CFAbsoluteTimeGetCurrent()
+        tapTab = tab
+        commitAt = nil
+        bodyAt = nil
+        readyAt = nil
+        readyLogged = false
+        fileLookupCount = 0
+        fileLookupMs = 0
+        fallbackCount = 0
+        artworkCount = 0
+        maxGapMs = 0
+        gapCount = 0
+    }
+
+    /// t1：`router.tab` 变更提交（`RootTabView.onChange` 里），即"页插入这一帧"的末尾
+    static func tabCommitted(_ tab: String) {
+        guard tab == tapTab, tapAt != nil, commitAt == nil else { return }
+        commitAt = CFAbsoluteTimeGetCurrent()
+    }
+
+    /// t2：目标页 body 第一次求值（同一轮只记第一次）
+    static func pageBody(_ page: String) {
+        guard page == tapTab, tapAt != nil, bodyAt == nil else { return }
+        bodyAt = CFAbsoluteTimeGetCurrent()
+    }
+
+    /// t3：列表首帧到了。延迟 0.8s 再落盘，把 t4/t5/t6 一起统计进去。
+    static func pageReady(_ page: String, rows: Int) {
+        guard page == tapTab, tapAt != nil, !readyLogged else { return }
+        readyLogged = true
+        readyAt = CFAbsoluteTimeGetCurrent()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            writeSummary(rows: rows)
+        }
+    }
+
+    static func noteFileLookup(_ seconds: Double) {
+        fileLookupCount += 1
+        fileLookupMs += seconds * 1000
+    }
+
+    static func noteFileFallback() { fallbackCount += 1 }
+    static func noteArtwork() { artworkCount += 1 }
+
+    // MARK: 看门狗（t6）
+
+    /// 每 100ms 往主线程丢一跳；主线程被占住时两跳之间的间隔就是阻塞时长。
+    static func startWatchdog() {
+        guard watchdog == nil else { return }
+        lastTick = CFAbsoluteTimeGetCurrent()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1, leeway: .milliseconds(10))
+        timer.setEventHandler {
+            let now = CFAbsoluteTimeGetCurrent()
+            let gap = (now - lastTick) * 1000
+            lastTick = now
+            if gap > 150 {
+                gapCount += 1
+                maxGapMs = max(maxGapMs, gap)
+            }
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
+    // MARK: 落盘
+
+    private static func writeSummary(rows: Int) {
+        guard let start = tapAt, tapTab == "downloads" else { return }
+        let commitMs = commitAt.map { ($0 - start) * 1000 } ?? -1
+        let bodyMs = (commitAt != nil && bodyAt != nil) ? (bodyAt! - commitAt!) * 1000 : -1
+        let readyMs = readyAt.map { ($0 - start) * 1000 } ?? -1
+        let line = "tab=downloads"
+            + " t0→t1=\(ms(commitMs)) t1→t2=\(ms(bodyMs)) t0→t3=\(ms(readyMs))"
+            + " rows=\(rows)"
+            + " file=\(fileLookupCount)次/\(ms(fileLookupMs))ms"
+            + " fallback=\(fallbackCount)次"
+            + " art=\(artworkCount)次"
+            + " maxGap=\(ms(maxGapMs))ms gaps>150ms=\(gapCount)"
+        write(line)
+    }
+
+    private static func ms(_ v: Double) -> String {
+        v < 0 ? "-" : String(format: "%.0f", v)
+    }
+
+    private static func write(_ line: String) {
+        queue.async {
+            let url = CrashReporter.directory().appendingPathComponent("perf.log")
+            let text = "\(perfStamp()) \(line)\n"
+            guard let data = text.data(using: .utf8) else { return }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            } else {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    private static func perfStamp() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm:ss.SSS"
+        return f.string(from: Date())
+    }
+}
+
 // MARK: - 崩溃 / 内存取证（2026-11-21）
 //
 // 老板报："播放中翻搜索结果，约 90–100 秒后 App 没有任何报错就回桌面。"
@@ -970,6 +1300,9 @@ enum CrashReporter {
         NSSetUncaughtExceptionHandler(jzUncaughtExceptionHandler)
 
         log("app launched · v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+
+        // 主线程看门狗（第 41 轮）：老板体感的"卡 2–3 秒"要靠它给实测数（`诊断/perf.log` 的 maxGap）
+        PerfProbe.startWatchdog()
 
         // SIGABRT 的具体断言文本只写在 stderr（CoreAudio/AVFoundation 的 Assertion failed 都走这里）。
         // 把它重定向到 `诊断/stderr.log`，下次复现就能看到原文。
@@ -1404,6 +1737,8 @@ extension DownloadManager {
         await MainActor.run {
             self.importProgress = nil
             self.lastImportReport = report.detail
+            // 一批新文件落盘：目录索引与行状态表都作废一次
+            self.markDirectoryCacheDirty()
         }
         CrashReporter.logImport("import: 结束 → \(report.summary)")
         return report

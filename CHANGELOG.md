@@ -1,3 +1,60 @@
+## iOS v2.4.52（230）· 2026-11-21 晚（下载 Tab 首屏：分页 + 行状态预计算 + 切页移出动画事务）
+
+老板（11-21 15:40 录屏，下载页 **662 首 · 26.47 GB**）："本地导入到几百上千首后，点「下载」Tab 卡 2–3 秒"，
+并给了一条线索——"点「下载」那一瞬间，底部 Tab 栏里那个「下载」按钮会明显变小一下"。
+
+### 出包（v2.4.52 / 230）
+
+| 项 | 值 |
+|---|---|
+| CI | **待跑**（本轮按老板要求只做本地提交，push / 触发 CI / 发群由老板侧执行） |
+| 产物 | 待 CI 产出 `JZ-Music-v2.4.52-<sha7>-r<run#>-ios-unsigned.ipa` |
+| 包内 | `2.4.52 (230)`（`project.pbxproj` 4 处 + `build.gradle.kts` 同步改） |
+| 分发 | 待老板 push 后自动发群 |
+
+### 一、根因（本机微基准实测，脚本 `.build/bench_download_tab.swift`，Swift 6.0.3 / N=662）
+
+| 量什么 | 实测 | 结论 |
+|---|---|---|
+| `downloads.json` 全量解码（662 条 / 495 KB） | **9.6 ms** | 只在启动发生一次，**不是**卡顿来源 |
+| 一次 body 的 6 遍全量扫描 | **0.3 ms** | 可忽略 |
+| 662 次 `firstIndex`（O(N²)） | **0.4 ms** | 可忽略 |
+| 662 次 `fileExists` | **0.3 ms** | 可忽略 |
+| 662 次体积格式化 | **1.0 ms** | 可忽略 |
+| **每首列一次目录（662 个文件）** | **2278 ms** | ⚠️ 唯一到秒级的磁盘口径（单次 3.4ms） |
+
+**根因不是"数据重算"，是"整页视图重建"**：切 Tab 时 `DownloadsTabView` 首次插进 `RootTabView` 的 ZStack，
+而这次插入发生在**切 Tab 的同一个动画事务里**（`JZTabBar` 的 `withAnimation` + ZStack 上的 `.animation(value: router.tab)`）——
+662 行已下载 + 245 条失败记录的 `List` 必须在动画第一帧之前建好，主线程被占死；
+底部栏自己的按压回弹/胶囊弹簧停在中间帧，就是老板看到的"按钮变小一下"。
+
+### 二、改了什么（六项，全部按老板拍板的 P0-1…P1-1）
+
+| # | 改动 | 位置 |
+|---|---|---|
+| P0-1 | 页面插入移出切 Tab 的动画事务：`withAnimation` 只包栏自身（改成栏上的 `.animation(_:value:)`），ZStack 不再按 `router.tab` 做动画 | `JZTabBar.swift` / `RootTabView.swift` |
+| P0-2 | 下载页首屏只建 80 行（失败区最多占 1/4，正在下载全显示），滚到底/点「继续加载」追加 80 行，带"已显示 N / 总 M"反馈与搜索未加载提示；左滑删除/多选/重试全部保留 | `DownloadsTabView.swift` / `DownloadItem.swift`（`DownloadListPaging`） |
+| P0-3 | 行状态后台预计算：`[song.id: (filePath, coverPath)]`，目录只列一次，渲染路径零磁盘 | `DownloadManager.swift`（`rowFacts`）/ `DownloadItem.swift`（`DownloadRowFacts`） |
+| P0-4 | `items.didSet` 不再 `removeAll()`：按签名（状态/路径/文件名）只摘掉真变了的歌 | `DownloadManager.swift` |
+| P1-1 | `findExistingAudioFile` 建基名索引 + 5 秒 TTL，写盘/删除/导入后主动作废 | `DownloadManager.swift` / `DownloadItem.swift`（`DownloadFileIndex`） |
+| 打点 | t0 点按钮 → t1 页插入提交 → t2 body 求值 → t3 列表首帧；t4 封面查询次数、t5 逐首列目录次数、t6 主线程最大停顿（100ms 看门狗），写 `诊断/perf.log` | `DownloadManager.swift`（`PerfProbe`）/ 各视图调用点 |
+
+**没有动**（老板的硬约束，也是 v2.4.48 的成果）：`persist` 后台写 + 0.6s 节流、`localFileCache`/`localCoverCache` 内存缓存、
+`CoverImageCache` 后台降采样解码；没有把 `List` 换成 `LazyVStack`；没碰发现页/歌词/播放链路。
+
+### 三、自测
+
+| 项 | 结果 |
+|---|---|
+| 新增纯逻辑断言（r168 mini harness） | **27 / 27 通过**（分页预算 15 条 / 目录索引 7 条 / 缓存签名 5 条） |
+| 官方 SelfTest（CI 同款文件清单） | 编译通过；运行在本机 WSL 仍止步于「歌词解密 zlib 桩」那 4 条既有失败（与上一轮相同，非本轮引入） |
+| `check_ui_hygiene.py` | ✅ 30 个界面文件 |
+| `check_pbxproj.py` | ✅ 231 个对象 / 2 个 target |
+| 语法解析（`swiftc -parse`，8 个改动文件） | ✅ 全通过 |
+
+**待真机补最后一格**：装这一包后点一次「下载」，把 `诊断/perf.log` 里那行 `tab=downloads …` 带回来。
+读法：`t0→t1` 慢 = 容器/动画；`t1→t2`/`t0→t3` 慢 = 整页构建；`fallback` 几十上百 = 逐行碰磁盘。
+
 ## iOS v2.4.51（229）· 2026-11-21 晚（导入：先抢进自己的暂存再解析 —— 修掉"全选 664 首、245 首失败"）
 
 老板："我在导入歌曲的时候，系统层面有 600 多首歌，但是导入后有 200 多个导入失败。"

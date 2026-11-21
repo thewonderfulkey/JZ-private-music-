@@ -181,6 +181,142 @@ enum ByteText {
     }
 }
 
+// MARK: - 下载页分页（第 41 轮：首屏只建 N 行，滚到底继续加载）
+//
+// 老板 2026-11-21：本地导入到几百上千首后，点「下载」Tab 要卡 2–3 秒。
+// 查下来卡的**不是数据**（662 条全量解码 9.6ms、6 遍全量扫描 0.3ms、662 次 firstIndex 0.4ms，
+// 都是本机微基准实测），而是**整页 900+ 行视图一次性建起来**。
+// 所以首帧只建一页，滚到底再加一页。
+//
+// 口径（视图与断言共用，别再在视图里各写一套）：
+//   · 显示顺序与页面一致：正在下载 → 失败 → 已下载；
+//   · **正在下载永远全显示**（在飞的就几首，藏起来等于看不见进度）；
+//   · 失败区最多占预算的 1/4（第一屏至少给 20 条，方便直接重试），其余给已下载——
+//     否则 245 条失败的旧记录会把 662 首已下载整片挤出首屏；
+//   · `total` 是"全展开会有多少行"，`shown` 是"这次建了多少行"，`hidden` 是差值。
+struct DownloadPageSlices: Equatable {
+    var ongoing: [DownloadItem]
+    var failed: [DownloadItem]
+    var finished: [DownloadItem]
+    var shown: Int
+    var total: Int
+
+    var hasMore: Bool { shown < total }
+    var hidden: Int { max(0, total - shown) }
+}
+
+enum DownloadListPaging {
+
+    /// 首屏行数（老板要的 60–80 行档位）
+    static let firstPage = 80
+    /// 每次「继续加载」/滚到底追加的行数
+    static let pageStep = 80
+
+    /// 失败区这一屏给多少条：预算的 1/4，第一屏至少 20 条，但不超过实际失败数。
+    static func failedQuota(budget: Int, failedCount: Int) -> Int {
+        guard budget > 0, failedCount > 0 else { return 0 }
+        let share = max(budget / 4, min(20, budget))
+        return min(failedCount, share)
+    }
+
+    static func slices(ongoing: [DownloadItem],
+                       failed: [DownloadItem],
+                       finished: [DownloadItem],
+                       limit: Int) -> DownloadPageSlices {
+        let budget = max(0, limit)
+
+        // 正在下载：不受分页限制，但先吃掉预算
+        let o = ongoing
+
+        let f: [DownloadItem]
+        let d: [DownloadItem]
+        let remaining = max(0, budget - o.count)
+        if remaining > 0 {
+            f = Array(failed.prefix(failedQuota(budget: remaining, failedCount: failed.count)))
+            d = Array(finished.prefix(max(0, remaining - f.count)))
+        } else {
+            f = []
+            d = []
+        }
+
+        return DownloadPageSlices(ongoing: o, failed: f, finished: d,
+                                  shown: o.count + f.count + d.count,
+                                  total: ongoing.count + failed.count + finished.count)
+    }
+
+    /// 下一次的 limit（点「继续加载」或滚到底时）
+    static func nextLimit(_ current: Int, total: Int) -> Int {
+        min(max(0, total), max(0, current) + pageStep)
+    }
+}
+
+// MARK: - 目录索引（一次列目录，别每首歌都列一遍）
+
+/// 第 41 轮 P1-1：`findExistingAudioFile` 原来"每首一次 `contentsOfDirectory`"，
+/// 662 首就是 662 次全目录列举（本机微基准：单次 3.4ms → 合计 2278ms）。
+/// 折成「基名 → 同名文件列表」后，找一首歌只是一次字典查询。
+enum DownloadFileIndex {
+
+    /// 目录里的文件名清单 → 索引。键是去掉扩展名的基名。
+    static func build(names: [String]) -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        out.reserveCapacity(names.count)
+        for name in names {
+            let base = (name as NSString).deletingPathExtension
+            out[base, default: []].append(name)
+        }
+        return out
+    }
+
+    /// 记录里的 `fileName` 在索引里找同名文件：先精确同名，再退到「同基名」。
+    /// （扩展名被换过、或 .flac/.m4a 两份都在时，精确那条优先；多个同基名按名字排序取第一个，保证可断言。）
+    static func match(fileName: String, in index: [String: [String]]) -> String? {
+        guard !fileName.isEmpty else { return nil }
+        let base = (fileName as NSString).deletingPathExtension
+        guard let candidates = index[base], !candidates.isEmpty else { return nil }
+        if candidates.contains(fileName) { return fileName }
+        return candidates.sorted().first
+    }
+}
+
+// MARK: - 缓存签名（第 41 轮 P0-4：按 id 失效，不再全清）
+
+/// 以前 `items` 任何变化（哪怕只是下载进度 +1%）都 `removeAll()` 两个缓存，
+/// 下载页每行隔一秒就重新走一次「线性找记录 + stat 磁盘」。
+/// 用一个便宜的签名判断"这条记录的本地状态到底变没变"：
+///   · 进度 / 字节数变化 → 签名不变 → 缓存保留；
+///   · 状态、本地路径、文件名变了 → 只摘掉这一首。
+struct DownloadCacheSignature: Equatable {
+    var songID: String
+    var status: DownloadStatus
+    var localPath: String?
+    var fileName: String
+
+    init(songID: String, status: DownloadStatus, localPath: String?, fileName: String) {
+        self.songID = songID
+        self.status = status
+        self.localPath = localPath
+        self.fileName = fileName
+    }
+
+    init(_ item: DownloadItem) {
+        self.init(songID: item.song.id,
+                  status: item.status,
+                  localPath: item.localPath,
+                  fileName: item.fileName)
+    }
+}
+
+// MARK: - 行状态（第 41 轮 P0-3：渲染路径零磁盘）
+
+/// 一行下载记录的"本地事实"：音频在哪、旁车封面在哪。
+/// 由 `DownloadManager` 在后台按一次目录列举算好，视图/播放链只读它，不再逐行 stat/列目录。
+/// nil 一律表示"没有"，与 `localFileURL` / `localCoverURL` 的返回口径一致。
+struct DownloadRowFacts: Equatable {
+    var filePath: String?
+    var coverPath: String?
+}
+
 // MARK: - 搜索历史条目
 struct SearchHistoryItem: Identifiable, Codable, Hashable {
     let id: UUID

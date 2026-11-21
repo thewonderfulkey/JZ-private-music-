@@ -29,6 +29,11 @@ struct JZTabBar: View {
         }
         .padding(.horizontal, 6)
         .frame(height: JZTabBarMetrics.height)
+        // 第 41 轮 P0-1：栏自己的动画改成**值驱动**，只作用在栏这一棵子树里。
+        // 以前是按钮 action 里 `withAnimation { selection = tab }` —— 那个事务同时把
+        // "页面插入"也包进去了：下载页要建几百行，底部栏的按压回弹/胶囊滑动就跟着一起被冻住
+        // （老板录屏里"点下载那一瞬间按钮变小一下"）。
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : Tokens.Motion.tabSwitch, value: selection)
         // 栏高固定 58：Dynamic Type 放到 AX5 时标签会顶破胶囊，这里把栏内字号上限收到 xxLarge。
         // 读屏用户走 VoiceOver 的完整标签，不依赖视觉字号。
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
@@ -44,9 +49,11 @@ struct JZTabBar: View {
         return Button {
             guard selection != tab else { return }
             Haptics.tabChanged()
-            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Tokens.Motion.tabSwitch) {
-                selection = tab
-            }
+            PerfProbe.tabTapped(tab.rawValue)
+            // 第 41 轮 P0-1：**不要**用 `withAnimation` 包这次赋值。
+            // 它同时驱动页面插入，下载页（几百上千行）会在这个事务里建，
+            // 栏自己的弹簧就被拖住不动了。动画改由上面 HStack 的 `.animation(_:value:)` 负责。
+            selection = tab
         } label: {
             HStack(spacing: 5) {
                 tabIcon(tab, selected: selected)

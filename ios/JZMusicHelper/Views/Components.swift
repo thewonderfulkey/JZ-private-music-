@@ -50,7 +50,10 @@ struct SongArtwork: View {
     /// 现在**每次 id 变都取一次**：取图期间旧图先留着（不闪占位），取到再替换；
     /// 中途又被换歌时 `.task` 会取消旧任务，这里用 `Task.isCancelled` 挡住过期结果覆盖新图。
     private func load() async {
+        // t4（第 41 轮打点）：列表每一行都会走这里，计数用于判断"一屏到底建了多少行"
+        PerfProbe.noteArtwork()
         // 已下载 / 导入的歌：先试本地旁车封面（离线也有图，不等网络）
+        // 第 41 轮 P0-3 起 `localCoverURL` 只读内存里的行状态表，不再逐行 stat/列目录
         if let local = DownloadManager.shared.localCoverURL(for: song),
            let img = await CoverImageCache.shared.image(forFile: local) {
             guard !Task.isCancelled else { return }
