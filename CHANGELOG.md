@@ -50,7 +50,7 @@
 
 `tools/dev/r167_mini_assertions.swift` **22/22**（时间预算 39.9/40/75 秒、连续 4/5 个不存在、
 ENOENT 码 4/260 vs EACCES 257、两种文案、暂存目录隐藏）；
-`ios/SelfTest/main.swift` 新增 20 条（CI 跑，本机 WSL 的 zlib 桩让全量自测停在前面的歌词解密，属已知）；
+`ios/SelfTest/main.swift` 新增 19 条（CI 跑，logic-tests 绿；本机 WSL 的 zlib 桩让全量自测停在前面的歌词解密，属已知）；
 `check_ui_hygiene.py` / `check_pbxproj.py` 通过；改动文件 `swiftc -parse` 通过。
 
 ### 四、待老板实机验证三件事
