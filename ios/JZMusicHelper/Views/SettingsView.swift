@@ -18,6 +18,9 @@ import UIKit
 // 新上：可缓存歌曲数量（歌词缓存上限）· 车载自动播放 · 下载保存位置可选。
 struct SettingsView: View {
 
+    /// 导出收藏数据的结果提示（排查去重用）
+    @State private var exportNote: String?
+
     @Environment(SettingsStore.self) private var settings
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerEngine.self) private var player
