@@ -1,3 +1,63 @@
+## iOS v2.4.53（231）· 2026-11-21 晚（下载 Tab：首帧压到 8 行 + 分块补行 + 交互懒挂载）
+
+老板真机（v2.4.52 / 230，`诊断/perf.log` 六次）：
+`t0→t1=507–813ms`、`maxGap=676–952ms`、`rows=80`、`file=0 / fallback=0 / art=5`。
+**耗时全在"页面插入 + 首屏行构建"**（80 行 ≈ 7–10ms/行），磁盘/封面/逐行列目录已被排除。
+
+### 出包（v2.4.53 / 231）
+
+| 项 | 值 |
+|---|---|
+| CI | **待跑**（本轮只做本地提交，push / 触发 CI / 发群由老板侧执行） |
+| 产物 | 待 CI 产出 `JZ-Music-v2.4.53-<sha7>-r<run#>-ios-unsigned.ipa` |
+| 包内 | `2.4.53 (231)`（`project.pbxproj` 4 处 + `build.gradle.kts` 同步） |
+| 分发 | 待老板 push 后自动发群 |
+
+### 一、根因（真机 perf.log 实测，不是推算）
+
+| 观测 | 数值 | 说明 |
+|---|---|---|
+| `t0→t1` | **507 / 554 / 573 / 598 / 604 / 813 ms** | 点按钮 → 页插入 + 首屏行建完 |
+| `t0→t3` | 与 `t0→t1` 几乎相等 | 页面"出现"那一刻就是建行建完那一刻 |
+| `maxGap` | **676 / 697 / 724 / 787 / 805 / 952 ms** | 主线程最长阻塞（老板体感的"卡死"） |
+| `rows` | 80 | 上一版的首屏行数 → 约 7–10ms/行 |
+| `file` / `fallback` / `art` | 0 次 / 0 次 / 5 次 | 磁盘、逐首列目录、封面都已排除 |
+
+`maxGap` 比 `t0→t3` 还大 100–350ms，说明**首帧之后还有一段阻塞**（List 首次布局 + 首次进页的 0.22s 淡入逐帧重算）。
+
+### 二、改了什么（按老板拍板的修正方案，七条）
+
+| # | 改动 | 位置 |
+|---|---|---|
+| 1 | **首帧只建 8 行**（不是 80），之后每拍 +4 行补到 80；一旦本轮出现过 >150ms 长停顿就停止自动补，交给「继续加载」 | `DownloadsTabView.swift` / `DownloadItem.swift`（`firstFrame` / `fillTarget` / `fillChunk` / `nextFillLimit`） |
+| 2 | **页面插入再推迟一拍**：点 Tab 只改选中态（栏动画先走），下一拍才 `visited.insert` + `shownTab`；并去掉 `\|\| router.tab == tab` 的兜底（它才是"点下就建页"的真凶） | `RootTabView.swift`（`shownTab` / `reveal(_:)`） |
+| 3 | **去掉 `.id(item.id.uuidString)`**：行 identity 直接用元素自身的 `UUID`，`ScrollViewReader` 也改认 UUID（`SongLocator` 加 UUID 重载） | `DownloadsTabView.swift` / `NowPlayingLocate.swift` |
+| 4 | **`swipeActions` / `contextMenu` 懒挂载**：只给"露过脸"的行挂（`armed` 集合），且与 `visibleLimit` 在同一次状态变更里更新，不额外多一次整页渲染 | `DownloadsTabView.swift`（`DownloadRowActions`） |
+| 5 | **行视图瘦身**：下载页专用 `DownloadRow`（封面 48 + 歌名 + 副行 + 时长 + 红心），去掉平台胶囊与名次槽那一组布局修饰 | `DownloadsTabView.swift`（`DownloadRow`） |
+| 6 | **打点补全**：`t0→选中` / `t0→t1` / `t0→t2`（body 求值）/ `t0→t3` / `t0→首行` + `evals`（body 求值次数），并把 `t1→t2` 那个恒为 `-` 的口径改掉 | `DownloadManager.swift`（`PerfProbe`）/ 各视图调用点 |
+| 7 | 保留 P0-3 行状态预计算 / P0-4 按 id 失效 / P1-1 目录索引（真机 `file=0/fallback=0` 已证明有效） | 未改动 |
+
+另外两条配套：
+- **「继续加载」步长 80 → 24**（真机 7–10ms/行，一次加 80 行就是 600ms 卡顿）；
+- **下载页不做首次淡入**（`FirstVisitReveal` 的 0.22s 会让重页逐帧重算，是 `maxGap` 比 `t0→t3` 大的来源之一）；
+- 失败区配额补边界：首帧只有 8 行时，失败区最多 2 条（否则 245 条失败会把歌全挤出首屏）。
+
+### 三、自测
+
+| 项 | 结果 |
+|---|---|
+| 新增纯逻辑断言（r169 mini harness） | **21 / 21 通过** |
+| 官方 SelfTest（CI 同款文件清单） | 编译通过（`BUILD_EXIT=0`；运行仍止步于既有的 zlib 桩 4 条，非本轮引入） |
+| `check_ui_hygiene.py` / `check_pbxproj.py` | ✅ / ✅ |
+| 语法解析（`swiftc -parse`，9 个文件） | ✅ 全通过 |
+
+### 四、装包后的验收（看 `诊断/perf.log` 下一行）
+
+- `t0→t1` **≤150ms**、`maxGap` **<100ms**、`rows` ≤15（首帧 8 行）；
+- 回发现再进下载页仍接近 0（保活路径没被破坏）；
+- 662 行滚动到底能继续加载（每次 +24）；左滑删除 / 多选 / 重试正常；
+- 按钮"变小 / 标签重叠"不再出现（建页不再占住动画帧）。
+
 ## iOS v2.4.52（230）· 2026-11-21 晚（下载 Tab 首屏：分页 + 行状态预计算 + 切页移出动画事务）
 
 老板（11-21 15:40 录屏，下载页 **662 首 · 26.47 GB**）："本地导入到几百上千首后，点「下载」Tab 卡 2–3 秒"，

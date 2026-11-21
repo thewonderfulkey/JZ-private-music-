@@ -37,8 +37,14 @@ struct DownloadsTabView: View {
     @State private var showBatchDeleteConfirm = false
 
     /// 第 41 轮 P0-2：首屏只建这么多行，滚到底/点「继续加载」再追加。
-    /// 老板这台机器 662 首已下载 + 245 条失败，一次性建 900+ 行就是那 2–3 秒的来源。
-    @State private var visibleLimit = DownloadListPaging.firstPage
+    /// 第 42 轮（真机 perf.log：80 行要 507–813ms ≈ 7–10ms/行）：**首帧只建 8 行**，
+    /// 之后分块补到 `fillTarget`（每块 4 行，一旦出现 >150ms 的长停顿就停止自动补，
+    /// 交给「继续加载」按钮 —— 保证验收口径 maxGap < 100ms）。
+    @State private var visibleLimit = DownloadListPaging.firstFrame
+    /// 自动补行是否还在跑
+    @State private var fillScheduled = false
+    /// 已经挂上左滑/长按菜单的行（只有"要动手的那些行"才挂，见 `completedRow`）
+    @State private var armed: Set<UUID> = []
     /// 自动续加载的节流（同一帧里连开好几页就等于没分页）
     @State private var lastAutoLoadAt = Date.distantPast
 
@@ -122,11 +128,14 @@ struct DownloadsTabView: View {
         // 条目变化（删了一首 / 导入进来一批）后清理选择：别删到看不见的东西
         .onChange(of: downloads.items.count) { _, _ in
             picked = BatchSelection.pruning(picked, visible: visibleIDs)
+            armed.formIntersection(visibleIDs)
             if downloads.items.isEmpty { selectMode = false }
         }
-        // 换了搜索词就回到第一页（否则上一轮的"加载到 400 行"会带过来，白白多建行）
+        // 换了搜索词就回到首帧行数（否则上一轮的"加载到 400 行"会带过来，白白多建行）
         .onChange(of: queryKey) { _, _ in
-            visibleLimit = DownloadListPaging.firstPage
+            visibleLimit = DownloadListPaging.firstFrame
+            fillScheduled = false
+            scheduleFill()
         }
         .locateToast(notice)
     }
@@ -318,9 +327,10 @@ struct DownloadsTabView: View {
                                         Label("删除", systemImage: "trash")
                                     }
                                 }
-                                // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                                // （用 uuidString 而不是 UUID：ScrollViewReader 的 id 统一走 String）
-                                .id(item.id.uuidString)
+                                // 第 42 轮：**去掉** `.id(uuidString)`。
+                                // 行本身就是 `ForEach(finished)` 的元素，identity 已经是 `item.id`；
+                                // 再挂一层 String id 等于每行每帧多一次身份重算（真机上这层很贵）。
+                                // `ScrollViewReader.scrollTo` 直接认元素 id（UUID），见下面的「定位」。
                         }
                     } header: {
                         sectionHeader(finishedHeaderText)
@@ -345,7 +355,12 @@ struct DownloadsTabView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             // t3（第 41 轮打点）：列表首帧到了
-            .onAppear { PerfProbe.pageReady("downloads", rows: paged.shown) }
+            .onAppear {
+                PerfProbe.pageReady("downloads", rows: paged.shown)
+                // 第 42 轮：首帧挂完，下一拍开始分块补行（并给这几行挂上左滑/长按）
+                DispatchQueue.main.async { armVisibleRows() }
+                scheduleFill()
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
             // 批量操作条浮在**迷你条上沿**：迷你条是父视图的 overlay，
             // 直接把操作条放 safeAreaInset 里会被它盖住（下载页经常在播歌）。
@@ -381,10 +396,11 @@ struct DownloadsTabView: View {
                             // 行可能还在"未加载区"：先把 limit 撑到那一行，再滚（下一帧才有这行）
                             let revealed = revealRowForCurrentSong()
                             let scrollToCurrent = {
-                                // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
+                                // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）。
+                                // 第 42 轮：行的 identity 就是 `item.id`（不再挂 String id），所以这里直接传 UUID。
                                 locator.locate(current: player.currentSong,
                                                songs: downloads.completedSongs,
-                                               rowIDs: finished.map { $0.id.uuidString },
+                                               rowIDs: finished.map(\.id),
                                                scroll: { id in
                                                    proxy.scrollTo(id, anchor: .center)
                                                })
@@ -456,6 +472,40 @@ struct DownloadsTabView: View {
     private func loadMore() {
         guard paged.hasMore else { return }
         visibleLimit = DownloadListPaging.nextLimit(visibleLimit, total: paged.total)
+        armVisibleRows()
+    }
+
+    // MARK: 首帧 8 行 + 分块补行（第 42 轮）
+
+    /// 只给"真的要动手的行"挂左滑/长按菜单。
+    /// 跟 `visibleLimit` 在同一个函数里改，SwiftUI 会合并成一次渲染（不会多付一遍）。
+    private func armVisibleRows() {
+        let page = DownloadListPaging.slices(ongoing: ongoing, failed: failed,
+                                             finished: finished, limit: visibleLimit)
+        var next = armed
+        next.formUnion(page.finished.map(\.id))
+        next.formUnion(page.failed.map(\.id))
+        next.formUnion(page.ongoing.map(\.id))
+        if next.count != armed.count { armed = next }
+    }
+
+    /// 首帧之后分块补到 `fillTarget`：每拍 4 行，一旦这一轮已经出现过 >150ms 的停顿就停手，
+    /// 剩下的交给「继续加载」按钮 —— 宁可少补几行，也不要再让主线程整段卡住。
+    private func scheduleFill() {
+        guard !fillScheduled else { return }
+        fillScheduled = true
+        DispatchQueue.main.async { fillStep() }
+    }
+
+    private func fillStep() {
+        let target = min(DownloadListPaging.fillTarget, paged.total)
+        guard visibleLimit < target, !PerfProbe.hadLongGap else {
+            fillScheduled = false
+            return
+        }
+        visibleLimit = DownloadListPaging.nextFillLimit(visibleLimit, target: target)
+        armVisibleRows()
+        DispatchQueue.main.async { fillStep() }
     }
 
     /// 「定位到正在播放」：目标行可能还在未加载区，先把 limit 撑到那一行。
@@ -624,10 +674,11 @@ struct DownloadsTabView: View {
         .padding(.vertical, Tokens.Spacing.m)
     }
 
-    // MARK: 已下载（一行歌，和收藏页同款；没有进度条）
+    // MARK: 已下载（瘦行 + 交互按需挂载）
 
     private func completedRow(_ item: DownloadItem) -> some View {
-        Button {
+        let interactive = armed.contains(item.id)
+        return Button {
             if selectMode {
                 picked = BatchSelection.toggling(picked, item.id)
                 return
@@ -642,28 +693,25 @@ struct DownloadsTabView: View {
                 router.showPlayer = true
             }
         } label: {
-            SongRow(song: item.song,
-                    // 多选态里不显示红心：那是个内嵌按钮，会和"点整行勾选"抢手势
-                    showsFavorite: !selectMode,
-                    isFavorite: library.isFavorite(item.song),
-                    onFavorite: {
-                        Haptics.favorite()
-                        withAnimation(Tokens.Motion.favorite) {
-                            library.toggleFavorite(item.song)
-                        }
-                    },
-                    subtitle: "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)",
-                    isSelected: selectMode ? picked.contains(item.id) : nil)
+            DownloadRow(item: item,
+                        // 多选态里不显示红心：那是个内嵌按钮，会和"点整行勾选"抢手势
+                        showsFavorite: !selectMode,
+                        isFavorite: library.isFavorite(item.song),
+                        onFavorite: {
+                            Haptics.favorite()
+                            withAnimation(Tokens.Motion.favorite) {
+                                library.toggleFavorite(item.song)
+                            }
+                        },
+                        isSelected: selectMode ? picked.contains(item.id) : nil)
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)
-        .contextMenu {
-            Button(role: .destructive) {
-                downloads.remove(itemID: item.id, deleteFile: true)
-            } label: {
-                Label("删除下载", systemImage: "trash")
-            }
-        }
+        // 第 42 轮：左滑删除 / 长按菜单只在"露过脸的行"上挂。
+        // 每行少挂 2 个交互修饰符，80 行就是 160 份开销；而真正会被左滑的只有看得见的那些。
+        .modifier(DownloadRowActions(itemID: item.id, enabled: interactive) { id in
+            downloads.remove(itemID: id, deleteFile: true)
+        })
     }
 
     // MARK: 正在下载（唯一会画进度条的行）
@@ -775,6 +823,109 @@ struct DownloadsTabView: View {
 
     private func sizeText(_ bytes: Int64) -> String {
         ByteText.human(bytes)
+    }
+}
+
+// MARK: - 下载页瘦行（第 42 轮）
+
+/// 真机 perf.log：80 行首帧 507–813ms ≈ 7–10ms/行，所以行本身必须瘦。
+///
+/// 和收藏页的 `SongRow` 相比：
+///   · 去掉平台胶囊（下载页全是「本地」，那一枚没有信息量）；
+///   · 去掉名次槽、`fixedSize`/`layoutPriority` 那一组布局修饰；
+///   · 封面尺寸 52 → 48，其余字号沿用同一套 `FontRole`（视觉上仍是同一族）。
+/// 功能一个不少：点整行起播（整列排队）、红心、多选勾选圈。
+private struct DownloadRow: View {
+
+    let item: DownloadItem
+    let showsFavorite: Bool
+    let isFavorite: Bool
+    let onFavorite: () -> Void
+    let isSelected: Bool?
+
+    private var subtitle: String {
+        "\(item.origin == "import" ? "本地导入 · " : "")\(item.quality.displayName) · \(item.sizeText)"
+    }
+
+    var body: some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            if let isSelected {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(isSelected ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                    .accessibilityHidden(true)
+            }
+
+            SongArtwork(song: item.song, size: 48)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.song.name)
+                    .font(FontRole.songTitle)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(FontRole.songSubtitle)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: Tokens.Spacing.xs)
+
+            Text(item.song.durationText)
+                .font(FontRole.metadata)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(minWidth: 36, alignment: .trailing)
+
+            if showsFavorite {
+                Button(action: onFavorite) {
+                    Image(systemName: isFavorite ? "heart.fill" : "heart")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.secondary)
+                        .minimumTapTarget()
+                }
+                .buttonStyle(.press)
+                .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
+            }
+        }
+        // 行高用 minHeight：AX5 时行要能长高
+        .frame(minHeight: Tokens.Size.songRowHeight)
+        .padding(.vertical, Tokens.Spacing.xxs)
+        .padding(.horizontal, Tokens.Spacing.xxs)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .onAppear { PerfProbe.firstRow("downloads") }
+    }
+}
+
+/// 左滑删除 + 长按菜单：只有"露过脸"的行才挂（`enabled`）。
+/// 没挂上的行照样能点、能看，只是暂时没有左滑 —— 行第一次出现的那一拍就会把 `enabled` 打开。
+private struct DownloadRowActions: ViewModifier {
+
+    let itemID: UUID
+    let enabled: Bool
+    let onDelete: (UUID) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        onDelete(itemID)
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+                .contextMenu {
+                    Button(role: .destructive) {
+                        onDelete(itemID)
+                    } label: {
+                        Label("删除下载", systemImage: "trash")
+                    }
+                }
+        } else {
+            content
+        }
     }
 }
 

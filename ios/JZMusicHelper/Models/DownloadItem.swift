@@ -210,13 +210,32 @@ enum DownloadListPaging {
     /// 首屏行数（老板要的 60–80 行档位）
     static let firstPage = 80
     /// 每次「继续加载」/滚到底追加的行数
-    static let pageStep = 80
+    /// 第 42 轮：80 → 24。真机 7–10ms/行，一次加 80 行就是 600ms 的卡顿；
+    /// 24 行约 200ms，且只有用户主动滚到底才会触发。
+    static let pageStep = 24
+
+    /// 第 42 轮（真机 perf.log 实测）：80 行首帧要 507–813ms（≈7–10ms/行），
+    /// 所以**首帧只建 8 行真数据**（8 行 ≈ 整屏可见量），再分块补到 `fillTarget`。
+    static let firstFrame = 8
+    /// 首帧之后补到的行数
+    static let fillTarget = 80
+    /// 每拍补几行（一拍 ≤100ms，见验收口径 maxGap < 100ms）
+    static let fillChunk = 4
 
     /// 失败区这一屏给多少条：预算的 1/4，第一屏至少 20 条，但不超过实际失败数。
+    /// 第 42 轮补一条边界：首帧只有 8 行时，"至少 20 条"这句话会把 8 行全给失败区
+    /// （老板机器上有 245 条失败记录），所以预算 <20 时改成给 1/4（最少 1 条）。
     static func failedQuota(budget: Int, failedCount: Int) -> Int {
         guard budget > 0, failedCount > 0 else { return 0 }
+        if budget < 20 { return min(failedCount, max(1, budget / 4)) }
         let share = max(budget / 4, min(20, budget))
         return min(failedCount, share)
+    }
+
+    /// 分块补行：下一拍应该涨到多少（不超过 target）
+    static func nextFillLimit(_ current: Int, target: Int, chunk: Int = fillChunk) -> Int {
+        guard target > 0, chunk > 0 else { return max(0, current) }
+        return min(target, max(0, current) + chunk)
     }
 
     static func slices(ongoing: [DownloadItem],

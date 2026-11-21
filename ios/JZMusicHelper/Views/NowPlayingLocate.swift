@@ -54,6 +54,34 @@ final class SongLocator {
                 songs: [Song],
                 rowIDs: [String]?,
                 scroll: @escaping (String) -> Void) {
+        locateCore(current: current, songs: songs) { index, song in
+            if let rowIDs, rowIDs.indices.contains(index) {
+                scroll(rowIDs[index])
+            } else {
+                scroll(song.id)
+            }
+        }
+    }
+
+    /// 同上，但行 id 是 **`DownloadItem.id`（UUID）**。
+    /// 第 42 轮：下载页去掉了 `.id(uuidString)`，行的 identity 直接是元素自己的 `UUID`，
+    /// 这样 `ForEach` 不用每帧再算一层 String 身份。
+    @MainActor
+    func locate(current: Song?,
+                songs: [Song],
+                rowIDs: [UUID],
+                scroll: @escaping (UUID) -> Void) {
+        locateCore(current: current, songs: songs) { index, _ in
+            guard rowIDs.indices.contains(index) else { return }
+            scroll(rowIDs[index])
+        }
+    }
+
+    /// 两个重载共用的一段：守卫、提示、高亮、读屏播报、贴边重试
+    @MainActor
+    private func locateCore(current: Song?,
+                            songs: [Song],
+                            scrollTo: @escaping (Int, Song) -> Void) {
         guard let current else {
             flashToast("还没有在播放的歌")
             return
@@ -69,12 +97,6 @@ final class SongLocator {
         }
 
         let song = songs[index]
-        let target: String
-        if let rowIDs, rowIDs.indices.contains(index) {
-            target = rowIDs[index]
-        } else {
-            target = song.id
-        }
 
         highlightTask?.cancel()
         highlightedSongID = song.id
@@ -93,7 +115,7 @@ final class SongLocator {
                                  argument: "已定位到第 \(index + 1) 首：\(song.name)")
         }
 
-        pin { scroll(target) }
+        pin { scrollTo(index, song) }
     }
 
     /// 把某一行贴到屏幕中间（多次贴，见文件头说明）

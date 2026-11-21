@@ -1141,10 +1141,13 @@ enum PerfProbe {
 
     private static var tapAt: CFAbsoluteTime?
     private static var tapTab = ""
+    private static var selectedAt: CFAbsoluteTime?
     private static var commitAt: CFAbsoluteTime?
     private static var bodyAt: CFAbsoluteTime?
+    private static var firstRowAt: CFAbsoluteTime?
     private static var readyAt: CFAbsoluteTime?
     private static var readyLogged = false
+    private static var bodyEvals = 0
 
     private static var fileLookupCount = 0
     private static var fileLookupMs = 0.0
@@ -1162,10 +1165,13 @@ enum PerfProbe {
     static func tabTapped(_ tab: String) {
         tapAt = CFAbsoluteTimeGetCurrent()
         tapTab = tab
+        selectedAt = nil
         commitAt = nil
         bodyAt = nil
+        firstRowAt = nil
         readyAt = nil
         readyLogged = false
+        bodyEvals = 0
         fileLookupCount = 0
         fileLookupMs = 0
         fallbackCount = 0
@@ -1174,16 +1180,30 @@ enum PerfProbe {
         gapCount = 0
     }
 
-    /// t1：`router.tab` 变更提交（`RootTabView.onChange` 里），即"页插入这一帧"的末尾
+    /// tA：选中态提交（`RootTabView.onChange`，**页面还没插**）。
+    /// 第 42 轮起页面插入推迟一拍，所以「点下去 App 有没有反应」只看这个数。
+    static func tabSelected(_ tab: String) {
+        guard tab == tapTab, tapAt != nil, selectedAt == nil else { return }
+        selectedAt = CFAbsoluteTimeGetCurrent()
+    }
+
+    /// t1：页插入 + 首屏行建完（推迟插入那一拍的**下一次** async 里打）。
     static func tabCommitted(_ tab: String) {
         guard tab == tapTab, tapAt != nil, commitAt == nil else { return }
         commitAt = CFAbsoluteTimeGetCurrent()
     }
 
-    /// t2：目标页 body 第一次求值（同一轮只记第一次）
+    /// t2：目标页 body 第一次求值（同一轮只记第一次；之后再求值只计数）
     static func pageBody(_ page: String) {
-        guard page == tapTab, tapAt != nil, bodyAt == nil else { return }
-        bodyAt = CFAbsoluteTimeGetCurrent()
+        guard page == tapTab, tapAt != nil else { return }
+        bodyEvals += 1
+        if bodyAt == nil { bodyAt = CFAbsoluteTimeGetCurrent() }
+    }
+
+    /// t4：第一行真的出现（`DownloadRowView.onAppear`）
+    static func firstRow(_ page: String) {
+        guard page == tapTab, tapAt != nil, firstRowAt == nil else { return }
+        firstRowAt = CFAbsoluteTimeGetCurrent()
     }
 
     /// t3：列表首帧到了。延迟 0.8s 再落盘，把 t4/t5/t6 一起统计进去。
@@ -1203,6 +1223,10 @@ enum PerfProbe {
 
     static func noteFileFallback() { fallbackCount += 1 }
     static func noteArtwork() { artworkCount += 1 }
+
+    /// 这一轮（从上一次点 Tab 起）有没有出现过 >150ms 的长停顿。
+    /// 下载页拿它做"自动补行"的刹车：已经卡过一次就不要再往列表里加行。
+    static var hadLongGap: Bool { gapCount > 0 }
 
     // MARK: 看门狗（t6）
 
@@ -1229,12 +1253,18 @@ enum PerfProbe {
 
     private static func writeSummary(rows: Int) {
         guard let start = tapAt, tapTab == "downloads" else { return }
+        let selectedMs = selectedAt.map { ($0 - start) * 1000 } ?? -1
+        let bodyMs = bodyAt.map { ($0 - start) * 1000 } ?? -1
         let commitMs = commitAt.map { ($0 - start) * 1000 } ?? -1
-        let bodyMs = (commitAt != nil && bodyAt != nil) ? (bodyAt! - commitAt!) * 1000 : -1
         let readyMs = readyAt.map { ($0 - start) * 1000 } ?? -1
+        let rowMs = firstRowAt.map { ($0 - start) * 1000 } ?? -1
         let line = "tab=downloads"
-            + " t0→t1=\(ms(commitMs)) t1→t2=\(ms(bodyMs)) t0→t3=\(ms(readyMs))"
-            + " rows=\(rows)"
+            + " t0→选中=\(ms(selectedMs))"
+            + " t0→t1=\(ms(commitMs))"
+            + " t0→t2=\(ms(bodyMs))"
+            + " t0→t3=\(ms(readyMs))"
+            + " t0→首行=\(ms(rowMs))"
+            + " rows=\(rows) evals=\(bodyEvals)"
             + " file=\(fileLookupCount)次/\(ms(fileLookupMs))ms"
             + " fallback=\(fallbackCount)次"
             + " art=\(artworkCount)次"

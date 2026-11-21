@@ -4400,8 +4400,8 @@ func dlItem(_ i: Int, status: DownloadStatus = .completed,
 section("下载页分页：预算怎么分（P0-2）")
 
 do {
-    check("首屏 80 行 / 每次再加 80",
-          DownloadListPaging.firstPage == 80 && DownloadListPaging.pageStep == 80)
+    check("首屏上限 80 / 每次「继续加载」加 24（第 42 轮从 80 降下来）",
+          DownloadListPaging.firstPage == 80 && DownloadListPaging.pageStep == 24)
 
     let finished = (0..<662).map { dlItem($0) }
     let one = DownloadListPaging.slices(ongoing: [], failed: [], finished: finished,
@@ -4427,13 +4427,21 @@ do {
     check("预算为 0 时不给失败区",
           DownloadListPaging.failedQuota(budget: 0, failedCount: 10) == 0)
 
-    check("继续加载：80 → 160", DownloadListPaging.nextLimit(80, total: 662) == 160)
+    check("继续加载：80 → 104", DownloadListPaging.nextLimit(80, total: 662) == 104)
     check("继续加载不越界", DownloadListPaging.nextLimit(640, total: 662) == 662)
     check("到底了不再涨", DownloadListPaging.nextLimit(662, total: 662) == 662)
 
     let empty = DownloadListPaging.slices(ongoing: [], failed: [], finished: [], limit: 80)
     check("空列表：没有更多、不显示负的 hidden",
           !empty.hasMore && empty.hidden == 0 && empty.shown == 0)
+
+    // 第 42 轮：首帧 8 行 + 分块补到 80（真机 80 行要 507–813ms ≈ 7–10ms/行）
+    check("首帧只建 8 行", DownloadListPaging.firstFrame == 8)
+    check("补行目标 80 / 每拍 4 行",
+          DownloadListPaging.fillTarget == 80 && DownloadListPaging.fillChunk == 4)
+    check("补行：8 → 12", DownloadListPaging.nextFillLimit(8, target: 80) == 12)
+    check("补行不越过目标", DownloadListPaging.nextFillLimit(76, target: 80) == 80)
+    check("已经到目标就不涨", DownloadListPaging.nextFillLimit(80, target: 80) == 80)
 }
 
 section("目录索引：一次列目录，别每首列一遍（P1-1）")

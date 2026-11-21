@@ -23,12 +23,14 @@ struct RootTabView: View {
     @Environment(DiscoverFeed.self) private var discoverFeed
     @Environment(AppRouter.self) private var router
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var downloads: DownloadManager
 
     /// 只在第一次进某个 Tab 时才建它的 NavigationStack：
     /// 识曲页里挂着一个跑 wasm 的 WKWebView，启动时不该被顺手建出来。
     @State private var visited: Set<AppRouter.Tab> = [.discover]
+    /// **真正在显示的页**（第 42 轮）：与 `router.tab` 分开。
+    /// 点 Tab 时 `router.tab` 立刻变（底部栏动画先走），`shownTab` 晚一拍才跟 —— 见 `reveal(_:)`。
+    @State private var shownTab: AppRouter.Tab = .discover
 
     private var activeDownloads: Int {
         downloads.items.filter { $0.status == .downloading || $0.status == .pending }.count
@@ -81,10 +83,9 @@ struct RootTabView: View {
             CarAudioAutoPlay.shared.attach(player: player, feed: discoverFeed, library: library)
         }
         .onChange(of: router.tab) { _, newValue in
-            visited.insert(newValue)
-            // t1（第 41 轮打点）：页插入这一帧提交完成。与 t0（点按钮）、t2（目标页 body 首次求值）
-            // 一起判断"卡在容器/动画事务"还是"卡在整页构建"。
-            PerfProbe.tabCommitted(newValue.rawValue)
+            // tA（第 42 轮打点）：选中态提交，页面还没插 —— "点下去 App 有没有反应"只看这个数
+            PerfProbe.tabSelected(newValue.rawValue)
+            reveal(newValue)
         }
         .onChange(of: scenePhase) { _, phase in
             // App Intent 会把 App 拉到前台；回到 active 时消费一次
@@ -110,15 +111,15 @@ struct RootTabView: View {
     private var tabPages: some View {
         ZStack {
             ForEach(AppRouter.Tab.allCases, id: \.self) { tab in
-                // `router.tab == tab` 也要算进来：onChange 是在这一帧渲染之后才跑，
-                // 只等 visited 会先闪一帧空白再插入新页。
-                if visited.contains(tab) || router.tab == tab {
+                // 第 42 轮：只看 `visited`（页面真的建好了才显示），不再用 `router.tab == tab` 兜底。
+                // 兜底那一句会让"点 Tab 的这一帧"就去建新页 —— 真机 perf.log 里 t0→t1=507–813ms 就是它，
+                // 而且 maxGap 676–952ms 说明这一帧连底部栏的动画都一起被冻住了。
+                if visited.contains(tab) {
                     page(for: tab)
-                        .opacity(router.tab == tab ? 1 : 0)
-                        .scaleEffect(router.tab == tab || reduceMotion ? 1 : 0.985)
-                        .allowsHitTesting(router.tab == tab)
-                        .accessibilityHidden(router.tab != tab)
-                        .zIndex(router.tab == tab ? 1 : 0)
+                        .opacity(tab == shownTab ? 1 : 0)
+                        .allowsHitTesting(tab == shownTab)
+                        .accessibilityHidden(tab != shownTab)
+                        .zIndex(tab == shownTab ? 1 : 0)
                 }
             }
         }
@@ -129,6 +130,29 @@ struct RootTabView: View {
         // 跟着一起冻住（老板录屏里"点下载那一瞬间按钮变小一下"就是这么来的）。
         // 现在页面切换是即时的；首次进页的淡入仍由 `FirstVisitReveal` 自己负责（独立、很轻）。
         // 底部栏的动画在 JZTabBar 内部按 `selection` 值驱动，只作用于栏自身。
+    }
+
+    /// 第 42 轮：**页面插入推迟一拍**。
+    ///
+    /// 点 Tab 只改选中态（底部栏的胶囊/图标立刻走），先把这一帧提交出去；
+    /// 下一拍再 `visited.insert` + `shownTab = tab`，让"建页"发生在用户已经看到栏动之后。
+    /// 已经访问过的页不用建，直接切（保活路径，理应接近 0）。
+    private func reveal(_ tab: AppRouter.Tab) {
+        if visited.contains(tab) {
+            shownTab = tab
+            PerfProbe.tabCommitted(tab.rawValue)
+            return
+        }
+        DispatchQueue.main.async {
+            // 这一拍里又切走了就不插（避免"插了又切走"的瞬时构建）
+            guard router.tab == tab else { return }
+            visited.insert(tab)
+            shownTab = tab
+            // 建页发生在这次状态提交里；下一拍才等于"首屏行建完"
+            DispatchQueue.main.async {
+                PerfProbe.tabCommitted(tab.rawValue)
+            }
+        }
     }
 
     @ViewBuilder
@@ -167,7 +191,9 @@ struct RootTabView: View {
                     .navigationTitle("下载")
             }
             .miniPlayerBar(onTap: openPlayer)
-            .modifier(FirstVisitReveal())
+            // 第 42 轮：下载页**不做**首次淡入。
+            // FirstVisitReveal 是 0.22s 的 opacity 动画，重页在动画期间会逐帧重算
+            // （真机 maxGap 676–952ms 里就有一段来自这里）。这一页要的是"点了就在"。
 
         case .settings:
             NavigationStack {
