@@ -138,6 +138,156 @@ enum AudioTagEmbedder {
         }
     }
 
+    // MARK: - 只换封面（把"前端显示的那张图"写回文件本身）
+
+    /// 封面写回的结果：换了 / 补了 / 本来就是同一张 / 容器不支持 / 失败。
+    /// 分开计数是有意义的 —— 老板要能看出"到底补进去几张、跳过几张"。
+    enum CoverEmbedOutcome: String, Sendable {
+        case replaced
+        case added
+        case already
+        case unsupported
+        case failed
+    }
+
+    /// 把一张封面写进音频文件（**只动封面**，标题/歌手/专辑/歌词原样保留）。
+    ///
+    /// - mp3：`DownloadCompanion.ID3Artwork` 只换 APIC 帧，音频体原样搬；
+    /// - m4a/mp4：AVFoundation 读出现有 metadata，去掉旧 artwork 换新的，passthrough 导出；
+    /// - 其它容器（flac/ogg/wav…）：`.unsupported`（旁车仍是兜底，见 `DownloadCompanion` 头注释）。
+    ///
+    /// 任何一步失败都**保留原文件**（先写临时文件、校验通过才原子替换），调用方据此计数。
+    static func alignArtwork(fileURL: URL, coverData: Data, coverMime: String) async -> CoverEmbedOutcome {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: fileURL.path), !coverData.isEmpty else { return .failed }
+        switch fileURL.pathExtension.lowercased() {
+        case "mp3":
+            return await alignMP3(fileURL: fileURL, cover: coverData, mime: coverMime)
+        case "m4a", "mp4":
+            return await alignM4A(fileURL: fileURL, cover: coverData)
+        default:
+            return .unsupported
+        }
+    }
+
+    /// mp3：只替换 APIC 帧。音频体（标签之后的所有字节）一个字节不改，
+    /// 所以这里**不需要**再跑一遍 AVAsset 可播放校验（那一步 662 首要多花好几分钟）；
+    /// 校验只看"临时文件体积等于算出来的字节数"和"头真的是 ID3v2.3/2.4"。
+    private static func alignMP3(fileURL: URL, cover: Data, mime: String)
+        async -> CoverEmbedOutcome {
+        let fm = FileManager.default
+        guard let original = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
+              !original.isEmpty else { return .failed }
+
+        if let existing = DownloadCompanion.ID3Artwork.image(inFileData: original), existing == cover {
+            return .already
+        }
+        let hadArtwork = DownloadCompanion.ID3Artwork.hasImage(inFileData: original)
+        guard let output = DownloadCompanion.ID3Artwork.replacing(inFileData: original,
+                                                                  cover: cover, mime: mime) else {
+            return .failed
+        }
+
+        let tempURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".align-\(UUID().uuidString).mp3")
+        defer { try? fm.removeItem(at: tempURL) }
+        do {
+            try output.write(to: tempURL, options: .atomic)
+        } catch {
+            return .failed
+        }
+
+        guard let size = (try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? Int64,
+              size == Int64(output.count),
+              let head = firstBytes(of: tempURL, count: 4), head.count == 4,
+              head[0] == 0x49, head[1] == 0x44, head[2] == 0x33,
+              head[3] == 0x03 || head[3] == 0x04 else {
+            return .failed
+        }
+
+        do {
+            _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
+            return hadArtwork ? .replaced : .added
+        } catch {
+            return .failed
+        }
+    }
+
+    /// m4a：读出现有 metadata，剔掉旧 artwork、换成新的，再 passthrough 导出（不重编码）。
+    /// 这个容器要真的重写一遍，所以保留原来那条 `isReadableAudioFile` 闸门。
+    private static func alignM4A(fileURL: URL, cover: Data) async -> CoverEmbedOutcome {
+        let fm = FileManager.default
+        let asset = AVURLAsset(url: fileURL)
+        let existing = (try? await asset.load(.metadata)) ?? []
+
+        var hadArtwork = false
+        var items: [AVMetadataItem] = []
+        for item in existing {
+            if isArtworkItem(item) {
+                hadArtwork = true
+                if let data = item.dataValue, data == cover { return .already }
+                continue
+            }
+            if let copy = mutableCopy(of: item) { items.append(copy) }
+        }
+
+        let artwork = AVMutableMetadataItem()
+        artwork.keySpace = AVMetadataKeySpace.common
+        artwork.key = AVMetadataKey.commonKeyArtwork.rawValue as NSString
+        artwork.value = cover as NSData
+        // 不写 dataType 时部分非 Apple 播放器不认这张封面；按文件头标 JPEG/PNG
+        if cover.starts(with: [0xFF, 0xD8, 0xFF]) {
+            artwork.dataType = kCMMetadataBaseDataType_JPEG as String
+        } else if cover.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            artwork.dataType = kCMMetadataBaseDataType_PNG as String
+        }
+        items.append(artwork)
+
+        let tempURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(".align-\(UUID().uuidString).m4a")
+        defer { try? fm.removeItem(at: tempURL) }
+
+        guard let session = AVAssetExportSession(asset: asset,
+                                                 presetName: AVAssetExportPresetPassthrough),
+              session.supportedFileTypes.contains(.m4a) else { return .failed }
+        session.outputURL = tempURL
+        session.outputFileType = .m4a
+        session.metadata = items
+        session.shouldOptimizeForNetworkUse = false
+
+        let finished = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            session.exportAsynchronously {
+                continuation.resume(returning: session.status == .completed)
+            }
+        }
+        guard finished, await isReadableAudioFile(tempURL) else { return .failed }
+
+        do {
+            _ = try fm.replaceItemAt(fileURL, withItemAt: tempURL)
+            return hadArtwork ? .replaced : .added
+        } catch {
+            return .failed
+        }
+    }
+
+    /// 这个 metadata 项是不是封面
+    private static func isArtworkItem(_ item: AVMetadataItem) -> Bool {
+        item.commonKey == .commonKeyArtwork
+            || (item.keySpace == .common
+                && (item.key as? String) == AVMetadataKey.commonKeyArtwork.rawValue)
+    }
+
+    /// 现有 metadata 项 → 可变副本（导出时直接吃 `AVMetadataItem`，转一份最稳）
+    private static func mutableCopy(of item: AVMetadataItem) -> AVMutableMetadataItem? {
+        guard let key = item.key, let space = item.keySpace else { return nil }
+        let copy = AVMutableMetadataItem()
+        copy.keySpace = space
+        copy.key = key
+        copy.value = item.value
+        copy.dataType = item.dataType
+        return copy
+    }
+
     // MARK: - metadata 组装
 
     /// m4a 的 metadata：common 键（标题/歌手/专辑/封面）+ iTunes 歌词键。

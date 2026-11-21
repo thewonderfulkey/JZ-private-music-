@@ -310,6 +310,220 @@ enum DownloadCompanion {
         }
     }
 
+    // MARK: - 只换封面（内嵌封面替换 / 追加）
+    //
+    // 老板 2026-11-22 原话：「我已经把导入的歌曲所有封面都替换内置了，那么本地的后台文件
+    // 封面并没有和前端内置的对齐，我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲
+    // 的封面，如果该歌曲后台文件中没有封面那么直接添加进去并建联就行了。」
+    //
+    // 这一步的立场是「**只动封面那一帧**」：
+    //   · 除 APIC 以外的帧（TIT2 / TPE1 / TALB / USLT…）原样搬 → 别人写的字段、内嵌歌词一个不丢；
+    //   · 音频体（标签之后的所有字节）**一个字节不改** → "能不能放"这件事天然不变；
+    //   · 无法安全解析（v2.2 / 带 unsynchronisation / 扩展头 / footer / 帧长度越界）→ 返回 nil，
+    //     调用方保持原文件不动。宁可不换封面，也不写坏一首能放的歌。
+    //
+    // 为什么不复用上面 `id3Tag(...)` 整条重建：那条路只写 TIT2/TPE1/TALB/APIC/USLT，
+    // 这次若只取到封面、没取到词，文件里原有的 USLT 就被顺手抹掉了（"对齐封面"不该删歌词）。
+    enum ID3Artwork {
+
+        /// 文件里已内嵌的第一张封面（优先 front cover，type = 3）。
+        /// 只用于「这张图和前端那张是不是同一张」：相同就跳过重写，662 首里能省多少省多少。
+        static func image(inFileData data: Data) -> Data? {
+            guard let tag = tagInfo(data) else { return nil }
+            let bytes = [UInt8](data)
+            guard let list = frames(bytes, tag: tag) else { return nil }
+            var fallback: Data?
+            for frame in list where frame.id == "APIC" {
+                guard let parsed = parseAPIC(bytes, body: frame.body) else { continue }
+                if parsed.type == 3 { return Data(bytes[parsed.image]) }
+                if fallback == nil { fallback = Data(bytes[parsed.image]) }
+            }
+            return fallback
+        }
+
+        /// 有没有内嵌封面（"替换"和"新增"要分开计数，老板要能看出到底补进去了几张）
+        static func hasImage(inFileData data: Data) -> Bool {
+            image(inFileData: data) != nil
+        }
+
+        /// 把封面替换 / 追加进文件，返回**完整的新文件字节**；无法安全处理 → nil。
+        static func replacing(inFileData data: Data, cover: Data, mime: String) -> Data? {
+            guard !cover.isEmpty else { return nil }
+
+            guard let tag = tagInfo(data) else {
+                // 没有 ID3v2 标签 → 造一条只含 APIC 的 v2.4 标签前置，音频体原样跟在后面。
+                // 但"开头是 ID3 却解析不了"（v2.2 / unsync / 长度越界）不能走这条路：
+                // 那会在旧标签前面再糊一条新标签，两个标签叠着，解码方读哪个都不算错。
+                guard !startsWithID3(data) else { return nil }
+                let frame = apicFrame(cover: cover, mime: mime, version: 4)
+                var out = tagHeader(version: 4, framesLength: frame.count)
+                out.append(frame)
+                out.append(data)
+                return out
+            }
+
+            let bytes = [UInt8](data)
+            guard let list = frames(bytes, tag: tag) else { return nil }
+            var kept = Data()
+            for frame in list where frame.id != "APIC" && frame.id != "PIC" {
+                kept.append(data.subdata(in: frame.start..<frame.end))
+            }
+            kept.append(apicFrame(cover: cover, mime: mime, version: tag.version))
+
+            var out = tagHeader(version: tag.version, framesLength: kept.count)
+            out.append(kept)
+            out.append(data.subdata(in: tag.end..<data.count))
+            return out
+        }
+
+        // MARK: 解析
+
+        private struct Tag {
+            var version: UInt8
+            var framesStart: Int
+            var end: Int
+        }
+
+        private struct Frame {
+            var id: String
+            var start: Int
+            var end: Int
+            var body: Range<Int> { (start + 10)..<end }
+        }
+
+        private static func startsWithID3(_ data: Data) -> Bool {
+            guard data.count >= 3 else { return false }
+            let head = [UInt8](data.prefix(3))
+            return head[0] == 0x49 && head[1] == 0x44 && head[2] == 0x33
+        }
+
+        /// 解析标签头。只认 v2.3 / v2.4 且**无** unsync / 扩展头 / footer：
+        /// 这几种会让"帧起点"整体偏移，重排标签等于赌解码器怎么猜，不如干脆不动。
+        private static func tagInfo(_ data: Data) -> Tag? {
+            guard startsWithID3(data), data.count >= 10 else { return nil }
+            let head = [UInt8](data.prefix(10))
+            let version = head[3]
+            guard version == 3 || version == 4 else { return nil }
+            let flags = head[5]
+            guard flags & 0x80 == 0, flags & 0x40 == 0 else { return nil }
+            if version >= 4, flags & 0x10 != 0 { return nil }
+            let size = syncsafeValue(head, at: 6)
+            guard size >= 0, 10 + size <= data.count else { return nil }
+            return Tag(version: version, framesStart: 10, end: 10 + size)
+        }
+
+        /// 逐帧走一遍，返回全部帧的范围；padding（全 0）之后停止；长度越界 → nil（不敢改）。
+        private static func frames(_ bytes: [UInt8], tag: Tag) -> [Frame]? {
+            var out: [Frame] = []
+            var i = tag.framesStart
+            while i + 10 <= tag.end {
+                guard let id = frameID(bytes, at: i) else { break } // 全 0 = padding 区
+                guard let size = frameSize(bytes, at: i, version: tag.version), size >= 0 else { return nil }
+                let end = i + 10 + size
+                guard end <= tag.end else { return nil }
+                out.append(Frame(id: id, start: i, end: end))
+                i = end
+            }
+            return out
+        }
+
+        /// 帧 ID：4 个 A-Z / 0-9；第一个字节是 0 → padding，返回 nil（调用方停止扫描）
+        private static func frameID(_ bytes: [UInt8], at index: Int) -> String? {
+            guard index + 4 <= bytes.count else { return nil }
+            var chars: [UInt8] = []
+            for k in 0..<4 {
+                let b = bytes[index + k]
+                guard (b >= 0x41 && b <= 0x5A) || (b >= 0x30 && b <= 0x39) else { return nil }
+                chars.append(b)
+            }
+            return String(decoding: chars, as: UTF8.self)
+        }
+
+        private static func frameSize(_ bytes: [UInt8], at index: Int, version: UInt8) -> Int? {
+            guard index + 10 <= bytes.count else { return nil }
+            if version >= 4 { return syncsafeValue(bytes, at: index + 4) }
+            let v = (Int(bytes[index + 4]) << 24) | (Int(bytes[index + 5]) << 16)
+                | (Int(bytes[index + 6]) << 8) | Int(bytes[index + 7])
+            return v >= 0 ? v : nil
+        }
+
+        private static func syncsafeValue(_ bytes: [UInt8], at index: Int) -> Int {
+            guard index + 3 < bytes.count else { return -1 }
+            return (Int(bytes[index] & 0x7F) << 21)
+                | (Int(bytes[index + 1] & 0x7F) << 14)
+                | (Int(bytes[index + 2] & 0x7F) << 7)
+                | Int(bytes[index + 3] & 0x7F)
+        }
+
+        /// APIC 帧体 → (图片类型, 图片字节范围)
+        /// 帧体布局：编码 1B + MIME\0 + 图片类型 1B + 描述\0 + 图片
+        private static func parseAPIC(_ bytes: [UInt8], body: Range<Int>)
+            -> (type: UInt8, image: Range<Int>)? {
+            var i = body.lowerBound
+            guard i < body.upperBound else { return nil }
+            let encoding = bytes[i]
+            i += 1
+            while i < body.upperBound, bytes[i] != 0x00 { i += 1 } // MIME
+            guard i < body.upperBound else { return nil }
+            i += 1
+            guard i < body.upperBound else { return nil }
+            let pictureType = bytes[i]
+            i += 1
+            if encoding == 1 || encoding == 2 {
+                // UTF-16 描述：双字节对齐，找 0x00 0x00
+                while i + 1 < body.upperBound {
+                    if bytes[i] == 0x00, bytes[i + 1] == 0x00 { i += 2; break }
+                    i += 2
+                }
+            } else {
+                while i < body.upperBound, bytes[i] != 0x00 { i += 1 }
+                guard i < body.upperBound else { return nil }
+                i += 1
+            }
+            guard i < body.upperBound else { return nil }
+            return (pictureType, i..<body.upperBound)
+        }
+
+        // MARK: 生成
+
+        private static func apicFrame(cover: Data, mime: String, version: UInt8) -> Data {
+            // v2.3 的标准里没有 UTF-8（只有 0/1），但这里描述是空串 —— 用 0x00 就完全合规；
+            // v2.4 用 0x03（UTF-8）。两种情况描述都不占字节，所以不存在编码风险。
+            var payload = Data([version >= 4 ? 0x03 : 0x00])
+            payload.append(contentsOf: Array(normalizedMime(mime).utf8))
+            payload.append(0x00) // MIME 结束
+            payload.append(0x03) // 图片类型：3 = front cover
+            payload.append(0x00) // 描述为空串
+            payload.append(cover)
+            return frameWith("APIC", payload, version: version)
+        }
+
+        private static func frameWith(_ id: String, _ payload: Data, version: UInt8) -> Data {
+            var data = Data()
+            let idBytes = Array(id.utf8)
+            guard idBytes.count == 4 else { return data }
+            data.append(contentsOf: idBytes)
+            if version >= 4 {
+                data.append(contentsOf: syncsafe(payload.count))
+            } else {
+                let size = max(0, min(payload.count, Int(Int32.max)))
+                data.append(contentsOf: [UInt8((size >> 24) & 0xFF), UInt8((size >> 16) & 0xFF),
+                                         UInt8((size >> 8) & 0xFF), UInt8(size & 0xFF)])
+            }
+            data.append(contentsOf: [0x00, 0x00]) // 帧标志
+            data.append(payload)
+            return data
+        }
+
+        private static func tagHeader(version: UInt8, framesLength: Int) -> Data {
+            var head = Data()
+            head.append(contentsOf: Array("ID3".utf8))
+            head.append(contentsOf: [version, 0x00, 0x00])
+            head.append(contentsOf: syncsafe(framesLength))
+            return head
+        }
+    }
+
     // MARK: - ID3 内部
 
     private static func addTextFrame(_ id: String, _ value: String, to frames: inout Data) {

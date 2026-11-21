@@ -75,6 +75,12 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var importProgress: ImportProgress?
     /// 取消标记（导入循环每首检查一次）
     var importCancelled = false
+    /// 封面写回（把前端显示的封面写进音频文件）进度；nil = 没在跑
+    @Published var coverAlignProgress: CoverAlignProgress?
+    /// 最近一次封面写回的结果（列表页弹窗用，不静默吞）
+    @Published var lastCoverAlignReport: String?
+    /// 封面写回的取消标记（每首检查一次）
+    var coverAlignCancelled = false
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -2424,6 +2430,230 @@ extension DownloadManager {
               fixed.unicodeScalars.contains(where: { (0x4E00...0x9FFF).contains($0.value) })
         else { return s }
         return fixed
+    }
+}
+
+// MARK: - 封面写回音频文件（第 48 轮，2026-11-22）
+//
+// 老板原话：「我已经把导入的歌曲所有封面都替换内置了，那么本地的后台文件封面并没有和
+// 前端内置的对齐。我希望对齐：自动把内置的封面下载下来替换原有文件中该歌曲的封面，
+// 如果该歌曲后台文件中没有封面，那么直接添加进去并建联就行了。」
+//
+// 现状（第 47 轮为止）是**两条各走各的路**：
+//   · 前端显示读的是旁车 `Cover/<基名>.jpg`（`SongArtwork` 先读它，没有才走 picURL / 兜底链）；
+//   · 音频文件自己内嵌的封面只在「下载完成 / 补料取到图」时写过一次，
+//     老板后来在编辑页换的封面**只写了旁车** —— 文件里还是旧图，或者干脆没有；
+//   · 结果：把歌拷到别的播放器、或旁车丢了，封面就是老的/空的。这就是"没对齐"。
+//
+// 这一层给一条**对齐通道**，两件事一次做完：
+//   ① 旁车：哪首没有 `Cover/<基名>.jpg`，就用 song.picURL（→ `CoverResolver` 兜底链）下一张写进去（建联）；
+//   ② 内嵌：把这张图写进音频文件本身（mp3 只换 APIC 帧 / m4a 换 artwork 元数据）。
+// 只动封面：标题/歌手/专辑/歌词帧与音频字节全部原样（见 `DownloadCompanion.ID3Artwork`）。
+extension DownloadManager {
+
+    /// 封面写回进度（后台写、主线程读）
+    struct CoverAlignProgress: Equatable {
+        var done: Int
+        var total: Int
+        var name: String
+    }
+
+    /// 一次封面写回的结果。"替换/新增/本来一致"必须分开算 —— 老板要能看出补进去了几张。
+    struct CoverAlignReport: Equatable {
+        var total = 0
+        var replaced = 0
+        var added = 0
+        var already = 0
+        var noCover = 0
+        var unsupported = 0
+        var failed = 0
+        var cancelled = false
+
+        var summary: String {
+            var parts: [String] = []
+            if replaced > 0 { parts.append("替换 \(replaced)") }
+            if added > 0 { parts.append("新增 \(added)") }
+            if already > 0 { parts.append("本来一致 \(already)") }
+            if noCover > 0 { parts.append("没图 \(noCover)") }
+            if unsupported > 0 { parts.append("格式不支持 \(unsupported)") }
+            if failed > 0 { parts.append("失败 \(failed)") }
+            let head = cancelled ? "已停止" : "封面已写回文件"
+            return parts.isEmpty ? "\(head)：没有可写的" : "\(head)：\(parts.joined(separator: " · "))"
+        }
+
+        /// 给弹窗用的一句补充（只有真有问题才提）
+        var note: String? {
+            var lines: [String] = []
+            if noCover > 0 {
+                lines.append("没图 \(noCover) 首：旁车和在线兜底都没取到封面（可以点「补全信息」再试一次）。")
+            }
+            if unsupported > 0 {
+                lines.append("格式不支持 \(unsupported) 首：flac / wav / ogg 这类容器没有可靠写法，只写了旁车。")
+            }
+            if failed > 0 {
+                lines.append("失败 \(failed) 首：原文件一个字节都没动（先写临时文件、校验通过才替换）。")
+            }
+            return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        }
+    }
+
+    private enum CoverAlignStep {
+        case replaced, added, already, noCover, unsupported, failed, cancelled
+    }
+
+    /// 一次性把全部已完成（下载 / 导入）的歌对齐。返回要处理的条数（0 = 没有可处理的）。
+    ///
+    /// 并发 3：这是 IO + CPU（读整文件、写整文件），不是网络；4 会用同一个文件的读写抢带宽，
+    /// 再高在真机上只会更慢。`coverAlignProgress` 每完成一首刷新一次，界面据此显示进度。
+    @discardableResult
+    func alignAllCoverArtwork() -> Int {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in _ = self?.alignAllCoverArtwork() }
+            return 0
+        }
+        let targets = items.filter { $0.status == .completed && $0.localPath != nil }
+        guard !targets.isEmpty else {
+            lastCoverAlignReport = "还没有下载或导入的歌"
+            return 0
+        }
+        coverAlignCancelled = false
+        lastCoverAlignReport = nil
+        coverAlignProgress = CoverAlignProgress(done: 0, total: targets.count, name: "")
+        CrashReporter.logMetadata("cover-align | 开始，\(targets.count) 首")
+
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var report = CoverAlignReport()
+            report.total = targets.count
+            var done = 0
+
+            // 一拍 3 首：`withTaskGroup` 每拍等齐再开下一拍。
+            // 为什么不一次把 662 首全丢进组：每首都要读+写整文件，全丢进去等于把磁盘队列打满，
+            // 真机上只会更慢，而且中途没有进度；分批还能每拍检查一次取消。
+            let concurrency = 3
+            var start = 0
+            while start < targets.count {
+                if self.coverAlignCancelled {
+                    report.cancelled = true
+                    break
+                }
+                let end = min(start + concurrency, targets.count)
+                let chunk = Array(targets[start..<end])
+                await withTaskGroup(of: (CoverAlignStep, String).self) { group in
+                    for item in chunk {
+                        group.addTask { [weak self] in
+                            guard let self else { return (.cancelled, item.song.name) }
+                            return (await self.alignCoverStep(for: item), item.song.name)
+                        }
+                    }
+                    for await (step, name) in group {
+                        done += 1
+                        switch step {
+                        case .replaced: report.replaced += 1
+                        case .added: report.added += 1
+                        case .already: report.already += 1
+                        case .noCover: report.noCover += 1
+                        case .unsupported: report.unsupported += 1
+                        case .failed: report.failed += 1
+                        case .cancelled: report.cancelled = true
+                        }
+                        let snapshot = (done: done, total: targets.count, name: name)
+                        await MainActor.run {
+                            self.coverAlignProgress = CoverAlignProgress(done: snapshot.done,
+                                                                         total: snapshot.total,
+                                                                         name: snapshot.name)
+                        }
+                    }
+                }
+                start = end
+            }
+
+            let summary = report.summary
+            CrashReporter.logMetadata("cover-align | 结束 → \(summary)")
+            await MainActor.run {
+                self.coverAlignProgress = nil
+                self.lastCoverAlignReport = [summary, report.note].compactMap { $0 }
+                    .joined(separator: "\n")
+            }
+        }
+        return targets.count
+    }
+
+    /// 停止（只停还没开始的；在飞的那几首会做完，避免半截文件）
+    func cancelCoverAlign() {
+        coverAlignCancelled = true
+    }
+
+    /// 单首对齐：老板在编辑页换完封面后立刻调，后台写回，不挡界面。
+    func alignCoverArtwork(for song: Song) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.alignCoverArtwork(for: song) }
+            return
+        }
+        guard let item = items.first(where: { $0.song.id == song.id }) else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let step = await self.alignCoverStep(for: item)
+            CrashReporter.logMetadata("cover-align | \(song.name) | \(step)")
+        }
+    }
+
+    /// 单首：取"前端显示的那张图" → 写回文件。失败只影响这一首。
+    private func alignCoverStep(for item: DownloadItem) async -> CoverAlignStep {
+        if coverAlignCancelled { return .cancelled }
+        guard let path = item.localPath, !path.isEmpty else { return .noCover }
+        let audio = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path) else { return .noCover }
+
+        // ① 旁车优先（和 `SongArtwork` 同一条口径：前端看到的是它就先对齐它）
+        var cover = DownloadCompanion.readCover(from: audio, in: [coverDirectory])
+        var wroteSidecar = false
+
+        // ② 没有旁车 → 用歌自己的封面地址；地址也没有 → 走兜底链（酷我 rid / QQ 严格匹配 / iTunes）
+        if cover == nil || cover?.isEmpty == true {
+            var raw = item.song.picURL
+            if raw == nil || raw?.isEmpty == true {
+                raw = await CoverResolver.shared.coverURLIgnoringOriginal(for: item.song)
+            }
+            if let url = raw, !url.isEmpty, let payload = await fetchCoverData(urlString: url) {
+                let compact = CoverImageCache.compressedCoverData(payload.data, maxPixel: 600)
+                let written = DownloadCompanion.writeSidecars(audio: audio, lyricsText: nil,
+                                                              coverData: compact,
+                                                              lyricsDirectory: lyricsDirectory,
+                                                              coverDirectory: coverDirectory)
+                wroteSidecar = written.coverURL != nil
+                cover = compact
+            }
+        }
+
+        guard let bytes = cover, !bytes.isEmpty else { return .noCover }
+
+        let outcome = await AudioTagEmbedder.alignArtwork(fileURL: audio, coverData: bytes,
+                                                          coverMime: Self.mimeType(forCover: bytes))
+        // 新写进去的旁车要立刻能被列表看到（目录索引 + 封面代次）
+        if wroteSidecar {
+            await MainActor.run {
+                self.markDirectoryCacheDirty()
+                _ = MetadataWriter.coverLanded(item.song)
+            }
+        }
+        switch outcome {
+        case .replaced: return .replaced
+        case .added: return .added
+        case .already: return .already
+        case .unsupported: return .unsupported
+        case .failed: return .failed
+        }
+    }
+
+    /// 封面字节 → MIME（只给 mp3 的 APIC 帧用；旁车文件名固定 .jpg，播放端按内容解码）
+    static func mimeType(forCover data: Data) -> String {
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if data.starts(with: [0x47, 0x49, 0x46, 0x38]) { return "image/gif" }
+        if data.count >= 12, data.starts(with: [0x52, 0x49, 0x46, 0x46]),
+           Array(data[8..<12]) == Array("WEBP".utf8) { return "image/webp" }
+        return "image/jpeg"
     }
 }
 

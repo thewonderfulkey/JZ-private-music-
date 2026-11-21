@@ -29,6 +29,8 @@ struct DownloadsTabView: View {
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
     @State private var showDedupeConfirm = false
+    /// 第 48 轮：封面写回音频文件（老板：前台封面换了，文件里还是旧的，要对齐）
+    @State private var showCoverAlignConfirm = false
     /// 导入面板（内置浏览器；不经过系统选择器）
     @State private var showImportBrowser = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
@@ -77,6 +79,11 @@ struct DownloadsTabView: View {
 
     private var totalBytes: Int64 {
         downloads.items.reduce(0) { $0 + $1.totalBytes }
+    }
+
+    /// 封面写回会被处理到的条数（确认弹窗里先告诉老板"要动多少首"）
+    private var coverAlignTargets: Int {
+        downloads.items.filter { $0.status == .completed && $0.localPath != nil }.count
     }
 
     /// 这一帧真正要建的行（第 41 轮 P0-2）。顺序/预算口径见 `DownloadListPaging`。
@@ -138,6 +145,18 @@ struct DownloadsTabView: View {
                     : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
             }
             Button("取消", role: .cancel) {}
+        }
+        // 第 48 轮：封面写回（老板："本地的后台文件封面并没有和前端内置的对齐"）
+        .confirmationDialog("把现在显示的封面写进音频文件？",
+                            isPresented: $showCoverAlignConfirm, titleVisibility: .visible) {
+            Button("开始写回") {
+                let n = downloads.alignAllCoverArtwork()
+                if n == 0 { flash("没有可写回的歌") }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将处理 \(coverAlignTargets) 首。只换封面：歌名/歌手/专辑/内嵌歌词和音频本身"
+                 + "一个字节都不动；文件里已经有同一张图的会跳过，没有封面的会补进去。")
         }
         .confirmationDialog("删除选中的 \(picked.count) 首？",
                             isPresented: $showBatchDeleteConfirm, titleVisibility: .visible) {
@@ -202,6 +221,14 @@ struct DownloadsTabView: View {
                       systemImage: "wand.and.stars")
             }
             .disabled(gaps.isClear)
+            Divider()
+            // 第 48 轮：封面写回音频文件（不是"补全"，是把**已经显示出来的那张图**写进文件本身）
+            Button {
+                showCoverAlignConfirm = true
+            } label: {
+                Label("把封面写进音频文件（对齐内置封面）",
+                      systemImage: "square.and.arrow.down.on.square")
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
         }
@@ -289,6 +316,34 @@ struct DownloadsTabView: View {
         }
     }
 
+    /// 封面写回进度（第 48 轮）。662 首要写几分钟，**必须有进度**，
+    /// 否则老板会以为"点了没反应"，中途划走 App 也会被系统挂起。
+    @ViewBuilder
+    private var coverAlignBanner: some View {
+        if let p = downloads.coverAlignProgress {
+            HStack(spacing: Tokens.Spacing.xs) {
+                ProgressView().scaleEffect(0.8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("正在写回封面 \(min(p.done + 1, p.total))/\(p.total)")
+                        .font(.footnote.weight(.semibold))
+                    Text(p.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Button("停止") { downloads.cancelCoverAlign() }
+                    .font(.footnote)
+                    .buttonStyle(.press)
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .padding(.vertical, Tokens.Spacing.xs)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+    }
+
     /// 真正开始导入：**必须 detached**（哈希/复制是重活，放主线程会把选择器与界面卡死）
     private func startImport(_ urls: [URL]) {
         downloads.importCancelled = false
@@ -307,6 +362,11 @@ struct DownloadsTabView: View {
                     .listRowSeparator(.hidden)
 
                 importProgressBanner
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+
+                coverAlignBanner
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -413,6 +473,14 @@ struct DownloadsTabView: View {
                 }
             }
             .locateToast(locator.toast)
+            // 第 48 轮：封面写回的结果（替换/新增/本来一致/没图/格式不支持/失败，一项都不许吞）
+            .alert("封面写回", isPresented: Binding(
+                get: { downloads.lastCoverAlignReport != nil },
+                set: { if !$0 { downloads.lastCoverAlignReport = nil } })) {
+                Button("好") { downloads.lastCoverAlignReport = nil }
+            } message: {
+                Text(downloads.lastCoverAlignReport ?? "")
+            }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
                 // 导入/整理的三个点在**外层**（`body` 的 toolbar 里），两个分支共用。

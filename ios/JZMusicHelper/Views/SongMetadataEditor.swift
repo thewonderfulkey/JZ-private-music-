@@ -226,6 +226,9 @@ struct SongMetadataEditor: View {
                let url = MetadataCoverImage.writeSidecar(data, audioPath: path) {
                 CoverImageCache.shared.invalidate(url: url)
                 edited = MetadataWriter.coverChanged(edited, picURL: nil)
+                // 第 48 轮（老板：前台换了封面，文件里还是旧的 → 要对齐）：
+                // 旁车写完立刻把这**同一张图**写回音频文件本身（后台跑，不挡关页面）。
+                DownloadManager.shared.alignCoverArtwork(for: edited)
             } else {
                 coverWriteFailed = true
                 MetadataWriter.apply(edited)
