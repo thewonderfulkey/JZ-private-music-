@@ -1,3 +1,49 @@
+## iOS v2.4.45（223）· 2026-11-21 下午（闪退真根因：SwiftUI 观察图；导入：系统选择器必须模态呈现）
+
+### 一、闪退：**不是音频、不是内存，是 SwiftUI AttributeGraph 在 flushTransactions 里 abort**
+
+`诊断/signal-ABRT.log` 的栈（backtrace 已生效）：
+
+```
+abort
+AttributeGraph   AGSubgraphGetGraph
+AttributeGraph   ...
+SwiftUICore      GraphHost.flushTransactions
+libswiftObservation.dylib ...
+```
+
+**根因**：`LibraryStore.isFavorite(_:)` 是在 view body 里逐行调用的，而它每次都会写一个缓存
+`favoriteMatchCache`；这个属性属于 `@Observable` 类 → 等于**在视图更新过程中改动被观察状态**
+→ SwiftUI 的观察图冲突 → `abort()`。
+
+这也解释了复现条件："播放 + 搜索 + 下滑"最容易崩（播放每 0.5 秒都在推 observable，body 重算频率最高，
+`isFavorite` 被调用的次数最多）；只搜索不播放，压力小很多。
+
+**修法**：`favoriteMatchCache`（以及 `dismissedPairs`、`mergeUndo` 这两个纯内部状态）标 `@ObservationIgnored`
+—— 缓存不参与观察图，body 里写它不再触发无效化。
+
+### 二、导入：系统文档选择器必须**模态呈现**（前两版都错在呈现方式）
+
+老板的观察是对的：**不是文件加密**，纯音频文件同样点不动「打开」。而且"和改下载保存路径那次一样的毛病"
+—— 两次都是把系统 picker 当 SwiftUI 的 sheet/fileImporter 用。
+
+系统 `UIDocumentPickerViewController` 的正确用法只有一种：**由 UIKit 模态 present，并强引用 delegate**。
+前两版分别是：
+1. `.fileImporter`（菜单动作里直接 present，委托连线被吞）；
+2. 把 `UIDocumentPickerViewController` 作为 `.sheet` 的内容（picker 不是模态呈现，"打开"变成死按钮）。
+
+**这版**
+- 新增 `DocumentPickerPresenter`：从 key window 的顶层 VC `present(picker)`，`alive` 静态强引用 delegate，
+  `didPickDocumentsAt` 里先 `dismiss` 再回调；
+- 触发前延迟 0.28s，避开菜单收起动画；
+- **空态也有「导入本地音乐」按钮**，工具栏常驻（以前没下载记录时连「⋯」都没有）。
+
+### 断言
+
+本地 mini **66/66**；全量编译通过。
+
+---
+
 ## iOS v2.4.44（222）· 2026-11-21 下午（SIGABRT 取证补齐 + 连点保护 + 导入原因可解释）
 
 ### 出包（v2.4.44 / 222）

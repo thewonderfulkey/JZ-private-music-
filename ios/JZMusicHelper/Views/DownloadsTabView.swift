@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 // MARK: - 下载（第四十轮补丁 4）
@@ -25,7 +26,6 @@ struct DownloadsTabView: View {
     @State private var locator = SongLocator()
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
-    @State private var showImporter = false
     @State private var showDedupeConfirm = false
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -54,22 +54,38 @@ struct DownloadsTabView: View {
     var body: some View {
         Group {
             if downloads.items.isEmpty {
-                EmptyStateView(title: "还没有下载任务",
-                               systemImage: "arrow.down.circle",
-                               description: "在播放页点「下载」，选一个音质")
+                VStack(spacing: Tokens.Spacing.m) {
+                    EmptyStateView(title: "还没有下载任务",
+                                   systemImage: "arrow.down.circle",
+                                   description: "在播放页点「下载」，选一个音质")
+                    Button {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(200))
+                            DocumentPickerPresenter.present { urls in
+                                guard !urls.isEmpty else { return }
+                                startImport(urls)
+                            }
+                        }
+                    } label: {
+                        Label("导入本地音乐", systemImage: "square.and.arrow.down")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 40)
+                            .background(Capsule().fill(Tokens.Palette.paperElevated))
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10),
+                                                            lineWidth: 0.5))
+                    }
+                    .buttonStyle(.press)
+                }
             } else {
                 list
             }
         }
-        // 2026-11-21：SwiftUI 的 `.fileImporter` 在真机上"打开"点了没反应（菜单动作里直接 present，
-        // 选择器的委托连线被吞）。换成自己包的 UIDocumentPickerViewController：自己收回调、自己 dismiss。
-        .sheet(isPresented: $showImporter) {
-            DocumentPicker { urls in
-                showImporter = false
-                guard !urls.isEmpty else { return }
-                startImport(urls)
-            }
-        }
+        // 2026-11-21 第三次修导入：**系统文档选择器必须模态呈现**。
+        // 前两版分别用 SwiftUI `.fileImporter` 和"把 UIDocumentPicker 当 sheet 内容"——
+        // 两者都会让右上角「打开」变成死按钮（不是文件问题，是呈现方式问题）。
+        // 现在用 `DocumentPickerPresenter.present(...)`，从 key window 的顶层 VC 模态弹出。
+        
         .alert("导入", isPresented: Binding(
             get: { downloads.lastImportReport != nil },
             set: { if !$0 { downloads.lastImportReport = nil } })) {
@@ -222,7 +238,14 @@ struct DownloadsTabView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Button {
-                            showImporter = true
+                            // 菜单收起动画与弹层抢同一帧会让 present 失败，延迟 0.28s 再弹
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(280))
+                                DocumentPickerPresenter.present { urls in
+                                    guard !urls.isEmpty else { return }
+                                    startImport(urls)
+                                }
+                            }
                         } label: {
                             Label("导入本地音乐…", systemImage: "square.and.arrow.down")
                         }
@@ -470,37 +493,52 @@ struct DownloadsTabView: View {
     }
 }
 
-// MARK: - 系统文件选择器（UIKit 包装）
+// MARK: - 系统文件选择器（模态呈现）
 
-/// 为什么不用 SwiftUI 的 `.fileImporter`：2026-11-21 真机上它 present 之后，
-/// "打开"按钮点了完全没反应（从 Menu 动作里直接 present，选择器的 delegate 连线被吞）。
-/// UIKit 这条路我们自己控制 dismiss 与回调，且能显示扩展名。
-struct DocumentPicker: UIViewControllerRepresentable {
+/// 为什么不用 SwiftUI `.fileImporter`、也不把 picker 当 sheet 内容：
+/// 这两种方式在真机上都会让系统选择器右上角「打开」变成死按钮（点了完全没反应）。
+/// 系统文档选择器应当由 UIKit **模态** present，并强引用 delegate —— 这是它唯一稳定的用法。
+final class DocumentPickerPresenter: NSObject, UIDocumentPickerDelegate {
 
-    var onPick: ([URL]) -> Void
+    /// present 期间保活（delegate 一旦释放，"打开"就会失效）
+    private static var alive: DocumentPickerPresenter?
 
-    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+    private var onPick: (([URL]) -> Void)?
 
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // `.item` = 任何文件都能选（对方 App 的自定义扩展名也能选）；文件夹同样可选
+    static func present(onPick: @escaping ([URL]) -> Void) {
+        guard let host = topViewController() else { return }
+        let presenter = DocumentPickerPresenter()
+        presenter.onPick = onPick
+        alive = presenter
+
+        // `.item`：任何文件都能选（自定义扩展名也行）；文件夹同样可选
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
         picker.allowsMultipleSelection = true
         picker.shouldShowFileExtensions = true
-        picker.delegate = context.coordinator
-        return picker
+        picker.delegate = presenter
+        host.present(picker, animated: true)
     }
 
-    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+    func documentPicker(_ controller: UIDocumentPickerViewController,
+                        didPickDocumentsAt urls: [URL]) {
+        let callback = onPick
+        onPick = nil
+        DocumentPickerPresenter.alive = nil
+        controller.dismiss(animated: true) { callback?(urls) }
+    }
 
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        private let onPick: ([URL]) -> Void
-        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        onPick = nil
+        DocumentPickerPresenter.alive = nil
+    }
 
-        func documentPicker(_ controller: UIDocumentPickerViewController,
-                            didPickDocumentsAt urls: [URL]) {
-            onPick(urls)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {}
+    private static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
     }
 }

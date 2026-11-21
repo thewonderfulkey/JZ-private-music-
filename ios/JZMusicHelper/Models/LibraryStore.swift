@@ -69,6 +69,12 @@ final class LibraryStore {
     }
 
     /// 「同曲」判定的缓存：`favorites` 一变就清空（`isFavorite` 每行都会调，不能每次扫全表）
+    ///
+    /// **`@ObservationIgnored` 是必须的**（2026-11-21 的 SIGABRT 根因）：
+    /// `isFavorite` 是在 view body 里被调用的，而它每次都会写这个缓存；
+    /// 只要它参与 `@Observable` 的观察图，就变成"在视图更新过程中改动被观察状态"
+    /// → SwiftUI AttributeGraph `flushTransactions` 里 abort。
+    @ObservationIgnored
     private var favoriteMatchCache: [String: Bool] = [:]
 
     private func note(_ text: String) {
@@ -377,9 +383,11 @@ final class LibraryStore {
 
     /// 疑似重复的组（每组 2 首）
     private(set) var duplicateGroups: [[Song]] = []
-    /// 否定缓存（`FavoriteReview.pairKey`）
+    /// 否定缓存（`FavoriteReview.pairKey`）——纯内部状态，不进观察图
+    @ObservationIgnored
     private var dismissedPairs: Set<String> = []
     /// 上一次合并前的快照（撤销用）
+    @ObservationIgnored
     private var mergeUndo: (favorites: [Song], dates: [String: Date],
                             fingerprints: [String: FavoriteFingerprint],
                             aliases: [String: [String]])?
