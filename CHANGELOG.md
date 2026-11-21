@@ -1,3 +1,16 @@
+### 出包记录（v2.4.54 / 232）
+
+| 项 | 值 |
+|---|---|
+| CI | **r171**（`7c6b12e`，run 44879256985）✅ success |
+| 首次失败 | r170（`c3ddb6d`）：`Song.swift: cannot find type 'MetaProvenance'` —— 双 target 源文件不同步，已由 `7c6b12e` 拆出 `Models/SongMeta.swift` 修复 |
+| 产物 | `JZ-Music-v2.4.54-7c6b12e-r171-ios-unsigned.ipa` · **3,254,053 B** · sha256 `44740822…f4d8a54d` |
+| 主二进制 | 12,017,800 B · sha256 `907b845b347b26ad…`（与所有历史包**不同**，出包闸通过） |
+| widget | `JZWidgets.appex` 162,952 B，与 r169 **完全一致**（`JZWidgets.swift` 不引用 `Song`，`Song/SongMeta` 被 dead-strip，属预期） |
+| 包内符号核对 | `MetaProvenance` / `MetaSource` / `MetaField` / `SongMeta` / `MetadataMatcher` / `MetadataWriter` + 「补全信息」「编辑歌曲信息」「用现在的名字重新联网匹配」均在主二进制 ✅ |
+| 分发 | 飞书「音乐软件开发」群 17:48:19 已收到包 |
+---
+
 ## iOS v2.4.54（232）· 2026-11-21 深夜（导入歌：元数据联网匹配 + 手动编辑 + 补料队列）
 
 老板两轮拍板（现象 → 根因）：
