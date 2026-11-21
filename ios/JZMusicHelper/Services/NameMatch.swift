@@ -612,6 +612,26 @@ enum ImportRules {
         if bytes <= 0 { return "" }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
+
+    // MARK: 导入结果文案（2026-11-21：老板问"为什么有些歌导不进去"）
+
+    /// 一批文件名里的扩展名汇总：`["a.ape","b.APE","c.wma"]` → `"ape/wma"`（小写、去重、排序）
+    static func extensionSummary(_ names: [String]) -> String {
+        let exts = Set(names.map { ($0 as NSString).pathExtension.lowercased() })
+            .filter { !$0.isEmpty }
+            .sorted()
+        return exts.isEmpty ? "未知" : exts.joined(separator: "/")
+    }
+
+    /// 这批被拒的文件是不是**全都是 iOS 没有解码器**的格式（ape / wma / dsf / ogg …）：
+    /// 只有这种情况才能理直气壮地说"导进来也是无声"，否则要说"认不出容器/可能是加密包"。
+    static func hasOnlyUndecodableExtensions(_ names: [String]) -> Bool {
+        guard !names.isEmpty else { return false }
+        return names.allSatisfy { name in
+            let ext = (name as NSString).pathExtension.lowercased()
+            return !ext.isEmpty && knownUnsupported.contains(ext)
+        }
+    }
 }
 
 // MARK: - tab 内本地搜索（下载 / 收藏）

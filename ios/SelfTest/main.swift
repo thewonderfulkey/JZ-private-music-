@@ -4273,6 +4273,18 @@ do {
     check("同名不算'在前'",
           !ImportRules.browserComesBefore("x", false, "x", false))
     check("体积：0 字节不显示", ImportRules.browserSizeText(0) == "")
+
+    // 导入结果文案（v2.4.47：老板问"为什么有些歌导不进去"）
+    check("扩展名汇总去重/小写/排序",
+          ImportRules.extensionSummary(["a.wma", "b.APE", "c.ape"]) == "ape/wma",
+          ImportRules.extensionSummary(["a.wma", "b.APE", "c.ape"]))
+    check("没有扩展名 → 未知", ImportRules.extensionSummary(["README"]) == "未知")
+    check("ape+wma 才判定'系统没有解码器'",
+          ImportRules.hasOnlyUndecodableExtensions(["a.ape", "b.wma"]))
+    check("有一个 mp3 就不能说'导进来也是无声'",
+          !ImportRules.hasOnlyUndecodableExtensions(["a.ape", "b.mp3"]))
+    check("认不出的扩展名不算系统不支持",
+          !ImportRules.hasOnlyUndecodableExtensions(["a.lexClip"]))
 }
 
 // MARK: - 汇总

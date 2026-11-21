@@ -586,7 +586,7 @@ struct ImportBrowserView: View {
                 } header: {
                     Text("怎么放歌进来")
                 } footer: {
-                    Text("同一个文件（字节一样）和同一首歌（同一条录音）会自动跳过，不会重复占地方。")
+                    Text("列表里只列能播的音频（mp3 / m4a / flac / wav / aiff…），图片、歌词、压缩包不会被选进来；ape / wma / ogg 这种 iOS 放不了的会灰掉并写明原因。同一个文件（字节一样）和同一首歌（同一条录音）会自动跳过，不会重复占地方。")
                 }
 
                 Section {

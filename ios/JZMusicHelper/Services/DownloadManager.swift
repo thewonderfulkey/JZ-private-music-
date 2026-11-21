@@ -1034,6 +1034,8 @@ extension DownloadManager {
         var duplicateSongs = 0
         var unsupported: [String] = []
         var failed: [String] = []
+        /// 失败原因（与 `failed` 对得上；弹窗里直接告诉老板"为什么失败"）
+        var failureReasons: [String] = []
         var addedNames: [String] = []
 
         var summary: String {
@@ -1051,17 +1053,28 @@ extension DownloadManager {
         var detail: String {
             var lines: [String] = [summary]
             if !unsupported.isEmpty {
-                let exts = Set(unsupported.map { ($0 as NSString).pathExtension.lowercased() })
-                    .filter { !$0.isEmpty }.sorted()
-                let extText = exts.isEmpty ? "未知" : exts.joined(separator: "/")
-                lines.append("不支持：\(unsupported.count) 个文件（格式 \(extText)）")
-                lines.append("如果这是别的音乐 App 自己的容器（例如 Light Player 的 .lexClip），里面通常是加密的，本 App 无法直接导入。")
-                lines.append(unsupported.prefix(5).joined(separator: "、"))
+                let extText = ImportRules.extensionSummary(unsupported)
+                lines.append("不支持（\(extText)）\(unsupported.count) 个："
+                             + nameList(unsupported))
+                if ImportRules.hasOnlyUndecodableExtensions(unsupported) {
+                    lines.append("这些格式 iOS 系统本身没有解码器（ape / wma / dsf / ogg…），导进来也是无声，所以直接跳过了。")
+                } else {
+                    lines.append("认不出这些文件的容器（也可能是别的 App 的加密包，例如 Light Player 的 .lexClip）。")
+                }
             }
             if !failed.isEmpty {
-                lines.append("读取失败：" + failed.prefix(6).joined(separator: "、"))
+                lines.append("读取失败 \(failed.count) 个：" + nameList(failed))
+                let reasons = Set(failureReasons).filter { !$0.isEmpty }.sorted()
+                if !reasons.isEmpty { lines.append("原因：" + reasons.joined(separator: "；")) }
             }
             return lines.joined(separator: "\n")
+        }
+
+        /// 最多列 6 个名字，多的用"…（还有 N 个）"收尾（别让弹窗长到看不完）
+        private func nameList(_ names: [String]) -> String {
+            let head = names.prefix(6).joined(separator: "、")
+            guard names.count > 6 else { return head }
+            return head + " …（还有 \(names.count - 6) 个）"
         }
     }
 
@@ -1138,6 +1151,8 @@ extension DownloadManager {
                 guard let meta = await Self.localMetadata(of: url) else {
                     CrashReporter.logImport("import: 读不出元数据/时长 · \(url.lastPathComponent)")
                     report.failed.append(url.lastPathComponent)
+                    report.failureReasons.append(
+                        "\(url.pathExtension.lowercased()) 读不出时长（可能没下载完、文件损坏，或是加密包）")
                     done += 1
                     continue
                 }
@@ -1187,6 +1202,7 @@ extension DownloadManager {
                 } catch {
                     CrashReporter.logImport("import: 复制失败 · \(url.lastPathComponent) · \(error.localizedDescription)")
                     report.failed.append(url.lastPathComponent)
+                    report.failureReasons.append("复制到音乐文件夹失败（空间不足或文件被占用）")
                     done += 1
                     continue
                 }
@@ -1395,7 +1411,16 @@ extension DownloadManager {
         guard let hash = sha256Hex(of: url) else { return nil }
 
         let asset = AVURLAsset(url: url)
-        let duration = (try? await asset.load(.duration))?.seconds ?? 0
+        var duration = (try? await asset.load(.duration))?.seconds ?? 0
+        // AVURLAsset 读不出时长 ≠ 文件坏了：有些 VBR mp3、头不全的 wav/m4a 就是拿不到。
+        // 再给 Core Audio（`AVAudioFile`，只读文件头）一次机会 —— 2026-11-21 老板"有些歌导入失败"
+        // 里这一类就是被 `duration <= 0` 一票否决的。
+        if !(duration > 0) {
+            duration = coreAudioDuration(of: url)
+            if duration > 0 {
+                CrashReporter.logImport("import: AVURLAsset 读不出时长，Core Audio 兜底成 \(Int(duration))s · \(url.lastPathComponent)")
+            }
+        }
         let common = (try? await asset.load(.commonMetadata)) ?? []
 
         var title = ""
@@ -1429,6 +1454,15 @@ extension DownloadManager {
         if duration <= 0 { return nil }
 
         return (title, artist, album, duration, artwork, hash, bytes)
+    }
+
+    /// 兜底读时长：`AVAudioFile` 走 Core Audio，只读文件头，对大文件也没开销。
+    /// 能打开就算"这个文件其实能播"，长度 = 帧数 / 采样率。
+    private static func coreAudioDuration(of url: URL) -> TimeInterval {
+        guard let file = try? AVAudioFile(forReading: url) else { return 0 }
+        let rate = file.fileFormat.sampleRate
+        guard rate > 0, file.length > 0 else { return 0 }
+        return Double(file.length) / rate
     }
 
     /// 文件 SHA-256（分块读，几百 MB 也不会把内存吃满）
