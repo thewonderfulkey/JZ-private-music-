@@ -4212,8 +4212,56 @@ do {
                                fileName: nil, query: "晴天"))
 }
 
-section("收藏去重：长副标题（包含关系）")
+// MARK: - 第六十六轮（v2.4.51）：导入先"抢"进暂存目录
+//
+// 事故实证（`诊断/import.log`）：全选 664 首（27 GB）导入，崩点固定在第 59 秒——
+// 崩点前 444/419 首 0 失败，崩点后 219/244 首全失败，系统原话「未能打开文件…因为它不存在」，
+// 设备当时还剩 303 GB。根因：系统选择器 `asCopy: true` 的副本在 App 的 tmp 里，
+// iOS 约 1 分钟后会清掉（前台也清）→ 后面那批 URL 全指向空气。
+// 现在的做法：回调一进来先抄进 `Documents/ImportStaging`，再从容解析。
 
+section("本地导入：抢取阶段（时间预算 / ENOENT / 文案）")
+
+do {
+    check("时间预算是 40 秒（改大就踩到系统清理线）", ImportGrabRules.grabBudget == 40)
+    check("连续 5 个不存在才停", ImportGrabRules.consecutiveMissingAbort == 5)
+
+    check("预算内、没连续失败 → 继续抢",
+          !ImportGrabRules.shouldStopGrabbing(elapsed: 39.9, consecutiveMissing: 0))
+    check("正好 40 秒 → 停",
+          ImportGrabRules.shouldStopGrabbing(elapsed: 40, consecutiveMissing: 0))
+    check("超时很久 → 停",
+          ImportGrabRules.shouldStopGrabbing(elapsed: 75, consecutiveMissing: 0))
+    check("连续 4 个不存在 → 还没到线",
+          !ImportGrabRules.shouldStopGrabbing(elapsed: 10, consecutiveMissing: 4))
+    check("连续 5 个不存在 → 认定 tmp 被清，停",
+          ImportGrabRules.shouldStopGrabbing(elapsed: 10, consecutiveMissing: 5))
+
+    check("ENOENT(4) 判成不存在",
+          ImportGrabRules.isMissingFile(domain: "NSCocoaErrorDomain", code: 4))
+    check("ENOENT 读(260) 也判成不存在",
+          ImportGrabRules.isMissingFile(domain: "NSCocoaErrorDomain", code: 260))
+    check("EACCES(257) 不算不存在（权限问题别混进来）",
+          !ImportGrabRules.isMissingFile(domain: "NSCocoaErrorDomain", code: 257))
+    check("别的 domain 不算",
+          !ImportGrabRules.isMissingFile(domain: "NSURLErrorDomain", code: 4))
+
+    let ms = ImportGrabRules.missedSummary(245)
+    check("摘要写清数量与原因", ms.contains("245") && ms.contains("临时副本"))
+    let early = ImportGrabRules.missedReason(count: 12, abortedEarly: true)
+    check("提前停下 → 建议一次选 150 首以内", early.contains("150") && early.contains("12"))
+    let late = ImportGrabRules.missedReason(count: 7, abortedEarly: false)
+    check("预算用完 → 说明已取到的都进来了", late.contains("7") && late.contains("已取到"))
+
+    check("ImportStaging 在导入浏览器里隐藏", ImportRules.browserHides(name: "ImportStaging"))
+    check("暂存目录判成 other（不进列表）",
+          ImportRules.browserKind(name: "ImportStaging", isDirectory: true) == .other)
+    check("隐藏名单里有它", ImportRules.browserHiddenNames.contains("ImportStaging"))
+    check("诊断目录照旧隐藏", ImportRules.browserHides(name: "诊断"))
+    check("用户自己的文件夹不隐藏", !ImportRules.browserHides(name: "我的歌"))
+}
+
+section("收藏去重：长副标题（包含关系）")
 do {
     func s(_ p: MusicPlatform, _ name: String, _ singer: String, dur: TimeInterval,
            id: String, album: String = "哎呦，不错哦") -> Song {

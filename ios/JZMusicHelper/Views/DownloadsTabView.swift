@@ -196,7 +196,9 @@ struct DownloadsTabView: View {
             HStack(spacing: Tokens.Spacing.xs) {
                 ProgressView().scaleEffect(0.8)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("正在导入 \(min(p.done + 1, p.total))/\(p.total)")
+                    Text(p.phase == .grabbing
+                         ? "正在取回 \(min(p.done + 1, p.total))/\(p.total)"
+                         : "正在导入 \(min(p.done + 1, p.total))/\(p.total)")
                         .font(.footnote.weight(.semibold))
                     Text(p.name)
                         .font(.caption2)
@@ -735,7 +737,7 @@ struct ImportBrowserView: View {
                                               bottom: Tokens.Spacing.xs,
                                               trailing: Tokens.Spacing.pageMargin))
                     .listRowBackground(Color.clear)
-                    Text("点「打开」后如果像没反应，多半是系统在把文件复制进来（大文件要等几秒，一次选几十首会更久）。选了就等它一下，别反复点；一次十几首最稳。")
+                    Text("点「打开」后如果像没反应，多半是系统在把文件复制进来（大文件要等几秒，选得多会更久）。选了就等它一下，别反复点。\n一次选 150 首以内最稳：iOS 只保证选择器的临时副本约 1 分钟可用，选太多会被系统清掉一半。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } header: {

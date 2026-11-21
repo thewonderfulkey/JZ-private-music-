@@ -576,10 +576,11 @@ enum ImportRules {
         case other
     }
 
-    /// 浏览器里要隐藏的目录名：`诊断`（崩溃取证日志，不是歌）与所有隐藏文件。
+    /// 浏览器里要隐藏的目录名：`诊断`（崩溃取证日志，不是歌）、`ImportStaging`
+    /// （导入时抢进来的暂存副本，抢完就删）与所有隐藏文件。
     /// `Inbox` 故意**不隐藏**——别的 App「用 JZ 音乐打开」送来的文件会落在那里，
     /// 万一自动导入没跑起来，用户还能在这一页看见它们手动导入。
-    static let browserHiddenNames: Set<String> = ["诊断"]
+    static let browserHiddenNames: Set<String> = ["诊断", "ImportStaging"]
 
     static func browserHides(name: String) -> Bool {
         if name.isEmpty { return true }
@@ -631,6 +632,61 @@ enum ImportRules {
             let ext = (name as NSString).pathExtension.lowercased()
             return !ext.isEmpty && knownUnsupported.contains(ext)
         }
+    }
+}
+
+// MARK: - 导入「抢取阶段」的纯逻辑（2026-11-21 晚 v2.4.51）
+//
+// 事故实证（`诊断/import.log`，别再靠猜）：老板全选 Light Player 的 664 首（27 GB）导入，
+// 崩点固定在**第 59 秒**——崩点前 444/419 首 0 失败，崩点后 219/244 首全失败，
+// 系统原话「未能打开文件…因为它不存在」，而当时设备**还剩 303 GB**。
+// 根因：系统选择器 `asCopy: true` 的副本放在 App 的 tmp 里，iOS 约 1 分钟后会清掉它
+// （前台也清，社区实测），清掉后手里那批 URL 全指向空气。
+// 现在的做法：回调一进来先把文件抄进自己的 `Documents/ImportStaging`，再从容解析。
+// 下面这几条是那一步的纯逻辑，交给 CI 钉住。
+enum ImportGrabRules {
+
+    /// 抢取阶段的时间预算（秒）。
+    ///
+    /// 系统清理是"约 1 分钟"（实测崩点 59 秒）。40 秒既够把 27 GB 的克隆跑完，
+    /// 又给后面的解析留了余量——宁可在预算内抢到 95%，也不要踩线抢到 100% 然后全丢。
+    static let grabBudget: TimeInterval = 40
+
+    /// 连续多少个「源文件不存在」就认定 tmp 已被系统清掉，停止空转
+    static let consecutiveMissingAbort = 5
+
+    /// `NSCocoaErrorDomain` 里"没有这个文件"的两个码：
+    /// `NSFileNoSuchFileError`(4) 与 `NSFileReadNoSuchFileError`(260)。
+    ///
+    /// 为什么按码判而不是按文案：`localizedDescription` 跟着系统语言走
+    /// （中文机"未能打开文件…因为它不存在"，英文机 "couldn't be opened … no such file"），
+    /// 按文案判早晚判错。
+    static let cocoaDomain = "NSCocoaErrorDomain"
+    static let noSuchFileCodes: Set<Int> = [4, 260]
+
+    static func isMissingFile(domain: String, code: Int) -> Bool {
+        domain == cocoaDomain && noSuchFileCodes.contains(code)
+    }
+
+    /// 现在该不该停下"抢"
+    static func shouldStopGrabbing(elapsed: TimeInterval, consecutiveMissing: Int) -> Bool {
+        if elapsed >= grabBudget { return true }
+        return consecutiveMissing >= consecutiveMissingAbort
+    }
+
+    /// 报告摘要里那一小段
+    static func missedSummary(_ count: Int) -> String {
+        "没赶上 \(count) 个（系统清理了临时副本）"
+    }
+
+    /// 报告正文里"没拿到"那句：**说人话 + 给下一步**，别只丢一个数字
+    static func missedReason(count: Int, abortedEarly: Bool) -> String {
+        if abortedEarly {
+            return "\(count) 首没能在系统清理临时副本前取到：iOS 只保证选择器的临时副本约 1 分钟可用。"
+                + "请一次选 150 首以内分批导入，已经进来的那一批会自动跳过。"
+        }
+        return "\(count) 首没赶上：导入跑到一半，系统清掉了选择器的临时副本（约 1 分钟）。"
+            + "已取到的都进来了，剩下的请一次选 150 首以内再导一次。"
     }
 }
 
