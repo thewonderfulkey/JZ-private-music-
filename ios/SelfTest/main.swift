@@ -4246,6 +4246,35 @@ do {
                                          s(.kugou, "手写的从前（优酸乳广告曲）", "周杰伦", dur: 297, id: "k2")))
 }
 
+// MARK: - 导入浏览器（r163：不再把系统选择器当唯一入口）
+
+section("导入浏览器：条目分类 / 隐藏名单 / 排序")
+
+do {
+    check("mp3 能选", ImportRules.browserKind(name: "a.mp3", isDirectory: false) == .audio)
+    check("大写 M4A 也能选", ImportRules.browserKind(name: "A.M4A", isDirectory: false) == .audio)
+    check("flac 能选", ImportRules.browserKind(name: "晴天.flac", isDirectory: false) == .audio)
+    check("文件夹是 folder", ImportRules.browserKind(name: "我的歌", isDirectory: true) == .folder)
+    check("ape 看得见但选不了", ImportRules.browserKind(name: "a.ape", isDirectory: false) == .unsupported)
+    check("wma 看得见但选不了", ImportRules.browserKind(name: "a.wma", isDirectory: false) == .unsupported)
+    check("lrc 不显示", ImportRules.browserKind(name: "a.lrc", isDirectory: false) == .other)
+    check("jpg 不显示", ImportRules.browserKind(name: "cover.jpg", isDirectory: false) == .other)
+
+    check("诊断目录隐藏", ImportRules.browserHides(name: "诊断"))
+    check("隐藏文件隐藏", ImportRules.browserHides(name: ".DS_Store"))
+    check("Inbox 要显示（别的 App 送来的文件落在那里）",
+          !ImportRules.browserHides(name: "Inbox"))
+    check("空名隐藏", ImportRules.browserHides(name: ""))
+
+    check("文件夹排在文件前",
+          ImportRules.browserComesBefore("zzz", true, "aaa.mp3", false))
+    check("02 排在 10 前（不是字典序）",
+          ImportRules.browserComesBefore("02 - a.mp3", false, "10 - b.mp3", false))
+    check("同名不算'在前'",
+          !ImportRules.browserComesBefore("x", false, "x", false))
+    check("体积：0 字节不显示", ImportRules.browserSizeText(0) == "")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

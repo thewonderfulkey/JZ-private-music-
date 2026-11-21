@@ -41,6 +41,33 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<!-- 声明能"打开"的音频类型：这样在「文件」App / LocalSend / 微信 / 隔空投送里
+	     选中一首歌 →「共享」→「JZ 音乐」就能直接导进来。
+	     这是**唯一不经过系统文件选择器**的导入入口 —— 那台机器上选择器的「打开」不回调
+	     （2026-11-19 的保存位置、2026-11-21 的三次导入修都是同一个死法）。
+	     LSHandlerRank=Alternate：不抢系统默认播放器的身份，只作为"可以分享给它"的候选。 -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>音频文件</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.audio</string>
+				<string>public.mp3</string>
+				<string>public.mpeg-4-audio</string>
+				<string>com.apple.m4a-audio</string>
+				<string>public.flac</string>
+				<string>com.microsoft.waveform-audio</string>
+				<string>public.aiff-audio</string>
+				<string>com.apple.coreaudio-format</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>识别你正在听的歌时需要使用麦克风，只采集几秒环境音，录音不会保存，也不会上传。</string>
 	<!-- 四家接口与音频 CDN 仍有大量明文 http 地址（酷狗搜索/歌词、部分直链）。不加这条，

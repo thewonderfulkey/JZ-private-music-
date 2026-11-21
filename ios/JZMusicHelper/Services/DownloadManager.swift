@@ -833,6 +833,32 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ = DownloadManager.shared
     }
 
+    // MARK: 「用 JZ 音乐打开」/ 共享到本 App 的音频（第三条导入入口）
+
+    /// 其他 App / 「文件」App 一次只送一个 URL，系统会**逐条**调 `open url:`。
+    /// 这里攒 0.4 秒再一起导：否则批量 20 首会并发跑 20 次导入，
+    /// 互相抢 `taken` 基名集合，还会重复算哈希。
+    private static var pendingOpenIn: [URL] = []
+    private static var pendingOpenInWork: DispatchWorkItem?
+
+    func application(_ app: UIApplication, open url: URL,
+                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        enqueueOpenIn([url])
+        return true
+    }
+
+    private func enqueueOpenIn(_ urls: [URL]) {
+        AppDelegate.pendingOpenIn.append(contentsOf: urls)
+        AppDelegate.pendingOpenInWork?.cancel()
+        let work = DispatchWorkItem {
+            let batch = AppDelegate.pendingOpenIn
+            AppDelegate.pendingOpenIn = []
+            DownloadManager.importFromOpenIn(batch)
+        }
+        AppDelegate.pendingOpenInWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
     /// 由 DownloadManager.urlSessionDidFinishEvents 调用，执行系统要求的收尾回调。
     static func completeBackgroundSession(for identifier: String) {
         backgroundCompletionHandlers[identifier]?()
@@ -927,6 +953,16 @@ enum CrashReporter {
     static func logImportSniff(_ name: String, head: Data, verdict: String) {
         let hex = head.map { String(format: "%02x", $0) }.joined(separator: " ")
         append("\(stamp()) \(name) | \(hex) | \(verdict)\n", to: "import-sniff.log")
+    }
+
+    /// 导入链路的分步日志（`诊断/import.log`）：选择器进出、回调、扫描、逐首结果。
+    ///
+    /// 为什么单开一个文件：老板这台机器上系统选择器的「打开」**按下去不回调**
+    /// （2026-11-19 的「保存位置」、2026-11-21 的三次导入修都是同一症状）。
+    /// 只看 UI 无法区分"按钮没反应 / 回调没来 / 回调来了但导入卡住"，
+    /// 落一份分步日志，下一次复现就能一眼定位死在哪一步。
+    static func logImport(_ line: String) {
+        append("\(stamp()) \(line)\n", to: "import.log")
     }
 
     /// 把 PlaybackTrace 的每一行写到 `诊断/trace.log`（崩了内存里那 200 条会一起消失）
@@ -1052,6 +1088,7 @@ extension DownloadManager {
     func importAudioFiles(_ urls: [URL]) async -> ImportReport {
         var report = ImportReport()
         await MainActor.run { self.lastImportReport = nil }
+        CrashReporter.logImport("import: 开始，收到 \(urls.count) 个选中项")
         let musicDir = musicDirectory
         try? FileManager.default.createDirectory(at: musicDir, withIntermediateDirectories: true)
 
@@ -1095,12 +1132,14 @@ extension DownloadManager {
                     } else {
                         CrashReporter.logImportSniff(url.lastPathComponent, head: head,
                                                      verdict: "不认识（判为不支持）")
+                        CrashReporter.logImport("import: 不支持 · \(url.lastPathComponent)")
                         report.unsupported.append(url.lastPathComponent)
                         done += 1
                         continue
                     }
                 }
                 guard ImportRules.isPlayable(extension: ext) else {
+                    CrashReporter.logImport("import: 不支持 · \(url.lastPathComponent)")
                     report.unsupported.append(url.lastPathComponent)
                     done += 1
                     continue
@@ -1112,6 +1151,7 @@ extension DownloadManager {
                 }
 
                 guard let meta = await Self.localMetadata(of: url) else {
+                    CrashReporter.logImport("import: 读不出元数据/时长 · \(url.lastPathComponent)")
                     report.failed.append(url.lastPathComponent)
                     done += 1
                     continue
@@ -1160,6 +1200,7 @@ extension DownloadManager {
                 do {
                     try FileManager.default.copyItem(at: url, to: dest)
                 } catch {
+                    CrashReporter.logImport("import: 复制失败 · \(url.lastPathComponent) · \(error.localizedDescription)")
                     report.failed.append(url.lastPathComponent)
                     done += 1
                     continue
@@ -1205,6 +1246,7 @@ extension DownloadManager {
             self.importProgress = nil
             self.lastImportReport = report.detail
         }
+        CrashReporter.logImport("import: 结束 → \(report.summary)")
         return report
     }
 
@@ -1238,6 +1280,52 @@ extension DownloadManager {
 
     /// 取消正在进行的导入（已导入的保留，剩下的不再处理）
     func cancelImport() { importCancelled = true }
+
+    /// 扫 App 自己的 Documents（= 文件 App 里的「JZ 音乐」）里**所有**能导入的音频，递归。
+    ///
+    /// 给内置导入浏览器的「扫描全部子文件夹」用：这样老板把几十首丢进 `JZ 音乐`（或它下面
+    /// 自己建的文件夹）之后，一次就能全导进来，不用一层层点进去。
+    /// `诊断` 与隐藏目录跳过（那是崩溃取证和系统垃圾）。
+    static func audioFilesInDocuments(limit: Int = 5000) -> [URL] {
+        let root = DownloadLocation.documentsDirectory()
+        let downloadedDir = DownloadLocation.musicDirectory().path
+        guard let en = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var out: [URL] = []
+        var folders = 0
+        while let f = en.nextObject() as? URL {
+            if out.count >= limit { break }
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: f.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                folders += 1
+                // `诊断` 是崩溃取证日志；`Download/Music` 里已经是我们自己下载/导入过的歌
+                // （再扫一遍只会走"同文件跳过"，白算一遍哈希）→ 两处都不进
+                if ImportRules.browserHides(name: f.lastPathComponent) || f.path == downloadedDir {
+                    en.skipDescendants()
+                }
+                continue
+            }
+            if ImportRules.isPlayable(extension: f.pathExtension) { out.append(f) }
+        }
+        CrashReporter.logImport("browser: 全容器扫描 → \(out.count) 首 / \(folders) 个文件夹")
+        return out
+    }
+
+    /// 别的 App「用 JZ 音乐打开」/「共享到 JZ 音乐」送来的文件（`AppDelegate.application(_:open:)`）。
+    ///
+    /// 这是导入的**第三条路**，完全不经过系统文件选择器：在「文件」App 或 LocalSend / 微信 /
+    /// 隔空投送里选中歌 →「共享」→「JZ 音乐」。老板那台机器的选择器「打开」不回调，
+    /// 这条路绕开了它，且文件是系统**就地**交给我们（`LSSupportsOpeningDocumentsInPlace` 已开）。
+    static func importFromOpenIn(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let names = urls.prefix(3).map(\.lastPathComponent).joined(separator: "、")
+        CrashReporter.logImport("open-in: \(urls.count) 个 → \(names)")
+        Task.detached(priority: .userInitiated) {
+            _ = await DownloadManager.shared.importAudioFiles(urls)
+        }
+    }
 
     /// 把"用户选中的一个 URL"展开成一批音频文件（文件夹递归，最多 5000 个，防止误选根目录）
     static func expandImportTargets(_ picked: URL) -> [URL] {

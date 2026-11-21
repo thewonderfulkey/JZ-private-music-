@@ -27,6 +27,10 @@ struct DownloadsTabView: View {
     /// 本地搜索（下载/导入都在这一页，按内容过滤，纯本地不联网）
     @State private var query = ""
     @State private var showDedupeConfirm = false
+    /// 导入面板（内置浏览器；不经过系统选择器）
+    @State private var showImportBrowser = false
+    /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
+    @State private var notice: String?
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -54,38 +58,25 @@ struct DownloadsTabView: View {
     var body: some View {
         Group {
             if downloads.items.isEmpty {
-                VStack(spacing: Tokens.Spacing.m) {
-                    EmptyStateView(title: "还没有下载任务",
-                                   systemImage: "arrow.down.circle",
-                                   description: "在播放页点「下载」，选一个音质")
-                    Button {
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(200))
-                            DocumentPickerPresenter.present { urls in
-                                guard !urls.isEmpty else { return }
-                                startImport(urls)
-                            }
-                        }
-                    } label: {
-                        Label("导入本地音乐", systemImage: "square.and.arrow.down")
-                            .font(.footnote.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 40)
-                            .background(Capsule().fill(Tokens.Palette.paperElevated))
-                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10),
-                                                            lineWidth: 0.5))
-                    }
-                    .buttonStyle(.press)
-                }
+                empty
             } else {
                 list
             }
         }
-        // 2026-11-21 第三次修导入：**系统文档选择器必须模态呈现**。
-        // 前两版分别用 SwiftUI `.fileImporter` 和"把 UIDocumentPicker 当 sheet 内容"——
-        // 两者都会让右上角「打开」变成死按钮（不是文件问题，是呈现方式问题）。
-        // 现在用 `DocumentPickerPresenter.present(...)`，从 key window 的顶层 VC 模态弹出。
-        
+        // 三个点（导入 / 整理）挂在**外层**。
+        // 2026-11-21 老板反馈："下载页没有下载的歌曲就没有三个点，也就没有导入入口"
+        // —— 以前这个 Menu 写在 `list` 的 toolbar 里，而空页面走的是另一个分支，所以整条
+        // 工具栏（含三个点）在空状态下根本不存在。现在两个分支共用这一条工具栏。
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { importMenu }
+        }
+        .sheet(isPresented: $showImportBrowser) {
+            ImportBrowserView { urls in
+                flash("开始导入 \(urls.count) 个文件…")
+                startImport(urls)
+            }
+            .environmentObject(downloads)
+        }
         .alert("导入", isPresented: Binding(
             get: { downloads.lastImportReport != nil },
             set: { if !$0 { downloads.lastImportReport = nil } })) {
@@ -102,6 +93,59 @@ struct DownloadsTabView: View {
                     : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
             }
             Button("取消", role: .cancel) {}
+        }
+        .locateToast(notice)
+    }
+
+    /// 工具栏上的三个点：导入 + 整理重复
+    private var importMenu: some View {
+        Menu {
+            Button {
+                showImportBrowser = true
+            } label: {
+                Label("导入本地音乐…", systemImage: "square.and.arrow.down")
+            }
+            Button {
+                showDedupeConfirm = true
+            } label: {
+                Label("整理重复（同曲留最高音质）", systemImage: "rectangle.stack.badge.minus")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("导入与整理")
+    }
+
+    /// 空状态：按钮用 `EmptyStateView(action:)`，**不再**是 ContentUnavailableView 后面
+    /// 跟一个 Button —— 那个 Button 会被撑满的 ContentUnavailableView 顶到屏幕外，
+    /// 老板看到的"没有导入本地按钮"就是这么来的。
+    private var empty: some View {
+        ScrollView {
+            VStack(spacing: Tokens.Spacing.s) {
+                EmptyStateView(title: "还没有下载任务",
+                               systemImage: "arrow.down.circle",
+                               description: "在播放页点「下载」，选一个音质。\n已有的本地音乐也可以导进来。",
+                               actionTitle: "导入本地音乐",
+                               action: { showImportBrowser = true })
+                Text("导入位置：文件 › JZ 音乐　（把歌放进这个文件夹，再回来导入）")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, Tokens.Spacing.l)
+            .padding(.bottom, Tokens.Spacing.xxl)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+    }
+
+    /// 一句话提示，1.5 秒后自己消失（导入开始/系统选择器失败都用它，绝不静默）
+    private func flash(_ text: String) {
+        notice = text
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            if notice == text { notice = nil }
         }
     }
 
@@ -235,30 +279,7 @@ struct DownloadsTabView: View {
             .locateToast(locator.toast)
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button {
-                            // 菜单收起动画与弹层抢同一帧会让 present 失败，延迟 0.28s 再弹
-                            Task { @MainActor in
-                                try? await Task.sleep(for: .milliseconds(280))
-                                DocumentPickerPresenter.present { urls in
-                                    guard !urls.isEmpty else { return }
-                                    startImport(urls)
-                                }
-                            }
-                        } label: {
-                            Label("导入本地音乐…", systemImage: "square.and.arrow.down")
-                        }
-                        Button {
-                            showDedupeConfirm = true
-                        } label: {
-                            Label("整理重复（同曲留最高音质）", systemImage: "rectangle.stack.badge.minus")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .accessibilityLabel("导入与整理")
-                }
+                // 导入/整理的三个点在**外层**（`body` 的 toolbar 里），两个分支共用。
                 ToolbarItem(placement: .topBarTrailing) {
                     LocateNowPlayingButton {
                         // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）
@@ -493,43 +514,366 @@ struct DownloadsTabView: View {
     }
 }
 
-// MARK: - 系统文件选择器（模态呈现）
+// MARK: - 内置导入浏览器（2026-11-21 第三次修导入：不再把系统选择器当唯一入口）
 
-/// 为什么不用 SwiftUI `.fileImporter`、也不把 picker 当 sheet 内容：
-/// 这两种方式在真机上都会让系统选择器右上角「打开」变成死按钮（点了完全没反应）。
-/// 系统文档选择器应当由 UIKit **模态** present，并强引用 delegate —— 这是它唯一稳定的用法。
+/// 老板这台机器上系统文件选择器的「打开」**按下去不回调**：
+///   · 2026-11-19「保存位置」用 SwiftUI `.fileImporter`（选文件夹）→ 同一个死法，
+///     当时改成"在 App 自己的文件夹里列表选"，成了；
+///   · 2026-11-21 导入先 `.fileImporter`、再 UIKit 模态 `UIDocumentPickerViewController`，
+///     两条完全不同的呈现路径，还是死在同一个按钮上。
+/// 三条路死在同一个地方 ⇒ 不是我们的回调写错，是系统那层没把结果交回来。
+/// 所以导入的主路径改成**先在本 App 的文件夹里挑**：
+///   · `文件 › JZ 音乐` 就是本 App 的 Documents（`UIFileSharingEnabled` / `LSSupportsOpeningDocumentsInPlace` 都已开）；
+///   · 用「文件」App / LocalSend / 隔空投送 / 微信把歌放进去，这里直接列出来，勾选导入；
+///   · 系统选择器降级成"还想试一下"的次选入口（下面 `DocumentPickerPresenter`）。
+struct ImportBrowserView: View {
+
+    /// 确认导入后交给下载页（那边统一走 `Task.detached` 的导入流程）
+    let onImport: ([URL]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var folder = DownloadLocation.documentsDirectory()
+    @State private var entries: [Entry] = []
+    @State private var selected: Set<String> = []
+    @State private var hint: String?
+
+    private let root = DownloadLocation.documentsDirectory()
+
+    struct Entry: Identifiable {
+        let url: URL
+        let kind: ImportRules.BrowserKind
+        var id: String { url.path }
+        var isFolder: Bool { kind == .folder }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("把歌放进「文件 › JZ 音乐」（「文件」App、LocalSend、隔空投送都行），再回来点「刷新」。系统选择器在这台机器上点「打开」不生效，所以这里直接列 App 自己的文件夹。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: Tokens.Spacing.s) {
+                        Button {
+                            reload()
+                        } label: {
+                            Label("刷新", systemImage: "arrow.clockwise")
+                        }
+                        Spacer(minLength: 0)
+                        if !audioEntries.isEmpty {
+                            Button("全选本页 \(audioEntries.count) 首") {
+                                selected = Set(audioEntries.map { $0.url.path })
+                            }
+                            .font(.footnote)
+                        }
+                    }
+                    Button {
+                        scanWholeContainer()
+                    } label: {
+                        Label("扫描整个「JZ 音乐」并导入", systemImage: "wand.and.stars")
+                    }
+                    Button {
+                        openSystemPicker()
+                    } label: {
+                        Label("还是用系统文件选择器…", systemImage: "folder.badge.plus")
+                    }
+                    if let hint {
+                        Text(hint)
+                            .font(.caption)
+                            .foregroundStyle(Tokens.Palette.vermilion)
+                    }
+                } header: {
+                    Text("怎么放歌进来")
+                } footer: {
+                    Text("同一个文件（字节一样）和同一首歌（同一条录音）会自动跳过，不会重复占地方。")
+                }
+
+                Section {
+                    if folder.path != root.path {
+                        Button {
+                            goUp()
+                        } label: {
+                            Label("上一级", systemImage: "chevron.up")
+                        }
+                    }
+                    if entries.isEmpty {
+                        Text("这个文件夹里没有可导入的音频文件")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(entries) { entry in
+                        row(entry)
+                    }
+                } header: {
+                    Text(pathText)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("导入本地音乐")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(importTitle) { runImport() }
+                        .disabled(selectedAudioURLs.isEmpty)
+                }
+            }
+            .task { reload() }
+        }
+    }
+
+    // MARK: 列表
+
+    private var audioEntries: [Entry] { entries.filter { $0.kind == .audio } }
+
+    private var selectedAudioURLs: [URL] {
+        entries.filter { $0.kind == .audio && selected.contains($0.url.path) }.map(\.url)
+    }
+
+    private var importTitle: String {
+        let n = selectedAudioURLs.count
+        return n == 0 ? "导入" : "导入（\(n)）"
+    }
+
+    /// `文件 › JZ 音乐` + 当前子路径（老板一眼能对上「文件」App 里的那个文件夹）
+    private var pathText: String {
+        let base = "文件 › JZ 音乐"
+        guard folder.path != root.path, folder.path.hasPrefix(root.path) else { return base }
+        let rel = String(folder.path.dropFirst(root.path.count))
+        let parts = rel.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        return ([base] + parts).joined(separator: " › ")
+    }
+
+    private func row(_ entry: Entry) -> some View {
+        Button {
+            switch entry.kind {
+            case .folder:
+                folder = entry.url
+                selected.removeAll()
+                hint = nil
+                reload()
+            case .audio:
+                toggle(entry.url)
+            case .unsupported:
+                hint = "《\(entry.url.lastPathComponent)》iOS 放不了这种格式，导进来也播不出声，所以没让选。"
+            case .other:
+                break
+            }
+        } label: {
+            HStack(spacing: Tokens.Spacing.s) {
+                Image(systemName: iconName(for: entry))
+                    .frame(width: 22)
+                    .foregroundStyle(entry.kind == .unsupported
+                                     ? Color.secondary
+                                     : (entry.isFolder ? Tokens.Palette.vermilion : Color.secondary))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.url.lastPathComponent)
+                        .font(.body)
+                        .lineLimit(2)
+                        .foregroundStyle(entry.kind == .unsupported ? Color.secondary : Color.primary)
+                    Text(subtitle(for: entry))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: Tokens.Spacing.xs)
+                if entry.isFolder {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else if entry.kind == .audio {
+                    Image(systemName: selected.contains(entry.url.path)
+                          ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected.contains(entry.url.path)
+                                         ? Tokens.Palette.vermilion : Color.secondary.opacity(0.4))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func iconName(for entry: Entry) -> String {
+        switch entry.kind {
+        case .folder: return "folder"
+        case .audio: return "music.note"
+        case .unsupported: return "exclamationmark.triangle"
+        case .other: return "doc"
+        }
+    }
+
+    private func subtitle(for entry: Entry) -> String {
+        switch entry.kind {
+        case .folder:
+            return "文件夹"
+        case .audio:
+            let ext = entry.url.pathExtension.uppercased()
+            let size = sizeText(entry.url)
+            return size.isEmpty ? ext : "\(ext) · \(size)"
+        case .unsupported:
+            return "iOS 不支持这种格式（\(entry.url.pathExtension.uppercased())）"
+        case .other:
+            return ""
+        }
+    }
+
+    private func sizeText(_ url: URL) -> String {
+        guard let num = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size]
+                as? NSNumber else { return "" }
+        return ImportRules.browserSizeText(num.int64Value)
+    }
+
+    // MARK: 动作
+
+    private func reload() {
+        let fm = FileManager.default
+        let urls = (try? fm.contentsOfDirectory(at: folder,
+                                                includingPropertiesForKeys: [.isDirectoryKey],
+                                                options: [.skipsHiddenFiles])) ?? []
+        var list: [Entry] = []
+        for url in urls {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            let kind = ImportRules.browserKind(name: url.lastPathComponent, isDirectory: isDir)
+            guard kind != .other else { continue }
+            list.append(Entry(url: url, kind: kind))
+        }
+        list.sort {
+            ImportRules.browserComesBefore($0.url.lastPathComponent, $0.isFolder,
+                                           $1.url.lastPathComponent, $1.isFolder)
+        }
+        entries = list
+        selected = selected.intersection(Set(list.map { $0.url.path }))
+        CrashReporter.logImport("browser: \(pathText) → \(list.count) 个条目")
+    }
+
+    private func toggle(_ url: URL) {
+        if selected.contains(url.path) {
+            selected.remove(url.path)
+        } else {
+            selected.insert(url.path)
+        }
+    }
+
+    private func goUp() {
+        guard folder.path != root.path else { return }
+        folder = folder.deletingLastPathComponent()
+        selected.removeAll()
+        hint = nil
+        reload()
+    }
+
+    private func runImport() {
+        let urls = selectedAudioURLs
+        guard !urls.isEmpty else { return }
+        CrashReporter.logImport("browser: 勾选 \(urls.count) 首 → 交给导入流程")
+        dismiss()
+        onImport(urls)
+    }
+
+    /// 不管用户把歌丢在哪一层子文件夹，一次全扫进来
+    private func scanWholeContainer() {
+        let files = DownloadManager.audioFilesInDocuments()
+        guard !files.isEmpty else {
+            hint = "「JZ 音乐」里没找到能导入的音频。先把歌放进这个文件夹（用「文件」App 或 LocalSend），再回来点这一项。"
+            return
+        }
+        CrashReporter.logImport("browser: 全容器 \(files.count) 首 → 交给导入流程")
+        dismiss()
+        onImport(files)
+    }
+
+    private func openSystemPicker() {
+        DocumentPickerPresenter.present(onFail: { message in
+            hint = message
+        }, onPick: { urls in
+            guard !urls.isEmpty else { return }
+            CrashReporter.logImport("picker: 收到 \(urls.count) 个 → 交给导入流程")
+            dismiss()
+            onImport(urls)
+        })
+    }
+}
+
+// MARK: - 系统文件选择器（次选入口：模态呈现 + 复制模式 + 全程日志）
+
+/// 每步都写 `诊断/import.log`：请求 / 顶层 VC / 是否被占用 / 已呈现 / 回调 / 取消 / 放弃。
+/// 上一次（v2.4.45）只改了呈现方式、没留痕，结果"还是没反应"时无法判断死在哪一步，
+/// 这一版把"能不能弹、弹了有没有回调"分开记。
 final class DocumentPickerPresenter: NSObject, UIDocumentPickerDelegate {
 
     /// present 期间保活（delegate 一旦释放，"打开"就会失效）
     private static var alive: DocumentPickerPresenter?
 
     private var onPick: (([URL]) -> Void)?
+    private var onFail: ((String) -> Void)?
 
-    static func present(onPick: @escaping ([URL]) -> Void) {
-        guard let host = topViewController() else { return }
+    static func present(onFail: @escaping (String) -> Void = { _ in },
+                        onPick: @escaping ([URL]) -> Void) {
+        CrashReporter.logImport("picker: 请求打开系统选择器")
+        guard let host = topViewController() else {
+            CrashReporter.logImport("picker: 找不到可用的顶层 VC → 放弃")
+            onFail("系统选择器打不开（找不到窗口）。请用上面的文件夹列表导入。")
+            return
+        }
+        CrashReporter.logImport("picker: 顶层 VC = \(type(of: host))")
+
         let presenter = DocumentPickerPresenter()
         presenter.onPick = onPick
+        presenter.onFail = onFail
         alive = presenter
 
-        // `.item`：任何文件都能选（自定义扩展名也行）；文件夹同样可选
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
+        // `asCopy: true`：让系统把选中的文件**复制**到我们的临时目录。
+        // 上一版是 `asCopy: false`（就地打开），那条路要求文档提供方与我们的容器协商安全作用域，
+        // 在老板这台机器上「打开」压根不回调（2026-11-19 的文件夹选择器是同一个死法）。
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio, .item],
+                                                    asCopy: true)
         picker.allowsMultipleSelection = true
         picker.shouldShowFileExtensions = true
         picker.delegate = presenter
-        host.present(picker, animated: true)
+
+        func giveUp(_ message: String) {
+            CrashReporter.logImport("picker: 放弃 · \(message)")
+            DocumentPickerPresenter.alive = nil
+            onFail(message)
+        }
+
+        func attempt(_ triesLeft: Int) {
+            if let busy = host.presentedViewController {
+                guard triesLeft > 0 else {
+                    giveUp("刚才有别的弹层压着（\(type(of: busy))），系统选择器没弹出来。请重试，或用上面的文件夹列表导入。")
+                    return
+                }
+                CrashReporter.logImport("picker: 顶层被占用（\(type(of: busy))），0.3s 后重试")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { attempt(triesLeft - 1) }
+                return
+            }
+            host.present(picker, animated: true) {
+                CrashReporter.logImport("picker: 已呈现（等系统回调）")
+            }
+        }
+        attempt(3)
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController,
                         didPickDocumentsAt urls: [URL]) {
+        let names = urls.prefix(3).map(\.lastPathComponent).joined(separator: "、")
+        CrashReporter.logImport("picker: 回调 \(urls.count) 个 → \(names)")
         let callback = onPick
-        onPick = nil
-        DocumentPickerPresenter.alive = nil
+        releaseSelf()
         controller.dismiss(animated: true) { callback?(urls) }
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        CrashReporter.logImport("picker: 用户取消")
+        releaseSelf()
+    }
+
+    private func releaseSelf() {
         onPick = nil
-        DocumentPickerPresenter.alive = nil
+        onFail = nil
+        if DocumentPickerPresenter.alive === self { DocumentPickerPresenter.alive = nil }
     }
 
     private static func topViewController() -> UIViewController? {

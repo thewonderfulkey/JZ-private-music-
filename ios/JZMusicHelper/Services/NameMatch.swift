@@ -555,6 +555,63 @@ enum ImportRules {
         }
         return "\(base) (\(UUID().uuidString.prefix(6)))"
     }
+
+    // MARK: 内置导入浏览器（2026-11-21 第三次修导入：不再把系统选择器当唯一入口）
+    //
+    // 背景：老板这台机器上系统文件选择器的「打开」**不回调**——2026-11-19 的「保存位置」
+    // （SwiftUI `.fileImporter`）和 2026-11-21 的导入（UIKit 模态 `UIDocumentPickerViewController`）
+    // 是两条完全不同的呈现路径，死在同一个按钮上，所以问题在系统那层。
+    // 于是导入改成"先在 App 自己的文件夹里挑"（`文件 › JZ 音乐` = 本 App 的 Documents）。
+    //
+    // 这一段只放**纯逻辑**：哪些条目该出现在列表里、怎么排序——好让 CI 能钉断言。
+
+    /// 浏览器里条目的类型（决定能不能点、能不能导入）
+    enum BrowserKind: Equatable {
+        case folder
+        case audio
+        /// 能看见但选不了：iOS 的 AVFoundation 放不出来（ape / wma / ogg …），
+        /// 与其导完"哑火"，不如在列表里就说清楚
+        case unsupported
+        /// 不显示（诊断日志、旁车目录）
+        case other
+    }
+
+    /// 浏览器里要隐藏的目录名：`诊断`（崩溃取证日志，不是歌）与所有隐藏文件。
+    /// `Inbox` 故意**不隐藏**——别的 App「用 JZ 音乐打开」送来的文件会落在那里，
+    /// 万一自动导入没跑起来，用户还能在这一页看见它们手动导入。
+    static let browserHiddenNames: Set<String> = ["诊断"]
+
+    static func browserHides(name: String) -> Bool {
+        if name.isEmpty { return true }
+        if name.hasPrefix(".") { return true }
+        return browserHiddenNames.contains(name)
+    }
+
+    /// 这个名字在导入浏览器里算哪一类
+    static func browserKind(name: String, isDirectory: Bool) -> BrowserKind {
+        if browserHides(name: name) { return .other }
+        if isDirectory { return .folder }
+        let ext = (name as NSString).pathExtension.lowercased()
+        if isPlayable(extension: ext) { return .audio }
+        if knownUnsupported.contains(ext) { return .unsupported }
+        return .other
+    }
+
+    /// 排序：文件夹在前，同类按「本地化标准比较」
+    /// （`01 - …`、`10 - …` 与中文都能排成人看得懂的顺序；纯 `String <` 会把 10 排在 2 前面）
+    static func browserComesBefore(_ aName: String, _ aIsFolder: Bool,
+                                   _ bName: String, _ bIsFolder: Bool) -> Bool {
+        if aIsFolder != bIsFolder { return aIsFolder }
+        let r = aName.localizedStandardCompare(bName)
+        if r == .orderedSame { return aName < bName }
+        return r == .orderedAscending
+    }
+
+    /// 文件大小文案（列表里给一眼能看的体积）
+    static func browserSizeText(_ bytes: Int64) -> String {
+        if bytes <= 0 { return "" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
 }
 
 // MARK: - tab 内本地搜索（下载 / 收藏）

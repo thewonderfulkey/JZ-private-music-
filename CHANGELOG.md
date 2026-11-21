@@ -1,3 +1,55 @@
+## iOS v2.4.46（224）· 2026-11-21 下午（导入：不再把系统选择器当唯一入口；三个点/导入按钮真的常驻）
+
+### 一、上一版为什么"看着改了、实际没改"（先纠错，再修）
+
+v2.4.45 的 CHANGELOG 写了"**空态也有「导入本地音乐」按钮，工具栏常驻**"，但代码里两件事都没做到：
+
+| 上一版的声称 | 代码里的实际 |
+|---|---|
+| 工具栏常驻 | 「⋯」Menu 仍写在 `list` 的 `.toolbar` 里，而空页面走的是 `Group` 的另一个分支 → **空状态下整条工具栏不存在** |
+| 空态有导入按钮 | 按钮是 `ContentUnavailableView`（`EmptyStateView`）**后面**再跟一个 `Button`。`ContentUnavailableView` 会吃满剩余高度，把后面的按钮顶到屏幕外（老板 13:10 的截图正是"只有标题 + 一句说明，底下什么都没有"） |
+
+所以老板这轮反馈"还是没有三个点、没有导入按钮"是**准确的**，不是他装错包。
+
+**这版的做法**
+- 工具栏（三个点：导入 / 整理重复）从 `list` 提到 `body` 的 `Group` 上，两个分支共用 → 有歌没歌都有；
+- 空态的导入按钮改用 `EmptyStateView(action:)`，由 `ContentUnavailableView` 自己渲染（居中，不会被顶出屏幕），
+  外层再套 `ScrollView`，AX5 大字号也不会截断；页面里写明"导入位置：文件 › JZ 音乐"。
+
+### 二、导入：系统选择器的「打开」在这台机器上**不回调**，所以主路径改成 App 自己的文件夹
+
+三次尝试、三条不同的呈现路径，死在同一个按钮上：
+
+| 时间 | 方式 | 结果 |
+|---|---|---|
+| 2026-11-19 | 保存位置：SwiftUI `.fileImporter`（选文件夹） | 「打开」不回调 → 当时改成"App 内列表选文件夹"，成了 |
+| 2026-11-21 v2.4.43 | 导入：SwiftUI `.fileImporter` | 同上，没反应 |
+| 2026-11-21 v2.4.45 | 导入：UIKit 模态 `UIDocumentPickerViewController(asCopy: false)` | 仍然没反应 |
+
+`.fileImporter` 与"UIKit 模态 present"是两套完全不同的呈现/回调机制，都死在「打开」上 ⇒
+**不是我们的 delegate 写错，也不是文件加密，是系统那层没把选择结果交回来**（老板说"像系统层面的"，判断正确）。
+这与 2026-11-19「保存位置」的结论一致，当时的解法就是"别依赖系统选择器"。
+
+**这版的做法（主路径不再经过系统选择器）**
+1. 新增 `ImportBrowserView`：**内置文件浏览器**，根目录 = 本 App 的 Documents（就是「文件 › JZ 音乐」，
+   `UIFileSharingEnabled` / `LSSupportsOpeningDocumentsInPlace` 早就开着）。可进子文件夹、多选、全选本页、
+   「扫描整个 JZ 音乐并导入」（递归、跳过 `诊断` 与 `Download/Music`）；
+2. **「用 JZ 音乐打开 / 共享到 JZ 音乐」**（第三条路）：`Info.plist` 声明了音频 `CFBundleDocumentTypes`，
+   `AppDelegate.application(_:open:)` 收文件（逐条回调攒 0.4s 批量导入）。在「文件」App / LocalSend /
+   微信 / 隔空投送里选中歌 →「共享」→「JZ 音乐」，完全不经过选择器；
+3. 系统选择器降级成"还想试一下"的次选入口：`asCopy: true`（让系统**复制**到临时目录，不走"就地打开"
+   那套安全作用域协商）+ 顶层 VC 被占用时重试 3 次 + **每一步写 `诊断/import.log`**
+   （请求 / 顶层 VC / 是否被占用 / 已呈现 / 回调 / 取消 / 放弃），下次一复现就知道死在哪一步。
+
+### 断言
+
+新增 `ImportRules` 的浏览器规则（分类 / 隐藏名单 / 排序 / 体积文案）：
+- `ios/SelfTest/main.swift` 新增 16 条（CI 跑）；
+- 本地 mini `tools/dev/r163_mini_assertions.swift` **22/22**；
+- `check_ui_hygiene.py` / `check_pbxproj.py` 通过；三个改动文件 `swiftc -parse` 通过。
+
+---
+
 ## iOS v2.4.45（223）· 2026-11-21 下午（闪退真根因：SwiftUI 观察图；导入：系统选择器必须模态呈现）
 
 ### 出包（v2.4.45 / 223）
