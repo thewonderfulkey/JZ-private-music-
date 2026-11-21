@@ -91,6 +91,13 @@ struct JZMusicHelperApp: App {
             }
             .preferredColorScheme(settings.appearance.colorScheme)
             .tint(Tokens.Palette.vermilion)
+            // 「用 JZ 音乐打开」/ 共享进来的音频（第三条导入入口，不经过系统选择器）。
+            // SwiftUI 是 scene-based：系统多半走场景回调而不是 AppDelegate 的 `application(_:open:)`，
+            // 所以这里必须也接一份；两条路都汇到 `enqueueOpenIn`（0.4s 去重合并）。
+            .onOpenURL { url in
+                guard url.isFileURL else { return }
+                DownloadManager.enqueueOpenIn([url])
+            }
         }
     }
 }

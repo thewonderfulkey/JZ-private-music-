@@ -835,28 +835,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     // MARK: 「用 JZ 音乐打开」/ 共享到本 App 的音频（第三条导入入口）
 
-    /// 其他 App / 「文件」App 一次只送一个 URL，系统会**逐条**调 `open url:`。
-    /// 这里攒 0.4 秒再一起导：否则批量 20 首会并发跑 20 次导入，
-    /// 互相抢 `taken` 基名集合，还会重复算哈希。
-    private static var pendingOpenIn: [URL] = []
-    private static var pendingOpenInWork: DispatchWorkItem?
-
+    /// scene-based 的 App（SwiftUI 就是）里系统多半走场景回调，`application(_:open:)` 未必会来
+    /// —— 所以根视图上还有一个 `.onOpenURL`（见 `JZMusicHelperApp`），两条都汇到
+    /// `DownloadManager.enqueueOpenIn`（0.4s 去重合并，不会导两次）。
     func application(_ app: UIApplication, open url: URL,
                      options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        enqueueOpenIn([url])
+        DownloadManager.enqueueOpenIn([url])
         return true
-    }
-
-    private func enqueueOpenIn(_ urls: [URL]) {
-        AppDelegate.pendingOpenIn.append(contentsOf: urls)
-        AppDelegate.pendingOpenInWork?.cancel()
-        let work = DispatchWorkItem {
-            let batch = AppDelegate.pendingOpenIn
-            AppDelegate.pendingOpenIn = []
-            DownloadManager.importFromOpenIn(batch)
-        }
-        AppDelegate.pendingOpenInWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     /// 由 DownloadManager.urlSessionDidFinishEvents 调用，执行系统要求的收尾回调。
@@ -1313,7 +1298,8 @@ extension DownloadManager {
         return out
     }
 
-    /// 别的 App「用 JZ 音乐打开」/「共享到 JZ 音乐」送来的文件（`AppDelegate.application(_:open:)`）。
+    /// 别的 App「用 JZ 音乐打开」/「共享到 JZ 音乐」送来的文件（`AppDelegate.application(_:open:)`
+    /// 或根视图的 `.onOpenURL`）。
     ///
     /// 这是导入的**第三条路**，完全不经过系统文件选择器：在「文件」App 或 LocalSend / 微信 /
     /// 隔空投送里选中歌 →「共享」→「JZ 音乐」。老板那台机器的选择器「打开」不回调，
@@ -1325,6 +1311,26 @@ extension DownloadManager {
         Task.detached(priority: .userInitiated) {
             _ = await DownloadManager.shared.importAudioFiles(urls)
         }
+    }
+
+    /// 系统逐条回调（一次一个文件），而且 `AppDelegate.application(_:open:)` 与 SwiftUI 的
+    /// `.onOpenURL` **可能各来一次**。这里攒 0.4 秒、按路径去重后一次性导入：
+    /// 否则批量 20 首会并发跑 20 次导入，互相抢基名集合、重复算哈希。
+    private static var pendingOpenIn: [URL] = []
+    private static var pendingOpenInWork: DispatchWorkItem?
+
+    static func enqueueOpenIn(_ urls: [URL]) {
+        for url in urls where !pendingOpenIn.contains(where: { $0.path == url.path }) {
+            pendingOpenIn.append(url)
+        }
+        pendingOpenInWork?.cancel()
+        let work = DispatchWorkItem {
+            let batch = pendingOpenIn
+            pendingOpenIn = []
+            importFromOpenIn(batch)
+        }
+        pendingOpenInWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     /// 把"用户选中的一个 URL"展开成一批音频文件（文件夹递归，最多 5000 个，防止误选根目录）
