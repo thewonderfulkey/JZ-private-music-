@@ -1,3 +1,18 @@
+## iOS v2.4.56（234）· 2026-11-21 傍晚（下载页去掉红心/收藏）
+
+老板原话：「下载页的所有歌曲不需要放置爱心，收藏功能」。
+
+- `DownloadRow` 删掉 `showsFavorite / isFavorite / onFavorite` 三个入参与右侧爱心按钮（含它的
+  `Haptics.favorite()`、`withAnimation(Tokens.Motion.favorite)`、`library.toggleFavorite`）；
+  `DownloadsTabView` 里因此不再需要 `@Environment(LibraryStore.self)`，一并撤掉。
+- **收藏功能本身不动**：入口仍在「我的收藏」、搜索页、榜单、歌手页、歌单详情（`SongRow(showsFavorite: true)`），
+  下载页只负责"我下载了什么"。
+- 副作用（正向）：行右侧最宽的那个内嵌按钮没了，副行「歌手 · 专辑」多出宽度（配合上一轮 `layoutPriority(1)`）。
+- 这是纯视图改动，没有新增纯逻辑，所以本轮不加迷你断言；门禁跑 `check_ui_hygiene.py`（31 文件 ✅）
+  与 6 个改动文件 `swiftc -parse` ✅，编译由 CI 兜。
+
+---
+
 ### 出包记录（v2.4.55 / 233）
 
 | 项 | 值 |

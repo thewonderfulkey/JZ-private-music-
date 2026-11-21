@@ -19,7 +19,6 @@ struct DownloadsTabView: View {
 
     @EnvironmentObject private var downloads: DownloadManager
     @Environment(PlayerEngine.self) private var player
-    @Environment(LibraryStore.self) private var library
     @Environment(AppRouter.self) private var router
 
     /// 第四十四轮：「定位到正在播放」的状态
@@ -739,15 +738,9 @@ struct DownloadsTabView: View {
             }
         } label: {
             DownloadRow(item: item,
-                        // 多选态里不显示红心：那是个内嵌按钮，会和"点整行勾选"抢手势
-                        showsFavorite: !selectMode,
-                        isFavorite: library.isFavorite(item.song),
-                        onFavorite: {
-                            Haptics.favorite()
-                            withAnimation(Tokens.Motion.favorite) {
-                                library.toggleFavorite(item.song)
-                            }
-                        },
+                        // 第 46 轮（老板 2026-11-21）：下载页**不放红心**——这一页是"我下载了什么"，
+                        // 收藏在「我的收藏」和搜索/榜单里做。顺手把行右侧那个内嵌按钮去掉，
+                        // 副行的「歌手 · 专辑」也能多出一点宽度。
                         isSelected: selectMode ? picked.contains(item.id) : nil)
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
@@ -881,13 +874,13 @@ struct DownloadsTabView: View {
 ///   · 去掉平台胶囊（下载页全是「本地」，那一枚没有信息量）；
 ///   · 去掉名次槽、`fixedSize`/`layoutPriority` 那一组布局修饰；
 ///   · 封面尺寸 52 → 48，其余字号沿用同一套 `FontRole`（视觉上仍是同一族）。
-/// 功能一个不少：点整行起播（整列排队）、红心、多选勾选圈。
+/// 功能：点整行起播（整列排队）、多选勾选圈。
+///
+/// 第 46 轮（老板 2026-11-21）：**红心去掉** —— "下载页的所有歌曲不需要放置爱心、收藏功能"。
+/// 这一页只负责"我下载了什么"；收藏入口留在「我的收藏」/ 搜索 / 榜单 / 歌手页。
 private struct DownloadRow: View {
 
     let item: DownloadItem
-    let showsFavorite: Bool
-    let isFavorite: Bool
-    let onFavorite: () -> Void
     let isSelected: Bool?
 
     /// 副行 = **歌手 · 专辑**（第 44 轮 B6：跟全 App 其它列表一致）。
@@ -948,17 +941,6 @@ private struct DownloadRow: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
-            }
-
-            if showsFavorite {
-                Button(action: onFavorite) {
-                    Image(systemName: isFavorite ? "heart.fill" : "heart")
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundStyle(isFavorite ? Tokens.Palette.vermilion : Color.secondary)
-                        .minimumTapTarget()
-                }
-                .buttonStyle(.press)
-                .accessibilityLabel(isFavorite ? "取消收藏" : "收藏")
             }
         }
         // 行高用 minHeight：AX5 时行要能长高
