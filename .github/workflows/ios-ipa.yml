@@ -55,6 +55,7 @@ jobs:
           mkdir -p build
           swiftc -Onone -swift-version 5 -o build/jz-selftest \
             ios/JZMusicHelper/Models/Song.swift \
+            ios/JZMusicHelper/Models/SongMeta.swift \
             ios/JZMusicHelper/Models/DownloadItem.swift \
             ios/JZMusicHelper/Services/APIClient.swift \
             ios/JZMusicHelper/Services/SearchAdapters.swift \

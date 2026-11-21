@@ -39,6 +39,8 @@
 		B00000000000000000000090 /* MetadataMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000090 /* MetadataMatcher.swift */; };
 		B00000000000000000000091 /* MetadataWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000091 /* MetadataWriter.swift */; };
 		B00000000000000000000092 /* SongMetadataEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000092 /* SongMetadataEditor.swift */; };
+		B00000000000000000000093 /* SongMeta.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000093 /* SongMeta.swift */; };
+		B00000000000000000000094 /* SongMeta.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000093 /* SongMeta.swift */; };
 		B00000000000000000000024 /* CoverResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* CoverResolver.swift */; };
 		B00000000000000000000025 /* Tokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000027 /* Tokens.swift */; };
 		B00000000000000000000026 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000028 /* Haptics.swift */; };
@@ -148,6 +150,7 @@
 		F00000000000000000000090 /* MetadataMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataMatcher.swift; sourceTree = "<group>"; };
 		F00000000000000000000091 /* MetadataWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataWriter.swift; sourceTree = "<group>"; };
 		F00000000000000000000092 /* SongMetadataEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongMetadataEditor.swift; sourceTree = "<group>"; };
+		F00000000000000000000093 /* SongMeta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongMeta.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* CoverResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverResolver.swift; sourceTree = "<group>"; };
 		F00000000000000000000027 /* Tokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tokens.swift; sourceTree = "<group>"; };
 		F00000000000000000000028 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
@@ -265,6 +268,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000002 /* Song.swift */,
+				F00000000000000000000093 /* SongMeta.swift */,
 				F00000000000000000000003 /* DownloadItem.swift */,
 				F00000000000000000000030 /* LibraryStore.swift */,
 				F00000000000000000000031 /* SettingsStore.swift */,
@@ -573,6 +577,7 @@
 				B00000000000000000000090 /* MetadataMatcher.swift in Sources */,
 				B00000000000000000000091 /* MetadataWriter.swift in Sources */,
 				B00000000000000000000092 /* SongMetadataEditor.swift in Sources */,
+				B00000000000000000000093 /* SongMeta.swift in Sources */,
 				B00000000000000000000024 /* CoverResolver.swift in Sources */,
 				B00000000000000000000025 /* Tokens.swift in Sources */,
 				B00000000000000000000026 /* Haptics.swift in Sources */,
@@ -646,6 +651,7 @@
 				B00000000000000000000045 /* DiscoverCatalog.swift in Sources */,
 				B00000000000000000000046 /* DiscoverRules.swift in Sources */,
 				B00000000000000000000048 /* Song.swift in Sources */,
+				B00000000000000000000094 /* SongMeta.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
