@@ -302,7 +302,11 @@ enum AudioTagEmbedder {
             guard let tag = firstBytes(of: fileURL, count: length), tag.count == length else { return nil }
             return DownloadCompanion.ID3Tags.reading(inFileData: Data(tag))
         case .flac:
-            guard let prefix = firstBytes(of: fileURL, count: metadataProbeLimit) else { return nil }
+            // 2026-11-22：**只读元数据区**，不再整读 16MB 前缀。
+            // 老板库里 664 首无损大多是 FLAC，检测/写回每首都读 16MB 就是 10 GB 的 I/O，
+            // 下载页自然卡成 PPT。fLaC 的元数据块自带长度，几 KB~几 MB，读完就走。
+            let need = flacMetadataLength(fileURL: fileURL) ?? metadataProbeLimit
+            guard let prefix = firstBytes(of: fileURL, count: need) else { return nil }
             return DownloadCompanion.FlacTags.reading(inFileData: Data(prefix))
         case .m4a:
             return await readM4A(fileURL: fileURL)
@@ -313,6 +317,34 @@ enum AudioTagEmbedder {
 
     /// 读元数据时最多读这么多（封面 + 歌词 + 其它块都在里面；512KB 的封面也就这个量级）
     static let metadataProbeLimit = 16 << 20
+
+    /// FLAC 的元数据区一共多长（含 4 字节 `fLaC` 魔数）。
+    ///
+    /// 用来把"读 16MB"降成"读真正需要的那几 KB~几 MB"：
+    /// 每个块头是 1 字节（最高位 = 最后一块）+ 3 字节长度，顺着走就能算出边界。
+    /// 读不出来 / 结构不对 → nil（调用方退回上限，宁可慢也不出错）。
+    static func flacMetadataLength(fileURL: URL) -> Int? {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        guard let magic = try? handle.read(upToCount: 4), [UInt8](magic) == Array("fLaC".utf8) else {
+            return nil
+        }
+        var total = 4
+        var last = false
+        var guardCount = 0
+        while !last {
+            guardCount += 1
+            guard guardCount <= 64 else { return nil }
+            guard let header = try? handle.read(upToCount: 4), header.count == 4 else { return nil }
+            let bytes = [UInt8](header)
+            last = (bytes[0] & 0x80) != 0
+            let length = (Int(bytes[1]) << 16) | (Int(bytes[2]) << 8) | Int(bytes[3])
+            total += 4 + length
+            guard total <= metadataProbeLimit else { return metadataProbeLimit }
+            if !last, (try? handle.seek(toOffset: UInt64(total))) == nil { return nil }
+        }
+        return total
+    }
 
     private static func readM4A(fileURL: URL) async -> DownloadCompanion.ID3Tags.Fields? {
         let asset = AVURLAsset(url: fileURL)

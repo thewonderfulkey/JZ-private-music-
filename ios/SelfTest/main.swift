@@ -499,7 +499,43 @@ do {
     check("旁车不按孤儿判", !StorageAuditRules.isOrphan(fileName: "A.lrc", referenced: refs))
 }
 
-// MARK: - 3.2.6 整理重复的批量计划（2026-11-22：点一下卡 10 秒）
+// MARK: - 3.2.7 写回范围：已对齐的不重复写（2026-11-22 老板："新歌写回会把老歌再写一遍"）
+
+section("写回范围：已对齐的不重复写")
+
+do {
+    func item(_ name: String, truth: SongFileTruth?, status: DownloadStatus = .completed,
+              path: String? = "/x/\(UUID().uuidString).flac") -> DownloadItem {
+        DownloadItem(song: song(.local, name, "某人", id: "si_\(name)_\(UUID().uuidString)"),
+                     streamURL: "file:///x", backendName: "本地导入", quality: .lossless,
+                     fileName: "\(name).flac", localPath: path, status: status, totalBytes: 1_000,
+                     fileTruth: truth)
+    }
+    var aligned = SongFileTruth()
+    aligned.title = .ok
+    aligned.artist = .ok
+    aligned.album = .ok
+    aligned.cover = .ok
+    aligned.lyrics = .ok
+    var broken = SongFileTruth()
+    broken.cover = .missing
+
+    check("没有状态记录（刚导入/刚改过）→ 需要写", SongInfoWriteRules.needsWrite(item("A", truth: nil)))
+    check("上次已对齐 → 跳过", !SongInfoWriteRules.needsWrite(item("B", truth: aligned)))
+    check("上次没对齐 → 还要写", SongInfoWriteRules.needsWrite(item("C", truth: broken)))
+
+    let list = [item("A", truth: nil),
+                item("B", truth: aligned),
+                item("C", truth: broken),
+                item("D", truth: aligned, status: .downloading),
+                item("E", truth: aligned, path: nil)]
+    let split = SongInfoWriteRules.pending(list)
+    check("待写只有 A / C 两条", split.targets.map(\.song.name) == ["A", "C"],
+          "\(split.targets.map(\.song.name))")
+    check("跳过的只算已对齐且有文件的（B 一条）", split.skipped == 1, "\(split.skipped)")
+}
+
+// MARK: - 3.2.8 整理重复的批量计划（2026-11-22：点一下卡 10 秒）
 
 section("整理重复：批量计划（口径不变，只是算法）")
 

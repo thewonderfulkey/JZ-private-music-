@@ -752,6 +752,35 @@ enum ImportGrabRules {
     }
 }
 
+// MARK: - 写回/检测的**范围规则**（2026-11-22 老板："新歌写回会把以前写过的再写一遍"）
+//
+// 为什么单独抽出来：这条判定要被 CI 直接喂（`SelfTest` 只编纯逻辑那一批文件）。
+// 口径只有一句：**上次已经确认对齐的，这次不再碰**（`fileTruth.isAligned == true`）。
+//   · 这样"新下一首 → 写回"只会真的写那一首，不会把 664 首 FLAC 全部重读重写一遍；
+//   · 想让某首歌重写：先用「检查文件对齐」扫一遍（会把状态刷新），或者改它的信息（会把状态清掉）；
+//   · 没有状态记录（nil，比如刚导入、刚改过信息）→ 当作"需要写"，如实写并回读校验。
+enum SongInfoWriteRules {
+
+    static func needsWrite(_ item: DownloadItem) -> Bool {
+        guard let truth = item.fileTruth else { return true }
+        return !truth.isAligned
+    }
+
+    /// 过滤出真正要写的那批，并返回被跳过的条数（报告里要说清楚"跳过了 N 首"，别让人以为漏了）
+    static func pending(_ items: [DownloadItem]) -> (targets: [DownloadItem], skipped: Int) {
+        var targets: [DownloadItem] = []
+        var skipped = 0
+        for item in items where item.status == .completed && item.localPath != nil {
+            if needsWrite(item) {
+                targets.append(item)
+            } else {
+                skipped += 1
+            }
+        }
+        return (targets, skipped)
+    }
+}
+
 // MARK: - 整理重复的**纯计算**（2026-11-22 老板："点一下整理重复卡死 10 秒"）
 //
 // 为什么要单独抽一层：判定口径必须还是 `FavoriteRules.isSameRecording`（一个字都不能改），

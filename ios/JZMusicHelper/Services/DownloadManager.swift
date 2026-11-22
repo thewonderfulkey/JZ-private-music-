@@ -1278,6 +1278,9 @@ final class DownloadManager: NSObject, ObservableObject {
         let previous = items[idx].song
         guard !Self.sameMetadata(previous, song) else { return }
         items[idx].song = song
+        // 2026-11-22：「写回」现在只写**没对齐**的歌（`SongInfoWriteRules`），所以列表里的信息一变，
+        // 上次那条「已对齐」的结论就必须作废 —— 否则这首歌会被当成"已经写过"而永远不再写。
+        items[idx].fileTruth = nil
 
         // 换过封面（代次变了）→ 作废这条路的内存缓存：
         // 旁车封面是以 `file://…/Cover/<基名>.jpg` 为 key 的，同名覆盖后 key 没变，不清就一直显示旧图。
@@ -2765,8 +2768,15 @@ extension DownloadManager {
 
     /// 一次性把全部已完成（下载 / 导入）的歌写回。返回要处理的条数（0 = 没有可处理的）。
     @discardableResult
+    /// 把"列表上显示的这一套"写进音频文件（全库入口）。
+    ///
+    /// **2026-11-22 改口径**（老板："新下载的歌写回时会把以前已经写回的再写一遍"）：
+    /// 只写**还没确认对齐**的那些（`SongInfoWriteRules`）—— 上次写回/检查过、状态是"已对齐"的歌
+    /// 直接跳过，不再重读重写 664 个 FLAC。报告里会写清楚跳过了多少首。
     func writeSongInfoToFiles() -> Int {
-        runSongInfoWrite(targets: items.filter { $0.status == .completed && $0.localPath != nil })
+        let all = items.filter { $0.status == .completed && $0.localPath != nil }
+        let split = SongInfoWriteRules.pending(all)
+        return runSongInfoWrite(targets: split.targets, skipped: split.skipped)
     }
 
     /// 只重跑上一次"没对齐"的那些（第 52 轮：662 首不用再全库重来）
@@ -2782,9 +2792,9 @@ extension DownloadManager {
 
     /// 写回主流程（全库 / 只重跑，共用）。一拍 3 首：每首都要读文件 + 写临时文件。
     @discardableResult
-    private func runSongInfoWrite(targets: [DownloadItem]) -> Int {
+    private func runSongInfoWrite(targets: [DownloadItem], skipped: Int = 0) -> Int {
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in _ = self?.runSongInfoWrite(targets: targets) }
+            DispatchQueue.main.async { [weak self] in _ = self?.runSongInfoWrite(targets: targets, skipped: skipped) }
             return 0
         }
         guard !targets.isEmpty else {
@@ -2804,6 +2814,12 @@ extension DownloadManager {
             var done = 0
             let concurrency = 3
             var start = 0
+            // 2026-11-22：**逐首的状态先攒着，最后一次性写回列表**。
+            // 旧写法每首都在主线程改一次 `items` → `items.didSet` 会把全表缓存签名重算一遍、
+            // 再喊行状态表重建；664 首 = 664 次全表扫 → 下载页跟 PPT 一样。
+            var collected: [(UUID, SongFileTruth)] = []
+            collected.reserveCapacity(targets.count)
+            var lastProgressAt = Date.distantPast
             while start < targets.count {
                 if self.songInfoWriteCancelled {
                     report.cancelled = true
@@ -2847,20 +2863,23 @@ extension DownloadManager {
                             + (result.reason.map { " | \($0)" } ?? "")
                         CrashReporter.logMetadata(detail)
 
-                        let snapshot = (done: done, total: targets.count, name: result.name)
-                        await MainActor.run {
-                            if let idx = self.items.firstIndex(where: { $0.id == result.itemID }) {
-                                self.items[idx].fileTruth = result.truth
+                        collected.append((result.itemID, result.truth))
+                        // 进度**节流**到每秒最多 5 次：它一变整页就要重算一遍行高
+                        let now = Date()
+                        if done == targets.count || now.timeIntervalSince(lastProgressAt) > 0.2 {
+                            lastProgressAt = now
+                            let snapshot = (done: done, total: targets.count, name: result.name)
+                            await MainActor.run {
+                                self.songInfoWriteProgress = SongInfoWriteProgress(done: snapshot.done,
+                                                                                   total: snapshot.total,
+                                                                                   name: snapshot.name)
                             }
-                            self.songInfoWriteProgress = SongInfoWriteProgress(done: snapshot.done,
-                                                                               total: snapshot.total,
-                                                                               name: snapshot.name)
                         }
                     }
                 }
                 start = end
             }
-
+            let pendingTruths = collected
             let summary = report.summary
             // 三个目录的当前数量：老板看 Cover/Lyrics/Music 三个数字对不上会以为"失败"，
             // 直接把这三个数摊在同一句里（Lyrics 少就是"这首歌本来没词"，不是写回失败）。
@@ -2870,10 +2889,24 @@ extension DownloadManager {
             let issues = report.issues
             CrashReporter.logMetadata("song-info | 结束 → \(summary) | \(folders) | 未对齐 \(issues.count) 首")
             await MainActor.run {
+                // 一次性把 664 首的新状态写回列表（一次 items 变更 = 一次缓存重建 + 一次落库）
+                if !pendingTruths.isEmpty {
+                    var byID: [UUID: SongFileTruth] = [:]
+                    byID.reserveCapacity(pendingTruths.count)
+                    for (id, truth) in pendingTruths { byID[id] = truth }
+                    for idx in self.items.indices {
+                        if let truth = byID[self.items[idx].id] {
+                            self.items[idx].fileTruth = truth
+                        }
+                    }
+                }
                 self.songInfoWriteProgress = nil
                 self.lastUnresolved = issues
                 self.persist()
                 var lines = [summary, folders]
+                if skipped > 0 {
+                    lines.insert("跳过了 \(skipped) 首上次已对齐的（不重复写）", at: 1)
+                }
                 if let note = report.note { lines.append(note) }
                 if !issues.isEmpty {
                     lines.append("未对齐 \(issues.count) 首 —— 点「查看明细」看名单，可复制、可只重跑这些。")
@@ -3120,6 +3153,7 @@ extension DownloadManager {
             var results: [(UUID, SongFileTruth)] = []
             var issues: [SongInfoIssue] = []
             var done = 0
+            var lastProgressAt = Date.distantPast
             let concurrency = 4
             var start = 0
             while start < targets.count {
@@ -3146,11 +3180,17 @@ extension DownloadManager {
                                                         reason: truth.problems.joined(separator: "、"),
                                                         fields: truth.compact))
                         }
-                        let snapshot = (done: done, total: targets.count, name: name)
-                        await MainActor.run {
-                            self.fileStateScanProgress = SongInfoWriteProgress(done: snapshot.done,
-                                                                               total: snapshot.total,
-                                                                               name: snapshot.name)
+                        // 2026-11-22：进度**节流**到每秒最多 5 次 —— 它一变整页要重算一遍行高，
+                        // 664 首逐条刷新就是"跟 PPT 一样"的主要来源之一。
+                        let now = Date()
+                        if done == targets.count || now.timeIntervalSince(lastProgressAt) > 0.2 {
+                            lastProgressAt = now
+                            let snapshot = (done: done, total: targets.count, name: name)
+                            await MainActor.run {
+                                self.fileStateScanProgress = SongInfoWriteProgress(done: snapshot.done,
+                                                                                   total: snapshot.total,
+                                                                                   name: snapshot.name)
+                            }
                         }
                     }
                 }
