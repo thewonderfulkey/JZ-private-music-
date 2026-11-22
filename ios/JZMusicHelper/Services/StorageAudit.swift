@@ -48,6 +48,13 @@ struct StorageAuditReport {
     /// 只列 1 小时前的：正在跑的后台下载临时文件不能碰。
     var staleTmpFiles: [FileEntry] = []
 
+    /// 「文件」App 的废纸篓（`Documents/.Trash`）。**这是 2026-11-22 那次 18 GB 的真凶**：
+    /// 在「文件」App 里删掉 JZ 音乐目录下的东西时，Files 会把它挪进这里，而不是真删；
+    /// 而 Files 的浏览页**看不到** `.Trash`（点开头），iOS 却照样算进 App 占用。
+    var trashBytes: Int64 = 0
+    var trashFiles: Int = 0
+    var trashURL: URL?
+
     var orphanBytes: Int64 { orphans.reduce(0) { $0 + $1.bytes } }
     var tempBytes: Int64 { tempArtifacts.reduce(0) { $0 + $1.bytes } }
 
@@ -111,8 +118,7 @@ enum StorageAudit {
             report.stagingBytes = stagingCount.bytes
             report.stagingPath = staging.path
 
-            // ③ 孤儿音频：Music 里没有记录认领的
-            let referenced = StorageAuditRules.referencedNames(items)
+            // ③ 孤儿音频：Music 里没有记录认领的            let referenced = StorageAuditRules.referencedNames(items)
             if let files = try? fm.contentsOfDirectory(at: music, includingPropertiesForKeys: nil,
                                                        options: []) {
                 for url in files where StorageAuditRules.isOrphan(fileName: url.lastPathComponent,
@@ -121,6 +127,17 @@ enum StorageAudit {
                                                 bytes: size(of: url), url: url))
                 }
                 report.orphans.sort { $0.bytes > $1.bytes }
+            }
+
+            // ③.5 「文件」App 的废纸篓（Documents/.Trash）—— 2026-11-22 那次 18 GB 的真凶：
+            // 在「文件」App 里删 JZ 音乐目录下的东西，Files 是把它挪进这里（不是真删），
+            // 而 Files 的浏览页看不到这个点开头的目录。
+            let trash = docs.appendingPathComponent(".Trash", isDirectory: true)
+            if fm.fileExists(atPath: trash.path) {
+                let m = countFiles(trash)
+                report.trashBytes = m.bytes
+                report.trashFiles = m.files
+                report.trashURL = trash
             }
 
             // ④ 写标签留下的隐藏临时文件（全容器找一遍，含子目录）
@@ -169,8 +186,22 @@ enum StorageAudit {
         return freed
     }
 
-    /// 清空导入暂存（只删这个目录里的东西，不动别的）
+    /// 清空「文件」App 的废纸篓（`Documents/.Trash`），返回释放的字节。
+    ///
+    /// 安全性：这里躺着的都是**用户已经删过**的东西（Files 只是把它挪进废纸篓，没有真删）。
+    /// 我们自己的代码从来不用废纸篓（`removeItem` 是直接 unlink），所以清它不会碰到在用文件。
     @discardableResult
+    static func clearTrash() -> Int64 {
+        let trash = DownloadLocation.documentsDirectory()
+            .appendingPathComponent(".Trash", isDirectory: true)
+        let before = countFiles(trash).bytes
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: trash, includingPropertiesForKeys: nil) else { return 0 }
+        for f in files { try? FileManager.default.removeItem(at: f) }
+        return max(0, before - countFiles(trash).bytes)
+    }
+
+    /// 清空导入暂存（只删这个目录里的东西，不动别的）    @discardableResult
     static func clearStaging() -> Int64 {
         let dir = DownloadManager.importStagingDirectory()
         let before = countFiles(dir).bytes
@@ -189,6 +220,7 @@ enum StorageAudit {
         case "ImportStaging": return "导入暂存（ImportStaging）"
         case "Inbox": return "其他 App 送来（Inbox）"
         case "诊断": return "诊断日志"
+        case ".Trash": return "「文件」App 废纸篓（.Trash）"
         default: return folder
         }
     }

@@ -18,12 +18,14 @@ struct StorageAuditSheet: View {
     @State private var notice: String?
     @State private var copied = false
     @State private var confirmOrphans = false
+    @State private var confirmTrash = false
 
     var body: some View {
         NavigationStack {
             List {
                 if let report {
                     summarySection(report)
+                    trashSection(report)
                     sectionsSection(report)
                     stagingSection(report)
                     tmpSection(report)
@@ -85,6 +87,41 @@ struct StorageAuditSheet: View {
                 Text("这些文件在「Music」里，但没有任何一条下载记录指向它们 —— 通常是早期导入/改名之后留下的旧副本。删掉不影响列表里的歌。")
             }
             .task { await runAudit() }
+        }
+    }
+
+    // MARK: 「文件」App 废纸篓（2026-11-22 那 18 GB 的真凶）
+
+    @ViewBuilder
+    private func trashSection(_ r: StorageAuditReport) -> some View {
+        if r.trashBytes > 0 {
+            Section {
+                row("废纸篓里还压着", ByteText.human(r.trashBytes), strong: true, warn: true)
+                row("文件数", "\(r.trashFiles) 个")
+                Button(role: .destructive) {
+                    confirmTrash = true
+                } label: {
+                    Label("清空废纸篓（释放 \(ByteText.human(r.trashBytes))）", systemImage: "trash")
+                }
+            } header: {
+                Text("「文件」App 的废纸篓（.Trash）")
+            } footer: {
+                Text("这就是上一次空间翻倍的真凶：在「文件」App 里删掉 JZ 音乐目录下的东西时，"
+                     + "Files 只是把它**挪进**这个 `.Trash`，并没有真删；而 Files 的浏览页看不到它"
+                     + "（点开头的目录），iOS 却照样算进 App 占用。"
+                     + "里面全是你已经删过的东西，清空不影响列表里的歌。")
+            }
+            .confirmationDialog("清空「文件」App 的废纸篓？",
+                                isPresented: $confirmTrash, titleVisibility: .visible) {
+                Button("清空（释放 \(ByteText.human(r.trashBytes))）", role: .destructive) {
+                    let freed = StorageAudit.clearTrash()
+                    flash("已清空废纸篓，释放 \(ByteText.human(freed))")
+                    Task { await runAudit() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这些是你之前删过、但 Files 只是挪进废纸篓的文件。清掉之后「文件」App 的「最近删除」里也就没有了。")
+            }
         }
     }
 
@@ -285,6 +322,8 @@ struct StorageAuditSheet: View {
         lines.append("\(r.stagingPath)：\(ByteText.human(r.stagingBytes))（\(r.stagingFiles) 个文件）")
         lines.append("— 写标签临时文件 —")
         lines.append("\(r.tempArtifacts.count) 个，\(ByteText.human(r.tempBytes))")
+        lines.append("— 「文件」App 废纸篓 .Trash —")
+        lines.append("\(r.trashFiles) 个，\(ByteText.human(r.trashBytes))")
         lines.append("— tmp 旧残留 —")
         lines.append("\(r.staleTmpFiles.count) 个，"
                      + "\(ByteText.human(r.staleTmpFiles.reduce(0) { $0 + $1.bytes }))")
