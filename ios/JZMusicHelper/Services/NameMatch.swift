@@ -150,6 +150,38 @@ enum NameMatch {
         return titleMatches(src.name, cand.name)
     }
 
+    // MARK: - 「歌手」其实是频道号 / 上传者（2026-11-22《下一个天亮》串歌）
+
+    /// 这个「歌手」是不是**频道号 / 上传者**，而不是"这首歌的歌手"？
+    ///
+    /// 判据（两条同时成立才算，缺一不可）：
+    ///   ① 池子里挂着 ≥`minDistinctTitles` 首**互不相同**的歌（按归一化歌名去重）；
+    ///   ② 这些歌里**一首都没有**和源歌名对得上——也就是这个"歌手"根本没这首。
+    ///
+    /// 为什么必须有②（这是不误伤真人歌手的关键）：真人歌手的搜索页里也会带出他别的歌
+    /// （搜「晴天 周杰伦」会回来 晴天/夜曲/七里香…），但**他自己那首一定在池子里**，
+    /// ②不成立，于是照旧走老口径（歌手优先 + 时长 ≤4s + 歌名只做辅助）。
+    /// 只有"名下挂着一堆对不上的歌、却没有这一首"的频道号才会命中——
+    /// 实测《下一个天亮》的歌手 `我的音乐调频` 名下挂着 简单爱/心锁/我们的歌/最长的电影/
+    /// 怎么会狠心伤害我 …（互不相同、时长都在 4 分钟上下），而它并没有这首。
+    ///
+    /// 命中之后由调用方（`SameSongCrossResolver.sameSong`）收紧成"歌名必须一致"，
+    /// 因为这种"歌手"名下的别的歌，用「歌手 + 时长」是分不开的。
+    static func looksLikeUploader(_ src: Song, among pool: [Song],
+                                  minDistinctTitles: Int = 3) -> Bool {
+        var titles = Set<String>()
+        for c in pool where c.id != src.id {
+            guard singerMatches(src.singer, c.singer) else { continue }
+            // 人家真有这首 → 这是歌手本人，不是频道号（老口径照旧）
+            if titleMatches(src.name, c.name) { return false }
+            let key = normTitle(c.name)
+            if key.isEmpty { continue }
+            titles.insert(key)
+            if titles.count >= minDistinctTitles { return true }
+        }
+        return false
+    }
+
     /// 主歌手（按分隔符取第一个，去掉括号说明）。
     /// 妖狐这类"搜索式"通道只要一个主歌手，别把「谭晶/陈奕迅」整串塞进去。
     static func primarySinger(_ raw: String) -> String {

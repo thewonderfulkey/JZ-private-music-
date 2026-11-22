@@ -262,7 +262,59 @@ do {
           "got=\(NameMatch.versionClass("연애의 조건 (Love Options) (Inst.)"))")
 }
 
-// MARK: - 3.2 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
+// MARK: - 3.2 频道号/上传者不认亲（2026-11-22《下一个天亮》串歌）
+
+section("频道号/上传者不认亲")
+
+do {
+    // 真实案例（2026-11-22 录屏）：歌手是频道名「我的音乐调频」，名下挂着别的歌，
+    // 时长都撞在 ±4s 里；老口径只认「歌手 + 时长」，于是把别的歌当成了这首的合法音源。
+    let pl = song(.kugou, "下一个天亮", "我的音乐调频", dur: 263, id: "kg_27e25b70")
+    let siblingExact = song(.kuwo, "怎么会狠心伤害我", "我的音乐调频", dur: 263, id: "kw_347079287")
+    let siblingEdge = song(.kuwo, "简单爱", "我的音乐调频", dur: 267, id: "kw_442871468")
+    let siblingFar = song(.kuwo, "心锁", "我的音乐调频", dur: 255, id: "kw_347075531")
+    let realCover = song(.netease, "下一个天亮", "郭静", dur: 266, id: "ne_233882")
+    let pool = [siblingExact, siblingEdge, siblingFar, realCover]
+
+    check("老口径确实放行（歌手同 + 时长差 0）",
+          SameSongCrossResolver.sameSong(src: pl, cand: siblingExact))
+    check("池子里歌名一首都没对上 → 认作频道号/上传者",
+          NameMatch.looksLikeUploader(pl, among: pool))
+    check("收紧后：同上传者的别的歌（263s，差 0）→ 拒",
+          !SameSongCrossResolver.sameSong(src: pl, cand: siblingExact, uploaderLike: true))
+    check("收紧后：同上传者的别的歌（267s，差 4s）→ 拒",
+          !SameSongCrossResolver.sameSong(src: pl, cand: siblingEdge, uploaderLike: true))
+    check("收紧后：真同曲换个平台（歌名一致）→ 通过",
+          SameSongCrossResolver.sameSong(
+            src: pl,
+            cand: song(.kuwo, "下一个天亮", "我的音乐调频", dur: 263, id: "kw_nd"),
+            uploaderLike: true))
+
+    // 不误伤真人歌手：周杰伦的搜索页也会带出他别的歌，但他自己那首就在池子里。
+    let jay = song(.qq, "晴天", "周杰伦", dur: 269, id: "qq_qt")
+    let jayPool = [jay,
+                   song(.kugou, "夜曲", "周杰伦", dur: 226, id: "kg_yq"),
+                   song(.kugou, "七里香", "周杰伦", dur: 299, id: "kg_qlx"),
+                   song(.kuwo, "晴天", "周杰伦", dur: 269, id: "kw_qt")]
+    check("真人歌手（他自己的歌在池子里）→ 不算频道号",
+          !NameMatch.looksLikeUploader(jay, among: jayPool))
+    check("真人歌手不收严：同歌手同时长、歌名不同 → 照旧通过",
+          SameSongCrossResolver.sameSong(
+            src: jay,
+            cand: song(.netease, "晴天 (周杰伦)", "周杰伦", dur: 269, id: "ne_qt"),
+            uploaderLike: false))
+
+    // 不误伤译名案（2026-11-19 老板口径）：名字不同但同歌手，池子里只有这一首（括号已被剥掉）。
+    let krSrc = song(.qq, "恋爱的条件", "BESTie (베스티)", dur: 194, id: "kr_src")
+    let krCand = song(.netease, "연애의 조건 (Love Options)", "BESTie", dur: 194, id: "kr_ne")
+    let krPool = [krCand, song(.kuwo, "연애의 조건 (Inst.)", "BESTie", dur: 192, id: "kr_inst")]
+    check("译名案：去重后只有 1 个歌名 → 不算频道号",
+          !NameMatch.looksLikeUploader(krSrc, among: krPool))
+    check("译名案：照旧判为同一首",
+          SameSongCrossResolver.sameSong(src: krSrc, cand: krCand, uploaderLike: false))
+}
+
+// MARK: - 3.3 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
 
 section("下载链排名与下载前校验")
 

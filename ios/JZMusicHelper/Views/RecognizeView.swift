@@ -591,8 +591,18 @@ struct RecognizeView: View {
                 && NameMatch.singerMatches(candidate.artist, $0.singer)
                 && StudioPick.isCleanTitle($0.name)
         }
-        let titleOnly = songs.first { NameMatch.titleMatches(candidate.title, $0.name) }
-        resolved = studio ?? titleOnly ?? songs.first
+        // 2026-11-22：主结果**必须**歌名对得上。
+        //   允许：归一化歌名一致（`下一个天亮` vs `下一个天亮 (Live)`，括号会被剥掉）；
+        //        或「歌名像 + 歌手对得上」（多歌手串/副标题差异）。
+        // 以前这里是 `titleMatches` 单条，且末尾还有 `?? songs.first` 兜底——
+        // 那一档**完全不校验身份**，《下一个天亮》这种"歌名被频道号/翻唱占满"的搜索页，
+        // 第一条常常是别的歌，识曲结果就"跳"了。
+        let titleOnly = songs.first {
+            NameMatch.normTitle(candidate.title) == NameMatch.normTitle($0.name)
+                || (NameMatch.titleMatches(candidate.title, $0.name)
+                    && NameMatch.singerMatches(candidate.artist, $0.singer))
+        }
+        resolved = studio ?? titleOnly
 
         if let resolved {
             library.recordRecognized(resolved)

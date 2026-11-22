@@ -200,6 +200,10 @@ enum SameSongCrossResolver {
         var neteaseDebug: String = ""
         var neteaseURL: String = ""
         var neteaseTop: [String] = []
+        /// 「歌手」是频道号/上传者时被收紧掉的候选（诊断用：`歌名|时长` 最多 3 条）
+        var uploaderDropped: [String] = []
+        /// 这一轮是不是把「歌手」认成了频道号/上传者（收紧只在这个条件下生效）
+        var uploaderSinger: Bool = false
     }
 
     /// 下载用：一次遍历同时求「目标档」与「最高可得档」
@@ -280,7 +284,22 @@ enum SameSongCrossResolver {
             out.neteaseTop = lookup.top
         }
 
-        cands = cands.filter { sameSong(src: song, cand: $0) }
+        // 身份闸（+ 2026-11-22 的「频道号」收紧，见 `sameSong(src:cand:uploaderLike:)`）：
+        // 先把"这个歌手是不是频道号/上传者"在**整池子**上判一次，再逐条过闸。
+        // 判据要整池（≥3 首互不相同、且一首都没对上源歌名），单条候选看不出来。
+        let uploaderLike = NameMatch.looksLikeUploader(song, among: cands)
+        out.uploaderSinger = uploaderLike
+        var droppedByUploader: [String] = []
+        cands = cands.filter { cand in
+            let kept = sameSong(src: song, cand: cand, uploaderLike: uploaderLike)
+            // 老口径放行、新口径挡掉 = 同一位上传者名下的"别的歌"，留痕给诊断
+            if !kept, uploaderLike, sameSong(src: song, cand: cand),
+               droppedByUploader.count < 3 {
+                droppedByUploader.append("\(cand.name.prefix(14))|\(cand.durationSec)s")
+            }
+            return kept
+        }
+        out.uploaderDropped = droppedByUploader
         // 按 key 去重（同曲可能在多个源里都出现），保留先出现的
         var seenKeys = Set<String>()
         cands = cands.filter { seenKeys.insert(candKey($0)).inserted }
@@ -379,6 +398,25 @@ enum SameSongCrossResolver {
     /// 现在歌名只在「时长未知」时兜底，不再是否决项；版本类标记仍然拦（见 `NameMatch.versionClass`）。
     static func sameSong(src: Song, cand: Song) -> Bool {
         NameMatch.sameRecording(src: src, cand: cand)
+    }
+
+    /// 同曲判定（池子级）：在老口径之上再挡一类**串成别的歌**。
+    ///
+    /// 2026-11-22（老板录屏《下一个天亮》播着播着变成《怎么会狠心伤害我》）：
+    /// 这首歌的「歌手」是频道名 `我的音乐调频`，名下几十首互不相干的歌、时长都在 4 分钟上下；
+    /// 老口径只认「歌手 + 时长 ±4s」，于是同一位上传者的**别的歌**被当成"同一条录音"的合法音源，
+    /// 后台升档时被换上，还把进度 seek 回去——听感就是"同一首唱到一半变成另一首"。
+    ///
+    /// `uploaderLike`（由整池子判出来，见 `NameMatch.looksLikeUploader`）为真时，
+    /// 只认**歌名归一化一致**的候选：译名/副标题都是括号里的，`normTitle` 会剥掉，
+    /// 所以真正的同曲换个平台仍然进得来；对不上的一律不进（宁可没有源，也不放错歌）。
+    ///
+    /// 为什么不是所有歌都要求歌名一致：那会把《恋爱的条件》/《연애의 조건 (Love Options)》
+    /// 这类译名案（2026-11-19 老板口径）重新误杀。只有"这个歌手根本没这首"时才收紧。
+    static func sameSong(src: Song, cand: Song, uploaderLike: Bool) -> Bool {
+        guard sameSong(src: src, cand: cand) else { return false }
+        guard uploaderLike else { return true }
+        return NameMatch.normTitle(src.name) == NameMatch.normTitle(cand.name)
     }
 }
 
@@ -501,6 +539,13 @@ enum DownloadResolver {
         debug.append("候选 \(ranked.count) 条" + (gateDropped.isEmpty ? "" : "（身份闸淘汰 \(gateDropped.count)+：\(gateDropped.joined(separator: "；"))）"))
         for (i, c) in ranked.prefix(6).enumerated() {
             debug.append("第\(i + 1)名 \(c.source.backendName) \(c.source.format.uppercased()) \(c.source.kbps)kbps \(c.source.totalBytes)B 分[\(c.score.short)] \(c.source.quality.displayName)")
+        }
+        // 2026-11-22：这一轮有没有"歌手被认成频道号"、因此挡掉了同上传者的别的歌
+        if found.uploaderSinger {
+            debug.append("歌手认作频道号/上传者 → 只认歌名一致"
+                + (found.uploaderDropped.isEmpty
+                   ? "（本轮没有因此被挡的候选）"
+                   : "，挡掉 \(found.uploaderDropped.count)+：\(found.uploaderDropped.joined(separator: "；"))"))
         }
         if !found.neteaseURL.isEmpty {
             debug.append("网易URL \(found.neteaseURL)")
