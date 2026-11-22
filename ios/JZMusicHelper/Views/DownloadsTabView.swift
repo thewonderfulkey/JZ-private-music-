@@ -36,7 +36,7 @@ struct DownloadsTabView: View {
     /// 2026-11-22：存储自检（老板找不到那多出来的 18 GB）
     @State private var showStorageAudit = false
     /// 导入面板（内置浏览器；不经过系统选择器）
-    @State private var showImportBrowser = false
+    @State private var deduping = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
     @State private var notice: String?
     /// 多选态（2026-11-21 老板：多选 + 全选 + 批量删除）
@@ -47,8 +47,9 @@ struct DownloadsTabView: View {
     @State private var editingItem: DownloadItem?
     /// 批量编辑（只改歌手/专辑）
     @State private var showBatchEdit = false
-    /// 补全缺口计数（未匹配 / 缺封面 / 缺歌词）—— 后台统计，不在 body 里查磁盘
-    @State private var gaps = DownloadManager.CompanionGaps()
+
+    // 2026-11-22：`gaps`（补全缺口计数）+「补全信息」入口已下线（老板：不准、也没见到效果）。
+    // 每首歌「修改信息 → 保存」时的自动匹配（SongMetadataEditor → MetadataMatcher）不受影响。
 
     /// 第 41 轮 P0-2：首屏只建这么多行，滚到底/点「继续加载」再追加。
     /// 第 42 轮（真机 perf.log：80 行要 507–813ms ≈ 7–10ms/行）：**首帧只建 8 行**，
@@ -138,24 +139,16 @@ struct DownloadsTabView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { importMenu }
         }
-        .sheet(isPresented: $showImportBrowser) {
-            ImportBrowserView { urls in
-                flash("开始导入 \(urls.count) 个文件…")
-                startImport(urls)
-            }
-            .environmentObject(downloads)
-        }
+        // 2026-11-22：`ImportBrowserView`（从「JZ 音乐」文件夹导入）入口已下线——
+        // 老板：有了「导入本地音乐（选择文件）」就不需要第二条进同一个导入器的路。
+        // 视图代码留着（`ImportBrowserView` 还在文件末尾），要恢复只加回一个 Button + sheet 即可。
         // 第 44 轮引入、第 47 轮改为左滑「歌曲信息」→ 编辑歌曲信息（歌名/歌手/专辑/封面）
-        .sheet(item: $editingItem, onDismiss: {
-            Task { gaps = await downloads.companionGapCounts() }
-        }) { item in
+        .sheet(item: $editingItem) { item in
             // 保存后编辑页立刻关，结果用列表页的轻提示回话（第 45 轮）
             SongMetadataEditor(item: item, onSaved: { message in flash(message) })
         }
         // 批量编辑：只允许统一改歌手/专辑（歌名、封面不批量）
-        .sheet(isPresented: $showBatchEdit, onDismiss: {
-            Task { gaps = await downloads.companionGapCounts() }
-        }) {
+        .sheet(isPresented: $showBatchEdit) {
             BatchMetadataEditor(items: downloads.items.filter { picked.contains($0.id) })
         }
         .alert("导入", isPresented: Binding(
@@ -168,10 +161,18 @@ struct DownloadsTabView: View {
         .confirmationDialog("把同一首歌的多条合成一条？（只留音质更好的）",
                             isPresented: $showDedupeConfirm, titleVisibility: .visible) {
             Button("整理", role: .destructive) {
-                let r = downloads.dedupeSameRecording()
-                downloads.lastImportReport = r.merged == 0
-                    ? "没有需要整理的重复"
-                    : "已合并 \(r.merged) 条，释放 \(ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file))"
+                // 2026-11-22：改成异步 + 后台比对 + 一次性落库。
+                // 旧实现是主线程 O(n²)（664 首 ≈ 22 万次「同一条录音」判定，每次都要繁简映射 +
+                // 两次正则），点下去就是 10 秒卡死。现在只卡在"比对"的几毫秒，界面不冻结。
+                deduping = true
+                Task {
+                    let r = await downloads.dedupeSameRecording()
+                    deduping = false
+                    downloads.lastImportReport = r.merged == 0
+                        ? "没有需要整理的重复"
+                        : "已合并 \(r.merged) 条，释放 "
+                          + ByteCountFormatter.string(fromByteCount: r.freedBytes, countStyle: .file)
+                }
             }
             Button("取消", role: .cancel) {}
         }
@@ -230,15 +231,17 @@ struct DownloadsTabView: View {
         .onChange(of: paged.finished.count) { _, _ in
             armVisibleRows()
         }
-        // 第 44 轮：缺口计数（662 次 stat）延后 1.2 秒再查，绝不抢首帧
-        .task {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            gaps = await downloads.companionGapCounts()
-        }
+        // 2026-11-22：原来这里有个 1.2 秒后跑「补全缺口计数（662 次 stat）」的 task，
+        // 只为给已下线的「补全信息」按钮凑文案 —— 一并删掉，少一次全表扫盘。
         .locateToast(notice)
     }
 
-    /// 工具栏上的三个点：导入（系统选择器为主）+ 文件夹导入 + 整理重复
+    /// 工具栏上的三个点（2026-11-22 老板精简：「从 JZ 音乐文件夹导入」和「补全信息」都下线）
+    ///
+    /// 下线理由（老板原话）：
+    ///   · 有了「导入本地音乐（选择文件）」就没必要再有「从文件夹导入」——两条路进同一个导入器；
+    ///   · 「补全信息」不准、也没见到实际效果，不如他在每首歌上「修改信息 → 保存」时自动匹配来得快，
+    ///     所以只保留后者（`SongMetadataEditor` → `MetadataMatcher`，那条链路一个字没动）。
     private var importMenu: some View {
         Menu {
             Button {
@@ -247,26 +250,12 @@ struct DownloadsTabView: View {
                 Label("导入本地音乐（选择文件）", systemImage: "square.and.arrow.down")
             }
             Button {
-                showImportBrowser = true
-            } label: {
-                Label("从「JZ 音乐」文件夹导入…", systemImage: "folder")
-            }
-            Button {
                 showDedupeConfirm = true
             } label: {
-                Label("整理重复（同曲留最高音质）", systemImage: "rectangle.stack.badge.minus")
+                Label(deduping ? "正在整理重复…" : "整理重复（同曲留最高音质）",
+                      systemImage: "rectangle.stack.badge.minus")
             }
-            // 第 44 轮 B7：批量补全入口（计数来自后台统计，不在渲染路径查磁盘）
-            Button {
-                let n = downloads.backfillAllMissing()
-                flash(n == 0 ? "没有需要补全的" : "开始补全 \(n) 首（并发 \(DownloadManager.companionConcurrency)）…")
-            } label: {
-                Label(gaps.isClear
-                      ? "补全封面/歌词/信息"
-                      : "补全信息（未匹配 \(gaps.noMatch) · 缺封面 \(gaps.noCover) · 缺歌词 \(gaps.noLyrics)）",
-                      systemImage: "wand.and.stars")
-            }
-            .disabled(gaps.isClear)
+            .disabled(deduping)
             Divider()
             // 第 51 轮 A 方案：只读检查（不写文件），给每行算出"文件里 vs 列表上"的小圆点
             Button {

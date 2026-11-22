@@ -752,7 +752,108 @@ enum ImportGrabRules {
     }
 }
 
-// MARK: - tab 内本地搜索（下载 / 收藏）
+// MARK: - 整理重复的**纯计算**（2026-11-22 老板："点一下整理重复卡死 10 秒"）
+//
+// 为什么要单独抽一层：判定口径必须还是 `FavoriteRules.isSameRecording`（一个字都不能改），
+// 但**算法**可以从 O(n²) 降到 O(n × 桶内个数)，而且能挪到后台跑、并被 CI 直接断言。
+//
+// 提速靠两点：
+//   ① 按「时长 4 秒一桶」切分：同一条录音时长差必然 ≤4s（或有一边时长未知），
+//      所以只需要和「同桶 + 前后各一桶 + 时长未知」里**已经保留**的条目比；
+//   ② 整个比对只读内存里的 `Song`，不碰磁盘、不碰 UI。
+//
+// 结果与旧实现**逐条等价**：仍按 `items` 原顺序扫，仍取第一个命中（候选按保留顺序排序后再比），
+// 仍是"留 kbps 更高的一条"。
+enum DuplicateSweep {
+
+    struct Plan {
+        /// 要删掉的条目（`DownloadItem.id`）
+        var losers: [UUID] = []
+        /// 合并了多少组
+        var merged: Int = 0
+        /// 预计释放的字节（各 loser 的 totalBytes 之和）
+        var freedBytes: Int64 = 0
+        var isEmpty: Bool { losers.isEmpty }
+    }
+
+    static func kbps(_ item: DownloadItem) -> Int64 {
+        let dur = item.song.duration
+        guard dur > 0, item.totalBytes > 0 else { return 0 }
+        return Int64((Double(item.totalBytes) * 8 / dur / 1000).rounded())
+    }
+
+    /// 4 秒一桶；时长未知（≤0）不进桶
+    static func bucketKey(_ seconds: Double) -> Int? {
+        seconds > 0 ? Int(seconds) / 4 : nil
+    }
+
+    static func plan(_ items: [DownloadItem]) -> Plan {
+        var plan = Plan()
+        var kept: [Int] = []                        // 保留条目的下标（按原顺序增长）
+        var buckets: [Int: [Int]] = [:]             // 桶 → kept 里位置
+        var unknownKept: [Int] = []                 // 时长未知的 kept 位置
+
+        func remember(_ pos: Int) {
+            if let key = bucketKey(items[kept[pos]].song.duration) {
+                buckets[key, default: []].append(pos)
+            } else {
+                unknownKept.append(pos)
+            }
+        }
+        func forget(_ pos: Int, key: Int?) {
+            if let key {
+                buckets[key]?.removeAll { $0 == pos }
+            } else {
+                unknownKept.removeAll { $0 == pos }
+            }
+        }
+
+        for idx in items.indices where items[idx].status == .completed {
+            let item = items[idx]
+            var candidates: [Int] = []
+            if let key = bucketKey(item.song.duration) {
+                for k in (key - 1)...(key + 1) {
+                    if let list = buckets[k] { candidates.append(contentsOf: list) }
+                }
+            }
+            candidates.append(contentsOf: unknownKept)
+            candidates.sort()                       // 与旧实现"按保留顺序取第一个"一致
+
+            var hit: Int?
+            for pos in candidates
+            where FavoriteRules.isSameRecording(items[kept[pos]].song, item.song) {
+                hit = pos
+                break
+            }
+
+            guard let pos = hit else {
+                kept.append(idx)
+                remember(kept.count - 1)
+                continue
+            }
+            plan.merged += 1
+            let existing = items[kept[pos]]
+            if kbps(existing) >= kbps(item) {
+                plan.losers.append(item.id)
+                plan.freedBytes += item.totalBytes
+            } else {
+                // 新的更好：旧的进 losers，保留位置换成新的（桶归属跟着改）
+                plan.losers.append(existing.id)
+                plan.freedBytes += existing.totalBytes
+                let oldKey = bucketKey(existing.song.duration)
+                let newKey = bucketKey(item.song.duration)
+                kept[pos] = idx
+                if oldKey != newKey {
+                    forget(pos, key: oldKey)
+                    if let newKey { buckets[newKey, default: []].append(pos) } else { unknownKept.append(pos) }
+                }
+            }
+        }
+        return plan
+    }
+}
+
+// MARK: - 下载页 tab 内本地搜索（下载 / 收藏）
 //
 // 纯本地、不联网：老板要"根据每个 tab 中的内容返回结果"。
 // 匹配字段：歌名、歌手、专辑，以及**文件名**（导入的文件常是 "01 - 歌手 - 歌名"）。

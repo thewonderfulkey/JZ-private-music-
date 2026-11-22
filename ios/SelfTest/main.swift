@@ -499,6 +499,62 @@ do {
     check("旁车不按孤儿判", !StorageAuditRules.isOrphan(fileName: "A.lrc", referenced: refs))
 }
 
+// MARK: - 3.2.6 整理重复的批量计划（2026-11-22：点一下卡 10 秒）
+
+section("整理重复：批量计划（口径不变，只是算法）")
+
+do {
+    func dl(_ name: String, _ singer: String, dur: Int, bytes: Int64,
+            id: String, status: DownloadStatus = .completed) -> DownloadItem {
+        DownloadItem(song: song(.local, name, singer, dur: dur, id: "song_\(id)"),
+                     streamURL: "file:///\(name)", backendName: "本地导入",
+                     quality: .lossless, fileName: "\(name).flac", localPath: "/x/\(name).flac",
+                     status: status, totalBytes: bytes,
+                     createdAt: Date(timeIntervalSince1970: 1))
+    }
+    // 同一条录音（同名同歌手同时长），320 vs 无损 → 留字节多的那条
+    let hi = dl("晴天", "周杰伦", dur: 269, bytes: 40_000_000, id: "a")
+    let lo = dl("晴天", "周杰伦", dur: 269, bytes: 10_000_000, id: "b")
+    let plan = DuplicateSweep.plan([hi, lo])
+    check("同一条录音只留一条", plan.losers.count == 1 && plan.merged == 1)
+    check("留下的是字节多（kbps 高）的那条",
+          plan.losers.first == lo.id, "loser=\(plan.losers.first == lo.id ? "lo" : "hi")")
+    check("释放字节 = 被删那条的体积", plan.freedBytes == 10_000_000)
+
+    check("不同歌（时长差 30s）不合并",
+          DuplicateSweep.plan([dl("晴天", "周杰伦", dur: 269, bytes: 10, id: "c"),
+                               dl("晴天", "周杰伦", dur: 299, bytes: 10, id: "d")]).isEmpty)
+    check("不同歌手不合并",
+          DuplicateSweep.plan([dl("晴天", "周杰伦", dur: 269, bytes: 20, id: "e"),
+                               dl("晴天", "蔡健雅", dur: 269, bytes: 10, id: "f")]).isEmpty)
+    check("下到一半（非 completed）不参与",
+          DuplicateSweep.plan([dl("晴天", "周杰伦", dur: 269, bytes: 20, id: "g"),
+                               dl("晴天", "周杰伦", dur: 269, bytes: 10, id: "h",
+                                  status: .downloading)]).isEmpty)
+    // 时长未知：规则允许"一边未知 + 歌名归一后相等"就算同一条
+    check("时长未知 vs 有时长、同名同歌手 → 合并",
+          DuplicateSweep.plan([dl("晴天", "周杰伦", dur: 0, bytes: 20, id: "i"),
+                               dl("晴天", "周杰伦", dur: 269, bytes: 10, id: "j")]).merged == 1)
+    // kbps 相同 → 保留先出现的（与旧实现一致）
+    let firstSame = dl("夜曲", "周杰伦", dur: 226, bytes: 5_000_000, id: "k")
+    let secondSame = dl("夜曲", "周杰伦", dur: 226, bytes: 5_000_000, id: "l")
+    let tie = DuplicateSweep.plan([firstSame, secondSame])
+    check("kbps 相同：保留先出现的那条",
+          tie.losers == [secondSame.id], "losers=\(tie.losers)")
+
+    // 规模口径：600 首跑完且不误合并。
+    // 注意：歌名/歌手都要**互不相干**、时长两两相差 >4s —— 否则按项目自己的「同一条录音」口径
+    // （歌名相似 ≥0.75 + 同歌手 + 时长相近）它们本来就该合并（我第一版测试数据就踩了这个：
+    // 歌10 与 歌130 同歌手同时长、LCS 0.75 → 真的算同一条）。
+    let many = (0..<600).map { i in
+        dl("曲目编号\(i)甲", "演唱者\(i)", dur: 100 + i * 10,
+           bytes: Int64(1_000_000 + i * 1000), id: "m\(i)")
+    }
+    let bigPlan = DuplicateSweep.plan(many)
+    check("600 首同库：跑完且不误合并", bigPlan.isEmpty,
+          "merged=\(bigPlan.merged)")
+}
+
 // MARK: - 3.3 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
 
 section("下载链排名与下载前校验")

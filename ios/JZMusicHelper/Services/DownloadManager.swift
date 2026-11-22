@@ -630,19 +630,12 @@ final class DownloadManager: NSObject, ObservableObject {
     func remove(itemID: UUID, deleteFile: Bool = true) {
         guard let idx = items.firstIndex(where: { $0.id == itemID }) else { return }
         let item = items[idx]
-        // 先叫停在飞的补料任务：否则它可能在我们删完文件之后才写旁车，
-        // 留下"音频没了、歌词封面还在"的孤儿文件（老板要的是一一对应地删）。
-        cancelCompanion(itemID)
-        if deleteFile, let path = item.localPath {
-            let audio = URL(fileURLWithPath: path)
-            // 自选外部目录：删之前同样要确认作用域在开着，否则删除会静默失败
-            DownloadLocation.openScope(forFile: audio)
-            // 一一对应：删音频之前先把它的 .lrc / .jpg 一起删掉（新位置 + 旧版同目录都清）。
-            // 旁车只依赖"音频基名"推导，不需要额外的清单文件，所以"谁被删、谁跟着删"永远对齐。
-            DownloadCompanion.removeSidecars(audio: audio,
-                                             lyricsDirectory: lyricsDirectory,
-                                             coverDirectory: coverDirectory)
-            try? FileManager.default.removeItem(at: audio)
+        // 2026-11-22：磁盘那一段抽到 `deleteFiles(of:)`，批量整理时复用（不再每条落一次库）
+        if deleteFile {
+            deleteFiles(of: item)
+        } else {
+            // 先叫停在飞的补料任务：否则它可能在我们删完记录之后才写旁车
+            cancelCompanion(itemID)
         }
         items.remove(at: idx)
         // 删掉的文件：目录索引作废一次（不然 5 秒 TTL 内还可能把刚删的歌"找回来"）
@@ -2408,27 +2401,55 @@ extension DownloadManager {
 
     /// 下载列表去重：同一首只留**音质更高**的一条（老板 2026-11-21 拍板）
     @discardableResult
-    func dedupeSameRecording() -> (merged: Int, freedBytes: Int64) {
-        var merged = 0
+    /// 整理重复（同一条录音只留音质更高的一条）。
+    ///
+    /// **2026-11-22 重写**（老板："点一下整理重复要卡死 10 秒，然后才弹详情"）：
+    /// 旧实现 = 主线程 O(n²)（664 首 ≈ 22 万次 `FavoriteRules.isSameRecording`，每次都要
+    /// 繁简映射 + 两次正则），而且每合并一条就 `remove(itemID:)` 一次 —— 每次都要重建全表缓存
+    /// 并**整份落库**（1 MB JSON）。两件事叠在一起就是那 10 秒。
+    ///
+    /// 现在：
+    ///   ① 比对交给 `DuplicateSweep.plan`（时长切桶 + 纯内存），跑在 `Task.detached` 里；
+    ///   ② 主线程只做最后一件事：把该删的文件按批删掉、`items` 只动一次、只落一次库。
+    /// 判定口径没变（还是 `FavoriteRules.isSameRecording`），结果与旧实现逐条等价。
+    func dedupeSameRecording() async -> (merged: Int, freedBytes: Int64) {
+        let snapshot = await MainActor.run { self.items }
+        let plan = await Task.detached(priority: .userInitiated) { () -> DuplicateSweep.Plan in
+            DuplicateSweep.plan(snapshot)
+        }.value
+        guard !plan.isEmpty else { return (0, 0) }
+        return await MainActor.run { self.applyDedupe(plan) }
+    }
+
+    /// 把整理结果落到磁盘与列表（**一次性**：一批文件、一次 items 变更、一次落库）
+    private func applyDedupe(_ plan: DuplicateSweep.Plan) -> (merged: Int, freedBytes: Int64) {
+        let loserIDs = Set(plan.losers)
         var freed: Int64 = 0
-        var kept: [DownloadItem] = []
-        for item in items where item.status == .completed {
-            if let hitIndex = kept.firstIndex(where: { FavoriteRules.isSameRecording($0.song, item.song) }) {
-                let hit = kept[hitIndex]
-                let keepExisting = Self.kbps(of: hit) >= Self.kbps(of: item)
-                let loser = keepExisting ? item : hit
-                let winner = keepExisting ? hit : item
-                freed += loser.totalBytes
-                remove(itemID: loser.id, deleteFile: true)
-                if !keepExisting {
-                    kept[hitIndex] = winner
-                }
-                merged += 1
-            } else {
-                kept.append(item)
-            }
+        for item in items where loserIDs.contains(item.id) {
+            deleteFiles(of: item)
+            freed += item.totalBytes
         }
-        return (merged, freed)
+        items.removeAll { loserIDs.contains($0.id) }
+        markDirectoryCacheDirty()
+        flushPersist()
+        CrashReporter.logMetadata("dedupe | 合并 \(plan.merged) 组 · 删 \(plan.losers.count) 条 · "
+                                  + "释放 \(freed / 1_048_576) MB")
+        return (plan.merged, freed)
+    }
+
+    /// 只删这一条在**磁盘**上的东西：先叫停补料、再删旁车、最后删音频。
+    /// 不碰 `items`、不落库 —— 单条删除与批量整理共用这一处（批量时避免每条都写一次 JSON）。
+    private func deleteFiles(of item: DownloadItem) {
+        cancelCompanion(item.id)
+        guard let path = item.localPath, !path.isEmpty else { return }
+        let audio = URL(fileURLWithPath: path)
+        // 自选外部目录：删之前同样要确认作用域在开着，否则删除会静默失败
+        DownloadLocation.openScope(forFile: audio)
+        // 一一对应：删音频之前先把它的 .lrc / .jpg 一起删掉（新位置 + 旧版同目录都清）
+        DownloadCompanion.removeSidecars(audio: audio,
+                                         lyricsDirectory: lyricsDirectory,
+                                         coverDirectory: coverDirectory)
+        try? FileManager.default.removeItem(at: audio)
     }
 
     // MARK: - 内部
