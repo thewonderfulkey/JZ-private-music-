@@ -57,6 +57,9 @@ struct DownloadsTabView: View {
     @State private var fillScheduled = false
     /// 已经挂上左滑按钮的行（只有"要动手的那些行"才挂，见 `completedRow`）
     @State private var armed: Set<UUID> = []
+    /// 「露脸即挂」的排队（2026-11-22）：同一拍里出现的几行合并成一次状态变更
+    @State private var pendingArm: Set<UUID> = []
+    @State private var armFlushScheduled = false
     /// 自动续加载的节流（同一帧里连开好几页就等于没分页）
     @State private var lastAutoLoadAt = Date.distantPast
 
@@ -201,6 +204,12 @@ struct DownloadsTabView: View {
         // 会把 visibleLimit 从 8 一路撑到 104 却完全不 arm —— 那一屏有 84 行能显示、
         // 只有前 6 行挂了左滑，其余长按/左滑都没反应。挂在这里就不再有"漏 arm"的路径。
         .onChange(of: visibleLimit) { _, _ in
+            armVisibleRows()
+        }
+        // 2026-11-22（老板：新下的歌横拉要等一会儿才灵）：**下载完成不改 items.count**，
+        // 只是把条目从「正在下载」挪进「已下载」，所以上面两条 arm 都不会触发。
+        // 这一条盯住"已下载多了一行"，当场把它挂上左滑。
+        .onChange(of: paged.finished.count) { _, _ in
             armVisibleRows()
         }
         // 第 44 轮：缺口计数（662 次 stat）延后 1.2 秒再查，绝不抢首帧
@@ -654,6 +663,30 @@ struct DownloadsTabView: View {
         if next.count != armed.count { armed = next }
     }
 
+    /// 行级「露脸即挂左滑」（2026-11-22 老板：新下的歌立刻横拉没反应，过一会儿才行）。
+    ///
+    /// 根因：`armed` 只由 `.onAppear`（列表级）/ `visibleLimit` 变化 / `fillStep` / `loadMore`
+    /// 这几条路径喂。而**下载完成**这件事：`items` 只是把条目从 `ongoing` 挪到 `finished`，
+    /// `items.count` 不变、`visibleLimit` 也不变 —— 上面四条一条都不触发，
+    /// 于是新行明明画出来了，`armed` 里却没有它 → `DownloadRowActions` 走 `enabled == false`
+    /// 那一支，横拉没有任何反应。要等到下一次 arm（切走再回来 / 继续加载 / 定位）才"突然又能拉"。
+    ///
+    /// 现在每行自己在 `onAppear` 里排进 `pendingArm`，下一拍合并成**一次**状态变更再挂上：
+    /// 既覆盖"新行出现"，也不会因为一屏几十行各写一次 `armed` 而抖。
+    private func armOnAppear(_ id: UUID) {
+        guard !armed.contains(id) else { return }
+        pendingArm.insert(id)
+        guard !armFlushScheduled else { return }
+        armFlushScheduled = true
+        DispatchQueue.main.async {
+            armFlushScheduled = false
+            let batch = pendingArm
+            pendingArm.removeAll()
+            guard !batch.isEmpty else { return }
+            armed.formUnion(batch)
+        }
+    }
+
     /// 首帧之后分块补到 `fillTarget`：每拍 4 行，一旦这一轮已经出现过 >150ms 的停顿就停手，
     /// 剩下的交给「继续加载」按钮 —— 宁可少补几行，也不要再让主线程整段卡住。
     private func scheduleFill() {
@@ -876,6 +909,8 @@ struct DownloadsTabView: View {
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
         .buttonStyle(.rowPress)
+        // 2026-11-22：行一露脸就排队挂左滑（不等列表级 arm 的下一次触发）。
+        .onAppear { armOnAppear(item.id) }
         // 第 42 轮：左滑按钮只在"露过脸的行"（`armed`）上挂 —— 80 行就是 80 份交互修饰符，
         // 而真正会被左滑的只有看得见的那些。
         // 第 47 轮：`armed` 现在由 `.onChange(of: visibleLimit)` 兜底（见 body），

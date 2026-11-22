@@ -344,6 +344,13 @@ do {
     check("同一秒的：重复调用顺序稳定",
           DownloadItem.newestFirst([batchA, batchB, batchC]).map(\.id)
             == DownloadItem.newestFirst([batchA, batchB, batchC]).map(\.id))
+
+    // 2026-11-22：新下载的那首必须落在**首屏第一行**（分页不能把它挤出去）
+    check("首屏第一行就是最新那首",
+          DownloadListPaging.slices(ongoing: [], failed: [],
+                                    finished: DownloadItem.newestFirst([old, mid, new]),
+                                    limit: DownloadListPaging.firstFrame)
+            .finished.first?.song.name == "新歌")
 }
 
 // MARK: - 3.2.2 起播挑选：够档立刻起播，起播后不再换源（2026-11-22 开头卡顿）
