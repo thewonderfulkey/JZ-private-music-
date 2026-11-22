@@ -5106,6 +5106,13 @@ do {
     check("只把「同名同版本、时长差 ≤25%」的候选放进第二池", near == [0], "\(near)")
     check("差太远（88s）的不进第二池", !near.contains(1), "\(near)")
     check("Live 版不进第二池", !near.contains(2), "\(near)")
+
+    // 第 57 轮补：时长一模一样、只是平台把歌手写成中文名的候选，也要进第二池
+    let near2 = LddcMatch.nearMissPool(
+        queryTitle: "우주를 줄게", targetSec: 213,
+        candidates: [(title: "우주를 줄게", durationSec: 213),
+                     (title: "우주를 줄게 (Radio Edit)", durationSec: 202)])
+    check("歌手字段对不上但时长一致的候选进第二池", near2 == [0], "\(near2)")
 }
 
 section("纯音乐识别（第 57 轮）")

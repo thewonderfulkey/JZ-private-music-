@@ -446,9 +446,11 @@ enum LddcMatch {
         return Double(abs(declaredSec - targetSec)) / Double(targetSec) <= headerDurationRatioTolerance
     }
 
-    /// "只差时长"的候选池：歌名像、版本类一致、时长差在 25%（且 ≥15 秒）以内。
-    /// **不看搜索里的歌手字段**——很多平台把同一个歌手写成中文名/原文名（볼빨간사춘기 / 脸红的思春期），
-    /// 歌手真伪交给词头 `[ar:]` 去证。
+    /// "只差身份证据"的候选池：歌名像、版本类一致、时长差在 25%（且 ≥15 秒）以内。
+    ///
+    /// **不看搜索里的歌手字段、也不再要求"时长必须差出去"**：很多平台把同一个歌手写成
+    /// 中文名/原文名（볼빨간사춘기 / 脸红的思春期），这类候选的时长其实一模一样，
+    /// 只是歌手字段对不上——它同样需要进第二池，让词头 `[ar:]` 去证。
     static func nearMissPool(queryTitle: String, targetSec: Int,
                              candidates: [(title: String, durationSec: Int)]) -> [Int] {
         guard targetSec > 0 else { return [] }
@@ -459,7 +461,7 @@ enum LddcMatch {
             guard titleScore(queryTitle, c.title) >= 90 else { continue }
             guard c.durationSec > 0 else { continue }
             let diff = abs(targetSec - c.durationSec)
-            guard diff > durationToleranceSec, diff <= limit else { continue }
+            guard diff <= limit else { continue }
             out.append(i)
         }
         return out

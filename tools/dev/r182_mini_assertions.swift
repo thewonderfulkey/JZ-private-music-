@@ -71,6 +71,11 @@ let near = LddcMatch.nearMissPool(
                  (title: "海屿你 (Live)", durationSec: 280),
                  (title: "另一首", durationSec: 279)])
 check("第二池只放同名同版本、差 ≤25% 的", near == [0], "\(near)")
+let near2 = LddcMatch.nearMissPool(
+    queryTitle: "우주를 줄게", targetSec: 213,
+    candidates: [(title: "우주를 줄게", durationSec: 213),
+                 (title: "우주를 줄게 (Radio Edit)", durationSec: 202)])
+check("时长一致但歌手字段对不上的也进第二池", near2 == [0], "\(near2)")
 
 print("— 纯音乐识别（第 57 轮）")
 let instCands = [(title: "溺火 (Vocal Version)", durationSec: 195),
