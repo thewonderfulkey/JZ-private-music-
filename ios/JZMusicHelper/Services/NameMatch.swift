@@ -520,6 +520,36 @@ enum ImportRules {
         playableExtensions.contains(ext.lowercased())
     }
 
+    /// 导入时的字段取舍：**文件里的标签 > 文件名解析**（纯函数，CI 钉口径）。
+    ///
+    /// 2026-11-22（老板："所有歌曲信息内置到音乐文件后，再次导入没有自动识别文件里内嵌的信息，
+    /// 还要我手动加载文件中的内容"）：真机整批无损是 FLAC，而 AVFoundation **读不了 Vorbis Comment**
+    /// （`commonMetadata` 对 flac 基本是空的），于是全被当成"没标签" → 歌名/歌手退回文件名
+    /// （`蔡健雅 - 红色高跟鞋 [网易_妖狐酷我]`），封面也没有，只能手动进「歌曲信息 → 以文件为准」。
+    /// 现在 AVFoundation 给不出的字段由 `AudioTagEmbedder.readFields`（mp3 ID3 / flac Vorbis+PICTURE /
+    /// m4a）再补一次，然后走这条纯规则：**标签优先，文件名只在标签也没有时兜底**。
+    ///
+    /// `guessed` = 用到了文件名兜底（调用方据此允许"歌名/歌手对调再搜一次"，也据此标记来源）。
+    static func pickImportedFields(tagTitle: String, tagArtist: String, tagAlbum: String,
+                                   fileTitle: String, fileArtist: String)
+        -> (title: String, artist: String, album: String, guessed: Bool) {
+        let t = tagTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = tagArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let al = tagAlbum.trimmingCharacters(in: .whitespacesAndNewlines)
+        var title = t
+        var artist = a
+        var guessed = false
+        if title.isEmpty {
+            title = fileTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            guessed = true
+        }
+        if artist.isEmpty {
+            artist = fileArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guessed = true
+        }
+        return (title, artist, al, guessed)
+    }
+
     /// 去掉音轨号前缀：`01 - `、`01.`、`01_`、`01、`
     static func strippingTrackNumber(_ s: String) -> String {
         var out = s

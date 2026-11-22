@@ -2212,10 +2212,16 @@ extension DownloadManager {
             guard landed else { done += 1; continue }
             taken.insert(base)
 
-            // 内嵌封面先压到 600px 再写成旁车（原图解码一次就是 9–36MB）
-            if let artwork = meta.artwork, !artwork.isEmpty {
-                let compact = CoverImageCache.compressedCoverData(artwork, maxPixel: 600)
-                _ = DownloadCompanion.writeSidecars(audio: dest, lyricsText: nil,
+            // 内嵌封面先压到 600px 再写成旁车（原图解码一次就是 9–36MB）；
+            // 2026-11-22：文件里带词的话**一并写 Lyrics 旁车** —— 播放页就不用再联网取一次，
+            // 这才是老板要的"内置到文件之后，重新导入就能直接用"。
+            let hasArt = !(meta.artwork?.isEmpty ?? true)
+            let hasWords = !(meta.lyrics?.isEmpty ?? true)
+            if hasArt || hasWords {
+                let compact = hasArt
+                    ? CoverImageCache.compressedCoverData(meta.artwork!, maxPixel: 600)
+                    : nil
+                _ = DownloadCompanion.writeSidecars(audio: dest, lyricsText: meta.lyrics,
                                                     coverData: compact,
                                                     lyricsDirectory: lyricsDirectory,
                                                     coverDirectory: coverDirectory)
@@ -2440,6 +2446,8 @@ extension DownloadManager {
         var album = ""
         var duration: TimeInterval = 0
         var artwork: Data?
+        /// 文件里内嵌的歌词（2026-11-22：导入时一并读出来写旁车，播放页就不用再联网取词）
+        var lyrics: String?
         var hash = ""
         var bytes: Int64 = 0
         /// 歌名/歌手/专辑有任何一个不是标签给的（文件名兜底或干脆没有）
@@ -2475,6 +2483,8 @@ extension DownloadManager {
         var artist = ""
         var album = ""
         var artwork: Data?
+        /// 文件里内嵌的歌词（2026-11-22：导进来就写旁车，播放页不用再联网取一次）
+        var lyricsText: String?
 
         for item in common {
             guard let key = item.commonKey else { continue }
@@ -2492,17 +2502,44 @@ extension DownloadManager {
             }
         }
 
-        // 标签缺失 → 用文件名兜底（第 44 轮起会**标记成 filenameGuess**，不再冒充真标签）
+        // 2026-11-22（老板："信息都内置到文件了，再导入却要手动加载文件中的内容"）：
+        // **AVFoundation 读不了 FLAC 的 Vorbis Comment**（`commonMetadata` 对 flac 基本是空的），
+        // 于是整批无损文件被当成"没标签"→ 歌名/歌手退回文件名（`蔡健雅 - 红色高跟鞋 [网易_妖狐酷我]`）、
+        // 封面也没有，只能手动进「歌曲信息 → 以文件为准」。
+        // 这里补一条：AVFoundation 给不出的字段，用我们自己的读取器再读一次——
+        // mp3 ID3 / flac Vorbis+PICTURE / m4a，那才是"内嵌标签"的真正口径（A 方案：文件是真相）。
+        // 只在"AVFoundation 少给了东西"时才多读一次（mp3/m4a 基本不会走到这里，不额外付 I/O；
+        // FLAC 一定走 —— 它正是这批文件）。
+        if title.isEmpty || artist.isEmpty || album.isEmpty || artwork == nil {
+            if let fields = await AudioTagEmbedder.readFields(fileURL: url) {
+                let tagTitle = DownloadCompanion.ID3Tags.trim(fields.title)
+                let tagArtist = DownloadCompanion.ID3Tags.trim(fields.artist)
+                let tagAlbum = DownloadCompanion.ID3Tags.trim(fields.album)
+                if title.isEmpty, !tagTitle.isEmpty { title = repairMojibake(tagTitle) }
+                if artist.isEmpty, !tagArtist.isEmpty { artist = repairMojibake(tagArtist) }
+                if album.isEmpty, !tagAlbum.isEmpty { album = repairMojibake(tagAlbum) }
+                if artwork == nil, let cover = fields.cover, !cover.isEmpty { artwork = cover }
+                if lyricsText == nil {
+                    let words = DownloadCompanion.ID3Tags.trim(fields.lyrics ?? "")
+                    if !words.isEmpty { lyricsText = words }
+                }
+            }
+        }
+
+        // 标签仍然缺失 → 用文件名兜底（第 44 轮起会**标记成 filenameGuess**，不再冒充真标签）。
+        // 取舍口径抽成纯函数 `ImportRules.pickImportedFields`（CI 钉住"标签优先"）。
         //
         // 注意：暂存副本的名字是 UUID（避免撞名），所以**必须用原始文件名**兜底，
         // 否则整个库的歌名会变成一串 UUID。
-        var guessed = false
-        if title.isEmpty || artist.isEmpty {
-            let parsed = ImportRules.parseFileName(originalName)
-            if title.isEmpty { title = parsed.title }
-            if artist.isEmpty { artist = parsed.artist }
-            guessed = true
-        }
+        let parsed = ImportRules.parseFileName(originalName)
+        let picked = ImportRules.pickImportedFields(tagTitle: title, tagArtist: artist,
+                                                    tagAlbum: album,
+                                                    fileTitle: parsed.title,
+                                                    fileArtist: parsed.artist)
+        title = picked.title
+        artist = picked.artist
+        album = picked.album
+        let guessed = picked.guessed
         if title.isEmpty { title = (originalName as NSString).deletingPathExtension }
         if duration <= 0 {
             return (nil, "\(url.pathExtension.lowercased()) 读不出时长（文件损坏或加密包）")
@@ -2514,6 +2551,7 @@ extension DownloadManager {
         meta.album = album
         meta.duration = duration
         meta.artwork = artwork
+        meta.lyrics = lyricsText
         meta.hash = hash
         meta.bytes = bytes
         meta.guessed = guessed || album.isEmpty

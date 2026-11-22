@@ -419,6 +419,49 @@ do {
     check("320k 达到「够档」", DownloadResolver.tierOf(k320) >= DownloadResolver.startGoodEnoughTier)
 }
 
+// MARK: - 3.2.4 导入字段取舍：文件标签 > 文件名（2026-11-22 重新导入要手动加载）
+
+section("导入字段取舍：文件标签 > 文件名")
+
+do {
+    // 真实案例：真机整批无损是 FLAC，AVFoundation 读不到 Vorbis Comment，
+    // 于是歌名退回文件名（`蔡健雅 - 红色高跟鞋 [网易_妖狐酷我]`），封面也没有。
+    let full = ImportRules.pickImportedFields(tagTitle: "红色高跟鞋", tagArtist: "蔡健雅",
+                                              tagAlbum: "若你碰到他",
+                                              fileTitle: "红色高跟鞋 [网易_妖狐酷我]",
+                                              fileArtist: "蔡健雅")
+    check("标签齐 → 用标签，文件名里的 [平台_后端] 不带进来",
+          full.title == "红色高跟鞋" && full.artist == "蔡健雅" && full.album == "若你碰到他",
+          "\(full)")
+    check("标签齐 → 不算 filenameGuess", !full.guessed)
+
+    let none = ImportRules.pickImportedFields(tagTitle: "", tagArtist: "", tagAlbum: "",
+                                              fileTitle: "红色高跟鞋", fileArtist: "蔡健雅")
+    check("标签全空 → 用文件名，并标成 filenameGuess",
+          none.title == "红色高跟鞋" && none.artist == "蔡健雅" && none.guessed, "\(none)")
+
+    let half = ImportRules.pickImportedFields(tagTitle: "红色高跟鞋", tagArtist: "", tagAlbum: "",
+                                              fileTitle: "随便什么", fileArtist: "蔡健雅")
+    check("只有歌名有标签 → 歌名用标签、歌手用文件名、仍算 filenameGuess",
+          half.title == "红色高跟鞋" && half.artist == "蔡健雅" && half.guessed, "\(half)")
+
+    let blank = ImportRules.pickImportedFields(tagTitle: "   ", tagArtist: "\n", tagAlbum: " ",
+                                               fileTitle: "晴天", fileArtist: "周杰伦")
+    check("空白标签当作没有", blank.title == "晴天" && blank.artist == "周杰伦" && blank.guessed,
+          "\(blank)")
+
+    // flac 读回来三项齐 → 导入不再联网补料（第 54 轮口径）
+    var fields = DownloadCompanion.ID3Tags.Fields()
+    fields.title = "红色高跟鞋"
+    fields.artist = "蔡健雅"
+    fields.cover = Data([0xFF, 0xD8, 0xFF])
+    check("标签自带歌名+歌手+封面 → 视为自带完整（不联网）",
+          DownloadCompanion.LocalTagRules.isSelfContained(fields: fields))
+    fields.cover = nil
+    check("少封面 → 不算自带完整（会补图）",
+          !DownloadCompanion.LocalTagRules.isSelfContained(fields: fields))
+}
+
 // MARK: - 3.3 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
 
 section("下载链排名与下载前校验")
