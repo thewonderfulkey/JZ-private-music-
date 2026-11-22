@@ -524,17 +524,23 @@ struct DownloadsTabView: View {
                 DispatchQueue.main.async { armVisibleRows() }
                 scheduleFill()
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { MiniPlayerClearance() }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear
+                    .frame(height: listBottomClearance)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             // 批量操作条浮在**迷你条上沿**：迷你条是父视图的 overlay，
             // 直接把操作条放 safeAreaInset 里会被它盖住（下载页经常在播歌）。
             .overlay(alignment: .bottom) {
-                if selectMode {
+                if batchBarVisible {
                     batchBar
-                        .padding(.bottom, CGFloat(MiniPlayerMetrics.listBottomInset(
+                        .padding(.bottom, CGFloat(MiniPlayerMetrics.batchBarBottomInset(
                             playing: player.hasCurrentSong)))
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
+            .animation(Tokens.Motion.stateChange, value: batchBarVisible)
             .locateToast(locator.toast)
             // 第 48/49 轮：写回结果；第 51 轮：对齐检查结果也走这一个框（一项都不许吞）
             .alert(activeReport?.title ?? "结果", isPresented: Binding(
@@ -753,12 +759,44 @@ struct DownloadsTabView: View {
         BatchSelection.isAllSelected(picked: picked, visible: visibleIDs)
     }
 
-    /// 底部批量操作条
+    /// 处理栏出不出现：多选态**且至少选了一首**（2026-11-23 老板口径，见 `BatchSelection.isBarVisible`）
+    private var batchBarVisible: Bool {
+        BatchSelection.isBarVisible(selectMode: selectMode, pickedCount: picked.count)
+    }
+
+    /// 列表滚到底时该让出的高度：迷你条 + 处理栏（两条是叠着的，不重叠）。
+    ///
+    /// 以前这里恒等于 `MiniPlayerClearance`（只算迷你条），处理栏一出现就压在最后一条歌上；
+    /// 现在把处理栏也算进来，滚到底最后一条正好停在上沿（与 r63"严丝合缝"同一口径）。
+    private var listBottomClearance: CGFloat {
+        let playing = player.hasCurrentSong
+        let base = CGFloat(MiniPlayerMetrics.listBottomInset(playing: playing))
+        guard batchBarVisible else { return base }
+        return max(base,
+                   CGFloat(MiniPlayerMetrics.batchBarBottomInset(playing: playing)
+                           + MiniPlayerMetrics.batchBarHeight))
+    }
+
+    /// 底部批量操作条（2026-11-23 老板口径）
+    ///
+    /// 老板原话："点击多选后，还没选歌的时候不要出现那个处理栏，至少选中一条歌之后再出现；
+    /// 其次处理栏我希望跟播放悬浮栏严丝合缝（如果播放栏显示的话），
+    /// 当没有播放歌曲的时候我希望处理栏和底层栏严丝合缝。"
+    ///
+    /// 所以：
+    ///   · 出现条件 = `batchBarVisible`（没选歌时整条不挂）；
+    ///   · 横向内缩量与迷你条**完全一致**（`Spacing.xs`）——两条同宽，边上才没有台阶；
+    ///   · 底边贴到迷你条卡片上沿 / 底层栏上沿（`batchBarBottomInset`），底两角不圆、
+    ///     顶两角用卡片圆角 —— 读起来是"迷你条上面长出来的一条"，不是浮在空中的灰带；
+    ///   · 底色换成和迷你条同一块 `paperElevated`（原来是半透明材质，底下滚过的歌会透上来）；
+    ///   · 高度固定在 `batchBarHeight`，和列表让出的高度共用同一个数。
     private var batchBar: some View {
         HStack(spacing: Tokens.Spacing.s) {
-            Text(picked.isEmpty ? "选择要处理的歌" : "已选 \(picked.count) 首")
+            Text("已选 \(picked.count) 首")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.leading, Tokens.Spacing.xs)
             Spacer(minLength: 0)
             // 第 44 轮：批量编辑（只改歌手/专辑；歌名与封面不批量）
             Button {
@@ -767,9 +805,9 @@ struct DownloadsTabView: View {
                 Label("编辑", systemImage: "pencil")
                     .font(.footnote.weight(.semibold))
                     .padding(.horizontal, Tokens.Spacing.m)
+                    .frame(minHeight: Tokens.Spacing.minTapTarget)
             }
             .buttonStyle(.press)
-            .disabled(picked.isEmpty)
             Button(role: .destructive) {
                 showBatchDeleteConfirm = true
             } label: {
@@ -780,11 +818,23 @@ struct DownloadsTabView: View {
                     .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.14)))
             }
             .buttonStyle(.press)
-            .disabled(picked.isEmpty)
+            .padding(.trailing, Tokens.Spacing.xs)
         }
-        .padding(.horizontal, Tokens.Spacing.pageMargin)
-        .padding(.vertical, Tokens.Spacing.xs)
-        .background(.regularMaterial)
+        // 高度用 min/max 一起钉死：`.frame(maxWidth:)` 与 `.frame(height:)` 叠着写时，
+        // 底色是画在**内层**那个 frame 上的，而它只有 HStack 的 44 高 —— 上下会各露 4pt 透明缝。
+        .frame(maxWidth: .infinity,
+               minHeight: CGFloat(MiniPlayerMetrics.batchBarHeight),
+               maxHeight: CGFloat(MiniPlayerMetrics.batchBarHeight))
+        .background(
+            UnevenRoundedRectangle(cornerRadii: .init(topLeading: Tokens.Radius.card,
+                                                      bottomLeading: 0,
+                                                      bottomTrailing: 0,
+                                                      topTrailing: Tokens.Radius.card),
+                                   style: .continuous)
+                .fill(Tokens.Palette.paperElevated)
+        )
+        // 与迷你条卡片同一条左右边线
+        .padding(.horizontal, Tokens.Spacing.xs)
     }
 
     private func enterSelectMode() {

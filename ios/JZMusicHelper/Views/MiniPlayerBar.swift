@@ -169,13 +169,18 @@ struct MiniPlayerOverlay: ViewModifier {
                     // 就从那条缝里露出来了。这里铺一条与页面同色的底（`Paper`，和 `paperBackground()`
                     // 同一个颜色），高度 = 条子 + 上留白，正好从条子上沿贴到 Tab 栏上沿；
                     // 条子本身**贴底**（下留白归零），缝就没了。
+                    //
+                    // v2.4.85（老板 2026-11-23："处理栏要跟播放悬浮栏严丝合缝"）：
+                    // 上留白归零 —— 底衬高度**正好等于卡片**，卡片贴顶。以前卡片上面还多垫 4pt，
+                    // 下载页的批量处理栏贴在 56 上就被这 4pt 隔出一条缝（或者被它盖住 4pt），
+                    // 怎么算都不"严丝合缝"。现在卡片上沿 = 底衬上沿 = `MiniPlayerMetrics.barCardTop`，
+                    // 处理栏底边贴到这个数就是真正的零缝。
                     Tokens.Palette.paper
-                        .frame(height: Tokens.Size.miniPlayerHeight + Tokens.Spacing.xxs)
+                        .frame(height: Tokens.Size.miniPlayerHeight)
                         .frame(maxWidth: .infinity)
                         .allowsHitTesting(false)
                     MiniPlayerBar(onTap: onTap)
                         .padding(.horizontal, Tokens.Spacing.xs)
-                        .padding(.top, Tokens.Spacing.xxs)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }

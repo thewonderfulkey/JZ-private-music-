@@ -77,7 +77,10 @@ enum LayoutRules {
 // padding 了 32 —— 于是最后一条和条子之间空出 40pt。这里把"该让多少"钉成一个数。
 enum MiniPlayerMetrics {
 
-    /// 条子连同上下内边距占掉的真实高度
+    /// 列表末尾该让出的高度：条子本体 56 + 8 的呼吸。
+    ///
+    /// v2.4.85 起迷你条的底衬高度正好等于卡片（56，见 `barCardTop`），底衬上不再多垫 4pt；
+    /// 这里的 8pt 纯粹是「最后一条不要贴着条子」的呼吸，不再和底衬高度绑在一起。
     static let barHeight: Double = 56 + 4 + 4
 
     /// 没在播歌时的页面底部呼吸（列表最后一条不要贴着屏幕边缘）
@@ -87,6 +90,28 @@ enum MiniPlayerMetrics {
     static func listBottomInset(playing: Bool) -> Double {
         playing ? barHeight : idleBottomInset
     }
+
+    // MARK: 批量处理栏的接缝（2026-11-23 老板口径）
+
+    /// 迷你条**卡片本体**的高度 = 卡片上沿距容器底边的高度。
+    ///
+    /// 老板（2026-11-23）："处理栏我希望跟播放悬浮栏严丝合缝（如果播放栏显示的话/如果正在播放歌曲的话），
+    /// 当没有播放歌曲的时候我希望处理栏和底层栏严丝合缝。"
+    ///
+    /// r78 时迷你条上面还垫着 4pt 的页面底色（底衬比卡片高 4），处理栏贴上 56 会被那 4pt
+    /// 盖住/隔开；现在 `MiniPlayerOverlay` 里卡片**贴顶**、底衬高度正好等于卡片，
+    /// 于是「56」就是那条接缝本身。改了 `Tokens.Size.miniPlayerHeight` 这里也要跟着改
+    /// （`ios/SelfTest` 有断言钉住两者相等）。
+    static let barCardTop: Double = 56
+
+    /// 「批量处理栏」该贴在哪儿：在播歌时贴迷你条卡片上沿，没播歌时贴底层 Tab 栏上沿（0）。
+    static func batchBarBottomInset(playing: Bool) -> Double {
+        playing ? barCardTop : 0
+    }
+
+    /// 处理栏本体高度：44 的可点高度 + 上下各 4。
+    /// 视图（固定高度）与「列表该让多少」共用这一个数，别再各写一套。
+    static let batchBarHeight: Double = 52
 }
 
 // MARK: - 歌词浏览手感（纯函数）

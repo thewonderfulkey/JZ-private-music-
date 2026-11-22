@@ -315,6 +315,15 @@ enum BatchSelection {
     static func pruning(_ picked: Set<UUID>, visible: [UUID]) -> Set<UUID> {
         picked.intersection(visible)
     }
+
+    /// 处理栏什么时候出现（2026-11-23 老板："点击多选后，还没选歌的时候不要出现那个处理栏，
+    /// 至少选中一条歌之后再出现"）。
+    ///
+    /// 只在多选态**且至少勾了一首**时才挂上来：否则就是一条只能看、两个键全禁用的灰条，
+    /// 白占着列表最后一眼的高度。
+    static func isBarVisible(selectMode: Bool, pickedCount: Int) -> Bool {
+        selectMode && pickedCount > 0
+    }
 }
 
 // MARK: - 体积文案（2026-11-21 老板：> 1GB 用 GB，< 1GB 用 MB，< 1MB 再降级，升级同理）

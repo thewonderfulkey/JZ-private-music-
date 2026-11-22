@@ -2249,14 +2249,31 @@ do {
     check("屏宽/屏高未知 → 按 393×852 估",
           LayoutRules.playerCoverSide(width: 0, height: 0) == phone)
 
-    // ⑦ 悬浮条严丝合缝：占位 = 条子本体 64，没播歌时 24
-    check("在播歌：列表末尾让出 64（= 条子 56 + 上下各 4）",
+    // ⑦ 悬浮条严丝合缝：占位 = 条子本体 56 + 8 呼吸，没播歌时 24
+    check("在播歌：列表末尾让出 64（= 条子 56 + 8 呼吸）",
           MiniPlayerMetrics.listBottomInset(playing: true) == 64,
           "\(MiniPlayerMetrics.listBottomInset(playing: true))")
     check("没在播歌：只让 24（页面底部呼吸）",
           MiniPlayerMetrics.listBottomInset(playing: false) == 24)
     check("让出高度正好等于条子高度（上一版 72+32 多空了 40pt）",
           MiniPlayerMetrics.listBottomInset(playing: true) == MiniPlayerMetrics.barHeight)
+
+    // ⓪ v2.4.85（老板 2026-11-23）：批量处理栏要跟迷你条/底层栏严丝合缝
+    check("迷你条卡片上沿 = 56（= Tokens.Size.miniPlayerHeight）",
+          MiniPlayerMetrics.barCardTop == 56, "\(MiniPlayerMetrics.barCardTop)")
+    check("处理栏接缝 = 条子本体高度（卡片贴顶，底衬不再比卡片高 4）",
+          MiniPlayerMetrics.barCardTop == 56 && MiniPlayerMetrics.barHeight - 56 == 8)
+    check("处理栏高度 = 44 可点高度 + 上下各 4",
+          MiniPlayerMetrics.batchBarHeight == 52, "\(MiniPlayerMetrics.batchBarHeight)")
+    check("在播歌：处理栏底边贴迷你条卡片上沿（56）",
+          MiniPlayerMetrics.batchBarBottomInset(playing: true) == MiniPlayerMetrics.barCardTop)
+    check("没播歌：处理栏底边贴底层栏上沿（0，不再留 24）",
+          MiniPlayerMetrics.batchBarBottomInset(playing: false) == 0,
+          "\(MiniPlayerMetrics.batchBarBottomInset(playing: false))")
+    check("在播歌时两条叠起来正好让出 56+52（列表最后一条不会压在处理栏下）",
+          MiniPlayerMetrics.batchBarBottomInset(playing: true)
+          + MiniPlayerMetrics.batchBarHeight == 108,
+          "\(MiniPlayerMetrics.batchBarBottomInset(playing: true) + MiniPlayerMetrics.batchBarHeight)")
 
     // ⑤ 同一首歌再点：不重新请求、不重头播
     check("同一首 + 已装上播放项 + 无错误 → 复用当前播放",
@@ -4757,6 +4774,18 @@ do {
 
     check("清理：只保留还看得见的", BatchSelection.pruning([a, b, c], visible: [a, c]) == [a, c])
     check("清理：全没了 → 空", BatchSelection.pruning([a, b], visible: []).isEmpty)
+
+    // v2.4.85（老板 2026-11-23）：还没选歌时不要出现处理栏
+    check("多选态但一首没选 → 处理栏不出现",
+          !BatchSelection.isBarVisible(selectMode: true, pickedCount: 0))
+    check("多选态选了 1 首 → 出现",
+          BatchSelection.isBarVisible(selectMode: true, pickedCount: 1))
+    check("多选态选了 3 首 → 出现",
+          BatchSelection.isBarVisible(selectMode: true, pickedCount: 3))
+    check("不在多选态（哪怕还留着残留选择）→ 不出现",
+          !BatchSelection.isBarVisible(selectMode: false, pickedCount: 2))
+    check("负数/脏计数也不出现",
+          !BatchSelection.isBarVisible(selectMode: true, pickedCount: -1))
 }
 
 // MARK: - 下载页分页（第 41 轮：首屏 80 行，滚到底继续加载）
