@@ -3382,9 +3382,23 @@ check("全片时长 = 退场结束，且压在 1.9s 以内",
       "total=\(SplashTimeline.total)")
 check("每一拍都落在 0…total 之间",
       [SplashTimeline.bandDraw, SplashTimeline.cupLeft, SplashTimeline.cupRight,
-       SplashTimeline.sound, SplashTimeline.thump, SplashTimeline.exit,
-       SplashTimeline.markFade, SplashTimeline.contentIn]
+       SplashTimeline.sound, SplashTimeline.soundSecond, SplashTimeline.thump,
+       SplashTimeline.exit, SplashTimeline.markFade, SplashTimeline.contentIn]
         .allSatisfy { $0.start >= 0 && $0.end <= SplashTimeline.total + 0.0001 })
+// 2026-11-22（老板："开屏动画还是在固定的一帧卡，只不过延迟了一些"）：
+// 逐帧量出来真凶是时间轴自己在 1.04–1.30 留了 258ms 空档 —— 声波 0.98s 就淡没了、
+// 轻顶 0.98s 结束、退场 1.30s 才起。下面三条把"全程都在动"钉死，谁再挪拍子先红。
+check("第二道声波撑到退场开始（出声这一拍不许提前哑掉）",
+      SplashTimeline.soundSecond.end >= SplashTimeline.exit.start,
+      "wave2.end=\(SplashTimeline.soundSecond.end) exit.start=\(SplashTimeline.exit.start)")
+check("声波透明度整拍匀速淡出（旧版把 easeOut 放进分母，0.1s 就淡没了）",
+      SplashTimeline.waveOpacity(progress: 0.2) > SplashTimeline.waveOpacity(progress: 0.6)
+        && SplashTimeline.waveOpacity(progress: 0.6) > SplashTimeline.waveOpacity(progress: 0.95)
+        && SplashTimeline.waveOpacity(progress: 0.6) > 0.15,
+      "op(0.6)=\(SplashTimeline.waveOpacity(progress: 0.6))")
+check("开屏全程不许停：最长静止窗 < 150ms",
+      SplashTimeline.longestStillWindow() < 0.15,
+      "still=\(SplashTimeline.longestStillWindow())s")
 check("进度两端夹紧（不许越界，也不许倒流）",
       SplashTimeline.bandDraw.progress(at: -1) == 0
         && SplashTimeline.bandDraw.progress(at: 99) == 1

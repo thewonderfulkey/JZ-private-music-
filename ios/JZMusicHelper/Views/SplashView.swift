@@ -10,7 +10,7 @@ import SwiftUI
 //
 // 为什么不做成 LaunchScreen 图：iOS 的 LaunchScreen 只能是静态的（系统截图，不能播动画），
 // 所以这一屏必须"从一张空白纸开始"才接得上——第一个动作就是落笔，正好由空白纸起笔。
-// 时间轴全部在 `Services/SplashTimeline.swift`（纯数据，CI 有断言）；这里只管画。
+// 时间轴与所有曲线都在 `Services/SplashTimeline.swift`（纯函数，CI 有断言）；这里只管画。
 //
 // 三条硬约束：
 //   · 只在**冷启动**出现一次（由 `JZMusicHelperApp` 的 @State 控制，回前台不再播）
@@ -22,7 +22,11 @@ struct SplashView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var start = Date()
+    /// 起拍时刻：**第一帧真的被画出来之后**才置上。
+    /// 2026-11-22：以前是 `@State private var start = Date()`，也就是 View 一构造就开始计时 ——
+    /// 而构造发生在首帧之前（系统启动转场约 0.16s），于是第一帧画面上头梁已经画了 26%，
+    /// 观感是"一出来就跳了一下"。现在 onAppear 之前一律按 t=0 画，正好等于 LaunchScreen 的空白纸。
+    @State private var start: Date?
     @State private var reducedOpacity: Double = 1
     @State private var finished = false
 
@@ -45,23 +49,18 @@ struct SplashView: View {
                 // 直接并列两个 view 会让 VoiceOver 把「JZ 音乐」念两遍。
                 ZStack {
                     paper(opacity: 1)
-                    markShape(band: 1, cupLeft: 1, cupRight: 1, sound: 0, thump: 0, exit: 0)
+                    markShape(SplashTimeline.snapshot(at: 0, reduceMotion: true))
                         .opacity(reducedOpacity)
                 }
             } else {
                 TimelineView(.animation) { context in
-                    let t = context.date.timeIntervalSince(start)
+                    // start 还没置上（首帧）就按 t=0 画：空白纸 + 一个点都还没落笔
+                    let t = start.map { context.date.timeIntervalSince($0) } ?? 0
+                    let s = SplashTimeline.snapshot(at: t)
                     ZStack {
-                        paper(opacity: 1 - SplashTimeline.exitProgress(at: t))
-                        markShape(
-                            band: easeOut(SplashTimeline.bandDraw.progress(at: t)),
-                            cupLeft: springValue(elapsed: t - SplashTimeline.cupLeft.start),
-                            cupRight: springValue(elapsed: t - SplashTimeline.cupRight.start),
-                            sound: SplashTimeline.sound.progress(at: t),
-                            thump: thumpCurve(at: t),
-                            exit: SplashTimeline.exitProgress(at: t)
-                        )
-                        .opacity(SplashTimeline.markOpacity(at: t, reduceMotion: false))
+                        paper(opacity: 1 - s.exit)
+                        markShape(s)
+                            .opacity(s.markOpacity)
                     }
                 }
             }
@@ -74,7 +73,11 @@ struct SplashView: View {
         .accessibilityLabel("JZ 音乐")
         .accessibilityHint("轻点跳过开屏动画")
         .accessibilityAddTraits(.isButton)
-        .task { await runTimeline() }
+        .task {
+            // 首帧已经画出来了，从这一帧起拍
+            if start == nil { start = Date() }
+            await runTimeline()
+        }
     }
 
     // MARK: - 定时
@@ -104,30 +107,29 @@ struct SplashView: View {
         Tokens.Palette.paper.opacity(opacity).ignoresSafeArea()
     }
 
-    private func markShape(band: Double, cupLeft: Double, cupRight: Double,
-                           sound: Double, thump: Double, exit: Double) -> some View {
+    private func markShape(_ s: SplashTimeline.Snapshot) -> some View {
         ZStack {
-            soundWaves(progress: sound)
+            soundWaves(s)
                 .frame(width: unit, height: unit)
             // 头梁：一块从弧心扫过去的扇形遮罩，让墨沿着弧的方向长出来（不是整块淡入）
             MarkShape(points: SplashMarkPath.band, mirror: false)
                 .fill(ink)
                 .mask(
-                    BandWedge(endDegrees: 152 + (385 - 152) * band)
+                    BandWedge(endDegrees: 152 + (385 - 152) * s.band)
                         .fill(Color.black)
                         .blur(radius: 0.6)
                 )
-            cupGroup(points: SplashMarkPath.cup, mirrored: false, progress: cupLeft, exit: exit)
-            cupGroup(points: SplashMarkPath.flank, mirrored: false, progress: cupLeft, exit: exit)
-            cupGroup(points: SplashMarkPath.cup, mirrored: true, progress: cupRight, exit: exit)
-            cupGroup(points: SplashMarkPath.flank, mirrored: true, progress: cupRight, exit: exit)
+            cupGroup(points: SplashMarkPath.cup, mirrored: false, progress: s.cupLeft, exit: s.exit)
+            cupGroup(points: SplashMarkPath.flank, mirrored: false, progress: s.cupLeft, exit: s.exit)
+            cupGroup(points: SplashMarkPath.cup, mirrored: true, progress: s.cupRight, exit: s.exit)
+            cupGroup(points: SplashMarkPath.flank, mirrored: true, progress: s.cupRight, exit: s.exit)
         }
         .frame(width: unit, height: unit)
         .scaleEffect(markSize / unit)
         .frame(width: markSize, height: markSize)
         // 收尾：整枚图标上浮 7pt、缩回 1.5%
-        .offset(y: -7 * exit)
-        .scaleEffect(1 + 0.04 * thump - 0.015 * exit)
+        .offset(y: -7 * s.exit)
+        .scaleEffect(1 + 0.04 * s.thump - 0.015 * s.exit)
     }
 
     private func cupGroup(points: [CGFloat], mirrored: Bool,
@@ -144,56 +146,35 @@ struct SplashView: View {
             .opacity(Double(min(1, p / 0.14)))
     }
 
-    /// 两道朱砂声波：左 140°→220°，右镜像 -40°→40°，荡开的同时淡出
-    private func soundWaves(progress: Double) -> some View {
-        let leftLocal = easeOut(clamp01((progress - 0.05) / 0.78))
-        let rightLocal = easeOut(clamp01((progress - 0.11) / 0.78))
-        return ZStack {
-            ForEach(0..<2, id: \.self) { i in
-                arcPath(center: CGPoint(x: 12, y: 176),
-                        radius: 26 + CGFloat(i) * 15, from: 140, to: 220)
-                    .stroke(Tokens.Palette.vermilion,
-                            style: StrokeStyle(lineWidth: i == 0 ? 2.2 : 1.8, lineCap: .round))
-                    .opacity(progress > 0 ? 0.55 * (1 - leftLocal) : 0)
-                    .scaleEffect(0.86 + 0.30 * CGFloat(leftLocal),
-                                 anchor: UnitPoint(x: 12 / unit, y: 176 / unit))
-                arcPath(center: CGPoint(x: 228, y: 176),
-                        radius: 26 + CGFloat(i) * 15, from: -40, to: 40)
-                    .stroke(Tokens.Palette.vermilion,
-                            style: StrokeStyle(lineWidth: i == 0 ? 2.2 : 1.8, lineCap: .round))
-                    .opacity(progress > 0 ? 0.55 * (1 - rightLocal) : 0)
-                    .scaleEffect(0.86 + 0.30 * CGFloat(rightLocal),
-                                 anchor: UnitPoint(x: 228 / unit, y: 176 / unit))
-            }
+    /// 两道朱砂声波：**错开两拍**（0.66 起、0.80 起），一内一外，
+    /// 荡开的同时按整拍匀速淡出 —— 2026-11-22 之前两道是同时的、且 0.1s 就淡没了，
+    /// 于是"出声"这一拍等于没做，1.03–1.33 那 300ms 画面上什么都不动。
+    private func soundWaves(_ s: SplashTimeline.Snapshot) -> some View {
+        ZStack {
+            waveArc(side: .left, radius: 26, progress: s.wave1)
+            waveArc(side: .right, radius: 26, progress: s.wave1)
+            waveArc(side: .left, radius: 41, progress: s.wave2)
+            waveArc(side: .right, radius: 41, progress: s.wave2)
         }
+    }
+
+    private enum Side { case left, right }
+
+    private func waveArc(side: Side, radius: CGFloat, progress: Double) -> some View {
+        let center = CGPoint(x: side == .left ? 12 : 228, y: 176)
+        let from: Double = side == .left ? 140 : -40
+        let to: Double = side == .left ? 220 : 40
+        return arcPath(center: center, radius: radius, from: from, to: to)
+            .stroke(Tokens.Palette.vermilion,
+                    style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
+            .opacity(SplashTimeline.waveOpacity(progress: progress))
+            .scaleEffect(SplashTimeline.waveScale(progress: progress),
+                         anchor: UnitPoint(x: center.x / unit, y: center.y / unit))
     }
 
     // MARK: - 曲线
 
     private var ink: Color { Color(uiColor: .label) }
-
-    private func clamp01(_ v: Double) -> Double { v < 0 ? 0 : (v > 1 ? 1 : v) }
-
-    private func easeOut(_ v: Double) -> Double {
-        let c = clamp01(v)
-        let m = 1 - c
-        return 1 - m * m * m
-    }
-
-    /// 阻尼弹簧（spring response / dampingFraction 的解析解），落位约 1.0，允许轻微过冲
-    private func springValue(elapsed: Double, response: Double = 0.40, damping: Double = 0.72) -> Double {
-        guard elapsed > 0 else { return 0 }
-        let w0 = 2 * Double.pi / response
-        let wd = w0 * (1 - damping * damping).squareRoot()
-        let decay = exp(-damping * w0 * elapsed)
-        return 1 - decay * (cos(wd * elapsed) + (damping * w0 / wd) * sin(wd * elapsed))
-    }
-
-    /// 0 → 1 → 0 的一顶
-    private func thumpCurve(at t: Double) -> Double {
-        let s = sin(Double.pi * SplashTimeline.thump.progress(at: t))
-        return s * s
-    }
 
     private func arcPath(center: CGPoint, radius: CGFloat, from: Double, to: Double) -> Path {
         var path = Path()
