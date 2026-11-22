@@ -24,6 +24,10 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 主线程发布：下载列表
     @Published var items: [DownloadItem] = [] {
         didSet {
+            // 2026-11-22：条目**任何**变化都 +1，给下载页搜索的缓存当版本号。
+            // 为什么不用 `items.count`：下载完成只是把状态从 downloading 改成 completed，
+            // 条数不变，但"它现在属于已下载"这件事必须让搜索/分段缓存失效。
+            revision &+= 1
             // 第 41 轮 P0-4：**不再 `removeAll()`**。
             //
             // 以前任何条目变化都清空两个缓存——包括下载中每秒一次的进度更新（`.downloading` 的
@@ -33,6 +37,9 @@ final class DownloadManager: NSObject, ObservableObject {
             invalidateCachesForChangedItems()
         }
     }
+    /// `items` 的版本号（见上面 didSet）。故意**不是** `@Published`：
+    /// 它只是给缓存当 key，界面更新由 `items` 自己触发，多一个发布只会多一轮 body。
+    private(set) var revision: Int = 0
     @Published var backgroundTaskCount: Int = 0
 
     /// `song.id` → 本地音频路径（空串 = 查过、没有）。

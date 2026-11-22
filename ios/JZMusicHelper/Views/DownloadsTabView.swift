@@ -65,24 +65,31 @@ struct DownloadsTabView: View {
 
     private var queryKey: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    private func hit(_ item: DownloadItem) -> Bool {
-        queryKey.isEmpty
-            || LibrarySearch.matches(song: item.song, fileName: item.fileName, query: queryKey)
+    /// **真正生效**的搜索词（2026-11-22）。
+    ///
+    /// 老板："663 首的时候，每输入一个字母就开始卡"。两个原因叠在一起：
+    ///   ① 每敲一个字母，全表 663 首 × 4 个字段各归一化一次（繁简映射 + 两次正则），
+    ///      而这几个列表在同一帧里还要被求值好几遍；
+    ///   ② 字母一个个进来时，每一拍都完整重算一次，等于把一次输入变成 6 次全表扫描。
+    /// 现在：输入框仍然实时回显（`query`），但**过滤**用 200ms 防抖之后的 `appliedQuery` ——
+    /// 连续敲字时列表不动，停手才筛一次；配合 `DownloadsSearchCache` 的"每首歌只归一化一次"，
+    /// 一拍只付 N 次 `contains`。
+    @State private var appliedQuery = ""
+
+    private var appliedQueryKey: String {
+        appliedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var ongoing: [DownloadItem] {
-        downloads.items.filter {
-            ($0.status == .downloading || $0.status == .pending) && hit($0)
-        }
+    /// 全表过滤 + 排序的缓存（一帧只算一次，见 `DownloadsSearchCache`）
+    @State private var searchCache = DownloadsSearchCache()
+
+    private var lists: (ongoing: [DownloadItem], finished: [DownloadItem], failed: [DownloadItem]) {
+        searchCache.lists(items: downloads.items, revision: downloads.revision, query: appliedQueryKey)
     }
-    private var finished: [DownloadItem] {
-        // 2026-11-22（老板录屏）：新下载的放最上面。只倒序展示，不动落库顺序。
-        DownloadItem.newestFirst(downloads.items.filter { $0.status == .completed && hit($0) })
-    }
-    private var failed: [DownloadItem] {
-        DownloadItem.newestFirst(
-            downloads.items.filter { ($0.status == .failed || $0.status == .cancelled) && hit($0) })
-    }
+
+    private var ongoing: [DownloadItem] { lists.ongoing }
+    private var finished: [DownloadItem] { lists.finished }
+    private var failed: [DownloadItem] { lists.failed }
 
     private var totalBytes: Int64 {
         downloads.items.reduce(0) { $0 + $1.totalBytes }
@@ -194,10 +201,19 @@ struct DownloadsTabView: View {
             if downloads.items.isEmpty { selectMode = false }
         }
         // 换了搜索词就回到首帧行数（否则上一轮的"加载到 400 行"会带过来，白白多建行）
-        .onChange(of: queryKey) { _, _ in
+        .onChange(of: appliedQueryKey) { _, _ in
             visibleLimit = DownloadListPaging.firstFrame
             fillScheduled = false
             scheduleFill()
+        }
+        // 2026-11-22（老板：663 首时每敲一个字母就卡）：输入防抖 200ms。
+        // `query` 驱动输入框回显（必须实时），`appliedQuery` 才是过滤依据。
+        // `.task(id:)` 在 id 变化时自动取消上一拍——连着敲 5 个字母只筛 1 次。
+        .task(id: query) {
+            guard query != appliedQuery else { return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            appliedQuery = query
         }
         // 第 47 轮兜底：**行数一变就 arm**。
         // 以前 arm 只跟着 `fillStep` / `loadMore` 走，而 `revealRowForCurrentSong()`（「定位」）
@@ -618,7 +634,7 @@ struct DownloadsTabView: View {
                     .background(Capsule().fill(Tokens.Palette.paperElevated))
             }
             .buttonStyle(.press)
-            if !queryKey.isEmpty {
+            if !appliedQueryKey.isEmpty {
                 Text("搜索命中的歌里还有 \(paged.hidden) 首没显示，点上面继续加载")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -1225,6 +1241,69 @@ private struct FileStateDot: View {
 ///     观感就是"有的歌能改、有的歌不能"。改成显式按钮后不再依赖长按。
 ///   · **删除只留一个**。这里以前和 `ForEach` 里那份 `.swipeActions` 重复，一行滑出两个垃圾桶。
 ///   · 「歌曲信息」占删除键的**左边**（顺序在 `DownloadRowSwipe.trailingOrder` 里定义一次）。
+// MARK: - 下载页搜索缓存（2026-11-22：663 首时"每输入一个字母就卡"）
+
+/// 下载页「全表过滤 + 排序」的缓存：**同一帧只算一次**，并且每首歌的可搜索串只归一化一次。
+///
+/// 为什么必须有（老板："下载 tab 歌曲很多的时候，搜索没输入一个字母就开始卡"）：
+///   · `ongoing / finished / failed` 这三个 computed 在 body 里会被求值好几次
+///     （分页、表头文案、全选、arm、定位…），每一次都是"全表 N 首 × 4 个字段"的
+///     繁简映射 + 两次正则 + 再 filter 一遍 + 再 sort 一遍；
+///   · 敲一下键 = 把上面这套跑好几遍。663 首时就是几千次归一化，主线程直接被占住。
+/// 现在按 `(items 的 revision, 生效的搜索词)` 缓存整批结果，不匹配才重算；
+/// 每首歌的归一化串单独缓存（元数据被改过才重算），所以连续敲字只付 N 次 `contains`。
+///
+/// `revision` 由 `DownloadManager.items.didSet` 递增 —— 所以"下载完成"这种**条数不变**
+/// 的变更也会让缓存失效（只按 count 判会漏）。
+final class DownloadsSearchCache {
+
+    private var cacheKey = ""
+    private var ongoingItems: [DownloadItem] = []
+    private var finishedItems: [DownloadItem] = []
+    private var failedItems: [DownloadItem] = []
+    /// `item.id` → (签名, 可搜索串)；签名发现"这首歌的元数据被改过"
+    private var blobs: [UUID: (signature: String, blob: String)] = [:]
+
+    func lists(items: [DownloadItem], revision: Int, query: String)
+        -> (ongoing: [DownloadItem], finished: [DownloadItem], failed: [DownloadItem]) {
+        let key = "\(revision)|\(query)"
+        if key == cacheKey {
+            return (ongoingItems, finishedItems, failedItems)
+        }
+        let q = query.isEmpty ? "" : LibrarySearch.key(query)
+        var ongoing: [DownloadItem] = []
+        var finished: [DownloadItem] = []
+        var failed: [DownloadItem] = []
+        ongoing.reserveCapacity(8)
+        finished.reserveCapacity(items.count)
+        failed.reserveCapacity(8)
+        for item in items {
+            if !q.isEmpty, !LibrarySearch.matches(blob: blob(for: item), key: q) { continue }
+            switch item.status {
+            case .downloading, .pending: ongoing.append(item)
+            case .completed: finished.append(item)
+            case .failed, .cancelled: failed.append(item)
+            }
+        }
+        cacheKey = key
+        ongoingItems = ongoing
+        // 2026-11-22（老板录屏）：新下载的放最上面。只倒序展示，不动落库顺序。
+        finishedItems = DownloadItem.newestFirst(finished)
+        failedItems = DownloadItem.newestFirst(failed)
+        return (ongoingItems, finishedItems, failedItems)
+    }
+
+    /// 一首歌的可搜索串（缓存；元数据变了才重算）
+    func blob(for item: DownloadItem) -> String {
+        let signature = item.fileName + "\u{1}" + item.song.name + "\u{1}"
+            + item.song.singer + "\u{1}" + item.song.album
+        if let hit = blobs[item.id], hit.signature == signature { return hit.blob }
+        let blob = LibrarySearch.blob(song: item.song, fileName: item.fileName)
+        blobs[item.id] = (signature, blob)
+        return blob
+    }
+}
+
 private struct DownloadRowActions: ViewModifier {
 
     let itemID: UUID

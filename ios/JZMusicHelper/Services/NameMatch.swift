@@ -729,8 +729,32 @@ enum ImportGrabRules {
 // 归一化复用收藏那套（繁转简 + 去标点/空白），所以「後來」能搜出「后来」。
 enum LibrarySearch {
 
-    private static func key(_ s: String) -> String {
+    /// 归一化（繁转简 + 去括号/标点/空白 + 小写）。
+    ///
+    /// **对外公开**：搜索每敲一个字母只需要归一化一次**查询词**，
+    /// 而每首歌的四个字段只需要归一化一次（见 `blob`）。
+    static func key(_ s: String) -> String {
         FavoriteRules.titleKey(s)
+    }
+
+    /// 一首歌的"可搜索串"：歌名 / 歌手 / 专辑 / 文件名各归一化一次，用 U+0001 分隔。
+    ///
+    /// 为什么要有这一层（2026-11-22 老板：663 首时下载页搜索"每输入一个字母就开始卡"）：
+    /// `rank()` 是"每首歌 × 每个字段 × 每次求值"各归一化一次——663 首 4 个字段 ≈ 2650 次
+    /// 繁简映射 + 两次正则，而同一帧里这几个列表还要被求值好几遍。
+    /// 现在每首歌只算一次（调用方缓存），之后每敲一个字母只是 N 次 `contains`。
+    /// 用 U+0001 分隔是为了不让"歌手末尾 + 专辑开头"拼出一个查询词（误命中）。
+    static func blob(song: Song, fileName: String?) -> String {
+        var parts = [key(song.name), key(song.singer), key(song.album)]
+        if let fileName {
+            parts.append(key((fileName as NSString).deletingPathExtension))
+        }
+        return parts.joined(separator: "\u{1}")
+    }
+
+    /// 用**已经归一化**的串和查询词做匹配（`q` 必须是 `key(_:)` 的结果）。
+    static func matches(blob: String, key q: String) -> Bool {
+        !q.isEmpty && blob.contains(q)
     }
 
     /// 是否命中（空查询由调用方当作"全部"，这里返回 false）

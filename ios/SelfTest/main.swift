@@ -353,7 +353,34 @@ do {
             .finished.first?.song.name == "新歌")
 }
 
-// MARK: - 3.2.2 起播挑选：够档立刻起播，起播后不再换源（2026-11-22 开头卡顿）
+// MARK: - 3.2.2 下载页搜索：预归一化（2026-11-22 输入一个字母就卡）
+
+section("下载页搜索：预归一化")
+
+do {
+    let s1 = song(.qq, "後來", "劉若英", album: "我等你", dur: 300, id: "ls1")
+    let name = "01 - 劉若英 - 後來.flac"
+    let blob = LibrarySearch.blob(song: s1, fileName: name)
+    check("繁简：搜「后来」命中「後來」",
+          LibrarySearch.matches(blob: blob, key: LibrarySearch.key("后来")))
+    check("歌手字段能搜", LibrarySearch.matches(blob: blob, key: LibrarySearch.key("刘若英")))
+    check("专辑字段能搜", LibrarySearch.matches(blob: blob, key: LibrarySearch.key("我等你")))
+    check("文件名能搜（去扩展名）", LibrarySearch.matches(blob: blob, key: LibrarySearch.key("01")))
+    check("跨字段不误命中（歌手末尾 + 专辑开头）",
+          !LibrarySearch.matches(blob: blob, key: LibrarySearch.key("英我等")),
+          "blob=\(blob)")
+    check("空查询不算命中（调用方按「全部」处理）",
+          !LibrarySearch.matches(blob: blob, key: ""))
+    check("不存在的词不命中", !LibrarySearch.matches(blob: blob, key: LibrarySearch.key("晴天")))
+    // 与老口径（逐字段 rank）结论一致：命中/不命中不能变
+    for q in ["后来", "刘若英", "我等你", "01", "英我等", "晴天"] {
+        let old = LibrarySearch.matches(song: s1, fileName: name, query: q)
+        let new = LibrarySearch.matches(blob: blob, key: LibrarySearch.key(q))
+        check("与老口径同结论：\(q)", old == new, "old=\(old) new=\(new)")
+    }
+}
+
+// MARK: - 3.2.3 起播挑选：够档立刻起播，起播后不再换源（2026-11-22 开头卡顿）
 
 section("起播挑选：不再中途换源")
 
