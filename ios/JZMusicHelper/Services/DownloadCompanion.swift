@@ -1226,6 +1226,7 @@ enum DownloadCompanion {
             case .sidecarOnly: return "只在旁车"
             case .missing: return "没有封面"
             case .unsupported: return "容器不支持"
+            case .fileMissing: return "文件已不在"
             }
         }
     }

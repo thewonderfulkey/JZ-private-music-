@@ -1232,6 +1232,7 @@ private struct FileStateDot: View {
         case .sidecarOnly: return Color.secondary.opacity(0.55)
         case .missing: return Color.orange.opacity(0.9)
         case .unsupported: return Color.secondary.opacity(0.25)
+        case .fileMissing: return Color.red.opacity(0.85)
         }
     }
 }

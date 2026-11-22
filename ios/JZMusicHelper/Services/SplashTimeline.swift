@@ -50,23 +50,26 @@ enum SplashTimeline {
     // MARK: 各拍
 
     /// 头梁：扇形遮罩从 152° 扫到 385°，墨沿着头梁的方向长出来
-    static let bandDraw = Beat(start: 0.00, duration: 0.62)
+    static let bandDraw = Beat(start: 0.00, duration: 0.58)
     /// 左耳罩弹入（spring 0.40 / 0.72，落位时约 0.62s 后完全静止）
-    static let cupLeft = Beat(start: 0.34, duration: 0.62)
+    /// 2026-11-22 三改：0.34 → **0.30** —— 落笔尾巴（easeOut 收尾）本来就爬得慢，
+    /// 耳罩早 40ms 进来正好压住那段"只有头梁边缘在挪"的 2 帧。
+    static let cupLeft = Beat(start: 0.30, duration: 0.62)
     /// 右耳罩比左边晚 0.06s：两只同时落会像"啪"一下，错开才像"戴"
-    static let cupRight = Beat(start: 0.40, duration: 0.62)
-    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.66 → 1.20
-    static let sound = Beat(start: 0.66, duration: 0.54)
-    /// 第二道（更外圈）晚 0.14s 起：两拍错开，画面一直动到退场（1.10）接上
+    static let cupRight = Beat(start: 0.36, duration: 0.62)
+    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.60 → 1.20
+    static let sound = Beat(start: 0.60, duration: 0.60)
+    /// 第二道（更外圈）晚 0.14s 起：两拍错开，画面一直动到退场（1.04）接上
     static let soundSecond = Beat(start: 0.80, duration: 0.40)
     /// 图标轻顶（scale 1 → 1.045 → 1），拉满一整拍到 1.02s
     static let thump = Beat(start: 0.66, duration: 0.36)
-    /// 退场：纸底淡出、首页从 0.985 涨到 1。比旧版提前 0.20s，正好接住第二道声波
-    static let exit = Beat(start: 1.10, duration: 0.42)
+    /// 退场：纸底淡出、首页从 0.985 涨到 1。
+    /// 2026-11-22 三改：1.10 → **1.04**（声波还在 20% 透明度的时就起淡出，接掉"退场前那 2 帧"）
+    static let exit = Beat(start: 1.04, duration: 0.42)
     /// 图标比纸底先走一步：不留一枚淡影压在新出现的封面上
-    static let markFade = Beat(start: 1.10, duration: 0.28)
+    static let markFade = Beat(start: 1.04, duration: 0.28)
     /// 首页内容淡入（与退场交叉，不是等黑屏再出来）
-    static let contentIn = Beat(start: 1.16, duration: 0.36)
+    static let contentIn = Beat(start: 1.10, duration: 0.36)
 
     // MARK: 总长
 

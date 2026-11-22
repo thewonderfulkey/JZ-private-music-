@@ -67,6 +67,11 @@ enum SongFileState: String, Codable {
     case missing
     /// 这个容器写不了标签（wav / ape / ogg…），只能靠旁车
     case unsupported
+    /// 记录还在、**音频文件已经不在了**（整理重复/手动删/搬运失败）。
+    ///
+    /// 2026-11-22：以前这种条目既没有对齐结果、也不会被写回，行上只剩一个说不清的灰点，
+    /// 老板的观感是"这首歌一直是灰色，重新写回也没用"。现在单列出来，行上直接写"文件已不在"。
+    case fileMissing
 }
 
 /// 单个字段在**文件里**的状态（第 52 轮：老板 2026-11-22 说"有些歌词没内嵌成功、有些没专辑，
@@ -193,7 +198,11 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var fileMissing: Bool?
 
     /// 圆点用：由逐字段结论推出来（只是"懒得跑检查"时的兜底，不存盘）
-    var fileState: SongFileState? { fileTruth?.state }
+    /// 界面上的状态：文件已不在 > 容器写不了 > 没对齐明细
+    var fileState: SongFileState? {
+        if fileMissing == true { return .fileMissing }
+        return fileTruth?.state
+    }
 
     init(id: UUID = UUID(),
          song: Song,

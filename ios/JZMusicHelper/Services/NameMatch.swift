@@ -805,6 +805,9 @@ enum DuplicateSweep {
         var merged: Int = 0
         /// 预计释放的字节（各 loser 的 totalBytes 之和）
         var freedBytes: Int64 = 0
+        /// 被并走的条目 → 留下来的那条（2026-11-22：收藏/最近播放/队列里还留着被删那条的
+        /// `Song.id`，播放时按 id 找不到本地文件 → 每次都重新联网取流，就是"《英雄》要等 1-2 秒"）
+        var winnerOf: [UUID: UUID] = [:]
         var isEmpty: Bool { losers.isEmpty }
     }
 
@@ -867,10 +870,12 @@ enum DuplicateSweep {
             let existing = items[kept[pos]]
             if kbps(existing) >= kbps(item) {
                 plan.losers.append(item.id)
+                plan.winnerOf[item.id] = existing.id
                 plan.freedBytes += item.totalBytes
             } else {
                 // 新的更好：旧的进 losers，保留位置换成新的（桶归属跟着改）
                 plan.losers.append(existing.id)
+                plan.winnerOf[existing.id] = item.id
                 plan.freedBytes += existing.totalBytes
                 let oldKey = bucketKey(existing.song.duration)
                 let newKey = bucketKey(item.song.duration)
@@ -880,6 +885,17 @@ enum DuplicateSweep {
                     if let newKey { buckets[newKey, default: []].append(pos) } else { unknownKept.append(pos) }
                 }
             }
+        }
+        // 链式归并：A 被 B 并、B 后来又被 C 并 → A 与 B 都算到 C 头上
+        let loserSet = Set(plan.losers)
+        for loser in plan.losers {
+            var target = plan.winnerOf[loser]
+            var guardCount = 0
+            while let t = target, loserSet.contains(t), let next = plan.winnerOf[t], guardCount < 8 {
+                target = next
+                guardCount += 1
+            }
+            if let t = target { plan.winnerOf[loser] = t }
         }
         return plan
     }

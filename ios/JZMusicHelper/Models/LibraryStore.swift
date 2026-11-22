@@ -243,6 +243,41 @@ final class LibraryStore {
         return docs.appendingPathComponent(name)
     }
 
+    /// 整理重复之后：把收藏 / 最近播放 / 识曲历史里指向"被并走那条"的引用换成幸存那条。
+    ///
+    /// 2026-11-22（老板："《英雄》被去重之后每次播放加载都要 1-2 秒，本地下载的歌不该这么久"）：
+    /// `DownloadManager.dedupeSameRecording` 只删了下载记录，列表里还留着被删那条的 `Song.id` ——
+    /// 播放时按 id 找不到本地文件，就回落到联网取流，这 1-2 秒就是这么来的。
+    func remapDedupedSongs(_ map: [String: Song]) {
+        guard !map.isEmpty else { return }
+        var changed = false
+
+        func mapped(_ list: [Song]) -> [Song] {
+            var out: [Song] = []
+            var seen = Set<String>()
+            out.reserveCapacity(list.count)
+            for song in list {
+                let next = map[song.id] ?? song
+                if next.id != song.id { changed = true }
+                if seen.insert(next.id).inserted {
+                    out.append(next)
+                } else {
+                    changed = true      // 换成幸存那条后与已有行重复：并成一行
+                }
+            }
+            return out
+        }
+
+        favorites = mapped(favorites)
+        recentSongs = mapped(recentSongs)
+        recognizeHistory = mapped(recognizeHistory)
+        guard changed else { return }
+        favoriteMatchCache.removeAll()
+        save(favorites, to: favoritesURL)
+        save(recentSongs, to: recentURL)
+        save(recognizeHistory, to: recognizeURL)
+    }
+
     private func save<T: Encodable>(_ value: T, to url: URL) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: url, options: .atomic)

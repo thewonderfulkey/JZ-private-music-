@@ -587,6 +587,14 @@ do {
     let tie = DuplicateSweep.plan([firstSame, secondSame])
     check("kbps 相同：保留先出现的那条",
           tie.losers == [secondSame.id], "losers=\(tie.losers)")
+    // 2026-11-22（老板："《英雄》被去重之后每次播放加载都要 1-2 秒"）：
+    // 每个 loser 都必须能追到它被并进的那条（收藏/最近播放按这个映射改引用，否则
+    // 播放时按 song.id 找不到本地文件，就会回落联网取流）。
+    check("每个被并走的条目都记下了幸存那条",
+          plan.losers.allSatisfy { plan.winnerOf[$0] == hi.id },
+          "winnerOf=\(plan.winnerOf.count)")
+    check("幸存那条不许落在被删名单里（链式归并要展开到最终那条）",
+          plan.losers.allSatisfy { !plan.losers.contains(plan.winnerOf[$0] ?? hi.id) })
 
     // 规模口径：600 首跑完且不误合并。
     // 注意：歌名/歌手都要**互不相干**、时长两两相差 >4s —— 否则按项目自己的「同一条录音」口径

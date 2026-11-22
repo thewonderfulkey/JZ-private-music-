@@ -2458,9 +2458,38 @@ extension DownloadManager {
         // 这些路径只删记录、不删文件。
         let survivorPaths = Set(items.filter { !loserIDs.contains($0.id) }
             .compactMap { $0.localPath }.filter { !$0.isEmpty })
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        // 2026-11-22 第二轮（老板："《英雄》被去重之后每次播放都要 1-2 秒"）：
+        // **幸存那条自己没文件、而被并走那条有文件** —— 删了 loser 的文件世上就没有这份音频了，
+        // 记录还在，于是每次播放都回落到联网取流。把 loser 的文件**接管**给 winner（只改指针），跳过删除。
+        var handedOver: Set<UUID> = []
+        var songRemap: [String: Song] = [:]
+        for (loserID, winnerID) in plan.winnerOf {
+            guard loserIDs.contains(loserID), let li = byID[loserID] else { continue }
+            if let wi = byID[winnerID], wi.song.id != li.song.id {
+                songRemap[li.song.id] = wi.song
+            }
+            guard let lp = li.localPath, !lp.isEmpty,
+                  FileManager.default.fileExists(atPath: lp),
+                  let wIdx = items.firstIndex(where: { $0.id == winnerID }) else { continue }
+            let winnerHasFile = items[wIdx].localPath
+                .map { FileManager.default.fileExists(atPath: $0) } ?? false
+            if !winnerHasFile {
+                items[wIdx].localPath = lp
+                items[wIdx].fileName = li.fileName
+                items[wIdx].totalBytes = li.totalBytes
+                items[wIdx].quality = li.quality
+                items[wIdx].fileMissing = false
+                handedOver.insert(loserID)
+                CrashReporter.logMetadata("dedupe | 文件接管给幸存那条 "
+                                          + URL(fileURLWithPath: lp).lastPathComponent)
+            }
+        }
         var freed: Int64 = 0
         for item in items where loserIDs.contains(item.id) {
-            if let path = item.localPath, survivorPaths.contains(path) {
+            if handedOver.contains(item.id) {
+                cancelCompanion(item.id)
+            } else if let path = item.localPath, survivorPaths.contains(path) {
                 CrashReporter.logMetadata("dedupe | 保留共用文件 \(URL(fileURLWithPath: path).lastPathComponent)")
                 cancelCompanion(item.id)
             } else {
@@ -2471,7 +2500,11 @@ extension DownloadManager {
         items.removeAll { loserIDs.contains($0.id) }
         markDirectoryCacheDirty()
         flushPersist()
+        // 收藏 / 最近播放 / 识曲历史里若还留着被并走那条的 `Song.id`，播放时按 id 找不到
+        // 本地文件 → 每次都要 1-2 秒联网取流。这里换成幸存那条（文件、封面、音质都跟着对）。
+        LibraryStore.shared.remapDedupedSongs(songRemap)
         CrashReporter.logMetadata("dedupe | 合并 \(plan.merged) 组 · 删 \(plan.losers.count) 条 · "
+                                  + "接管文件 \(handedOver.count) 条 · 改引用 \(songRemap.count) 条 · "
                                   + "释放 \(freed / 1_048_576) MB")
         return (plan.merged, freed)
     }
