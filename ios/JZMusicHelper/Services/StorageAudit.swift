@@ -118,7 +118,8 @@ enum StorageAudit {
             report.stagingBytes = stagingCount.bytes
             report.stagingPath = staging.path
 
-            // ③ 孤儿音频：Music 里没有记录认领的            let referenced = StorageAuditRules.referencedNames(items)
+            // ③ 孤儿音频：Music 里没有记录认领的
+            let referenced = StorageAuditRules.referencedNames(items)
             if let files = try? fm.contentsOfDirectory(at: music, includingPropertiesForKeys: nil,
                                                        options: []) {
                 for url in files where StorageAuditRules.isOrphan(fileName: url.lastPathComponent,
@@ -201,7 +202,8 @@ enum StorageAudit {
         return max(0, before - countFiles(trash).bytes)
     }
 
-    /// 清空导入暂存（只删这个目录里的东西，不动别的）    @discardableResult
+    /// 清空导入暂存（只删这个目录里的东西，不动别的）
+    @discardableResult
     static func clearStaging() -> Int64 {
         let dir = DownloadManager.importStagingDirectory()
         let before = countFiles(dir).bytes
