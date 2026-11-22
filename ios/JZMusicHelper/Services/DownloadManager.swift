@@ -951,9 +951,13 @@ final class DownloadManager: NSObject, ObservableObject {
                                                 lyricsDirectory: lyricsDirectory,
                                                 coverDirectory: coverDirectory)
             if AudioTagEmbedder.canWriteTags(fileURL: audioURL) {
-                var fields = DownloadCompanion.ID3Tags.Fields()
-                fields.lyrics = text   // 其它字段留空 = 不动（口径：空值不是"清空"）
-                _ = await AudioTagEmbedder.writeTags(fileURL: audioURL, fields: fields)
+                // 关键：不能只传 lyrics —— `FlacTags` / `ID3Tags` 会把 TITLE/ARTIST/ALBUM
+                // 从旧标签里剔掉再按传入值重写，只传词就等于把歌名/歌手/专辑删了。
+                // 先把文件里现有的一套读出来，只改 lyrics 这一项。
+                if var fields = await AudioTagEmbedder.readFields(fileURL: audioURL) {
+                    fields.lyrics = text
+                    _ = await AudioTagEmbedder.writeTags(fileURL: audioURL, fields: fields)
+                }
             }
             markDirectoryCacheDirty()
         }

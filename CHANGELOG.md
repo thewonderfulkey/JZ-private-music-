@@ -1,3 +1,16 @@
+## iOS v2.4.68（246）· 2026-11-22 14:45（v2.4.67 的止损：只补词不能把歌名/歌手/专辑删了）
+
+v2.4.67 的 `fillLyricsOnly` 里犯了一个会伤文件的错：`writeTags` 传了**只有 lyrics 的 Fields**。
+可 `FlacTags.rewritingMetadata` / `ID3Tags` 的做法是"把 TITLE/ARTIST/ALBUM/UNSYNCEDLYRICS
+从旧标签里剔掉，再按传入值重写"——只传词，等于把歌名/歌手/专辑从 FLAC 文件里删掉。
+
+修法：先 `readFields` 把文件里**现有那一套**读出来，只改 `lyrics` 一项再写回。
+`ios/SelfTest` 已有"不许顺手删别的帧/别的 Vorbis 键"的断言，这一版不新增，靠它兜住。
+
+**v2.4.67（r184）作废，请装 v2.4.68（r185）。**
+
+---
+
 ## iOS v2.4.67（245）· 2026-11-22 14:37（643 之后还差 19 首：`file-first` 把"没词"也当完整跳过了）
 
 老板 14:37 的截屏：`Cover 662 · Lyrics 643 · Music 662`（638 → **+5**），14:37 的 `诊断.zip` 里
