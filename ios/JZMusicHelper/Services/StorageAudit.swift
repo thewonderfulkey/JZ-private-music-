@@ -58,10 +58,22 @@ struct StorageAuditReport {
     var orphanBytes: Int64 { orphans.reduce(0) { $0 + $1.bytes } }
     var tempBytes: Int64 { tempArtifacts.reduce(0) { $0 + $1.bytes } }
 
-    /// 容器里所有分区的合计（约等于 iOS「设置」里看到的那个数）
-    var totalBytes: Int64 { sections.reduce(0) { $0 + $1.bytes } }
+    /// 容器里所有分区的合计（约等于 iOS「设置」里看到的那个数）。
+    /// 导入暂存不单列成一行（界面里有它自己那节），但字节要算进来，否则总数会偏小。
+    var totalBytes: Int64 { sections.reduce(0) { $0 + $1.bytes } + stagingBytes }
 
-    /// 比"记录合计"多出来的部分 —— 就是老板找不到的那一坨
+    /// **音频**（`Music/` 里那些歌本身）合计 —— 只有这一块应该和"记录合计"对得上
+    var audioBytes: Int64 = 0
+    var audioFiles: Int = 0
+
+    /// 旁车与其它 = 磁盘合计 − 音频合计：封面、歌词、配置 json、诊断日志、Library 缓存、tmp。
+    /// 2026-11-22 第二次对账：这 232 MB 全在这一格里，全是**正常开销**，不是垃圾。
+    var overheadBytes: Int64 { max(0, totalBytes - audioBytes) }
+
+    /// 真正要警惕的只有这一条：**音频比记录多**（说明 Music 里有没人认领的歌）。
+    var audioWasteBytes: Int64 { max(0, audioBytes - libraryBytes) }
+
+    /// 旧口径（保留给文案）：磁盘比记录多出来的全部
     var wasteBytes: Int64 { max(0, totalBytes - libraryBytes) }
 }
 
@@ -80,16 +92,35 @@ enum StorageAudit {
             let root = DownloadLocation.currentDirectory()
             let staging = DownloadManager.importStagingDirectory()
 
-            // ① 分区：Documents 下每个一级目录 + 根目录散文件 + Library + tmp
+            // ① 分区：**先把三块拆开**（音频 / 封面 / 歌词），再算下载根里剩下的散落。
+            //
+            // 2026-11-22 第二次对账（老板："清完还剩 232.9 MB 既不是缓存也不是 trash"）：
+            // 旧口径把"整个下载目录"当成音频去和记录比，于是封面/歌词旁车也被算成"未认领"；
+            // 再加 Library（缓存/数据库）、配置 json、诊断日志，232 MB 全在里面 —— 全是正常开销。
+            // 现在只让 **音频 vs 记录** 对账，其余单列"旁车与其它"。
             var seen = Set<String>()
-            func addSection(_ title: String, _ url: URL) {
+            @discardableResult
+            func addSection(_ title: String, _ url: URL) -> (Int64, Int) {
                 let path = url.standardizedFileURL.path
-                guard seen.insert(path).inserted else { return }
+                guard seen.insert(path).inserted else { return (0, 0) }
                 let (bytes, files) = measure(url)
                 report.sections.append(.init(id: path, title: title, bytes: bytes, files: files))
+                return (bytes, files)
             }
 
-            addSection("歌曲（\(root.lastPathComponent)）", root)
+            let lyrics = DownloadLocation.lyricsDirectory()
+            let covers = DownloadLocation.coverDirectory()
+            let (rootTotal, _) = measure(root)
+            let audio = addSection("音频（Music）", music)
+            report.audioBytes = audio.0
+            report.audioFiles = audio.1
+            let cover = addSection("封面（Cover）", covers)
+            let lyric = addSection("歌词（Lyrics）", lyrics)
+            let restOfRoot = max(0, rootTotal - audio.0 - cover.0 - lyric.0)
+            if restOfRoot > 1_000_000 {
+                report.sections.append(.init(id: root.path + "#rest", title: "下载目录里其它文件",
+                                             bytes: restOfRoot, files: 0))
+            }
             // 根目录里散落的东西也算进来，别"看不见就当没有"
             if let loose = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: [.isDirectoryKey],
                                                        options: []) {

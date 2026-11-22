@@ -130,12 +130,15 @@ struct StorageAuditSheet: View {
     private func summarySection(_ r: StorageAuditReport) -> some View {
         Section {
             row("磁盘合计（约等于「设置」里那个数）", ByteText.human(r.totalBytes), strong: true)
+            row("音频合计（Music 里 \(r.audioFiles) 个文件）", ByteText.human(r.audioBytes))
             row("记录合计（\(r.libraryCount) 首）", ByteText.human(r.libraryBytes))
-            row("没被记录认领（多出来的）", ByteText.human(r.wasteBytes),
-                warn: r.wasteBytes > 200_000_000)
+            row("音频 − 记录", ByteText.human(r.audioWasteBytes),
+                warn: r.audioWasteBytes > 50_000_000)
+            row("旁车与其它（封面/歌词/配置/日志/缓存/临时）", ByteText.human(r.overheadBytes))
         } footer: {
-            Text("「没被记录认领」= 磁盘合计 − 记录合计。这一块就是「设置」里看着多了、但列表里找不到的那部分："
-                 + "导入暂存、写标签的隐藏临时文件、以及 Music 里没人认领的旧副本。下面三节分别列出来。")
+            Text("只有「音频 − 记录」这一条该警惕（>0 = Music 里有没人认领的歌，下面「孤儿音频」会列出来）。"
+                 + "「旁车与其它」是**正常开销**：每首歌的封面图 + 歌词文件、配置 json、诊断日志、"
+                 + "系统缓存（Library）。清掉缓存会自己重建，不算垃圾。")
         }
     }
 
@@ -312,8 +315,11 @@ struct StorageAuditSheet: View {
     private func copyReport() {
         guard let r = report else { return }
         var lines: [String] = ["【存储自检】\(Date())"]
-        lines.append("磁盘合计 \(ByteText.human(r.totalBytes)) · 记录 \(r.libraryCount) 首 "
-                     + "\(ByteText.human(r.libraryBytes)) · 未被认领 \(ByteText.human(r.wasteBytes))")
+        lines.append("磁盘合计 \(ByteText.human(r.totalBytes)) · 音频 \(r.audioFiles) 个 "
+                     + "\(ByteText.human(r.audioBytes)) · 记录 \(r.libraryCount) 首 "
+                     + "\(ByteText.human(r.libraryBytes))")
+        lines.append("音频−记录 \(ByteText.human(r.audioWasteBytes)) · 旁车与其它 "
+                     + "\(ByteText.human(r.overheadBytes))")
         lines.append("— 按目录 —")
         for s in r.sections {
             lines.append("\(s.title)：\(ByteText.human(s.bytes))（\(s.files) 个文件）")
