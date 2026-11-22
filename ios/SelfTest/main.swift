@@ -13,6 +13,7 @@
 //   /tmp/jz-selftest
 
 import Foundation
+import Observation
 
 // MARK: - 断言小工具
 
@@ -5531,6 +5532,80 @@ do {
                                            candidates: [(title: "溺火 (Vocal Version)", durationSec: 195)]))
     check("音源时长未知 → 不判纯音乐",
           !LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 0, candidates: candidates))
+}
+
+// MARK: - 收藏爱心的观测契约（v2.4.86）
+//
+// 2026-11-23 老板："在热门音乐点查看全部后点收藏，爱心只是抖一下、不会被真正标记，
+// 但收藏确实成功了。" 真因是**视图丢了对 `favorites` 的订阅**（不是收藏逻辑）：
+// `isFavorite` 有一张非观察的判定缓存，命中时一个可观察属性都不读就 return，
+// 而 `@Observable` 只按"这次 body 求值里读过哪些属性"订阅 → 那一行再也不重画。
+// 下面的探针把这条语义钉死：旧写法必须收不到通知（就是那个 bug），新写法必须收到。
+
+/// 复刻 `LibraryStore.isFavorite` 的两种写法（缓存 + 可观察的收藏表）
+@Observable
+final class HeartObservationProbe {
+    var favorites: [String] = []
+    @ObservationIgnored var cache: [String: Bool] = [:]
+
+    /// v2.4.85 及以前：命中缓存就直接返回，一个可观察属性都不读
+    func isFavoriteLegacy(_ id: String) -> Bool {
+        if let hit = cache[id] { return hit }
+        let hit = favorites.contains(id)
+        cache[id] = hit
+        return hit
+    }
+
+    /// v2.4.86 起：收藏数量作为参数交给 `FavoriteObservation`（读是结构性的）
+    func isFavoriteFixed(_ id: String) -> Bool {
+        if let hit = FavoriteObservation.cached(cache[id], favoritesCount: favorites.count) {
+            return hit
+        }
+        let hit = favorites.contains(id)
+        cache[id] = hit
+        return hit
+    }
+
+    func add(_ id: String) {
+        favorites.append(id)
+        cache.removeAll()
+    }
+}
+
+/// 计数盒子：避免在 `onChange`（逃逸闭包）里改捕获的 var
+final class ObservationFlag { var fired = 0 }
+
+/// 模拟"一帧 body 求值 + 之后数据变了"：返回视图会不会被通知重绘
+func observationProbe(_ body: @escaping () -> Void, mutate: () -> Void) -> Int {
+    let flag = ObservationFlag()
+    withObservationTracking(body, onChange: { flag.fired += 1 })
+    mutate()
+    return flag.fired
+}
+
+section("收藏爱心的观测契约（v2.4.86）：命中缓存也要订阅得到 favorites")
+
+do {
+    let legacy = HeartObservationProbe()
+    _ = legacy.isFavoriteLegacy("a")            // 冷：读了 favorites
+    _ = legacy.isFavoriteLegacy("a")            // 热：命中缓存
+    check("旧写法：缓存热起来后点收藏，视图收不到通知（老板看到的「爱心不动」）",
+          observationProbe({ _ = legacy.isFavoriteLegacy("a") },
+                           mutate: { legacy.add("a") }) == 0)
+
+    let fixed = HeartObservationProbe()
+    _ = fixed.isFavoriteFixed("a")
+    _ = fixed.isFavoriteFixed("a")
+    check("新写法：命中缓存后点收藏，视图会被通知重绘（爱心会变红）",
+          observationProbe({ _ = fixed.isFavoriteFixed("a") },
+                           mutate: { fixed.add("a") }) > 0)
+
+    check("判定器：收藏为空时不采信缓存（交回现算）",
+          FavoriteObservation.cached(true, favoritesCount: 0) == nil)
+    check("判定器：有收藏 + 命中缓存 → 采用缓存答案",
+          FavoriteObservation.cached(true, favoritesCount: 3) == true)
+    check("判定器：有收藏 + 没命中 → 现算",
+          FavoriteObservation.cached(nil, favoritesCount: 3) == nil)
 }
 
 // MARK: - 汇总

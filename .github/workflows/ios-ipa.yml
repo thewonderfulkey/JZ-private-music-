@@ -49,6 +49,11 @@ jobs:
       - name: 检查界面卫生（硬编码字号 / 固定行高）
         run: python3 tools/ios/check_ui_hygiene.py
 
+      # 2026-11-23：老板「点爱心只抖一下、不变红，但收藏真成功了」——视图丢了对
+      # `favorites` 的订阅（命中判定缓存就 return，一个可观察属性都没读）。
+      - name: 检查收藏爱心的观测契约
+        run: python3 tools/ios/check_favorite_heart.py
+
       - name: 编译网络层 + 跑断言
         run: |
           set -euo pipefail

@@ -230,6 +230,30 @@ enum NameMatch {
 //
 // 纯逻辑放在这里（而不是新建文件）是刻意的：新增 .swift 要同时改 pbxproj、CI 编译清单、
 // 本地 run-selftest.sh 三处，漏一处就是"本地过了 CI 挂"。
+//
+// MARK: - 收藏判定的「观测契约」（v2.4.86）
+//
+// 老板 2026-11-23："点爱心只是抖一下，不会真的标记，但收藏确实成功了。"
+// 真因不是收藏逻辑，是**视图丢了对 `favorites` 的订阅**：`@Observable` 的订阅粒度是
+// 「这次 body 求值里到底读过哪些属性」。`LibraryStore.isFavorite` 为了性能挂了一张
+// 非观察的判定缓存，命中时一个属性都不读就直接 return —— 于是那些**只靠 `isFavorite`
+// 拿爱心状态**的行（榜单查看全部 / 搜索 / 艺人页 / 歌单详情 / 最新单曲 / 我的歌单）
+// 悄悄丢了订阅：数据变了，界面不重画。收藏页因为直接读 `favorites`，所以一直是好的。
+//
+// 修法：把「读到的收藏数量」做成**参数**传进来。读取因此是结构性的（不是靠注释提醒），
+// 也顺手挡住"`_ = favorites` 被编译器优化掉"这条路。
+enum FavoriteObservation {
+
+    /// 命中缓存时可以采用的答案；没命中（或收藏是空的）返回 nil，交给调用方现算。
+    ///
+    /// `favoritesCount` **必须**来自 `favorites.count` 的真实读取 —— 它的唯一作用就是
+    /// 让"判定收藏"这件事在 SwiftUI 眼里算"读过收藏"（`ios/SelfTest` 有断言钉住这条语义）。
+    static func cached(_ answer: Bool?, favoritesCount: Int) -> Bool? {
+        guard favoritesCount > 0 else { return nil }
+        return answer
+    }
+}
+
 enum FavoriteRules {
 
     /// 同一条录音？（**对称**口径，专用于收藏）

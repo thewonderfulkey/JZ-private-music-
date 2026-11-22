@@ -86,7 +86,18 @@ final class LibraryStore {
     }
 
     func isFavorite(_ song: Song) -> Bool {
-        if let hit = favoriteMatchCache[song.id] { return hit }
+        // ① **先无条件读一次 `favorites`**（数量交给判定器当参数用，不是可选步骤）。
+        //
+        // 2026-11-23 老板："点爱心只是抖一下、不会真的标记，但收藏确实成功了。"
+        // 以前这里命中缓存就直接 return，一个可观察属性都没读 —— `@Observable` 的订阅只看
+        // "这次 body 求值里读过哪些属性"，于是只在 body 里调 `isFavorite` 的行
+        // （榜单查看全部 / 搜索 / 艺人页 / 歌单 / 最新单曲 / 我的歌单）**悄悄丢了订阅**：
+        // 收藏真的加成/取消了，爱心却一动不动。收藏页直接读 `favorites`，所以从来没坏过。
+        // 口径写在 `FavoriteObservation`（CI 有断言 + 源码闸门）。
+        if let hit = FavoriteObservation.cached(favoriteMatchCache[song.id],
+                                                favoritesCount: favorites.count) {
+            return hit
+        }
         var hit = FavoriteRules.duplicateIndex(of: song, in: favorites) != nil
         if !hit {
             // 文件级合并留下的别名：标题不同、但确认是同一个文件的那两首
