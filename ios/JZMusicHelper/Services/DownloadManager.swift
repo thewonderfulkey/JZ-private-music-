@@ -154,12 +154,27 @@ final class DownloadManager: NSObject, ObservableObject {
         backgroundSession = URLSession(configuration: bgConfig, delegate: self, delegateQueue: nil)
 
         loadPersisted()
-        // 第 44 轮：断点续抓 —— 上次没补完（被杀进程 / 切后台 / 网络断了）的条目接着补。
-        // 只捡"有状态记录且没跑完"的，不会把 662 首全库重新搜一遍（那是批量补全入口的事）。
-        DispatchQueue.main.async { [weak self] in self?.resumeCompanionBackfill() }
-        // 第四十轮补丁 4：把旧版 `Documents/Music` 里的文件搬进新的三个子目录，搬空后删掉这个文件夹
-        // （老板："后台文件既然全都存在 Downloads 中了，为什么还留着 Music 文件夹，可以删了"）
-        migrateLegacyMusicFolderIfNeeded()
+        // 2026-11-22（老板："开屏动画总是卡一下，新包第一次更严重"）：
+        // 下面两件事原来都在 `init` 里同步跑 —— 而 `init` 发生在**第一帧之前**，
+        // 它们一慢，开屏动画的第一拍就没了。现在都推到开屏之后：
+        //   · `migrateLegacyMusicFolderIfNeeded`：枚举 Documents + 逐文件 move；
+        //   · `resumeCompanionBackfill`：把上次没补完的条目排进补料队列。
+        scheduleLaunchMaintenance()
+    }
+
+    /// 开屏之后再做的启动维护（2026-11-22）
+    ///
+    /// 为什么要等：`JZMusicHelperApp.init` → `DownloadManager.shared` 这一段全在第一帧之前，
+    /// 任何文件枚举/迁移/队列扫描都会直接吃掉开屏动画的前几百毫秒。
+    /// 老板的观感就是"开屏先黑一下、然后动画一顿一顿"。
+    private func scheduleLaunchMaintenance() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self else { return }
+            self.migrateLegacyMusicFolderIfNeeded()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.resumeCompanionBackfill()
+        }
     }
 
     // MARK: - 旧版目录迁移
@@ -1216,11 +1231,21 @@ final class DownloadManager: NSObject, ObservableObject {
 
     // MARK: - 持久化
 
+    /// 读盘。
+    ///
+    /// 2026-11-22（老板："开屏动画总是卡一下，新包第一次更严重"）：`downloads.json` 有近 1 MB、
+    /// 664 条记录，解码放在第一帧之前会直接吃掉开屏动画的起步。现在解码挪到后台，
+    /// 解完再回主线程发布（这期间列表是空的，正好被开屏挡着）。
     private func loadPersisted() {
-        guard let data = try? Data(contentsOf: recordsURL),
-              let saved = try? JSONDecoder().decode([DownloadItem].self, from: data)
-        else { return }
-        items = saved
+        guard let data = try? Data(contentsOf: recordsURL) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let saved = try? JSONDecoder().decode([DownloadItem].self, from: data) else { return }
+            await MainActor.run {
+                // 解码期间可能已经有新下载进来了（极少）：那就别拿旧快照盖掉
+                guard let self, self.items.isEmpty else { return }
+                self.items = saved
+            }
+        }
     }
 
     /// 落盘：JSON 编码 + 写盘都丢到后台串行队列（2026-11-21 老板："导入的时候会卡一下"）
@@ -2427,9 +2452,20 @@ extension DownloadManager {
     /// 把整理结果落到磁盘与列表（**一次性**：一批文件、一次 items 变更、一次落库）
     private func applyDedupe(_ plan: DuplicateSweep.Plan) -> (merged: Int, freedBytes: Int64) {
         let loserIDs = Set(plan.losers)
+        // 2026-11-22（老板："合并前写回过一次，合并后文件没了，之后总报一首写回失败"）：
+        // 如果某条记录和目标记录指向**同一个文件**（同一份文件被导两次、只是 song.id 不同），
+        // 删 loser 的文件会把 winner 的文件一起删掉。所以先把"还有幸存记录在用"的路径记下来，
+        // 这些路径只删记录、不删文件。
+        let survivorPaths = Set(items.filter { !loserIDs.contains($0.id) }
+            .compactMap { $0.localPath }.filter { !$0.isEmpty })
         var freed: Int64 = 0
         for item in items where loserIDs.contains(item.id) {
-            deleteFiles(of: item)
+            if let path = item.localPath, survivorPaths.contains(path) {
+                CrashReporter.logMetadata("dedupe | 保留共用文件 \(URL(fileURLWithPath: path).lastPathComponent)")
+                cancelCompanion(item.id)
+            } else {
+                deleteFiles(of: item)
+            }
             freed += item.totalBytes
         }
         items.removeAll { loserIDs.contains($0.id) }
@@ -2719,6 +2755,8 @@ extension DownloadManager {
         var unsupported = 0
         var failed = 0
         var cancelled = false
+        /// 记录还在、本地文件已经不在的（合并重复/手动删掉留下的死记录）——**不算失败**
+        var fileMissing = 0
         /// 没对齐的明细（一首一行）
         var issues: [SongInfoIssue] = []
 
@@ -2737,6 +2775,10 @@ extension DownloadManager {
         /// 给弹窗用的一句补充（只有真有问题才提）
         var note: String? {
             var lines: [String] = []
+            if fileMissing > 0 {
+                lines.append("有 \(fileMissing) 首的记录还在、本地文件已经不在了（多半是整理重复或手动删掉后留下的旧记录）"
+                             + " —— 已跳过，不再算失败，也不会每次都提示。")
+            }
             if empty > 0 {
                 lines.append("没信息可写 \(empty) 首：既没有本地封面，也没取到在线封面（歌名/歌手仍会写入）。")
             }
@@ -2764,6 +2806,8 @@ extension DownloadManager {
         var reason: String?
         /// "容器=flac ext=.flac（扩展名不符）" —— 逐首日志里带上，下次一看就知道是不是假扩展名
         var container: String = ""
+        /// 文件已经不在本地了（合并重复 / 手动删掉留下的死记录）：**不算失败，也不再天天报**
+        var fileMissing: Bool = false
     }
 
     /// 一次性把全部已完成（下载 / 导入）的歌写回。返回要处理的条数（0 = 没有可处理的）。
@@ -2817,7 +2861,7 @@ extension DownloadManager {
             // 2026-11-22：**逐首的状态先攒着，最后一次性写回列表**。
             // 旧写法每首都在主线程改一次 `items` → `items.didSet` 会把全表缓存签名重算一遍、
             // 再喊行状态表重建；664 首 = 664 次全表扫 → 下载页跟 PPT 一样。
-            var collected: [(UUID, SongFileTruth)] = []
+            var collected: [(UUID, SongFileTruth, Bool)] = []
             collected.reserveCapacity(targets.count)
             var lastProgressAt = Date.distantPast
             while start < targets.count {
@@ -2839,16 +2883,21 @@ extension DownloadManager {
                     }
                     for await result in group {
                         done += 1
-                        switch result.kind {
-                        case .replaced: report.replaced += 1
-                        case .added: report.added += 1
-                        case .already: report.already += 1
-                        case .empty: report.empty += 1
-                        case .unsupported: report.unsupported += 1
-                        case .failed: report.failed += 1
-                        case .cancelled: report.cancelled = true
+                        if result.fileMissing {
+                            // 记录还在、文件没了：单独计数，**不进未对齐名单**（不然每次都提示一遍）
+                            report.fileMissing += 1
+                        } else {
+                            switch result.kind {
+                            case .replaced: report.replaced += 1
+                            case .added: report.added += 1
+                            case .already: report.already += 1
+                            case .empty: report.empty += 1
+                            case .unsupported: report.unsupported += 1
+                            case .failed: report.failed += 1
+                            case .cancelled: report.cancelled = true
+                            }
                         }
-                        if !result.truth.isAligned || result.kind == .failed {
+                        if !result.fileMissing, !result.truth.isAligned || result.kind == .failed {
                             report.issues.append(SongInfoIssue(
                                 id: result.itemID,
                                 name: result.name,
@@ -2863,7 +2912,7 @@ extension DownloadManager {
                             + (result.reason.map { " | \($0)" } ?? "")
                         CrashReporter.logMetadata(detail)
 
-                        collected.append((result.itemID, result.truth))
+                        collected.append((result.itemID, result.truth, result.fileMissing))
                         // 进度**节流**到每秒最多 5 次：它一变整页就要重算一遍行高
                         let now = Date()
                         if done == targets.count || now.timeIntervalSince(lastProgressAt) > 0.2 {
@@ -2892,12 +2941,17 @@ extension DownloadManager {
                 // 一次性把 664 首的新状态写回列表（一次 items 变更 = 一次缓存重建 + 一次落库）
                 if !pendingTruths.isEmpty {
                     var byID: [UUID: SongFileTruth] = [:]
+                    var missingIDs = Set<UUID>()
                     byID.reserveCapacity(pendingTruths.count)
-                    for (id, truth) in pendingTruths { byID[id] = truth }
+                    for (id, truth, missing) in pendingTruths {
+                        byID[id] = truth
+                        if missing { missingIDs.insert(id) }
+                    }
                     for idx in self.items.indices {
-                        if let truth = byID[self.items[idx].id] {
-                            self.items[idx].fileTruth = truth
-                        }
+                        let id = self.items[idx].id
+                        if let truth = byID[id] { self.items[idx].fileTruth = truth }
+                        // 文件不在了：打标记，之后写回/检测都跳过它，不再天天报"失败"
+                        if missingIDs.contains(id) { self.items[idx].fileMissing = true }
                     }
                 }
                 self.songInfoWriteProgress = nil
@@ -2934,6 +2988,7 @@ extension DownloadManager {
             let result = await self.writeSongInfoStep(for: item)
             await MainActor.run {
                 if let idx = self.items.firstIndex(where: { $0.id == result.itemID }) {
+                    if result.fileMissing { self.items[idx].fileMissing = true }
                     self.items[idx].fileTruth = result.truth
                 }
                 self.persist()
@@ -2960,6 +3015,12 @@ extension DownloadManager {
         }
         let audio = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: path) else {
+            // 2026-11-22：记录还在、文件没了（合并重复把文件删了 / 在「文件」App 里手动删了）。
+            // 这种条目**不再算"写回失败"**，也不该每次点写回都报一遍 —— 打上标记，后面直接跳过。
+            result.fileMissing = true
+            result.kind = .unsupported
+            result.truth = DownloadCompanion.FileTruth.unsupported(
+                coverSidecar: nil, lyricsSidecar: nil, note: "本地文件不在了")
             result.reason = "本地文件不在了"
             return result
         }
@@ -3150,7 +3211,8 @@ extension DownloadManager {
             guard let self else { return }
             var counts: [SongFileState: Int] = [:]
             var fieldIssues: [String: Int] = [:]
-            var results: [(UUID, SongFileTruth)] = []
+            var results: [(UUID, SongFileTruth, Bool)] = []
+            var missingCount = 0
             var issues: [SongInfoIssue] = []
             var done = 0
             var lastProgressAt = Date.distantPast
@@ -3159,26 +3221,32 @@ extension DownloadManager {
             while start < targets.count {
                 let end = min(start + concurrency, targets.count)
                 let chunk = Array(targets[start..<end])
-                await withTaskGroup(of: (UUID, SongFileTruth, String).self) { group in
+                await withTaskGroup(of: (UUID, SongFileTruth, String, Bool).self) { group in
                     for item in chunk {
                         group.addTask { [weak self] in
+                            let exists = item.localPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
                             guard let self else {
-                                return (item.id, SongFileTruth(), item.song.name)
+                                return (item.id, SongFileTruth(), item.song.name, exists)
                             }
-                            return (item.id, await self.fileTruth(for: item), item.song.name)
+                            return (item.id, await self.fileTruth(for: item), item.song.name, exists)
                         }
                     }
-                    for await (id, truth, name) in group {
+                    for await (id, truth, name, exists) in group {
                         done += 1
-                        results.append((id, truth))
-                        counts[truth.state, default: 0] += 1
-                        for problem in truth.problems {
-                            fieldIssues[problem, default: 0] += 1
-                        }
-                        if !truth.isAligned {
-                            issues.append(SongInfoIssue(id: id, name: name,
-                                                        reason: truth.problems.joined(separator: "、"),
-                                                        fields: truth.compact))
+                        results.append((id, truth, !exists))
+                        if !exists {
+                            // 2026-11-22：文件不在了 —— 打标记，下次写回/检测都跳过，不再天天报
+                            missingCount += 1
+                        } else {
+                            counts[truth.state, default: 0] += 1
+                            for problem in truth.problems {
+                                fieldIssues[problem, default: 0] += 1
+                            }
+                            if !truth.isAligned {
+                                issues.append(SongInfoIssue(id: id, name: name,
+                                                            reason: truth.problems.joined(separator: "、"),
+                                                            fields: truth.compact))
+                            }
                         }
                         // 2026-11-22：进度**节流**到每秒最多 5 次 —— 它一变整页要重算一遍行高，
                         // 664 首逐条刷新就是"跟 PPT 一样"的主要来源之一。
@@ -3202,6 +3270,7 @@ extension DownloadManager {
             let missing = counts[.missing] ?? 0
             let unsupported = counts[.unsupported] ?? 0
             var summary = "对齐检查（\(targets.count) 首）：文件已对齐 \(inSync)"
+                + (missingCount > 0 ? " · 文件已不在 \(missingCount)" : "")
                 + " · 只在旁车 \(sidecar) · 没封面 \(missing) · 容器不支持 \(unsupported)"
             if !fieldIssues.isEmpty {
                 let detail = fieldIssues.sorted { $0.value > $1.value }
@@ -3213,9 +3282,10 @@ extension DownloadManager {
             let issueList = issues
             CrashReporter.logMetadata("file-state | 结束 → \(summary.replacingOccurrences(of: "\n", with: " "))")
             await MainActor.run {
-                for (id, truth) in results {
+                for (id, truth, missing) in results {
                     if let idx = self.items.firstIndex(where: { $0.id == id }) {
                         self.items[idx].fileTruth = truth
+                        if missing { self.items[idx].fileMissing = true }
                     }
                 }
                 self.lastUnresolved = issueList

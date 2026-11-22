@@ -80,7 +80,11 @@ struct RootTabView: View {
             visited.insert(router.tab)
             drainIntents()
             // 车载自动播放：连上车机 / 车载蓝牙就自动接着放（见 CarAudioAutoPlay）
-            CarAudioAutoPlay.shared.attach(player: player, feed: discoverFeed, library: library)
+            // 2026-11-22：`attach` 会配并**激活**音频会话（setActive），那一下会占主线程几十毫秒。
+            // 开屏动画只有 1.7 秒，先让它走完再挂 —— 晚 1.4 秒连车机也一样来得及。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                CarAudioAutoPlay.shared.attach(player: player, feed: discoverFeed, library: library)
+            }
         }
         .onChange(of: router.tab) { _, newValue in
             // tA（第 42 轮打点）：选中态提交，页面还没插 —— "点下去 App 有没有反应"只看这个数

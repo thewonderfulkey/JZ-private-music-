@@ -27,9 +27,21 @@ struct JZMusicHelperApp: App {
         // 下载完成提示（可选权限，拒绝也不影响下载）
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         // 收藏的文件级去重：收藏那一刻只做元数据级，指纹由后台补（延迟几秒，不和首屏抢网络）
-        Task { @MainActor in FavoriteDedupeService.shared.scheduleLaunchPass() }
-        // iCloud 备份开关（默认关）在每次启动时对现有文件补设一次
-        DownloadLocation.applyBackupExclusion(!SettingsStore.shared.iCloudBackup)
+        // 2026-11-22：再往后推一点 —— 它要读文件指针，开屏动画期间不该跟主线程抢 I/O。
+        let excludeFromBackup = !SettingsStore.shared.iCloudBackup
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            FavoriteDedupeService.shared.scheduleLaunchPass()
+        }
+        // 2026-11-22（老板："开屏动画总是卡一下，新包第一次更严重"）：
+        // `applyBackupExclusion` 会枚举 Documents 下最多 5000 个文件、**逐个** `setResourceValues`。
+        // 以前它在 `init` 里同步跑 —— 也就是第一帧之前，开屏动画还没开始就被它拖住了。
+        // 现在等开屏动画走完（1.7s）+ 几秒缓冲，再丢到后台队列慢慢设。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            DispatchQueue.global(qos: .utility).async {
+                DownloadLocation.applyBackupExclusion(excludeFromBackup)
+            }
+        }
     }
 
     var body: some Scene {

@@ -762,6 +762,9 @@ enum ImportGrabRules {
 enum SongInfoWriteRules {
 
     static func needsWrite(_ item: DownloadItem) -> Bool {
+        // 2026-11-22：文件已经不在的（合并重复/手动删掉留下的死记录）永远不再写 ——
+        // 以前每次点写回都要重新报一遍"本地文件不在了"。
+        if item.fileMissing == true { return false }
         guard let truth = item.fileTruth else { return true }
         return !truth.isAligned
     }

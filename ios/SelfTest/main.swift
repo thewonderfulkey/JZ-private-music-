@@ -505,11 +505,14 @@ section("写回范围：已对齐的不重复写")
 
 do {
     func item(_ name: String, truth: SongFileTruth?, status: DownloadStatus = .completed,
-              path: String? = "/x/\(UUID().uuidString).flac") -> DownloadItem {
-        DownloadItem(song: song(.local, name, "某人", id: "si_\(name)_\(UUID().uuidString)"),
-                     streamURL: "file:///x", backendName: "本地导入", quality: .lossless,
-                     fileName: "\(name).flac", localPath: path, status: status, totalBytes: 1_000,
-                     fileTruth: truth)
+              path: String? = "/x/\(UUID().uuidString).flac",
+              fileMissingFlag: Bool = false) -> DownloadItem {
+        var made = DownloadItem(song: song(.local, name, "某人", id: "si_\(name)_\(UUID().uuidString)"),
+                                streamURL: "file:///x", backendName: "本地导入", quality: .lossless,
+                                fileName: "\(name).flac", localPath: path, status: status,
+                                totalBytes: 1_000, fileTruth: truth)
+        if fileMissingFlag { made.fileMissing = true }
+        return made
     }
     var aligned = SongFileTruth()
     aligned.title = .ok
@@ -533,6 +536,13 @@ do {
     check("待写只有 A / C 两条", split.targets.map(\.song.name) == ["A", "C"],
           "\(split.targets.map(\.song.name))")
     check("跳过的只算已对齐且有文件的（B 一条）", split.skipped == 1, "\(split.skipped)")
+
+    // 2026-11-22（老板：合并前写回过、合并后文件没了，之后总报"写回失败"）：
+    // 记录还在、文件已不在 → 打个标记，之后写回/检测都跳过它，不再天天报。
+    let dead = item("英雄", truth: broken, fileMissingFlag: true)
+    check("文件已不在的记录 → 不再要求写", !SongInfoWriteRules.needsWrite(dead))
+    check("文件已不在的记录不进待写名单",
+          !SongInfoWriteRules.pending([dead]).targets.contains { $0.id == dead.id })
 }
 
 // MARK: - 3.2.8 整理重复的批量计划（2026-11-22：点一下卡 10 秒）

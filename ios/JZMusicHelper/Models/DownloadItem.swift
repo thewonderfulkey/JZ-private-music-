@@ -187,6 +187,11 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
     var fileTruth: SongFileTruth?
 
+    /// 记录还在、**文件已经不在本地了**（2026-11-22：合并重复 / 在「文件」App 里手动删掉之后
+    /// 留下的死记录）。置 true 之后：写回与检测都直接跳过它，也不再每次报"写回失败"。
+    /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
+    var fileMissing: Bool?
+
     /// 圆点用：由逐字段结论推出来（只是"懒得跑检查"时的兜底，不存盘）
     var fileState: SongFileState? { fileTruth?.state }
 
