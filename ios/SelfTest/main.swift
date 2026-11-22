@@ -5079,6 +5079,50 @@ do {
           "\(CompanionRetryRules.backoffSeconds(attempt: 99))")
 }
 
+// MARK: - 第 57 轮：词头自证 + 纯音乐识别
+//
+// 老板 2026-11-22 15:04 剩下的几首：《海屿你》候选词头 [total:288000]，音源 278s（差 10s）；
+// 《우주를 줄게》候选歌手写成中文名「脸红的思春期」，搜索歌手分 0；《溺火》是纯音乐。
+
+section("词头自证（第 57 轮）")
+
+do {
+    check("海屿你：278s 音源 vs 词头 288s（3.6%）→ 收",
+          LddcMatch.headerDurationOK(targetSec: 278, declaredSec: 288))
+    check("溺火：166s 音源 vs 词头 195s（17%）→ 不收",
+          !LddcMatch.headerDurationOK(targetSec: 166, declaredSec: 195))
+    check("正好 8% 边界算过", LddcMatch.headerDurationOK(targetSec: 100, declaredSec: 108))
+    check("超出 8% 一点就不收", !LddcMatch.headerDurationOK(targetSec: 100, declaredSec: 109))
+    check("词头没写 total → 不算证据", !LddcMatch.headerDurationOK(targetSec: 278, declaredSec: 0))
+    check("音源时长未知 → 不算证据", !LddcMatch.headerDurationOK(targetSec: 0, declaredSec: 288))
+
+    // 第二池：歌名像、版本类一致、只差时长（不看搜索里的歌手字段）
+    let near = LddcMatch.nearMissPool(
+        queryTitle: "海屿你", targetSec: 278,
+        candidates: [(title: "海屿你", durationSec: 288),
+                     (title: "海屿你", durationSec: 190),
+                     (title: "海屿你 (Live)", durationSec: 280),
+                     (title: "另一首", durationSec: 279)])
+    check("只把「同名同版本、时长差 ≤25%」的候选放进第二池", near == [0], "\(near)")
+    check("差太远（88s）的不进第二池", !near.contains(1), "\(near)")
+    check("Live 版不进第二池", !near.contains(2), "\(near)")
+}
+
+section("纯音乐识别（第 57 轮）")
+
+do {
+    let candidates = [(title: "溺火 (Vocal Version)", durationSec: 195),
+                      (title: "溺火 (氛围纯音乐)", durationSec: 161)]
+    check("溺火：最接近音源（166s）的那版是纯音乐 → 判纯音乐",
+          LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 166,
+                                          candidates: candidates))
+    check("只有人声版时不当纯音乐",
+          !LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 166,
+                                           candidates: [(title: "溺火 (Vocal Version)", durationSec: 195)]))
+    check("音源时长未知 → 不判纯音乐",
+          !LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 0, candidates: candidates))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

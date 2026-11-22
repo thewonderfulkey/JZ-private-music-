@@ -58,5 +58,28 @@ check("第 12 次后收手", !CompanionRetryRules.shouldRetry(attempt: 12))
 check("放弃后有 1 小时冷却", CompanionRetryRules.cooldownAfterGivingUp == 3600,
       "\(CompanionRetryRules.cooldownAfterGivingUp)")
 
+print("— 词头自证（第 57 轮）")
+check("海屿你 278/288 → 收", LddcMatch.headerDurationOK(targetSec: 278, declaredSec: 288))
+check("溺火 166/195 → 不收", !LddcMatch.headerDurationOK(targetSec: 166, declaredSec: 195))
+check("8% 边界算过", LddcMatch.headerDurationOK(targetSec: 100, declaredSec: 108))
+check("超 8% 不收", !LddcMatch.headerDurationOK(targetSec: 100, declaredSec: 109))
+check("没 total 不算证据", !LddcMatch.headerDurationOK(targetSec: 278, declaredSec: 0))
+let near = LddcMatch.nearMissPool(
+    queryTitle: "海屿你", targetSec: 278,
+    candidates: [(title: "海屿你", durationSec: 288),
+                 (title: "海屿你", durationSec: 190),
+                 (title: "海屿你 (Live)", durationSec: 280),
+                 (title: "另一首", durationSec: 279)])
+check("第二池只放同名同版本、差 ≤25% 的", near == [0], "\(near)")
+
+print("— 纯音乐识别（第 57 轮）")
+let instCands = [(title: "溺火 (Vocal Version)", durationSec: 195),
+                 (title: "溺火 (氛围纯音乐)", durationSec: 161)]
+check("溺火 166s 最接近纯音乐版 → 判纯音乐",
+      LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 166, candidates: instCands))
+check("只有人声版 → 不判纯音乐",
+      !LddcMatch.closestIsInstrumental(queryTitle: "溺火", targetSec: 166,
+                                       candidates: [(title: "溺火 (Vocal Version)", durationSec: 195)]))
+
 print("\nRESULT: \(pass) passed, \(fail.count) failed")
 if !fail.isEmpty { exit(1) }

@@ -62,6 +62,8 @@ enum LddcLyrics {
         case none = ""
         case noCandidates = "酷狗连候选都没搜到"
         case rejectedIdentity = "候选都过不了身份闸（只有别的版本/别人唱的）"
+        /// 第 57 轮：最接近音源时长的那一版是纯音乐（《溺火》）
+        case instrumental = "最接近音源时长的版本是纯音乐"
         case fetchFailed = "候选对得上，但取词接口没返回词"
     }
     private static let missBox = DiagBox()
@@ -229,15 +231,12 @@ enum LddcLyrics {
 
     /// 取词：**同歌手同版本类**的候选里，首选 + 重试一次，再换第 2 个（各重试一次）。
     /// 绝不跨歌手/跨版本类去找"下一份词"——那正是 74 行粤语版与 58 行 Live 词的通路。
+    ///
+    /// 第 57 轮：严格池全空之后，再试**只差时长**的第二池（`nearMissPick`），
+    /// 用词头 `[total:]`/`[ar:]` 自证后才收；两条都不过才写空态。
     static func pickBest(candidates: [Candidate], title: String, artist: String,
                          targetSec: Int) async -> Picked? {
         let ranked = rank(candidates, title: title, artist: artist, targetSec: targetSec)
-        guard !ranked.isEmpty else {
-            let blocked = rejectBox.get()
-            noteDiag("候选 \(candidates.count) 条，没有一条过身份闸（\(blocked.isEmpty ? "分数不够" : blocked)）")
-            noteMiss(.rejectedIdentity)
-            return nil
-        }
         var failures = 0
         for item in ranked.prefix(2) {
             for pass in 1...2 {
@@ -257,10 +256,58 @@ enum LddcLyrics {
                 }
             }
         }
+        // 第二池：只差时长的候选，词头自证后才收（第 57 轮）
+        if let near = await nearMissPick(candidates: candidates, title: title,
+                                         artist: artist, targetSec: targetSec) {
+            return near
+        }
+        if ranked.isEmpty {
+            let blocked = rejectBox.get()
+            noteDiag("候选 \(candidates.count) 条，没有一条过身份闸（\(blocked.isEmpty ? "分数不够" : blocked)）")
+            let instrumental = LddcMatch.closestIsInstrumental(
+                queryTitle: title, targetSec: targetSec,
+                candidates: candidates.map { (title: $0.title, durationSec: $0.durationSec) })
+            noteMiss(instrumental ? .instrumental : .rejectedIdentity)
+            return nil
+        }
         var diag = "候选 \(candidates.count) 条（最高 \(Int(ranked[0].score)) 分），前 \(failures) 次都没取到词"
         let channel = lastKgChannel()
         if !channel.isEmpty { diag += "，" + channel }
         noteDiag(diag)
+        return nil
+    }
+
+    /// 第二池：歌名像、版本类一致，只是时长差出 ±4s 的候选。
+    ///
+    /// 为什么要有：《海屿你》的候选词头是 `[ar:大头针][ti:海屿你][total:288000]`，
+    /// 歌名/歌手/总时长全都自证对得上，只是音源少了 10s 尾巴；《우주를 줄게》更冤——
+    /// 同一个歌手在平台里写的是中文名「脸红的思春期」，搜索候选的歌手分是 0，可词头里写着
+    /// `[ar:볼빨간사춘기 (脸红的思春期)]`。两首都该收，但必须让**词自己**先证明身份：
+    /// `selfReportReason`（歌名+歌手） + `headerDurationOK`（词头 total 与音源差 ≤8%）。
+    private static func nearMissPick(candidates: [Candidate], title: String,
+                                     artist: String, targetSec: Int) async -> Picked? {
+        let pool = LddcMatch.nearMissPool(
+            queryTitle: title, targetSec: targetSec,
+            candidates: candidates.map { (title: $0.title, durationSec: $0.durationSec) })
+        guard !pool.isEmpty else { return nil }
+        // 时长最接近的优先
+        let ordered = pool.sorted {
+            abs(targetSec - candidates[$0].durationSec) < abs(targetSec - candidates[$1].durationSec)
+        }
+        for idx in ordered.prefix(2) {
+            let cand = candidates[idx]
+            guard let one = await fetchOne(cand, songTitle: title, songArtist: artist) else { continue }
+            let declared = one.meta.durationMs / 1000
+            guard LddcMatch.headerDurationOK(targetSec: targetSec, declaredSec: declared) else {
+                noteKgChannel("《\(cand.title)》词头 total=\(declared)s 与音源 \(targetSec)s 差得太多，不收")
+                continue
+            }
+            let pct = Double(abs(declared - targetSec)) / Double(max(1, targetSec)) * 100
+            noteDiag("严格池没词，用词头自证收了《\(cand.title)》（\(String(format: "%.1f", pct))% 时长差）")
+            let note = "《\(cand.title)》· \(cand.artist)"
+                + " · 词头自证（音源 \(targetSec)s / 词头 \(declared)s）"
+            return Picked(lines: one.lines, declaredMs: declared * 1000, note: note)
+        }
         return nil
     }
 

@@ -426,4 +426,69 @@ enum LddcMatch {
         guard targetSec > 0, candidateSec > 0 else { return true }
         return abs(targetSec - candidateSec) <= durationToleranceSec
     }
+
+    // MARK: 词头自证（第 57 轮）
+    //
+    // 老板 2026-11-22 15:04 那批剩下的歌里，《海屿你》的候选词头是
+    // `[ar:大头针][ti:海屿你][total:288000]`——**歌名、歌手、总时长全都对得上**，只是音源
+    // 只有 278s（少了 10s 尾巴），被 ±4s 的时长硬门槛挡在门外。
+    // 这类"同一首、时长差几秒"的候选不该整首丢：允许进第二池，但必须**词头自证**——
+    //   ① 词头 [ti:]/[ar:] 过 `selfReportReason`（歌手闸仍是 90 分）
+    //   ② 词头 [total:] 与音源时长的偏差 ≤ 8%
+    // 两条都过才收；词头没写 total 的一律不收（没有证据，宁可空着）。
+
+    /// 词头自证允许的相对时长偏差
+    static let headerDurationRatioTolerance: Double = 0.08
+
+    /// 词头 `[total:]` 与音源时长是否在 8% 以内（任一边未知 → 不算证据，返回 false）
+    static func headerDurationOK(targetSec: Int, declaredSec: Int) -> Bool {
+        guard targetSec > 0, declaredSec > 0 else { return false }
+        return Double(abs(declaredSec - targetSec)) / Double(targetSec) <= headerDurationRatioTolerance
+    }
+
+    /// "只差时长"的候选池：歌名像、版本类一致、时长差在 25%（且 ≥15 秒）以内。
+    /// **不看搜索里的歌手字段**——很多平台把同一个歌手写成中文名/原文名（볼빨간사춘기 / 脸红的思春期），
+    /// 歌手真伪交给词头 `[ar:]` 去证。
+    static func nearMissPool(queryTitle: String, targetSec: Int,
+                             candidates: [(title: String, durationSec: Int)]) -> [Int] {
+        guard targetSec > 0 else { return [] }
+        let limit = max(15, Int(Double(targetSec) * 0.25))
+        var out: [Int] = []
+        for (i, c) in candidates.enumerated() {
+            guard versionClass(queryTitle) == versionClass(c.title) else { continue }
+            guard titleScore(queryTitle, c.title) >= 90 else { continue }
+            guard c.durationSec > 0 else { continue }
+            let diff = abs(targetSec - c.durationSec)
+            guard diff > durationToleranceSec, diff <= limit else { continue }
+            out.append(i)
+        }
+        return out
+    }
+
+    /// 剩下的候选里"最接近音源时长的那一版"是不是纯音乐。
+    /// 用来把空态写成「该歌曲是纯音乐，没有歌词」，而不是含糊的"四个源都没取到词"。
+    ///
+    /// 只认歌名 ≥90 分的候选；`targetSec` 为 0 时一律 false（没有时长就没有"最接近"）。
+    static func closestIsInstrumental(queryTitle: String, targetSec: Int,
+                                      candidates: [(title: String, durationSec: Int)]) -> Bool {
+        guard targetSec > 0 else { return false }
+        let matched = candidates.filter {
+            guard $0.durationSec > 0 else { return false }
+            // 带括注的候选（《溺火 (氛围纯音乐)》）直接算标题分会掉到 70 以下，
+            // 所以「完整标题」和「剥掉括注的标题」取较大者
+            return max(titleScore(queryTitle, $0.title),
+                       titleScore(queryTitle, coreTitle($0.title))) >= 90
+        }
+        guard !matched.isEmpty else { return false }
+        let closest = matched.min { abs(targetSec - $0.durationSec) < abs(targetSec - $1.durationSec) }
+        guard let closest else { return false }
+        return versionClass(closest.title) == .instrumental
+    }
+
+    /// 去掉 `(...)` / `（...）` / `[...]` / `【...】` 括注（只给标题比对用）
+    private static func coreTitle(_ text: String) -> String {
+        text.replacingOccurrences(of: #"[(（\[【][^)）\]】]*[)）\]】]"#, with: "",
+                                  options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }

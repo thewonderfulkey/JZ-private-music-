@@ -148,6 +148,9 @@ extension LyricsService {
                 base = "这首歌没有原唱歌词（词源里只有别的版本，按口径不贴另一版）"
             case .noCandidates:
                 base = "没搜到这首歌的词源"
+            case .instrumental:
+                // 第 57 轮（老板点名《溺火》）：最接近音源时长的那一版是纯音乐
+                base = "该歌曲是纯音乐，没有歌词"
             case .fetchFailed, .none:
                 base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
             }
