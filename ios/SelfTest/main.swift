@@ -462,6 +462,43 @@ do {
           !DownloadCompanion.LocalTagRules.isSelfContained(fields: fields))
 }
 
+// MARK: - 3.2.5 存储自检：孤儿/临时残留的判定（2026-11-22 空间翻倍）
+
+section("存储自检：孤儿与临时残留")
+
+do {
+    check("写标签的隐藏临时文件认得出（.tags-）",
+          StorageAuditRules.isTagTempArtifact(".tags-3F2A91.flac"))
+    check(".embed- 也算", StorageAuditRules.isTagTempArtifact(".embed-9C71.m4a"))
+    check("正常文件不是临时文件",
+          !StorageAuditRules.isTagTempArtifact("周杰伦 - 晴天.mp3"))
+    check("音频按扩展名认（flac / MP3 / m4a）",
+          StorageAuditRules.isAudio("a.flac") && StorageAuditRules.isAudio("b.MP3")
+            && StorageAuditRules.isAudio("c.m4a"))
+    check("旁车 / 日志不算音频",
+          !StorageAuditRules.isAudio("a.lrc") && !StorageAuditRules.isAudio("a.jpg")
+            && !StorageAuditRules.isAudio("trace.log"))
+
+    func dl(_ fileName: String, path: String?) -> DownloadItem {
+        DownloadItem(song: song(.local, fileName, "某人", id: "loc_\(fileName)"),
+                     streamURL: "file:///\(fileName)", backendName: "本地导入",
+                     quality: .lossless, fileName: fileName, localPath: path,
+                     status: .completed, totalBytes: 1_000)
+    }
+    let items = [dl("A.flac", path: "/x/Music/A.flac"),
+                 dl("B.flac", path: nil)]
+    let refs = StorageAuditRules.referencedNames(items)
+    check("fileName 和 localPath 最后一段都算被引用",
+          refs.contains("A.flac") && refs.contains("B.flac"), "\(refs.sorted())")
+    check("没人认领的音频 → 孤儿",
+          StorageAuditRules.isOrphan(fileName: "C.flac", referenced: refs))
+    check("有记录的音频 → 不是孤儿",
+          !StorageAuditRules.isOrphan(fileName: "A.flac", referenced: refs))
+    check("隐藏文件不按孤儿判（走临时残留那一类）",
+          !StorageAuditRules.isOrphan(fileName: ".tags-x.flac", referenced: refs))
+    check("旁车不按孤儿判", !StorageAuditRules.isOrphan(fileName: "A.lrc", referenced: refs))
+}
+
 // MARK: - 3.3 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
 
 section("下载链排名与下载前校验")

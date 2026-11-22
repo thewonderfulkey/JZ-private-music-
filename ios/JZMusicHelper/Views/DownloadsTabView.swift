@@ -33,6 +33,8 @@ struct DownloadsTabView: View {
     @State private var showSongInfoWriteConfirm = false
     /// 第 52 轮：未对齐明细（名单 + 可复制 + 可只重跑这些）
     @State private var showUnresolved = false
+    /// 2026-11-22：存储自检（老板找不到那多出来的 18 GB）
+    @State private var showStorageAudit = false
     /// 导入面板（内置浏览器；不经过系统选择器）
     @State private var showImportBrowser = false
     /// 一句话轻提示（"开始导入 N 个文件…"这种，1.5 秒后自己消失）
@@ -272,6 +274,14 @@ struct DownloadsTabView: View {
                 flash(n == 0 ? "没有可检查的歌" : "开始检查 \(n) 首…")
             } label: {
                 Label("检查文件对齐（封面/标签/歌词）", systemImage: "doc.text.magnifyingglass")
+            }
+            Divider()
+            // 2026-11-22（老板："空间从 20 多 G 变 40 多 G，我找不到多余的文件"）：
+            // 把"磁盘上到底被什么占了"摊开给他看，并给出三类**可安全删除**的残留。
+            Button {
+                showStorageAudit = true
+            } label: {
+                Label("存储自检（空间被谁占了）", systemImage: "internaldrive")
             }
             Divider()
             // 第 48/49 轮：把**列表上显示的这一套**写进音频文件本身。
@@ -557,6 +567,11 @@ struct DownloadsTabView: View {
             // 第 52 轮：未对齐名单（可复制给开发、可只重跑这些）
             .sheet(isPresented: $showUnresolved) {
                 UnresolvedListSheet()
+                    .environmentObject(downloads)
+            }
+            // 2026-11-22：存储自检（空间被谁占了 / 三类可安全删除的残留）
+            .sheet(isPresented: $showStorageAudit) {
+                StorageAuditSheet()
                     .environmentObject(downloads)
             }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
