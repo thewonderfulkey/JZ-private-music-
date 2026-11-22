@@ -26,6 +26,7 @@ struct StorageAuditSheet: View {
                     summarySection(report)
                     sectionsSection(report)
                     stagingSection(report)
+                    tmpSection(report)
                     tempSection(report)
                     orphanSection(report)
                 } else {
@@ -144,8 +145,41 @@ struct StorageAuditSheet: View {
         }
     }
 
-    // MARK: 写标签的临时文件
+    // MARK: tmp 里的旧残留
 
+    @ViewBuilder
+    private func tmpSection(_ r: StorageAuditReport) -> some View {
+        Section {
+            ForEach(r.staleTmpFiles.prefix(6)) { f in
+                HStack {
+                    Text(f.name).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: Tokens.Spacing.xs)
+                    Text(ByteText.human(f.bytes)).font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if r.staleTmpFiles.count > 6 {
+                Text("还有 \(r.staleTmpFiles.count - 6) 个…")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            if !r.staleTmpFiles.isEmpty {
+                Button(role: .destructive) {
+                    let freed = StorageAudit.delete(r.staleTmpFiles)
+                    flash("已清 \(r.staleTmpFiles.count) 个旧临时文件，释放 \(ByteText.human(freed))")
+                    Task { await runAudit() }
+                } label: {
+                    Label("清掉 tmp 里 1 小时前的 \(r.staleTmpFiles.count) 个文件（安全）",
+                          systemImage: "trash")
+                }
+            }
+        } footer: {
+            Text("从别的 App（Light Player 这类）导入时，系统会先把选中的文件**抄进我们 App 的 tmp**，"
+                 + "我们抢完再删自己那份。中途取消 / 预算用完，那批副本就留在 tmp 里 —— "
+                 + "「文件」App 里看不到，但 iOS 照样算进 App 占用。只清 1 小时前的，正在下载的不动。")
+        }
+    }
+
+    // MARK: 写标签的临时文件
     @ViewBuilder
     private func tempSection(_ r: StorageAuditReport) -> some View {
         Section {
@@ -251,6 +285,9 @@ struct StorageAuditSheet: View {
         lines.append("\(r.stagingPath)：\(ByteText.human(r.stagingBytes))（\(r.stagingFiles) 个文件）")
         lines.append("— 写标签临时文件 —")
         lines.append("\(r.tempArtifacts.count) 个，\(ByteText.human(r.tempBytes))")
+        lines.append("— tmp 旧残留 —")
+        lines.append("\(r.staleTmpFiles.count) 个，"
+                     + "\(ByteText.human(r.staleTmpFiles.reduce(0) { $0 + $1.bytes }))")
         lines.append("— 孤儿音频 —")
         lines.append("\(r.orphans.count) 个，\(ByteText.human(r.orphanBytes))")
         for f in r.orphans.prefix(40) {

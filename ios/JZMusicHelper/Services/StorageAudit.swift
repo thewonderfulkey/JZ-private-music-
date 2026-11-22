@@ -43,6 +43,11 @@ struct StorageAuditReport {
     var stagingFiles: Int = 0
     var stagingPath: String = ""
 
+    /// `tmp` 里**早于 1 小时**的文件（系统临时目录：文档选择器把选中文件抄进来，
+    /// 抢完之后我们只删自己成功抢完的那份；中途取消/预算用完，副本就留在这里）。
+    /// 只列 1 小时前的：正在跑的后台下载临时文件不能碰。
+    var staleTmpFiles: [FileEntry] = []
+
     var orphanBytes: Int64 { orphans.reduce(0) { $0 + $1.bytes } }
     var tempBytes: Int64 { tempArtifacts.reduce(0) { $0 + $1.bytes } }
 
@@ -128,6 +133,24 @@ enum StorageAudit {
                 }
             }
             report.tempArtifacts.sort { $0.bytes > $1.bytes }
+
+            // ⑤ tmp 里 1 小时前的残留（文档选择器抄进来的副本是最大的一类）
+            let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            let cutoff = Date().addingTimeInterval(-3600)
+            if let en = fm.enumerator(at: tmp,
+                                      includingPropertiesForKeys: [.isRegularFileKey,
+                                                                   .contentModificationDateKey],
+                                      options: [.skipsPackageDescendants]) {
+                for case let url as URL in en {
+                    let v = try? url.resourceValues(forKeys: [.isRegularFileKey,
+                                                              .contentModificationDateKey])
+                    guard v?.isRegularFile == true else { continue }
+                    guard let modified = v?.contentModificationDate, modified < cutoff else { continue }
+                    report.staleTmpFiles.append(.init(id: url.path, name: url.lastPathComponent,
+                                                      bytes: size(of: url), url: url))
+                }
+            }
+            report.staleTmpFiles.sort { $0.bytes > $1.bytes }
             return report
         }.value
     }
