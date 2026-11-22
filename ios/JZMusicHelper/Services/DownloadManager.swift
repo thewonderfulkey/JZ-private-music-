@@ -783,7 +783,11 @@ final class DownloadManager: NSObject, ObservableObject {
             scheduleCompanionRetry(id: id, after: backoff)
         } else {
             items[idx].companionState = .done
-            items[idx].companionNextAt = nil
+            // 重试满额但仍是"没词"：留一个 1 小时的冷却，回前台时 `resumeCompanionBackfill`
+            // 会按这个时间再试（以前置 nil = 再也不碰，24 首就是这么钉住的）
+            items[idx].companionNextAt = result.retryable
+                ? Date().addingTimeInterval(CompanionRetryRules.cooldownAfterGivingUp)
+                : nil
             if result.retryable {
                 // 第 55 轮：真的重试满了还没词 —— 落一行日志，下一轮能直接点名（以前只有内存里的原因）
                 CrashReporter.logMetadata(
@@ -839,6 +843,15 @@ final class DownloadManager: NSObject, ObservableObject {
                 return (item.companionNextAt ?? .distantPast) <= now
             case .none:
                 // 从没进过队列的老条目：只有"旁车歌词确实缺"才捡，避免每次回前台把全库排一遍
+                let audio = URL(fileURLWithPath: item.localPath ?? "")
+                let base = DownloadCompanion.baseName(for: audio)
+                let lrc = DownloadCompanion.lyricsURL(in: lyricsDir, baseName: base)
+                return !FileManager.default.fileExists(atPath: lrc.path)
+            case .done:
+                // 第 55 轮：上一轮"跑完了但没词"（老板库里 24 首就是这种状态）。
+                // 旁车还缺、额度还在、冷却也到了 → 再给一次机会；每小时最多一次。
+                guard (item.companionAttempts ?? 0) < Self.companionMaxAttempts,
+                      (item.companionNextAt ?? .distantPast) <= now else { return false }
                 let audio = URL(fileURLWithPath: item.localPath ?? "")
                 let base = DownloadCompanion.baseName(for: audio)
                 let lrc = DownloadCompanion.lyricsURL(in: lyricsDir, baseName: base)

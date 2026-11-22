@@ -52,6 +52,8 @@ check("退避单调不减",
           .allSatisfy { $0 <= $1 })
 check("第 3 次之后还有额度", CompanionRetryRules.shouldRetry(attempt: 3))
 check("第 12 次后收手", !CompanionRetryRules.shouldRetry(attempt: 12))
+check("放弃后有 1 小时冷却", CompanionRetryRules.cooldownAfterGivingUp == 3600,
+      "\(CompanionRetryRules.cooldownAfterGivingUp)")
 
 print("\nRESULT: \(pass) passed, \(fail.count) failed")
 if !fail.isEmpty { exit(1) }

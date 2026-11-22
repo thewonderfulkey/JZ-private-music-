@@ -1476,4 +1476,7 @@ enum CompanionRetryRules {
 
     /// 还给不给下一次机会
     static func shouldRetry(attempt: Int) -> Bool { attempt < maxAttempts }
+
+    /// 重试满额后仍没词的冷却（秒）：回前台时按它再试一次，不再永久钉死
+    static let cooldownAfterGivingUp: TimeInterval = 3600
 }
