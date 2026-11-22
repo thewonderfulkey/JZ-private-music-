@@ -34,9 +34,16 @@ struct SplashMini {
         check("全片时长 = 退场结束，且 < 1.9s", abs(T.total - T.exit.end) < 0.0001 && T.total < 1.9,
               "total=\(T.total)")
         check("每一拍落在 0…total 之间",
-              [T.bandDraw, T.cupLeft, T.cupRight, T.sound, T.soundSecond, T.thump,
+              [T.bandDraw, T.entrance, T.cupLeft, T.cupRight, T.sound, T.soundSecond, T.thump,
                T.exit, T.markFade, T.contentIn]
                 .allSatisfy { $0.start >= 0 && $0.end <= T.total + 0.0001 })
+        check("开场先柔化：第一帧几乎不可见", T.snapshot(at: 0).entrance < 0.05,
+              "entrance(0)=\(T.snapshot(at: 0).entrance)")
+        check("柔化 0.3s 内完成", T.snapshot(at: T.entrance.end + 0.06).entrance > 0.99)
+        check("落笔前段不抢戏：头 100ms 画不到 1/10",
+              T.bandCurve(T.bandDraw.progress(at: 0.10)) < 0.10,
+              "band(0.10s)=\(T.bandCurve(T.bandDraw.progress(at: 0.10)))")
+        check("落笔收尾不拖", T.bandCurve(1) - T.bandCurve(0.85) > 0.10)
 
         check("第二道声波撑到退场开始", T.soundSecond.end >= T.exit.start,
               "wave2.end=\(T.soundSecond.end) exit.start=\(T.exit.start)")

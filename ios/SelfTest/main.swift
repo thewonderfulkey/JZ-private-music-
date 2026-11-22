@@ -3389,10 +3389,23 @@ check("全片时长 = 退场结束，且压在 1.9s 以内",
         && SplashTimeline.total < 1.9,
       "total=\(SplashTimeline.total)")
 check("每一拍都落在 0…total 之间",
-      [SplashTimeline.bandDraw, SplashTimeline.cupLeft, SplashTimeline.cupRight,
+      [SplashTimeline.bandDraw, SplashTimeline.entrance, SplashTimeline.cupLeft, SplashTimeline.cupRight,
        SplashTimeline.sound, SplashTimeline.soundSecond, SplashTimeline.thump,
        SplashTimeline.exit, SplashTimeline.markFade, SplashTimeline.contentIn]
         .allSatisfy { $0.start >= 0 && $0.end <= SplashTimeline.total + 0.0001 })
+// 2026-11-23（老板："开屏整个过程刚开始略显突兀，像是突然出现"）：
+// 进场柔化 + 落笔曲线改成"起步慢、收尾快"。下面四条把这件事钉住。
+check("开场先柔化：第一帧图标几乎不可见（不是硬着出现）",
+      SplashTimeline.snapshot(at: 0).entrance < 0.05,
+      "entrance(0)=\(SplashTimeline.snapshot(at: 0).entrance)")
+check("柔化在 0.3s 内完成（不许拖到动画中段）",
+      SplashTimeline.snapshot(at: SplashTimeline.entrance.end + 0.06).entrance > 0.99,
+      "entrance=\(SplashTimeline.snapshot(at: SplashTimeline.entrance.end + 0.06).entrance)")
+check("落笔前段不抢戏：头 100ms 画不到 1/10",
+      SplashTimeline.bandCurve(SplashTimeline.bandDraw.progress(at: 0.10)) < 0.10,
+      "band(0.10s)=\(SplashTimeline.bandCurve(SplashTimeline.bandDraw.progress(at: 0.10)))")
+check("落笔收尾不拖：最后 1/6 拍至少再画 1/10（别又把接缝变成停顿）",
+      SplashTimeline.bandCurve(1) - SplashTimeline.bandCurve(0.85) > 0.10)
 // 2026-11-22（老板："开屏动画还是在固定的一帧卡，只不过延迟了一些"）：
 // 逐帧量出来真凶是时间轴自己在 1.04–1.30 留了 258ms 空档 —— 声波 0.98s 就淡没了、
 // 轻顶 0.98s 结束、退场 1.30s 才起。下面三条把"全程都在动"钉死，谁再挪拍子先红。

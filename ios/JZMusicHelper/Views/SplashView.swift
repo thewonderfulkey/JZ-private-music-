@@ -60,7 +60,8 @@ struct SplashView: View {
                     ZStack {
                         paper(opacity: 1 - s.exit)
                         markShape(s)
-                            .opacity(s.markOpacity)
+                            // 进场柔化：整枚图标从 0 浮起来（0.24s），不是第一帧就硬着出现
+                            .opacity(s.markOpacity * s.entrance)
                     }
                 }
             }
@@ -127,9 +128,10 @@ struct SplashView: View {
         .frame(width: unit, height: unit)
         .scaleEffect(markSize / unit)
         .frame(width: markSize, height: markSize)
-        // 收尾：整枚图标上浮 7pt、缩回 1.5%
-        .offset(y: -7 * s.exit)
-        .scaleEffect(1 + 0.04 * s.thump - 0.015 * s.exit)
+        // 收尾：整枚图标上浮 7pt、缩回 1.5%；
+        // 进场：从 1.04 缩到 1、下移 4pt 浮上来（与透明度一起，解决"突然出现"）
+        .offset(y: -7 * s.exit + 4 * (1 - s.entrance))
+        .scaleEffect(1 + 0.04 * s.thump + 0.04 * (1 - s.entrance) - 0.015 * s.exit)
     }
 
     private func cupGroup(points: [CGFloat], mirrored: Bool,
@@ -143,7 +145,9 @@ struct SplashView: View {
             .rotationEffect(.degrees(Double(dir) * 6 * (1 - Double(p))), anchor: anchor)
             // 退场时两只耳罩各自向外让开 6 单位（像"张开"）
             .offset(x: dir * 6 * CGFloat(exit), y: 26 * (1 - p))
-            .opacity(Double(min(1, p / 0.14)))
+            // 2026-11-23：耳罩原来 0.087s（3 帧）就满不透明，一起落像"啪"一下；
+            // 拉长到 0.19s，让两只耳罩是"浮"上来而不是"弹"出来。
+            .opacity(Double(min(1, p / 0.30)))
     }
 
     /// 两道朱砂声波：**错开两拍**（0.66 起、0.80 起），一内一外，

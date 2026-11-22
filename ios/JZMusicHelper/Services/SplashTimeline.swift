@@ -51,6 +51,12 @@ enum SplashTimeline {
 
     /// 头梁：扇形遮罩从 152° 扫到 385°，墨沿着头梁的方向长出来
     static let bandDraw = Beat(start: 0.00, duration: 0.58)
+    /// 进场：整枚图标"从纸里浮出来"（透明度 0→1、放大 1.04→1、下移 4pt→0）。
+    ///
+    /// 2026-11-23（老板："开屏整个过程刚开始略显突兀，像是突然出现"）：
+    /// 以前第一帧就是硬边墨迹 + 已经画了一截的弧，加上系统启动转场的推近，读起来就是"啪一下出现"。
+    /// 现在整个图标先柔化登场（0.24s），墨的落笔再从这一层里长出来。
+    static let entrance = Beat(start: 0.00, duration: 0.24)
     /// 左耳罩弹入（spring 0.40 / 0.72，落位时约 0.62s 后完全静止）
     /// 2026-11-22 三改：0.34 → **0.30** —— 落笔尾巴（easeOut 收尾）本来就爬得慢，
     /// 耳罩早 40ms 进来正好压住那段"只有头梁边缘在挪"的 2 帧。
@@ -89,6 +95,8 @@ enum SplashTimeline {
     struct Snapshot: Equatable {
         /// 头梁画到哪（0…1）
         var band: Double
+        /// 整枚图标的进场柔化（0…1）
+        var entrance: Double
         /// 左/右耳罩弹入（0…1，弹簧会轻微过冲）
         var cupLeft: Double
         var cupRight: Double
@@ -105,12 +113,13 @@ enum SplashTimeline {
 
     static func snapshot(at time: Double, reduceMotion: Bool = false) -> Snapshot {
         if reduceMotion {
-            return Snapshot(band: 1, cupLeft: 1, cupRight: 1, wave1: 0, wave2: 0,
+            return Snapshot(band: 1, entrance: 1, cupLeft: 1, cupRight: 1, wave1: 0, wave2: 0,
                             thump: 0, exit: 0,
                             markOpacity: markOpacity(at: time, reduceMotion: true))
         }
         return Snapshot(
-            band: easeOut(bandDraw.progress(at: time)),
+            band: bandCurve(bandDraw.progress(at: time)),
+            entrance: easeOut(entrance.progress(at: time)),
             cupLeft: spring(elapsed: time - cupLeft.start),
             cupRight: spring(elapsed: time - cupRight.start),
             wave1: sound.progress(at: time),
@@ -129,9 +138,18 @@ enum SplashTimeline {
         return 1 - m * m * m
     }
 
+    /// 落笔的曲线：**起步慢、收尾快**（`1.9t² − 0.9t³`）。
+    ///
+    /// 2026-11-23（老板："刚开始略显突兀，像是突然出现"）：原来用 `easeOut`，前 100ms 就画出 43%，
+    /// 读起来就是"弧一下跳出来"。这条曲线 f'(0)=0（起笔轻）、f'(1)=1.1（不拖尾巴，
+    /// 所以不会又把"落笔完成→出声"那 2 帧变成停顿），前 100ms 只画 3%。
+    static func bandCurve(_ v: Double) -> Double {
+        let t = clamp01(v)
+        return t * t * (1.9 - 0.9 * t)
+    }
+
     /// 阻尼弹簧（spring response / dampingFraction 的解析解），落位约 1.0，允许轻微过冲
-    static func spring(elapsed: Double, response: Double = 0.40, damping: Double = 0.72) -> Double {
-        guard elapsed > 0 else { return 0 }
+    static func spring(elapsed: Double, response: Double = 0.40, damping: Double = 0.72) -> Double {        guard elapsed > 0 else { return 0 }
         let w0 = 2 * Double.pi / response
         let wd = w0 * (1 - damping * damping).squareRoot()
         let decay = exp(-damping * w0 * elapsed)
@@ -179,6 +197,7 @@ enum SplashTimeline {
     /// 头梁/退场是整片、图标淡出是整枚、弹簧是局部位移、声波是两根细线。
     static func motionDelta(from a: Snapshot, to b: Snapshot) -> Double {
         abs(b.band - a.band) * 100
+            + abs(b.entrance - a.entrance) * 80
             + abs(b.cupLeft - a.cupLeft) * 6
             + abs(b.cupRight - a.cupRight) * 6
             + abs(waveEnergy(progress: b.wave1) - waveEnergy(progress: a.wave1)) * 40
