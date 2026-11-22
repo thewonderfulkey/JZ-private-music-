@@ -929,6 +929,42 @@ final class DownloadManager: NSObject, ObservableObject {
         }
     }
 
+    /// 「文件里其它都在、只差词」的单点补词（第 56 轮）。
+    ///
+    /// 老板 2026-11-22 14:37：Lyrics 643 / Music 662，差的 19 首里有 9 首是"封面/标签都在、
+    /// 就是没词"，被 `file-first` 当成"完整"整批跳过。这条路不发匹配请求、不碰歌名/歌手/封面，
+    /// 只做三件事：取词 → 写 `Lyrics/` 旁车 → 能写标签就顺手把 USLT/UNSYNCEDLYRICS 内嵌进去。
+    private func fillLyricsOnly(song: Song, audioURL: URL,
+                                result: CompanionFillResult) async -> CompanionFillResult {
+        var out = result
+        let fetched = await LyricsService.shared.fetch(song)
+        let lines = fetched?.lines ?? []
+        let text = lines.isEmpty ? nil : DownloadCompanion.lrcText(
+            from: lines, title: song.name, artist: song.singer, durationSec: song.durationSec)
+        out.lyricsOK = !(text ?? "").isEmpty
+        if !out.lyricsOK {
+            out.reason = await LyricsService.shared.failureReason()
+            out.retryable = true
+        }
+        if let text {
+            _ = DownloadCompanion.writeSidecars(audio: audioURL, lyricsText: text, coverData: nil,
+                                                lyricsDirectory: lyricsDirectory,
+                                                coverDirectory: coverDirectory)
+            if AudioTagEmbedder.canWriteTags(fileURL: audioURL) {
+                var fields = DownloadCompanion.ID3Tags.Fields()
+                fields.lyrics = text   // 其它字段留空 = 不动（口径：空值不是"清空"）
+                _ = await AudioTagEmbedder.writeTags(fileURL: audioURL, fields: fields)
+            }
+            markDirectoryCacheDirty()
+        }
+        out.verdict = .reject
+        out.note = out.lyricsOK ? "已补歌词（其余信息未改）" : "信息已内置，词源没取到"
+        CrashReporter.logMetadata(
+            "lyrics-only | \(song.name) | "
+            + (out.lyricsOK ? "\(lines.count) 行" : "无 · \(out.reason ?? "未知原因")"))
+        return out
+    }
+
     /// 存"待确认"候选（0.6–0.85：不自动写，等用户在看编辑页时点「采用」）
     func setMatchSuggestion(_ suggestion: Song, for song: Song) async {
         await MainActor.run {
@@ -947,12 +983,20 @@ final class DownloadManager: NSObject, ObservableObject {
         // 第 54 轮（老板："下次导入后自动解析、不用联网"）：文件里自带歌名+歌手+封面 →
         // **一个网络请求都不发**。这条兜住两种情况：导入时判过但被排进队列的、
         // 以及老库里"已经写回文件"的歌被「断点续抓」重新捡起来的。
+        //
+        // 第 56 轮补一个口子（老板 14:37 的截屏：Lyrics 643 / 662，还差 19）：
+        // 这条规则**不看歌词**，于是「封面在、词不在」的那批被直接跳过，补全排到它们也只记一行
+        // file-first。现在改成：四项（歌名/歌手/封面/歌词）都齐才跳过；**只差词 → 只补词**，
+        // 不重新匹配、不覆盖歌名/歌手/封面。
         if let fields = await AudioTagEmbedder.readFields(fileURL: audioURL),
            DownloadCompanion.LocalTagRules.isSelfContained(fields: fields) {
-            result.note = "已内置（未联网）"
-            result.verdict = .reject
-            CrashReporter.logMetadata("file-first | \(song.name) | 文件里已自带完整信息，跳过联网")
-            return result
+            if DownloadCompanion.LocalTagRules.isFullySelfContained(fields: fields) {
+                result.note = "已内置（未联网）"
+                result.verdict = .reject
+                CrashReporter.logMetadata("file-first | \(song.name) | 文件里已自带完整信息，跳过联网")
+                return result
+            }
+            return await fillLyricsOnly(song: song, audioURL: audioURL, result: result)
         }
 
         // ① 元数据匹配：只在这一首还没被匹配过时跑（避免每次重试都重新搜一遍）

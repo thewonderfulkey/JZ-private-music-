@@ -464,6 +464,15 @@ enum LyricSearchQuery {
         t = t.replacingOccurrences(of: #"\s*[-_]\s*wy[_-]?\d+\s*$"#, with: "",
                                    options: [.regularExpression, .caseInsensitive])
 
+        // ②b 「歌名-歌手-上传者2」（没有 wy_ 后缀，如「溺火-特污兔-Dirtyrabbit2」）：
+        //     歌手为空时把中段当歌手，末段像上传者 ID 就丢
+        if a.isEmpty, hyphenSegments >= 3,
+           let m = capture(#"^\s*(.+?)\s*[-–—]\s*([^-–—]+?)\s*[-–—]\s*([A-Za-z][A-Za-z0-9_.]*\d[A-Za-z0-9_.]*)\s*$"#, in: t),
+           m.count >= 4, !isVersionTag(m[3]) {
+            t = m[1]
+            a = m[2]
+        }
+
         // ④ 歌手串挂在歌名里（「溺火-特污兔-…」）：把歌手那一段剥掉
         if !a.isEmpty {
             for name in artistNames(a) {

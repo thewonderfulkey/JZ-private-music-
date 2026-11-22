@@ -5038,6 +5038,11 @@ do {
     let e = LyricSearchQuery.apply(title: "溺火-特污兔-Dirtyrabbit2", singer: "特污兔")
     check("歌手段 + 上传者尾巴都剥掉", e.title == "溺火" && e.artist == "特污兔", "\(e.title) / \(e.artist)")
 
+    // 第 56 轮：歌手字段是空的（库里这条就是这样），仍要能从名字里认出歌手
+    let e2 = LyricSearchQuery.apply(title: "溺火-特污兔-Dirtyrabbit2", singer: "")
+    check("歌手为空时从名字中段补出来", e2.title == "溺火" && e2.artist == "特污兔",
+          "\(e2.title) / \(e2.artist)")
+
     let f = LyricSearchQuery.apply(title: "Converted with FlexClip 【SUNO V5】庞麦郎-我的滑板鞋-黑人福音R&B",
                                    singer: "SUNO V5")
     check("剪辑工具前缀不带进搜索", !f.title.contains("Converted with FlexClip"), f.title)

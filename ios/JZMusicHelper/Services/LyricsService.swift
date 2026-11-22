@@ -115,26 +115,30 @@ extension LyricsService {
         func clear() { lock.lock(); parts.removeAll(); lock.unlock() }
         func text() -> String { lock.lock(); defer { lock.unlock() }; return parts.joined(separator: "｜") }
     }
-    private static let noteBox = NoteBox()
 
     /// 取词主链（见文件头的四步说明）。整条链 8 秒硬超时。
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
-        noteBox.clear()
+        // 第 56 轮：这次取词的诊断笔记**每次一份**。
+        // 以前是一个 `static let noteBox`，并发 4 条链共用 → 日志里 A 歌的原因会混进 B 歌
+        // （14:35 那次《我不难过》那行里带着《Letting Go》的候选，就是它）。
+        let notes = NoteBox()
         let target = audioSec > 0 ? audioSec : song.durationSec
         // 第 55 轮：歌名本身就是文件名的（「寒鸦少年-华晨宇-wy_1305366556」）先洗净再搜。
         // 只改**搜索用的名字**，`platformID` / 显示名 / 旁车基名都不动（`Song.with` 保证）。
         let q = LyricSearchQuery.apply(title: song.name, singer: song.singer)
         let query = q.changed ? song.with(name: q.title, singer: q.artist) : song
         if q.changed {
-            noteBox.add("查词名纠正为「\(q.title) / \(q.artist)」")
+            notes.add("查词名纠正为「\(q.title) / \(q.artist)」")
         }
         let began = Date()
-        let raw = await LddcLyrics.withDeadline(seconds: 8) { await chain(query, target: target) }
+        let raw = await LddcLyrics.withDeadline(seconds: 8) {
+            await chain(query, target: target, notes: notes)
+        }
         let hit: LyricsResult? = raw ?? nil
         let ms = Int(Date().timeIntervalSince(began) * 1000)
 
         guard var result = hit, !result.isEmpty else {
-            let notes = noteBox.text()
+            let noteText = notes.text()
             let diag = LddcLyrics.lastDiagnostics()
             // r78：先看"为什么没词"，别一律说成"没取到词"——
             // 候选都在、只是全是别人的版本时，那是**这首歌没有原唱词**，不是我们取不到。
@@ -147,7 +151,7 @@ extension LyricsService {
             case .fetchFailed, .none:
                 base = ms >= 7900 ? "取词超时（8 秒内没结果）" : "四个源都没取到词"
             }
-            if !notes.isEmpty { base += "（" + notes + "）" }
+            if !noteText.isEmpty { base += "（" + noteText + "）" }
             if !diag.isEmpty { base += "：" + diag }
             await LyricsService.shared.noteFailure(base)
             return nil
@@ -168,7 +172,7 @@ extension LyricsService {
     ///   · ② 单独 5.5 秒预算：一次 ② 最多 2 候选 × 2 轮 × 2 通道，真机上串行跑完能吃掉
     ///     整个 8 秒，把 ③④ 一起挤掉——"网易云明明有词却显示没词"就是这么来的；
     ///   · 每个源都往空态诊断里写一行"几分钟几秒、断在哪"，下一轮不用猜。
-    private static func chain(_ song: Song, target: Int) async -> LyricsResult? {
+    private static func chain(_ song: Song, target: Int, notes: NoteBox) async -> LyricsResult? {
         let began = Date()
         func elapsed() -> Int { Int(Date().timeIntervalSince(began) * 1000) }
 
@@ -182,9 +186,9 @@ extension LyricsService {
         // ① 酷我平台的歌：musicId 精确取词，1 个请求
         if song.platform == .kuwo {
             if let official = await kuwoOfficial(song) { return official }
-            noteBox.add("① 酷我官方 \(elapsed())ms 无词")
+            notes.add("① 酷我官方 \(elapsed())ms 无词")
         } else {
-            noteBox.add("① 酷我官方 跳过（非酷我歌）")
+            notes.add("① 酷我官方 跳过（非酷我歌）")
         }
 
         // ①b 平台官方词（按 id 精确，1 个请求）：网易 / QQ。
@@ -197,10 +201,10 @@ extension LyricsService {
         switch song.platform {
         case .netease:
             if let official = await neteaseOfficial(song) { return official }
-            noteBox.add("①b 网易官方 \(elapsed())ms 无词")
+            notes.add("①b 网易官方 \(elapsed())ms 无词")
         case .qq:
             if let official = await qqOfficial(song: song) { return official }
-            noteBox.add("①b QQ官方 \(elapsed())ms 无词")
+            notes.add("①b QQ官方 \(elapsed())ms 无词")
         case .local:
             // 第 44 轮（老板拍板：**不动 r74 的 ①②③④ 顺序**，只把这一档扩到本地导入）：
             // 导入歌自己没有平台 id，但自动匹配会给它补一个 QQ songmid —— 有它就按 id 精确取官方词，
@@ -208,7 +212,7 @@ extension LyricsService {
             if let mid = song.meta?.matchedID, !mid.isEmpty,
                song.meta?.matchedPlatform == MusicPlatform.qq.rawValue {
                 if let official = await qqOfficial(song: song, mid: mid) { return official }
-                noteBox.add("①b QQ官方（导入歌 songmid）\(elapsed())ms 无词")
+                notes.add("①b QQ官方（导入歌 songmid）\(elapsed())ms 无词")
             }
         default:
             break
@@ -220,15 +224,15 @@ extension LyricsService {
         }
         if let kg = kgRaw ?? nil { return kg }
         let kgDiag = LddcLyrics.lastDiagnostics()
-        noteBox.add("② 酷狗 \(elapsed())ms " + (kgDiag.isEmpty ? "无词" : kgDiag))
+        notes.add("② 酷狗 \(elapsed())ms " + (kgDiag.isEmpty ? "无词" : kgDiag))
 
         // ③ LRCLIB（早就在跑了，这里只是取结果）
         if let result = await lrclib.value { return result }
-        noteBox.add("③ LRCLIB \(elapsed())ms 无匹配")
+        notes.add("③ LRCLIB \(elapsed())ms 无匹配")
 
         // ④ 网易云
         if let result = await netease.value { return result }
-        noteBox.add("④ 网易云 \(elapsed())ms 无匹配")
+        notes.add("④ 网易云 \(elapsed())ms 无匹配")
         return nil
     }
 

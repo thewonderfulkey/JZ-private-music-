@@ -29,6 +29,9 @@ check("烟火里的尘埃", d.title == "烟火里的尘埃" && d.artist == "华�
 let e = LyricSearchQuery.apply(title: "溺火-特污兔-Dirtyrabbit2", singer: "特污兔")
 check("溺火：歌手段 + 上传者尾巴", e.title == "溺火" && e.artist == "特污兔", "\(e.title) / \(e.artist)")
 
+let e2 = LyricSearchQuery.apply(title: "溺火-特污兔-Dirtyrabbit2", singer: "")
+check("溺火：歌手为空也能认出中段", e2.title == "溺火" && e2.artist == "特污兔", "\(e2.title) / \(e2.artist)")
+
 let f = LyricSearchQuery.apply(title: "Converted with FlexClip 【SUNO V5】庞麦郎-我的滑板鞋-黑人福音R&B",
                                singer: "SUNO V5")
 check("剪辑前缀不带进搜索", !f.title.contains("Converted with FlexClip"), f.title)
