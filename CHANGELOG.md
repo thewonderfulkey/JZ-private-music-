@@ -1,3 +1,16 @@
+### 出包记录（v2.4.65 / 243）
+
+| 项 | 值 |
+|---|---|
+| CI | **r182**（`243db3f`）✅ logic-tests + build **一次过** |
+| 产物 | `JZ-Music-v2.4.65-243db3f-r182-ios-unsigned.ipa` · **3,411,220 B** · sha256 `305c65df…6f51b868` |
+| 主二进制 | 12,680,216 B · sha256 `fd69174c28e8eca2…`（v2.4.64 是 `836fa1f0…` → **不是空包**） |
+| 包内版本 | `CFBundleShortVersionString 2.4.65` / `CFBundleVersion 243`（app + JZWidgets 一致）✅ |
+| 包内符号 | `persistFetchedLyrics`、`CompanionRetryRules`、「查词名纠正为」都在 ✅ |
+| 分发 | 飞书「音乐软件开发」群 14:16:32 已收到包 |
+
+---
+
 ## iOS v2.4.65（243）· 2026-11-22 13:43（24 首没词：洗名字 + 断点续抓 + 播放落盘）
 
 老板 13:43 的截屏（`Music 662 · Lyrics 638`）+ 13:44 的 `诊断.zip`：662 首里 **24 首 `lyrics=empty`**。
