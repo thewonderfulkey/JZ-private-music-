@@ -73,10 +73,12 @@ struct DownloadsTabView: View {
         }
     }
     private var finished: [DownloadItem] {
-        downloads.items.filter { $0.status == .completed && hit($0) }
+        // 2026-11-22（老板录屏）：新下载的放最上面。只倒序展示，不动落库顺序。
+        DownloadItem.newestFirst(downloads.items.filter { $0.status == .completed && hit($0) })
     }
     private var failed: [DownloadItem] {
-        downloads.items.filter { ($0.status == .failed || $0.status == .cancelled) && hit($0) }
+        DownloadItem.newestFirst(
+            downloads.items.filter { ($0.status == .failed || $0.status == .cancelled) && hit($0) })
     }
 
     private var totalBytes: Int64 {

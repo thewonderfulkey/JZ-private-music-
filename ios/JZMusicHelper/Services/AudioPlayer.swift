@@ -934,9 +934,12 @@ final class PlayerEngine {
         statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
             + " · \(PlaybackQualityRules.label)"
         start(item: AVPlayerItem(url: url), song: song, source: src)
-        // 起播之后再决定"要不要换更高码率"：这时 `source` 才是这一首的真实档位，
-        // 已经是 320 档就不会再白跑一轮完整排名。
-        schedulePlaybackUpgrade(for: song)
+        // 2026-11-22 **不再做"起播后升档"**：`swapToBetterSource` 会 `replaceCurrentItem` + seek，
+        // 缓冲从 0 重来，就是老板说的"开头 10 秒左右卡一下"。
+        // 档位已经在 `resolveStream` 第①步（`DownloadResolver.startPick`）挑好了：
+        // 320k 一到就用 320k 起播，拿不到才等满窗口用手上最高的一档。
+        // 函数与 `upgradedSongID` 留着是为了回滚（把下面这行注释放开即可）。
+        // schedulePlaybackUpgrade(for: song)
     }
 
     /// 装配并起播一个 item（本地文件与在线取流共用这一处）
@@ -996,26 +999,38 @@ final class PlayerEngine {
                                                  allowLossless: allowLossless)
         }
 
-        // ① 先到先用（≤320k + 内容闸门）
+        // ① 起播挑选（2026-11-22）：窗口内挑**最高档**的一条起播，起播之后不再换 item。
+        //    旧路径是"谁先回来用谁 + 后台升档"，那一步 `replaceCurrentItem` 会让缓冲从 0 重来，
+        //    听感就是老板说的"开头 10 秒左右卡一下"（见 `DownloadResolver.startPick`）。
+        if let quick = await DownloadResolver.startPick(song: song, want: PlayerEngine.playbackQuality),
+           usable(quick.source) {
+            return quick.source
+        }
+
+        // ② 先到先用（老路径，6s 预算）：启动窗口没等到任何候选时**必须**留着这一档。
+        //    为什么不能直接跳去 plan()：plan 要等"跨源候选"（搜索 + 逐个解析，最长 15s），
+        //    而妖狐/ikun 这类慢后端 2–5s 才回——直接进 plan 会把"3s 能起播"拖成 15s，
+        //    正是 2026-11-20 老板投诉的"切歌卡 10 秒"。这里先抢一条出来响，
+        //    音质不好也没关系：起播之后**不再换 item**（宁可这一首 128k，也不中途卡一下）。
         if let quick = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
            usable(quick.source) {
             return quick.source
         }
 
-        // ② 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
+        // ③ 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
         let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
         if let picked = plan.ranked.first(where: { usable($0.source) }) {
             return picked.source
         }
 
-        // ③ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
+        // ④ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
         if let cross = await SameSongCrossResolver.resolve(
             song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys()),
            usable(cross) {
             return cross
         }
 
-        // ④ 无损兜底：**只在前三条全空时**才放开 FLAC（周杰伦这类"酷我只有 FLAC"的歌）。
+        // ⑤ 无损兜底：**只在前四条全空时**才放开 FLAC（周杰伦这类"酷我只有 FLAC"的歌）。
         //
         // 为什么必须放在最后、且只跑一次：无损要现拉 26~55MB 的远端流，首字节 1.5~2s，
         // 放在关键路径上就会重现"播完卡住"（2026-11-19 心动模式的结论：无损必须现拉，
@@ -1029,7 +1044,7 @@ final class PlayerEngine {
             return lossless.source
         }
 
-        // ⑤ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
+        // ⑥ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         if let retry = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
            usable(retry.source) {
@@ -1043,11 +1058,16 @@ final class PlayerEngine {
         return nil
     }
 
-    // MARK: 后台再判一次"有没有更高码率"（只在 ≤320k 以内）
+    // MARK: 后台再判一次"有没有更高码率"（只在 ≤320k 以内）—— **2026-11-22 停用**
 
     /// 老板 2026-11-20 定稿：旧的 `scheduleQualityUpgrade`（会顺手把播放链升到 FLAC）**必须下线**。
     /// 这里是它的替代品——只在 ≤320k 之内往更高**实测码率**走（320 > 256 > 128），无损永远不参与。
-    /// 起播用它换更好的档音质；已经是 320 档就不再白跑一轮 15s 的完整排名。
+    ///
+    /// **2026-11-22 起停用（`loadCurrent` 里的调用已注释）**：老板反馈《下一个天亮》开头 10 秒左右
+    /// 会明显卡一下。根因就是这里——`swapToBetterSource` 是 `replaceCurrentItem` + seek，缓冲从 0 重来，
+    /// 而它触发时进度已经走了 1–5 秒，正好落在"开头 10 秒"里。
+    /// 档位改由 `DownloadResolver.startPick` 在**起播之前**一次挑好（320k 到手就用 320k 起播）。
+    /// 保留实现只为回滚：把 `loadCurrent` 里那行注释放开即可。
     private func schedulePlaybackUpgrade(for song: Song) {
         guard let cur = source, PlaybackQualityRules.isPlayable(cur) else { return }
         guard !PlaybackQualityRules.isTopTier(cur) else { return }

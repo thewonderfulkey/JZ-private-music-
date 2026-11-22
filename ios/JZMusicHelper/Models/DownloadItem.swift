@@ -250,6 +250,24 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     var sizeText: String {
         ByteText.human(totalBytes)
     }
+
+    /// 下载列表的展示顺序：**新的在最上面**（老板 2026-11-22 录屏："现在下载歌曲都放最底下了"）。
+    ///
+    /// 为什么只在展示层倒序、不动 `DownloadManager.items`：那个数组还是"落库顺序"，
+    /// 被去重、缓存签名、补料队列、删除下标等多处依赖；只把「列表怎么排」这一层倒过来，风险最小。
+    ///
+    /// 时间完全相同的（同一批导入 / 同一秒完成）按原数组里**后入的先显示**，
+    /// 这样两次渲染之间顺序稳定，不会因为 `sort` 不稳定而让行来回跳。
+    static func newestFirst(_ items: [DownloadItem]) -> [DownloadItem] {
+        items.enumerated()
+            .sorted { a, b in
+                if a.element.createdAt != b.element.createdAt {
+                    return a.element.createdAt > b.element.createdAt
+                }
+                return a.offset > b.offset
+            }
+            .map(\.element)
+    }
 }
 
 // MARK: - 批量选择（2026-11-21 老板：下载 tab 要多选 + 全选 + 批量删除）

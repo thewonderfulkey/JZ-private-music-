@@ -600,15 +600,16 @@ enum DownloadResolver {
 
     // MARK: 播放链：先到先用（2026-11-20 老板定稿：不要再等齐三个后端）
 
-    /// 播放入口：**哪个后端先回来、且过了「档位 + 内容闸门 + 身份闸」，就立刻用它起播**。
+    /// 播放入口（老路径）：**哪个后端先回来、且过了「档位 + 内容闸门 + 身份闸」，就立刻用它起播**。
     ///
     /// 旧 `quickPick` 是"等齐"——`collect` 里的 `for await` 要等每个 job 各自返回或各自超时
     /// 才收工。实测（老板真实歌单取样）三个 primary 后端**从来没有一次**在 1.8s 内等齐：
     /// gdstudio 0.4~0.9s、oiapi 1.4~2.1s、妖狐酷我 2.0~4.9s。于是每次切歌都吃满窗口，
     /// 那一段"没声音"的空档正好把进程送到系统的挂起线以下（见 IOS-BACKGROUND-ADVANCE.md）。
     ///
-    /// 现在第一个合格候选直接返回，其余候选不再等。后续"要不要更好的一档"由
-    /// `AudioPlayer.schedulePlaybackUpgrade` 在后台收尾（同样受 ≤320k 约束）。
+    /// 2026-11-22 起它在播放链里退居**第二档**：先由 `startPick` 在 1.6s 窗口内挑最高档；
+    /// 窗口空手而归才回到这里"谁先回来用谁"（慢后端 2–5s 也能起播，不会掉进 plan 的 15s）。
+    /// 起播之后**不再换 item**（旧的 `schedulePlaybackUpgrade` 已停用，就是它造成开头卡顿）。
     ///
     /// `allowLossless`：**只给"最后一条可用源"用**（周杰伦这类酷我只有 FLAC 的歌）。
     /// 常规路径（第一遍）传 false —— 无损不进关键路径，否则又会回到"播完卡住"
@@ -649,6 +650,87 @@ enum DownloadResolver {
                 }
             }
             return nil
+        }
+    }
+
+    // MARK: 起播挑选（2026-11-22：够档立刻起播，不够档才等窗口）
+
+    /// 起播窗口。320k 的后端实测都在 0.9–1.1s（酷狗官方 128k 0.88–1.01s、星海酷狗 320k 0.87–1.14s），
+    /// 1.6s 足够把"能拿到的最高档"收齐；拿不到就用手上最高的那条起播，不再事后换。
+    static let startWindow: TimeInterval = 1.6
+
+    /// 「够档」的门槛：320k 档（`tierOf` 700）。到手就不用再等。
+    static let startGoodEnoughTier = 700
+
+    /// 一批候选里挑"起播用哪条"：档位 > 实测码率 > 响应快（纯函数，CI 钉口径）。
+    ///
+    /// 为什么不直接用 `Score`：`Score` 里还掺了版本/时长/来源可靠性，起播这一步只关心
+    /// "同样是一首对的歌，哪条更不亏"——那三个维度对它已经没有区分度。
+    static func bestForStart(_ candidates: [Candidate]) -> Candidate? {
+        candidates.max { a, b in
+            if a.score.tier != b.score.tier { return a.score.tier < b.score.tier }
+            if a.source.kbps != b.source.kbps { return a.source.kbps < b.source.kbps }
+            return a.elapsedMs > b.elapsedMs
+        }
+    }
+
+    /// 起播挑选（老板 2026-11-22：开头 10 秒左右会卡一下）。
+    ///
+    /// **旧路径**：`firstPlayable` 谁先回来用谁。酷狗官方 128k 与星海酷狗 320k 都落在 0.9–1.1s，
+    /// 128k 常常先到 → 先以 128k 起播，再由 `AudioPlayer.schedulePlaybackUpgrade` 后台换成 320k。
+    /// 那一步是 `player.replaceCurrentItem` + seek：**缓冲从 0 重来**，听着就是"放着放着卡一下"，
+    /// 而且换的时候进度已经走了 1–5 秒，正好落在"开头 10 秒"里。
+    ///
+    /// **现在**：一次挑好，起播之后不再换 item。
+    ///   · 320k 一到（`startGoodEnoughTier`）立刻起播 —— 和以前一样快（~1.0s）；
+    ///   · 拿不到 320k 就等满 `window`（1.6s），用手上最高的一档起播；
+    ///   · 窗口内一条都没有 → nil，由调用方继续走后面的兜底（完整排名 / 跨平台 / 无损兜底）。
+    static func startPick(song: Song, want: QualityLevel,
+                          window: TimeInterval = startWindow) async -> Candidate? {
+        let jobs = primaryJobs(for: song).filter {
+            !BackendHealth.shared.isCoolingDown($0.adapter.name)
+        }
+        guard !jobs.isEmpty else { return nil }
+        let start = Date()
+        return await withTaskGroup(of: Candidate?.self) { group in
+            for job in jobs {
+                group.addTask {
+                    // 每个后端最多用掉窗口剩下的时间（后端内部还有自己的超时）
+                    let left = max(0.5, window - Date().timeIntervalSince(start))
+                    let t0 = Date()
+                    guard let src = await withTimeoutOrNil(left, {
+                        try await job.adapter.resolve(song: job.song, quality: want)
+                    }) else { return nil }
+                    // 身份闸：primary 后端拿的就是这首歌自己；跨源条目才需要再验一次
+                    if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
+                        return nil
+                    }
+                    guard PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec) else {
+                        return nil
+                    }
+                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                    return Candidate(song: job.song, source: src, elapsedMs: ms,
+                                     score: score(of: src, song: job.song, ref: song, ms: ms))
+                }
+            }
+            var best: Candidate?
+            for await c in group {
+                guard let c else { continue }
+                if let b = best {
+                    if c.score.tier > b.score.tier
+                        || (c.score.tier == b.score.tier && c.source.kbps > b.source.kbps) {
+                        best = c
+                    }
+                } else {
+                    best = c
+                }
+                // 够档就立刻起播，剩下的候选直接取消（不再等）
+                if let b = best, b.score.tier >= startGoodEnoughTier {
+                    group.cancelAll()
+                    return b
+                }
+            }
+            return best
         }
     }
 

@@ -314,6 +314,77 @@ do {
           SameSongCrossResolver.sameSong(src: krSrc, cand: krCand, uploaderLike: false))
 }
 
+// MARK: - 3.2.1 下载列表顺序：新的在最上面（2026-11-22 老板录屏）
+
+section("下载列表顺序：新的在最上面")
+
+do {
+    func item(_ name: String, _ sec: TimeInterval) -> DownloadItem {
+        DownloadItem(song: song(.qq, name, "歌手"), streamURL: "file:///\(name).flac",
+                     backendName: "import", quality: .lossless, fileName: "\(name).flac",
+                     status: .completed, totalBytes: 1_000,
+                     createdAt: Date(timeIntervalSince1970: sec))
+    }
+    let old = item("老歌", 100)
+    let mid = item("中间", 200)
+    let new = item("新歌", 300)
+    check("新的排最前（旧→新 的落库顺序被倒过来）",
+          DownloadItem.newestFirst([old, mid, new]).map(\.song.name) == ["新歌", "中间", "老歌"],
+          "got=\(DownloadItem.newestFirst([old, mid, new]).map(\.song.name))")
+    check("落库顺序打乱也一样", 
+          DownloadItem.newestFirst([mid, new, old]).map(\.song.name) == ["新歌", "中间", "老歌"])
+    check("空列表不炸", DownloadItem.newestFirst([]).isEmpty)
+
+    // 同一秒完成的一批（批量导入）：后入的在上，且两次调用顺序一致（不能来回跳）
+    let batchA = item("A", 500)
+    let batchB = item("B", 500)
+    let batchC = item("C", 500)
+    check("同一秒的：后入的先显示",
+          DownloadItem.newestFirst([batchA, batchB, batchC]).map(\.song.name) == ["C", "B", "A"])
+    check("同一秒的：重复调用顺序稳定",
+          DownloadItem.newestFirst([batchA, batchB, batchC]).map(\.id)
+            == DownloadItem.newestFirst([batchA, batchB, batchC]).map(\.id))
+}
+
+// MARK: - 3.2.2 起播挑选：够档立刻起播，起播后不再换源（2026-11-22 开头卡顿）
+
+section("起播挑选：不再中途换源")
+
+do {
+    func src(_ kbps: Int64, _ backend: String) -> StreamSource {
+        StreamSource(url: "https://x/\(backend)", backendName: backend, platform: .kugou,
+                     quality: .high, format: "mp3", note: "",
+                     kbps: kbps, totalBytes: 10_000_000)
+    }
+    func cand(_ s: StreamSource, ms: Int) -> DownloadResolver.Candidate {
+        DownloadResolver.Candidate(
+            song: song(.kugou, "下一个天亮", "我的音乐调频"),
+            source: s, elapsedMs: ms,
+            score: DownloadResolver.Score(tier: DownloadResolver.tierOf(s), version: 300,
+                                          duration: 100, reliable: 90, ms: ms))
+    }
+    let k128 = src(128, "酷狗官方")
+    let k320 = src(321, "星海酷狗")
+    let k256 = src(256, "某后端")
+
+    check("320 压过先到的 128（这就是不再中途换源的关键）",
+          DownloadResolver.bestForStart([cand(k128, ms: 200), cand(k320, ms: 900)])?.source.backendName
+            == "星海酷狗",
+          "got=\(DownloadResolver.bestForStart([cand(k128, ms: 200), cand(k320, ms: 900)])?.source.backendName ?? "nil")")
+    check("只有 128 时就用 128（不再空等）",
+          DownloadResolver.bestForStart([cand(k128, ms: 200)])?.source.kbps == 128)
+    check("同档取实测码率更高的",
+          DownloadResolver.bestForStart([cand(k256, ms: 300), cand(k320, ms: 800)])?.source.kbps == 321)
+    check("同档同码率取更快的",
+          DownloadResolver.bestForStart([cand(k320, ms: 900), cand(k320, ms: 400)])?.elapsedMs == 400)
+    check("一条都没有 → nil", DownloadResolver.bestForStart([]) == nil)
+    check("起播窗口 1.6s、够档门槛 = 320k 档（700）",
+          DownloadResolver.startWindow == 1.6 && DownloadResolver.startGoodEnoughTier == 700,
+          "window=\(DownloadResolver.startWindow) tier=\(DownloadResolver.startGoodEnoughTier)")
+    check("128k 达不到「够档」", DownloadResolver.tierOf(k128) < DownloadResolver.startGoodEnoughTier)
+    check("320k 达到「够档」", DownloadResolver.tierOf(k320) >= DownloadResolver.startGoodEnoughTier)
+}
+
 // MARK: - 3.3 下载链排名（2026-11-19 老板口径：全收集 → 身份淘汰 → 打分排序 → 取第一 → 校验 → 退第二）
 
 section("下载链排名与下载前校验")
