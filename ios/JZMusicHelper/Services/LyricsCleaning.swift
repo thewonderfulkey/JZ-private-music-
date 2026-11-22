@@ -428,3 +428,106 @@ enum LyricsCleaning {
         return indexAt(lines, positionMs: positionMs + lead)
     }
 }
+
+// MARK: - 取词用的搜索名（第 55 轮 · v2.4.65）
+//
+// 老板库里 24 首没词，其中 5 首的**歌名本身就是文件名**：
+//   「寒鸦少年-华晨宇-wy_1305366556」「水星记-郭顶-wy_441491828」
+//   「我们俩-郭顶-wy_85571」「烟火里的尘埃-华晨宇-wy_29004400」「溺火-特污兔-Dirtyrabbit2」
+// 拿这种名字去搜，酷狗回的是别人的歌（"华晨宇 / 海山来了"），身份闸当然全拒 → 永远没词。
+//
+// 这一层只改**取词时用的名字**：库里显示的歌名/歌手一个字节都不动（改显示要走编辑页，需要用户点头）。
+// 纯函数，`ios/SelfTest` 有断言。
+enum LyricSearchQuery {
+
+    /// 返回 (取词歌名, 取词歌手, 有没有改过)
+    static func apply(title: String, singer: String) -> (title: String, artist: String, changed: Bool) {
+        let rawTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawSinger = singer.trimmingCharacters(in: .whitespacesAndNewlines)
+        var t = rawTitle
+        var a = rawSinger
+        let hyphenSegments = t.split(whereSeparator: { "-–—".contains($0) }).count
+
+        // ① 剪辑/转换工具留下的前缀（"Converted with FlexClip 【SUNO V5】…"）
+        t = t.replacingOccurrences(of: "Converted with FlexClip", with: "",
+                                   options: [.regularExpression, .caseInsensitive])
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // ② 「歌名-歌手-wy_123456」：站点 ID 段剥掉；歌手为空时顺手把中段当歌手
+        if let m = capture(#"^\s*(.+?)\s*[-–—]\s*([^-–—]+?)\s*[-_]\s*wy[_-]?\d+\s*$"#, in: t),
+           m.count >= 3 {
+            t = m[1]
+            if a.isEmpty { a = m[2] }
+        }
+
+        // ③ 只剩「-wy_123」尾巴
+        t = t.replacingOccurrences(of: #"\s*[-_]\s*wy[_-]?\d+\s*$"#, with: "",
+                                   options: [.regularExpression, .caseInsensitive])
+
+        // ④ 歌手串挂在歌名里（「溺火-特污兔-…」）：把歌手那一段剥掉
+        if !a.isEmpty {
+            for name in artistNames(a) {
+                let esc = NSRegularExpression.escapedPattern(for: name)
+                t = t.replacingOccurrences(of: "\\s*[-–—]\\s*" + esc + "\\s*[-–—]\\s*",
+                                           with: "-", options: [.regularExpression, .caseInsensitive])
+                t = t.replacingOccurrences(of: "\\s*[-–—]\\s*" + esc + "\\s*$",
+                                           with: "", options: [.regularExpression, .caseInsensitive])
+            }
+        }
+
+        // ⑤ 「歌名-上传者2」：中文歌名后面挂着一个带数字的纯 ASCII 尾巴 → 当后缀删掉
+        //    只处理"原来就有 3 段以上"的情况，避免把「海屿你-remix」这类真版本标记误删
+        if hyphenSegments >= 3, containsCJK(t),
+           let m = capture(#"^(.+?)\s*[-–—]\s*([A-Za-z][A-Za-z0-9_.]*\d[A-Za-z0-9_.]*)\s*$"#, in: t),
+           m.count >= 3, !isVersionTag(m[2]) {
+            t = m[1]
+        }
+
+        // ⑥ 收尾：不留空段 / 尾随连字符
+        t = t.replacingOccurrences(of: #"^[\s\-–—]+|[\s\-–—]+$"#, with: "", options: .regularExpression)
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { t = rawTitle }
+        return (t, a, t != rawTitle || a != rawSinger)
+    }
+
+    /// 歌手串拆成若干候选（"A/B" → ["A","B"]；整串也保留一份）
+    static func artistNames(_ singer: String) -> [String] {
+        var out: [String] = []
+        let whole = singer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !whole.isEmpty { out.append(whole) }
+        for part in singer.split(whereSeparator: { "/／、,，;；&".contains($0) }) {
+            let s = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !s.isEmpty && !out.contains(s) { out.append(s) }
+        }
+        return out
+    }
+
+    private static func containsCJK(_ s: String) -> Bool {
+        s.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
+    }
+
+    /// 版本类标记：这些尾巴是「另一版」的证据，不能当上传者 ID 删掉
+    private static func isVersionTag(_ s: String) -> Bool {
+        let low = s.lowercased()
+        for tag in ["remix", "live", "inst", "dj", "demo", "cover", "acoustic", "remaster"] {
+            if low.contains(tag) { return true }
+        }
+        return false
+    }
+
+    /// 正则第一处匹配的捕获组（0 = 整段）
+    private static func capture(_ pattern: String, in text: String) -> [String]? {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let m = re.firstMatch(in: text, range: range) else { return nil }
+        var out: [String] = []
+        for i in 0..<m.numberOfRanges {
+            if let r = Range(m.range(at: i), in: text) {
+                out.append(String(text[r]).trimmingCharacters(in: .whitespaces))
+            } else {
+                out.append("")
+            }
+        }
+        return out
+    }
+}

@@ -315,3 +315,28 @@ mp3 / flac 改成「先写新标签/新元数据 → 1MB 一块拷音频 → 体
 专辑缺失**不影响**判定（很多歌本来没有专辑）；歌词缺失也**不**触发自动联网。
 
 断言：第 54 轮 8 条（自带完整/缺封面/缺歌手/无专辑/带词/空/nil），本机 **90/90**。
+
+### 8.9 第 55 轮：24 首没词的真正原因（洗名字 / 断点续抓 / 播放落盘）
+
+老板 2026-11-22 13:43 截屏 `Music 662 · Lyrics 638` + 13:44 的 `诊断.zip`。
+`metadata.log` 里 24 条 `lyrics=empty` 与 638 的缺口正好对上，分四类：
+
+| 类 | 首数 | 例子 | 断在哪 |
+|---|---|---|---|
+| 歌名就是文件名 | 5 | 寒鸦少年-华晨宇-wy_1305366556 | 搜出来是别人的歌 → 身份闸全拒 |
+| 有词、文件却空 | 5 | 海屿你 58 行 / 圣山 64 行 / 锁 80 行 | 一次失败 → 3 次封顶 → 永不再试 |
+| 版本类被拦 | 1 | Mood (Remix\|Explicit) | 候选是 Remix 版 |
+| 词源真没有 | 13 | SUNO V5 9 首 + Numb / shØut / 前前前世Slow Ver / 우주를 줄게 | 没有这一版的词 |
+
+三处改动：
+
+1. `LyricSearchQuery`（`LyricsCleaning.swift`）：取词前剥 `-歌手-wy_123` / `Converted with FlexClip` /
+   中文名后的上传者尾巴；**只改搜索用名**，显示名、`platformID`、旁车基名都不动。
+2. `CompanionRetryRules`（`DownloadCompanion.swift`）：3 次 → 12 次，退避到 1 小时；
+   `resumeCompanionBackfill()` 接进 `RootTabView` 的 `scenePhase == .active`（以前只有定义、没人调，
+   等于断点续抓从来没生效过——13:43 那次 56 首只跑了 3 秒就被挂起，日志停在 6 行）。
+3. `DownloadManager.persistFetchedLyrics`：播放页取到词立刻写 `Lyrics/<基名>.lrc`（已存在则跳过）。
+
+另：每首补料会落一行 `lyrics | 歌名 | N 行 / 无 · 原因`，下一轮不用再复算就能点名。
+
+断言：第 55 轮 18 条（清洗 12 + 重试 6），本机 mini **18/18**。

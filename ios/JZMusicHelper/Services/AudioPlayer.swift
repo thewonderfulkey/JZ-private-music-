@@ -1517,6 +1517,11 @@ final class PlayerEngine {
     private var lyricSourceBySong: [String: String] = [:]
 
     private func adoptLyrics(_ result: LyricsResult?, for song: Song) {
+        // 第 55 轮：取到词就落旁车（只剩"文件夹里没有"的那 24 首靠播放补齐）。
+        // 内部会先判 `Lyrics/<基名>.lrc` 在不在，不会覆盖已有文件。
+        if let result, !result.lines.isEmpty {
+            DownloadManager.shared.persistFetchedLyrics(result, for: song)
+        }
         if let result {
             let previous = lyricSourceBySong[song.id]
             // 只比"来源名"（标签里有耗时，如 `LDDC · 逐字 · 1.8s`，按首个 · 前的前缀比）

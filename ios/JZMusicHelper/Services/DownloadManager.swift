@@ -116,10 +116,10 @@ final class DownloadManager: NSObject, ObservableObject {
     // 真正的网络/写盘在 `Task.detached` 里跑，回来时 `MainActor.run` 收尾。
     /// 补料并发上限（QQ 搜索与搜索页同域，>4 会把搜索打超时 —— 老板刚修过那一轮）
     static let companionConcurrency = 4
-    /// 每首最多自动重试几次（超过就停下，等用户点「补全信息」）
-    static let companionMaxAttempts = 3
-    /// 退避：第 1 次失败 2s 后再试，第 2 次 8s，第 3 次 30s
-    static let companionBackoff: [TimeInterval] = [2, 8, 30]
+    /// 每首最多自动重试几次（第 55 轮：3 → 12；口径在 `CompanionRetryRules`，CI 有断言）
+    static let companionMaxAttempts = CompanionRetryRules.maxAttempts
+    /// 退避：2s → 8s → 30s → 2min → 10min → 30min → 1h（之后一直 1h）
+    static let companionBackoff: [TimeInterval] = CompanionRetryRules.backoff
 
     /// 等着补的条目（按入队顺序）
     private var fillQueue: [UUID] = []
@@ -435,6 +435,28 @@ final class DownloadManager: NSObject, ObservableObject {
     func localLyrics(for song: Song) -> [LyricLine]? {
         guard let audio = localFileURL(for: song) else { return nil }
         return DownloadCompanion.readLyrics(from: audio, in: [lyricsDirectory])
+    }
+
+    /// 播放页取到词 → 立刻落 `Lyrics/<基名>.lrc` 旁车（第 55 轮）。
+    ///
+    /// 为什么要有：旁车以前只在"补料"那一步写，播放时取到的词只进内存 ——
+    /// 于是"我明明看到过歌词"和"文件夹里没有"可以同时成立（老板那 24 首里就有这种）。
+    /// 已存在就跳过（不覆盖用户/上一轮已经写好的那份）。只在主线程调用。
+    func persistFetchedLyrics(_ result: LyricsResult?, for song: Song) {
+        guard let result, !result.lines.isEmpty else { return }
+        guard let audio = localFileURL(for: song) else { return }
+        let base = DownloadCompanion.baseName(for: audio)
+        let url = DownloadCompanion.lyricsURL(in: lyricsDirectory, baseName: base)
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        let text = DownloadCompanion.lrcText(from: result.lines, title: song.name,
+                                             artist: song.singer, durationSec: song.durationSec)
+        guard !text.isEmpty else { return }
+        _ = DownloadCompanion.writeSidecars(audio: audio, lyricsText: text, coverData: nil,
+                                            lyricsDirectory: lyricsDirectory,
+                                            coverDirectory: coverDirectory)
+        CrashReporter.logMetadata(
+            "lyrics-saved | \(song.name) | \(result.lines.count) 行 | \(result.source)")
+        markDirectoryCacheDirty()
     }
 
     /// 离线封面（列表/播放页显示本地封面用）：已下载完成 + 旁车 .jpg 存在才返回。
@@ -762,6 +784,11 @@ final class DownloadManager: NSObject, ObservableObject {
         } else {
             items[idx].companionState = .done
             items[idx].companionNextAt = nil
+            if result.retryable {
+                // 第 55 轮：真的重试满了还没词 —— 落一行日志，下一轮能直接点名（以前只有内存里的原因）
+                CrashReporter.logMetadata(
+                    "companion | \(items[idx].song.name) | 重试 \(attempt) 次仍没词 · \(result.reason ?? "无原因")")
+            }
         }
         persist()
         if result.coverOK {
@@ -789,17 +816,36 @@ final class DownloadManager: NSObject, ObservableObject {
         }
     }
 
-    /// 冷启动续抓：把"上次没跑完"的条目重新排队（`running` 是进程被杀留下的，一律当 pending）
+    /// 冷启动 / 回前台续抓：把"上次没跑完"的条目重新排队。
+    ///
+    /// 第 55 轮补了两个口子（老板 13:43 那次补全只跑了 3 秒就被系统挂起，56 首一首没走完）：
+    ///   · `.failed` 不再只看 attempts<3；只要还有额度、且退避时间已到就重新排；
+    ///   · `companionState == nil`（老库里从没进过队列）+ `Lyrics/` 里确实没有旁车的，也一并捡起来。
+    /// 只在主线程调用；回前台由 `RootTabView` 的 `scenePhase` 触发。
     func resumeCompanionBackfill() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in self?.resumeCompanionBackfill() }
             return
         }
-        let pending = items.filter {
-            $0.status == .completed && $0.localPath != nil
-                && ($0.companionState == .pending || $0.companionState == .running
-                    || ($0.companionState == .failed
-                        && ($0.companionAttempts ?? 0) < Self.companionMaxAttempts))
+        let now = Date()
+        let lyricsDir = lyricsDirectory
+        let pending = items.filter { item in
+            guard item.status == .completed, item.localPath != nil else { return false }
+            switch item.companionState {
+            case .pending, .running:
+                return true
+            case .failed:
+                guard (item.companionAttempts ?? 0) < Self.companionMaxAttempts else { return false }
+                return (item.companionNextAt ?? .distantPast) <= now
+            case .none:
+                // 从没进过队列的老条目：只有"旁车歌词确实缺"才捡，避免每次回前台把全库排一遍
+                let audio = URL(fileURLWithPath: item.localPath ?? "")
+                let base = DownloadCompanion.baseName(for: audio)
+                let lrc = DownloadCompanion.lyricsURL(in: lyricsDir, baseName: base)
+                return !FileManager.default.fileExists(atPath: lrc.path)
+            default:
+                return false
+            }
         }
         guard !pending.isEmpty else { return }
         CrashReporter.logMetadata("resume | \(pending.count) 首待补（断点续抓）")
@@ -933,6 +979,11 @@ final class DownloadManager: NSObject, ObservableObject {
             result.reason = await LyricsService.shared.failureReason()
             result.retryable = true
         }
+        // 第 55 轮：逐首落一行取词结果 —— 以前只有内存里的 lastFailure，下一首就被覆盖，
+        // 出问题时只能靠"复算"，没法直接点名哪首没词、断在哪。
+        CrashReporter.logMetadata(
+            "lyrics | \(working.name) | "
+            + (result.lyricsOK ? "\(lines.count) 行" : "无 · \(result.reason ?? "未知原因")"))
         if isCompanionCancelled(itemID) { return result }
 
         // ③ 封面：匹配到的图优先；没有就沿兜底链（酷我 rid → QQ 严格匹配 → iTunes）

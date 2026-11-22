@@ -94,6 +94,9 @@ struct RootTabView: View {
                 // B3（老板 2026-11-20）：回前台自愈。后台被挂起后取源任务可能已经死了，
                 // 只靠"任务自己恢复"不够——应该出声却没出声时补一脚（用户自己暂停/来电打断不碰）。
                 player.recoverIfStalled()
+                // 第 55 轮：补全队列也可能被挂起（13:43 那次 56 首只跑了 3 秒）。
+                // `resumeCompanionBackfill` 以前只有定义、没人调，等于断点续抓从来没生效过。
+                DownloadManager.shared.resumeCompanionBackfill()
                 // r121：回前台顺便核对一下热歌榜换没换。
                 // 发现页的 Tab 是保活的（`RootTabView` 只建一次），`DiscoverView.task` 不会再跑，
                 // 所以"App 在后台挂了两天"时榜单会一直停在旧日期——这里补一次（内部有 10 分钟节流）。

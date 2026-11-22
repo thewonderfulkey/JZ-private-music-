@@ -1454,3 +1454,26 @@ enum DownloadCompanion {
         return v < 10 ? "0\(v)" : "\(v)"
     }
 }
+
+// MARK: - 补全重试口径（第 55 轮 · v2.4.65）
+//
+// 老板 13:43 那次「补全 56 首」只跑了 3 秒就被系统挂起，日志停在 6 行；
+// 而以前每首最多重试 3 次（2s / 8s / 30s），3 次之后就 `.done` 再也不碰 ——
+// 一次抖动 = 这首歌永远没词（他库里 24 首就是这么留下的）。
+//
+// 现在：12 次，退避一路拉到 1 小时；回前台由 `resumeCompanionBackfill` 接着跑。
+// 放在这一层（而不是 DownloadManager 里）是因为 CI 的 logic-tests 只编这一批文件，纯值才能被断言。
+enum CompanionRetryRules {
+    /// 每首最多自动重试几次
+    static let maxAttempts = 12
+    /// 退避表：2s → 8s → 30s → 2min → 10min → 30min → 1h（之后一直 1h）
+    static let backoff: [TimeInterval] = [2, 8, 30, 120, 600, 1800, 3600]
+
+    /// 第 `attempt` 次失败后等多久再试（attempt 从 1 开始）
+    static func backoffSeconds(attempt: Int) -> TimeInterval {
+        backoff[min(max(attempt, 1) - 1, backoff.count - 1)]
+    }
+
+    /// 还给不给下一次机会
+    static func shouldRetry(attempt: Int) -> Bool { attempt < maxAttempts }
+}

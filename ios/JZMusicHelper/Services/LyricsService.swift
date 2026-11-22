@@ -121,8 +121,15 @@ extension LyricsService {
     static func resolve(_ song: Song, audioSec: Int = 0) async -> LyricsResult? {
         noteBox.clear()
         let target = audioSec > 0 ? audioSec : song.durationSec
+        // 第 55 轮：歌名本身就是文件名的（「寒鸦少年-华晨宇-wy_1305366556」）先洗净再搜。
+        // 只改**搜索用的名字**，`platformID` / 显示名 / 旁车基名都不动（`Song.with` 保证）。
+        let q = LyricSearchQuery.apply(title: song.name, singer: song.singer)
+        let query = q.changed ? song.with(name: q.title, singer: q.artist) : song
+        if q.changed {
+            noteBox.add("查词名纠正为「\(q.title) / \(q.artist)」")
+        }
         let began = Date()
-        let raw = await LddcLyrics.withDeadline(seconds: 8) { await chain(song, target: target) }
+        let raw = await LddcLyrics.withDeadline(seconds: 8) { await chain(query, target: target) }
         let hit: LyricsResult? = raw ?? nil
         let ms = Int(Date().timeIntervalSince(began) * 1000)
 
@@ -147,6 +154,7 @@ extension LyricsService {
         }
         result.elapsedMs = ms
         // 来源标签带上耗时：播放页顶部那行小字就能看到（老板要的毫秒数）
+        if q.changed { result.source += " · 已纠名" }
         result.source += " · " + String(format: "%.1fs", Double(ms) / 1000)
         return result
     }

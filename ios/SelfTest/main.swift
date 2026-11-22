@@ -5012,6 +5012,65 @@ do {
     check("读不出标签（nil）→ 不完整", !DownloadCompanion.LocalTagRules.isSelfContained(fields: nil))
 }
 
+// MARK: - 第 55 轮：取词前洗名字 + 补全不再 3 次封顶
+//
+// 老板 2026-11-22 13:43 的截屏 + 诊断.zip：662 首里 24 首 `lyrics=empty`，
+// 其中 5 首的歌名本身就是文件名（「寒鸦少年-华晨宇-wy_1305366556」），拿去搜只会搜到别人的歌。
+
+section("取词名清洗（第 55 轮）")
+
+do {
+    let a = LyricSearchQuery.apply(title: "寒鸦少年-华晨宇-wy_1305366556", singer: "")
+    check("站点 ID 尾巴剥掉、歌手从中间段补出来",
+          a.title == "寒鸦少年" && a.artist == "华晨宇", "\(a.title) / \(a.artist)")
+    check("确实报告了「改过」", a.changed)
+
+    let b = LyricSearchQuery.apply(title: "水星记-郭顶-wy_441491828", singer: "")
+    check("同一种文件名", b.title == "水星记" && b.artist == "郭顶", "\(b.title) / \(b.artist)")
+
+    let c = LyricSearchQuery.apply(title: "我们俩-郭顶-wy_85571", singer: "")
+    check("同一种文件名（我们俩）", c.title == "我们俩" && c.artist == "郭顶", "\(c.title) / \(c.artist)")
+
+    let d = LyricSearchQuery.apply(title: "烟火里的尘埃-华晨宇-wy_29004400", singer: "")
+    check("同一种文件名（烟火里的尘埃）", d.title == "烟火里的尘埃" && d.artist == "华晨宇",
+          "\(d.title) / \(d.artist)")
+
+    let e = LyricSearchQuery.apply(title: "溺火-特污兔-Dirtyrabbit2", singer: "特污兔")
+    check("歌手段 + 上传者尾巴都剥掉", e.title == "溺火" && e.artist == "特污兔", "\(e.title) / \(e.artist)")
+
+    let f = LyricSearchQuery.apply(title: "Converted with FlexClip 【SUNO V5】庞麦郎-我的滑板鞋-黑人福音R&B",
+                                   singer: "SUNO V5")
+    check("剪辑工具前缀不带进搜索", !f.title.contains("Converted with FlexClip"), f.title)
+
+    // 不许误伤：正常歌名一个字都不改
+    for (t, s) in [("晴天", "周杰伦"),
+                   ("Sukidayo -Hyakkai No Koukai- (English Version)", "Che'Nelle"),
+                   ("Mood (Remix|Explicit)", "24kGoldn/Justin Bieber"),
+                   ("ピースサイン (V字手势)", "米津玄師"),
+                   ("海屿你-remix", "大头针")] {
+        let r = LyricSearchQuery.apply(title: t, singer: s)
+        check("不改：\(t)", r.title == t && r.artist == s, "\(r.title) / \(r.artist)")
+    }
+
+    let empty = LyricSearchQuery.apply(title: "", singer: "周杰伦")
+    check("空歌名不炸", empty.title.isEmpty)
+}
+
+section("补全重试（第 55 轮：不再 3 次封顶）")
+
+do {
+    check("最多 12 次（原来是 3 次）", CompanionRetryRules.maxAttempts == 12,
+          "\(CompanionRetryRules.maxAttempts)")
+    check("退避表够长（覆盖到 1 小时）", CompanionRetryRules.backoff.count >= 7)
+    check("退避单调不减",
+          zip(CompanionRetryRules.backoff, CompanionRetryRules.backoff.dropFirst())
+              .allSatisfy { $0 <= $1 })
+    check("第 3 次之后还有额度", CompanionRetryRules.shouldRetry(attempt: 3))
+    check("第 12 次后收手", !CompanionRetryRules.shouldRetry(attempt: 12))
+    check("退避取到末项也不越界", CompanionRetryRules.backoffSeconds(attempt: 99) == 3600,
+          "\(CompanionRetryRules.backoffSeconds(attempt: 99))")
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
