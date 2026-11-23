@@ -163,6 +163,19 @@ def fmt_title(title, fail):
     return ("❌ " if fail else "✅ ") + title
 
 
+def clean_text(s):
+    """丢掉孤立代理字符（lone surrogate）。
+
+    为什么需要：CI 里失败日志是 `tail -c 1500` 截出来的，正好切在多字节 UTF-8 中间时，
+    Python 用 surrogateescape 解出来就带上了孤立代理；再 `json.dumps(...).encode('utf-8')`
+    会抛 "surrogates not allowed"，整条失败通知就**静默丢失**（2026-11-23 真发生过：
+    构建失败了，群里一条消息都没有）。这里统一替换成 '?'，保证消息一定发得出去。
+    """
+    if not s:
+        return s or ""
+    return s.encode("utf-8", "replace").decode("utf-8", "replace")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--title", required=True)
@@ -174,6 +187,9 @@ def main():
     ap.add_argument("--fail", action="store_true", help="失败通知：发红色卡片")
     ap.add_argument("--note", action="store_true", help="文件之后再补一条说明卡（默认不发）")
     args = ap.parse_args()
+    # 截断的多字节 UTF-8 会带孤立代理字符，先洗掉，否则整条通知会静默丢失
+    args.title = clean_text(args.title)
+    args.body = clean_text(args.body)
 
     cfg = load_config()
     chat_id = args.chat or cfg.get("chat_id", "")
