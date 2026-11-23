@@ -5608,6 +5608,76 @@ do {
           FavoriteObservation.cached(nil, favoritesCount: 3) == nil)
 }
 
+// MARK: - 下载页「按歌手筛选」（2026-11-23）
+
+section("下载页按歌手筛选：只按歌手一个维度，人工订正过的名字不许被自动拆开")
+
+do {
+    func dl(_ name: String, _ singer: String, dur: Int = 240, id: String,
+            status: DownloadStatus = .completed, bytes: Int64 = 8_000_000) -> DownloadItem {
+        DownloadItem(song: song(.local, name, singer, dur: dur, id: "song_\(id)"),
+                     streamURL: "file:///\(name)", backendName: "本地导入",
+                     quality: .lossless, fileName: "\(name).flac", localPath: "/x/\(name).flac",
+                     status: status, totalBytes: bytes,
+                     createdAt: Date(timeIntervalSince1970: 1))
+    }
+
+    // 空白归一（手工改过的名字最常见的脏法）
+    check("歌手键：全角空格 / 不间断空格被压成普通空格并去掉首尾",
+          DownloadArtistFilter.artistKey("周杰伦\u{3000} \u{00A0}") == "周杰伦",
+          DownloadArtistFilter.artistKey("周杰伦\u{3000} \u{00A0}"))
+    check("歌手键：中间多个空格压成一个",
+          DownloadArtistFilter.artistKey("Adele  Adkins") == "Adele Adkins")
+    check("歌手键：只有空白 → 「未知歌手」",
+          DownloadArtistFilter.artistKey("   ") == DownloadArtistFilter.unknownArtist)
+    check("歌手键：零宽字符不会造出第二个歌手",
+          DownloadArtistFilter.artistKey("周杰伦\u{200B}") == DownloadArtistFilter.artistKey("周杰伦"))
+
+    // **不拆合唱**（老板 2026-11-23："每一首歌的歌手名称都是对的，人工修改过"）
+    check("歌手键：合唱名原样保留", DownloadArtistFilter.artistKey("周杰伦&袁咏琳") == "周杰伦&袁咏琳")
+    check("歌手键：合唱不被并进单人歌手",
+          DownloadArtistFilter.artistKey("周杰伦&袁咏琳") != DownloadArtistFilter.artistKey("周杰伦"))
+
+    let items = [
+        dl("晴天", "周杰伦", dur: 269, id: "a"),
+        dl("七里香", "周杰伦", dur: 299, id: "b"),
+        dl("夜曲", "周杰伦", dur: 226, id: "c"),
+        dl("小酒窝", "林俊杰、蔡卓妍", dur: 231, id: "d"),
+        dl("江南", "林俊杰", dur: 268, id: "e"),
+        dl("没歌手", "", id: "f"),
+        dl("正在下的", "周杰伦", id: "g", status: .downloading),
+        dl("失败的", "周杰伦", id: "h", status: .failed),
+    ]
+    let groups = DownloadArtistFilter.groups(items)
+    let jay = groups.first { $0.name == "周杰伦" }
+
+    check("聚合：只数已下载（在飞 / 失败不进歌手清单）", jay?.count == 3, "count=\(jay?.count ?? -1)")
+    check("聚合：空歌手单独归到「未知歌手」",
+          groups.contains { $0.name == DownloadArtistFilter.unknownArtist && $0.count == 1 })
+    check("聚合：合唱是独立一项，不并进「林俊杰」",
+          groups.contains { $0.name == "林俊杰、蔡卓妍" && $0.count == 1 }
+            && groups.first { $0.name == "林俊杰" }?.count == 1)
+    check("聚合：条数降序（周杰伦 3 首排第一）", groups.first?.name == "周杰伦", groups.first?.name ?? "—")
+    check("聚合：总时长按首累计", jay?.seconds == 269 + 299 + 226, "\(jay?.seconds ?? -1)")
+    check("聚合：同样输入两次顺序完全一致（列表不来回跳）",
+          DownloadArtistFilter.groups(items).map(\.name) == groups.map(\.name))
+
+    check("筛选：nil = 全部，一条不动", DownloadArtistFilter.filter(items, artist: nil).count == items.count)
+    // `filter` 只按歌手筛，不按状态筛（分区是列表层的事）——同一位歌手正在下的、失败的也一起留下
+    check("筛选：只留这位歌手（含在飞 / 失败）",
+          DownloadArtistFilter.filter(items, artist: "周杰伦").map { $0.song.name }
+            == ["晴天", "七里香", "夜曲", "正在下的", "失败的"])
+    check("筛选：只留已下载时条数与聚合 count 一致",
+          DownloadArtistFilter.filter(items, artist: "周杰伦")
+            .filter { $0.status == .completed }.count == 3)
+    check("筛选：能命中「未知歌手」",
+          DownloadArtistFilter.filter(items, artist: DownloadArtistFilter.unknownArtist).count == 1)
+    check("筛选：库里没有的歌手 = 空", DownloadArtistFilter.filter(items, artist: "邓紫棋").isEmpty)
+    check("contains：这位歌手还在不在（删光后调用方要能把筛选退回「全部」）",
+          DownloadArtistFilter.contains("周杰伦", in: items)
+            && !DownloadArtistFilter.contains("邓紫棋", in: items))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

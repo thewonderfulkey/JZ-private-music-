@@ -986,3 +986,76 @@ enum LibrarySearch {
         return 0
     }
 }
+
+// MARK: - 下载页「按歌手筛选」（2026-11-23）
+//
+// 老板 2026-11-23：下载页是一条平铺长列表，"我就想听那一个歌手下载到本地的歌"筛不出来。
+// 这一轮**只加歌手一个维度**（专辑/风格/码率都不做），口径钉死在这里，视图只消费。
+//
+// 归并键 = 空白归一后的原字符串。**不拆合唱、不取第一歌手、不做繁简、不比大小写**：
+// 老板明确"每一首歌的歌手名称都是对的，人工修改过"——自动拆分（`DiscoverRules.singerKey`
+// 那种按 `/、&` 取第一歌手）会把人工结论改掉（"周杰伦&袁咏琳"不该被塞进"周杰伦"名下）。
+// 空白归一仍要做：手工改过的名字常带全角空格 / 不间断空格 / 零宽字符，不归一就会
+// 冒出"周杰伦"和"周杰伦 "两个歌手。空歌手归到「未知歌手」一档，不隐藏（隐藏等于丢歌）。
+
+/// 一位歌手的聚合结果（筛选条上的胶囊 / 「全部歌手」列表用）。
+struct DownloadArtistGroup: Identifiable, Hashable, Sendable {
+    /// 展示名（已做空白归一，仍是老板人工校对过的那个名字）
+    let name: String
+    /// 这位歌手「已下载」的条数（正在下载 / 失败的**不算**——筛选是"我想听哪一位歌手"）
+    let count: Int
+    /// 这位歌手「已下载」的总时长（秒），给"一共多久"用
+    let seconds: Int
+    var id: String { name }
+}
+
+enum DownloadArtistFilter {
+
+    /// 没有歌手名（或只有空白）的条目统一归到这一档
+    static let unknownArtist = "未知歌手"
+
+    /// 歌手的**归并键**：只做空白归一，别的什么都不做（理由见上面那段注释）。
+    static func artistKey(_ raw: String) -> String {
+        var s = raw
+        // 全角空格 / 不间断空格 / 零宽 / BOM 统一成普通空格
+        for junk in ["\u{3000}", "\u{00A0}", "\u{200B}", "\u{FEFF}", "\t", "\n", "\r"] {
+            s = s.replacingOccurrences(of: junk, with: " ")
+        }
+        // 连续空格压成一个（手工改出来的名字最常见的问题）
+        let collapsed = s.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+        return collapsed.isEmpty ? unknownArtist : collapsed
+    }
+
+    /// 筛选（`nil` = 原样返回，一条都不动）。只按歌手筛，**不按状态筛** ——
+    /// 分区（正在下载 / 失败 / 已下载）是列表层的事；筛了某位歌手，他正在下和失败的那几条也该看得见。
+    static func filter(_ items: [DownloadItem], artist: String?) -> [DownloadItem] {
+        guard let artist else { return items }
+        return items.filter { artistKey($0.song.singer) == artist }
+    }
+
+    /// 从整库聚合出歌手清单：**只看「已下载」**，条数降序 → 名字本地化升序。
+    ///
+    /// 排序必须稳定（两次渲染顺序一致），否则列表会来回跳——`localizedStandardCompare`
+    /// 在中文环境下按拼音走，是系统里唯一不用自带拼音表的办法。
+    static func groups(_ items: [DownloadItem]) -> [DownloadArtistGroup] {
+        var count: [String: Int] = [:]
+        var seconds: [String: Int] = [:]
+        for item in items where item.status == .completed {
+            let key = artistKey(item.song.singer)
+            count[key, default: 0] += 1
+            seconds[key, default: 0] += max(0, item.song.durationSec)
+        }
+        return count.map { name, n in
+            DownloadArtistGroup(name: name, count: n, seconds: seconds[name] ?? 0)
+        }
+        .sorted { a, b in
+            if a.count != b.count { return a.count > b.count }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    /// 这个筛选值现在还在不在库里（删歌 / 改歌手之后用来把筛选退回「全部」）
+    static func contains(_ artist: String, in items: [DownloadItem]) -> Bool {
+        items.contains { $0.status == .completed && artistKey($0.song.singer) == artist }
+    }
+}

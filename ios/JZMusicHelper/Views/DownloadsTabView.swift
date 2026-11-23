@@ -86,8 +86,44 @@ struct DownloadsTabView: View {
     /// 全表过滤 + 排序的缓存（一帧只算一次，见 `DownloadsSearchCache`）
     @State private var searchCache = DownloadsSearchCache()
 
+    // MARK: 歌手筛选（2026-11-23）
+
+    /// 当前选中的歌手（`nil` = 全部）。**只按歌手一个维度**，老板 2026-11-23 定稿：
+    /// "下载 tab 只增加一个筛选选项：歌手，每一首歌的歌手名称都是对的，人工修改过。"
+    @State private var artistFilter: String?
+    /// 是否打开「全部歌手」列表
+    @State private var showArtistPicker = false
+    /// 歌手聚合的缓存（664 首不能每帧算一遍，见 `DownloadsArtistIndex`）
+    @State private var artistIndex = DownloadsArtistIndex()
+
+    private var artistGroups: [DownloadArtistGroup] {
+        artistIndex.groups(items: downloads.items, revision: downloads.revision)
+    }
+
+    /// 顶部横条只放前几位（其余的在「全部歌手」里）
+    private var topArtistGroups: [DownloadArtistGroup] {
+        Array(artistGroups.prefix(12))
+    }
+
+    /// 横条上真正铺的胶囊：前 12 位；如果当前选中的歌手不在前 12 位（从「全部歌手」里挑的），
+    /// 就把它临时插到最前面——否则会出现"筛着某人、却一个胶囊都没高亮"的怪状态。
+    private var chipGroups: [DownloadArtistGroup] {
+        if let artist = artistFilter,
+           !topArtistGroups.contains(where: { $0.name == artist }),
+           let selected = artistGroups.first(where: { $0.name == artist }) {
+            return [selected] + topArtistGroups
+        }
+        return topArtistGroups
+    }
+
+    /// 库里一共多少首已下载（胶囊「全部」和「全部歌手」上的总数）
+    private var artistTotalCount: Int {
+        artistGroups.reduce(0) { $0 + $1.count }
+    }
+
     private var lists: (ongoing: [DownloadItem], finished: [DownloadItem], failed: [DownloadItem]) {
-        searchCache.lists(items: downloads.items, revision: downloads.revision, query: appliedQueryKey)
+        searchCache.lists(items: downloads.items, revision: downloads.revision,
+                           query: appliedQueryKey, artist: artistFilter)
     }
 
     private var ongoing: [DownloadItem] { lists.ongoing }
@@ -208,6 +244,23 @@ struct DownloadsTabView: View {
             visibleLimit = DownloadListPaging.firstFrame
             fillScheduled = false
             scheduleFill()
+        }
+        // 2026-11-23 歌手筛选：任何一条改筛选的路径（胶囊 / 全部歌手 / 定位自动清掉）
+        // 都走这里 —— 选择范围一变小，多选和"已挂交互"的集合必须跟着收，不然会删到看不见的歌。
+        .onChange(of: artistFilter) { _, _ in
+            picked = BatchSelection.pruning(picked, visible: visibleIDs)
+            armed.formIntersection(visibleIDs)
+            visibleLimit = DownloadListPaging.firstFrame
+            fillScheduled = false
+            scheduleFill()
+        }
+        // 库变了（删歌 / 批量改歌手）：这位歌手已经不存在了就把筛选退回「全部」，
+        // 不留一个"空着但还写着周杰伦"的列表。
+        .onChange(of: downloads.revision) { _, _ in
+            if let artist = artistFilter,
+               !DownloadArtistFilter.contains(artist, in: downloads.items) {
+                artistFilter = nil
+            }
         }
         // 2026-11-22（老板：663 首时每敲一个字母就卡）：输入防抖 200ms。
         // `query` 驱动输入框回显（必须实时），`appliedQuery` 才是过滤依据。
@@ -500,6 +553,21 @@ struct DownloadsTabView: View {
                     }
                 }
 
+                // 2026-11-23：筛着的这位歌手已经一首都没有了（删光了 / 改了歌手名）——
+                // 说清楚，别让人对着一片空白以为歌丢了。`revision` 变化时也会自动退回「全部」。
+                if artistFilter != nil,
+                   paged.ongoing.isEmpty, paged.failed.isEmpty, paged.finished.isEmpty {
+                    Text("这位歌手名下已经没有已下载的歌了。点上面的「全部」看整个库。")
+                        .font(FontRole.metadata)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        .padding(.vertical, Tokens.Spacing.m)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
                 // 第 41 轮 P0-2：还没显示完时的「继续加载」。滚到底自动续，
                 // 也留一个能点的按钮（老板明确要"已显示 N / 总 M"的反馈，不能让人以为丢歌）。
                 if paged.hasMore {
@@ -569,6 +637,15 @@ struct DownloadsTabView: View {
                 StorageAuditSheet()
                     .environmentObject(downloads)
             }
+            // 2026-11-23：全部歌手（这个库可能有 300+ 位，靠横条翻不现实）
+            .sheet(isPresented: $showArtistPicker) {
+                ArtistPickerSheet(groups: artistGroups,
+                                  total: artistTotalCount,
+                                  selected: artistFilter) { name in
+                    showArtistPicker = false
+                    setArtist(name)
+                }
+            }
             .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
                 // 导入/整理的三个点在**外层**（`body` 的 toolbar 里），两个分支共用。
@@ -589,6 +666,12 @@ struct DownloadsTabView: View {
                         }
                         .accessibilityLabel("多选")
                         LocateNowPlayingButton {
+                            // 2026-11-23：筛着别的歌手时点「定位」必然找不到——先把筛选退回「全部」，
+                            // 否则这个键又变成"点了没反应"（第 45 轮踩过同款观感）。
+                            if let artist = artistFilter, let current = player.currentSong,
+                               DownloadArtistFilter.artistKey(current.singer) != artist {
+                                artistFilter = nil
+                            }
                             // 行可能还在"未加载区"：先把 limit 撑到那一行，再滚（下一帧才有这行）
                             let revealed = revealRowForCurrentSong()
                             let scrollToCurrent = {
@@ -622,9 +705,11 @@ struct DownloadsTabView: View {
 
     private var finishedHeaderText: String {
         let shown = paged.finished.count
+        // 筛了歌手就把歌手名放进分区标题：滚过头部之后仍然知道"现在只看的是谁"
+        let scope = artistFilter.map { "\($0)" } ?? "已下载"
         return shown < finished.count
-            ? "已下载（\(finished.count) · 已显示 \(shown)）"
-            : "已下载（\(finished.count)）"
+            ? "\(scope)（\(finished.count) · 已显示 \(shown)）"
+            : "\(scope)（\(finished.count)）"
     }
 
     /// 还没显示完时的那一行：给明确反馈（已显示 N / 总 M），能点，也能滚到底自动续。
@@ -898,10 +983,10 @@ struct DownloadsTabView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("我的下载")
                         .font(.title3.weight(.bold))
-                    Text("\(finished.count) 首 · \(sizeText(totalBytes))"
-                         + (paged.hasMore ? " · 已显示 \(paged.shown)" : ""))
+                    Text(headerSummary)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                     HStack(spacing: Tokens.Spacing.s) {
                         Button {
                             playAll(shuffle: false)
@@ -947,9 +1032,120 @@ struct DownloadsTabView: View {
                     .lineLimit(1)
             }
             .foregroundStyle(.tertiary)
+
+            artistFilterBar
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .padding(.vertical, Tokens.Spacing.m)
+    }
+
+    // MARK: 歌手筛选条（2026-11-23）
+
+    /// 横滑的一排歌手胶囊：`全部` + 条数最多的前 12 位 + `全部歌手`。
+    ///
+    /// 为什么是"前 12 位 + 全部歌手"而不是把所有歌手都铺开：这个库 664 首、可能有 300+ 位歌手，
+    /// 全铺开就是一条几百个胶囊的长龙，反而找不到。常听的那几位一定在头部（按条数降序）。
+    private var artistFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Tokens.Spacing.xs) {
+                artistChip(name: nil, title: "全部", count: artistTotalCount)
+                ForEach(chipGroups) { group in
+                    artistChip(name: group.name, title: group.name, count: group.count)
+                }
+                Button {
+                    showArtistPicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("全部歌手")
+                            .font(.footnote)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: Tokens.Spacing.minTapTarget)
+                    .background(Capsule().fill(Tokens.Palette.paperElevated))
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                }
+                .buttonStyle(.press)
+                .accessibilityLabel("全部歌手，共 \(artistGroups.count) 位")
+            }
+            // 内边距放在**滚动内容**上：这样第一个胶囊跟页面正文对齐，
+            // 而滑到最后一个时能一路滑到屏幕边缘（横滑条常见做法）。
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        // 横滑条贴到页面左右边缘（外面那层 header 已经加过页边距，这里抵掉）
+        .padding(.horizontal, -Tokens.Spacing.pageMargin)
+    }
+
+    /// 单个歌手胶囊（`name == nil` 就是「全部」）
+    private func artistChip(name: String?, title: String, count: Int) -> some View {
+        let active = artistFilter == name
+        return Button {
+            setArtist(name)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.footnote.weight(active ? .semibold : .regular))
+                    .lineLimit(1)
+                Text("\(count)")
+                    .font(.caption2)
+                    .foregroundStyle(active ? Color.white.opacity(0.85) : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: Tokens.Spacing.minTapTarget)
+            .background(
+                Capsule().fill(active ? Tokens.Palette.vermilion : Tokens.Palette.paperElevated)
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    active ? Color.clear : Color.primary.opacity(0.10), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.press)
+        .accessibilityLabel(name.map { "\($0)，\(count) 首" } ?? "全部歌手，\(count) 首")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// 切换歌手筛选：**顺手把分页打回首帧**。
+    ///
+    /// 不打回的话，上一轮为「全部」补到 400 行的 `visibleLimit` 会原样带过来，
+    /// 筛成 20 首之后仍然一次建 20 行（无所谓），但反过来从"某歌手"切回"全部"时
+    /// 会把上一次的 400 行预算直接套上——首帧就建 400 行，正是第 41/42 轮花了几版才压掉的那种卡。
+    private func setArtist(_ name: String?) {
+        guard artistFilter != name else { return }
+        artistFilter = name
+        visibleLimit = DownloadListPaging.firstFrame
+        fillScheduled = false
+        scheduleFill()
+    }
+
+    /// 头顶那行小字：筛了歌手就把名字和总时长顶上（"周杰伦 · 37 首 · 2 小时 41 分 · 486 MB"）
+    private var headerSummary: String {
+        var parts: [String] = []
+        if let artistFilter { parts.append(artistFilter) }
+        parts.append("\(finished.count) 首")
+        let seconds = scopeSeconds
+        if seconds > 0 { parts.append(durationText(seconds)) }
+        parts.append(sizeText(scopeBytes))
+        if paged.hasMore { parts.append("已显示 \(paged.shown)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 当前筛选范围里的字节数（未筛选时跟原来一样算全库）
+    private var scopeBytes: Int64 {
+        artistFilter == nil ? totalBytes : finished.reduce(0) { $0 + $1.totalBytes }
+    }
+
+    private var scopeSeconds: Int {
+        finished.reduce(0) { $0 + max(0, $1.song.durationSec) }
+    }
+
+    private func durationText(_ seconds: Int) -> String {
+        guard seconds > 0 else { return "" }
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        if h > 0 { return m > 0 ? "\(h) 小时 \(m) 分" : "\(h) 小时" }
+        return "\(max(1, m)) 分钟"
     }
 
     // MARK: 已下载（瘦行 + 交互按需挂载）
@@ -1088,8 +1284,16 @@ struct DownloadsTabView: View {
 
     // MARK: 工具
 
+    /// 「播放全部 / 随机」的作用范围 = **当前筛选范围**（2026-11-23）。
+    ///
+    /// 没筛歌手时跟以前完全一样（全库）；筛了某位歌手，这两个键就变成
+    /// "把这位歌手下载的歌全放一遍"——老板要的正是这件事，不用再回长列表里一首首点。
+    private var scopeSongs: [Song] {
+        artistFilter == nil ? downloads.completedSongs : finished.map(\.song)
+    }
+
     private func playAll(shuffle: Bool) {
-        let songs = downloads.completedSongs
+        let songs = scopeSongs
         guard !songs.isEmpty else { return }
         if shuffle {
             player.replaceQueue(songs, shuffle: true)
@@ -1318,10 +1522,13 @@ final class DownloadsSearchCache {
     private var failedItems: [DownloadItem] = []
     /// `item.id` → (签名, 可搜索串)；签名发现"这首歌的元数据被改过"
     private var blobs: [UUID: (signature: String, blob: String)] = [:]
+    /// `item.id` → (歌手签名, 歌手归并键)。2026-11-23 加歌手筛选时一并缓存：
+    /// 筛一次就等于把所有 664 首的歌手各归一化一次，不缓存的话每帧都要重来一遍。
+    private var artistKeys: [UUID: (signature: String, key: String)] = [:]
 
-    func lists(items: [DownloadItem], revision: Int, query: String)
+    func lists(items: [DownloadItem], revision: Int, query: String, artist: String? = nil)
         -> (ongoing: [DownloadItem], finished: [DownloadItem], failed: [DownloadItem]) {
-        let key = "\(revision)|\(query)"
+        let key = "\(revision)|\(query)|\(artist ?? "")"
         if key == cacheKey {
             return (ongoingItems, finishedItems, failedItems)
         }
@@ -1333,6 +1540,8 @@ final class DownloadsSearchCache {
         finished.reserveCapacity(items.count)
         failed.reserveCapacity(8)
         for item in items {
+            // 先按歌手筛（一次字典查 + 一次字符串比较），再走可搜索串
+            if let artist, artistKey(for: item) != artist { continue }
             if !q.isEmpty, !LibrarySearch.matches(blob: blob(for: item), key: q) { continue }
             switch item.status {
             case .downloading, .pending: ongoing.append(item)
@@ -1356,6 +1565,122 @@ final class DownloadsSearchCache {
         let blob = LibrarySearch.blob(song: item.song, fileName: item.fileName)
         blobs[item.id] = (signature, blob)
         return blob
+    }
+
+    /// 这首歌的歌手归并键（缓存；只有 `singer` 变了才重算）
+    func artistKey(for item: DownloadItem) -> String {
+        let signature = item.song.singer
+        if let hit = artistKeys[item.id], hit.signature == signature { return hit.key }
+        let key = DownloadArtistFilter.artistKey(item.song.singer)
+        artistKeys[item.id] = (signature, key)
+        return key
+    }
+}
+
+// MARK: - 下载页歌手聚合缓存（2026-11-23）
+
+/// 歌手清单**每换一次库只算一次**。
+///
+/// 为什么不能直接算：`artistGroups` 会被 body 求值好几次（筛选条、头部小字、全部歌手页），
+/// 每次都跑 664 首的字符串归一化 + 分组排序的话，就是 11-22 那次"每敲一个字母就卡"的翻版。
+/// `revision` 由 `DownloadManager.items.didSet` 递增，连"下载完成但条数没变"也会让它失效。
+final class DownloadsArtistIndex {
+
+    private var cachedRevision = -1
+    private var cached: [DownloadArtistGroup] = []
+
+    func groups(items: [DownloadItem], revision: Int) -> [DownloadArtistGroup] {
+        if revision == cachedRevision { return cached }
+        cached = DownloadArtistFilter.groups(items)
+        cachedRevision = revision
+        return cached
+    }
+}
+
+// MARK: - 「全部歌手」选择页（2026-11-23）
+
+/// 这个库可能有 300+ 位歌手，横条上只放前 12 位；剩下的在这里搜/挑。
+private struct ArtistPickerSheet: View {
+
+    let groups: [DownloadArtistGroup]
+    let total: Int
+    let selected: String?
+    let onPick: (String?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var matched: [DownloadArtistGroup] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return groups }
+        let key = LibrarySearch.key(q)
+        return groups.filter { LibrarySearch.key($0.name).contains(key) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    row(name: nil, title: "全部歌手", count: total)
+                }
+                Section("歌手（\(groups.count) 位）") {
+                    ForEach(matched) { group in
+                        row(name: group.name, title: group.name,
+                            count: group.count, seconds: group.seconds)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $query, prompt: "搜歌手名")
+            .navigationTitle("按歌手筛选")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(name: String?, title: String, count: Int, seconds: Int = 0) -> some View {
+        Button {
+            onPick(name)
+            dismiss()
+        } label: {
+            HStack(spacing: Tokens.Spacing.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body)
+                        .lineLimit(1)
+                    if seconds > 0 {
+                        Text(ArtistPickerSheet.durationText(seconds))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                Text("\(count) 首")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if selected == name {
+                    Image(systemName: "checkmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(seconds > 0
+            ? "\(title)，\(count) 首，\(ArtistPickerSheet.durationText(seconds))"
+            : "\(title)，\(count) 首")
+    }
+
+    private static func durationText(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        if h > 0 { return m > 0 ? "\(h) 小时 \(m) 分" : "\(h) 小时" }
+        return "\(max(1, m)) 分钟"
     }
 }
 
