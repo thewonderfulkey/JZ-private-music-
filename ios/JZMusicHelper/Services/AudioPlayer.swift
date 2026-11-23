@@ -1452,7 +1452,8 @@ final class PlayerEngine {
             }
             guard let measured, measured > 1 else { return }
             // 落库（同一个文件只量这一次）
-            DurationTruthStore.shared.store(url: url, seconds: measured, confirmed: true)
+            DurationTruthStore.shared.store(url: url, seconds: measured,
+                                            source: "decode", confirmed: true)
             guard self.currentSong?.id == id else { return }
             self.adoptMeasured(measured, source: "解码实测", rank: 1)
         }
