@@ -304,7 +304,12 @@ jobs:
         if: failure() && env.LARK_APP_ID != ''
         continue-on-error: true
         run: |
-          BODY=$(printf '版本：v%s\n运行：%s/%s/actions/runs/%s' "$VERSION" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          set -uo pipefail
+          # 2026-11-23：把 xcodebuild 的 error 行直接贴进卡片 —— 本机是 Windows，
+          # 看不到 runner 的日志，"只有一句构建失败"等于没有信息（v2.4.90 连挂两次就是这么瞎的）。
+          ERRS=$(grep -E "error: " build/xcodebuild.log 2>/dev/null | head -8 || true)
+          if [ -z "$ERRS" ]; then ERRS=$(tail -c 1200 build/xcodebuild.log 2>/dev/null || true); fi
+          BODY=$(printf '版本：v%s\n运行：%s/%s/actions/runs/%s\n%s' "$VERSION" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$ERRS")
           python3 tools/notify/lark.py --fail --title "iOS 构建失败" --body "$BODY"
 
       - name: 失败时附上编译日志
