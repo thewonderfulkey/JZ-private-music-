@@ -1,3 +1,17 @@
+### 出包记录（v2.4.90 / 268）
+
+| 项 | 值 |
+|---|---|
+| CI | **r216**（`520e5f2`）✅（r213/r214/r215 三次失败：`currentPlayingSongID` 是**存储属性**却写进了 `extension`，已修） |
+| 产物 | `JZ-Music-v2.4.90-520e5f2-r216-ios-unsigned.ipa` · **3,568,064 B** · sha256 `de95a977…` |
+| 主二进制 | 13,351,520 B · sha256 `394edf38…`（v2.4.89 是 `6ecf592a…` / 13,255,840 B → **不是空包**） |
+| 包内版本 | 2.4.90 / 268（app + JZWidgets）✅ |
+| 包内证据 | `DurationCalibration` / `FlacDurationHeader` / `DurationRepairRules` / `measuredDuration` 四个符号都在包里 |
+| 分发 | 飞书群 22:36:10 收到包（CI 自动发） |
+| 顺带 | CI 的失败卡片现在会**直接带 `xcodebuild` 的 error 行**（本机 Windows 看不到 runner 日志，v2.4.90 连挂两次就是这么瞎的） |
+
+---
+
 ## iOS v2.4.90（268）· 2026-11-23（真实时长：672 首全量实测 + 修 FLAC 头，拖动才准）
 
 老板 2026-11-23 的口径（在 v2.4.89 之后重新对齐）：
