@@ -32,7 +32,7 @@ jobs:
   # 改坏了在这里就红，不用等 IPA 打出来才发现"这首歌排到后面去了"。
   logic-tests:
     name: logic tests (swiftc)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - name: 检出代码
@@ -166,8 +166,8 @@ jobs:
   build-ipa:
     needs: logic-tests
     name: build unsigned ipa
-    runs-on: macos-14
-    timeout-minutes: 30
+    runs-on: macos-15
+    timeout-minutes: 90
     env:
       ARTIFACT_DIR: out
       # 飞书机器人凭据（仓库 Secrets；没有就只留 artifact，不报错）
