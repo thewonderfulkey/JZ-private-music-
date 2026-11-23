@@ -655,7 +655,8 @@ enum DurationCalibration {
         let format = file.processingFormat
         let rate = format.sampleRate
         guard rate > 0 else { return nil }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1 << 18) else {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                            frameCapacity: AVAudioFrameCount(1 << 18)) else {
             return nil
         }
         var total: AVAudioFramePosition = 0
@@ -699,7 +700,7 @@ enum DurationCalibration {
                                        backupDir: URL, songID: String) -> Bool {
         guard let handle = try? FileHandle(forUpdating: fileURL) else { return false }
         defer { try? handle.close() }
-        guard let prefix = try? handle.read(upToCount: 64 * 1024),
+        guard let prefix = (try? handle.read(upToCount: 64 * 1024)) ?? nil,
               let site = FlacDurationHeader.site(inFileData: prefix),
               let samples = FlacDurationHeader.totalSamples(seconds: seconds,
                                                             sampleRate: site.sampleRate) else {
