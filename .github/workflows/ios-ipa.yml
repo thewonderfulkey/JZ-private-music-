@@ -97,6 +97,7 @@ jobs:
             ios/JZMusicHelper/Services/LrclibLyrics.swift \
             ios/JZMusicHelper/Services/DownloadCompanion.swift \
             ios/JZMusicHelper/Services/StorageAuditRules.swift \
+            ios/JZMusicHelper/Services/DurationTruth.swift \
             ios/JZMusicHelper/Services/KuwoChart.swift \
             ios/JZMusicHelper/Services/KuwoPlaylist.swift \
             ios/JZMusicHelper/Services/PlaylistImport.swift \

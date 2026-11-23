@@ -114,6 +114,18 @@ final class PlayerEngine {
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
 
+    /// 接口/容器**声明**的总长（诊断用；不等于真实长度）
+    private(set) var declaredDuration: Double = 0
+    /// 当前 `duration` 是否已由"解码实测 / 播放实测"确认
+    private(set) var durationConfirmed = false
+    /// 有没有拿到过**实测**值（哪怕还没确认）。有过的值不许被"声明值"改回去。
+    private var durationMeasured = false
+    /// 正在后台量的那一首（同一首不重复量）
+    private var durationTask: Task<Double?, Never>?
+    private var durationTaskSongID: String?
+    /// 播放页那行小字：`声明 4:12 / 实测 4:47`（只在两者不一致时出现，给老板一眼看出差在哪）
+    private(set) var durationNote: String?
+
     /// 精确播放位置（秒）：直接向 AVPlayer 取，供逐字歌词按 30fps 推进使用。
     /// 常规 UI 仍用 `currentTime`（0.5 秒一次的时间观察者），避免全页高频重绘。
     var preciseTime: Double {
@@ -618,9 +630,22 @@ final class PlayerEngine {
     }
 
     func seek(toFraction fraction: Double) {
-        // 手指在哪就是哪：落点 = 比例 × 总长（纯比例，见 `SeekTargetRules`）。
-        // 总长现在只有播放器一个来源，所以"条上看到的比例"和"歌里的位置"是同一把尺子。
-        seek(toSeconds: SeekTargetRules.target(fraction: fraction, duration: duration))
+        let f = min(max(fraction.isFinite ? fraction : 0, 0), 1)
+        // 已经确认过真长 → 直接落点，零等待
+        guard !durationConfirmed, let task = durationTask else {
+            seek(toSeconds: SeekTargetRules.target(fraction: f, duration: duration))
+            return
+        }
+        // 还没确认：最多等 1.2 秒拿解码值再落点。
+        // 宁可等这一下，也不能拿"声明的总长"去乘比例 —— 那正是拖到哪都不对的根。
+        Task { @MainActor [weak self] in
+            let measured = await self?.measuredWithin(1.2, of: task)
+            guard let self else { return }
+            if let measured, measured > 1 {
+                self.adoptMeasured(measured, source: "解码实测")
+            }
+            self.seek(toSeconds: SeekTargetRules.target(fraction: f, duration: self.duration))
+        }
     }
 
     /// 点某一句歌词 → 跳到那一句。
@@ -812,11 +837,26 @@ final class PlayerEngine {
 
     private func resetProgress() {
         currentTime = 0
-        // 总长只有**一个**来源：播放器自己（`item.duration`，ready 之后由 `adoptDuration` 写入）。
-        // 这里先用接口给的时长占个位——播放器还没就绪的那一瞬间，条不该是 0。
-        // 2026-11-23 起删掉了 `max(元数据, 我们自己标定的 measured)` 和"只许变大"的锁：
-        // 那套自造的数字会让条和音频用两把尺子，拖到哪儿都不对。
-        duration = Double(currentSong?.durationSec ?? 0)
+        // 总长的取值顺序（2026-11-24）：
+        //   ① 这首歌量过（缓存里已确认）→ 直接用真值，一次都不再量；
+        //   ② 没量过 → 先用接口时长占位（几十毫秒内条就有数），起播后在后台解码量真值。
+        // 播放器自己报的 `item.duration` **只是"声明值"**：《不凡2024》声明 4:12、实际 4:47，
+        // 所以它只用来兜底显示，不许覆盖实测值（见 `adoptDuration`）。
+        let declared = Double(currentSong?.durationSec ?? 0)
+        declaredDuration = declared
+        duration = declared
+        durationConfirmed = false
+        durationMeasured = false
+        durationNote = nil
+        durationTask = nil
+        durationTaskSongID = nil
+        if let song = currentSong, let url = DownloadManager.shared.localFileURL(for: song),
+           let fact = DurationTruthStore.shared.fact(for: url) {
+            duration = fact.seconds
+            durationConfirmed = fact.confirmed
+            durationMeasured = true
+            updateDurationNote()
+        }
         bufferedTime = 0
         errorText = nil
         // r77：换曲时把 seek 状态也清掉。上一首的 completion 有可能因为 item 被换掉
@@ -979,6 +1019,8 @@ final class PlayerEngine {
         updateNowPlaying()
         // 起播就记一次（位置 0）：万一进程在这儿被杀，下次车载连上也知道"上一首是它"
         flushSnapshot()
+        // 没量过就后台量一次真长（不阻塞起播）；量完当场把条改对
+        beginDurationProbe(song: song)
     }
 
     /// 取流（2026-11-20 老板口径重写：**先到先用 + 同曲换源 + 全程 ≤320k**）。
@@ -1183,7 +1225,17 @@ final class PlayerEngine {
             statusText = "忽略切歌瞬间的迟到结束通知"
             return
         }
-        // 播到真结尾了。总长本来就跟播放器一致，这里不再改数字、也不修文件头。
+        // 播到真结尾了：**这时播放头停的位置就是这首歌的真实长度**，耳朵听到的、
+        // 比任何声明值都可信。记进事实库（以后每次起播都直接用），并与解码值对账。
+        if let song = currentSong,
+           let url = DownloadManager.shared.localFileURL(for: song),
+           currentTime > 5 {
+            let heard = currentTime
+            DurationTruthStore.shared.recordPlaybackEnd(url: url, seconds: heard)
+            if !durationConfirmed || abs(heard - duration) > 1 {
+                adoptMeasured(heard, source: "播放实测")
+            }
+        }
         // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门
         flushSnapshot(finished: true)
         switch mode {
@@ -1317,15 +1369,94 @@ final class PlayerEngine {
     /// 连续 3 首都没源就停下来给一句人话，不把整个队列烧光。
     private var skipLimit: Int { PlaybackRules.autoSkipLimit }
 
-    /// 采纳播放项的时长：**播放器说多长就多长**（可增可减），条和音频永远用同一把尺子。
+    /// 采纳播放器报的时长 —— 注意：**那是"容器声明的值"，不是真实长度**。
     ///
-    /// 2026-11-23 修复：以前是"只许变大 + 只信我们自己标定的数"，一旦那个数偏了，
-    /// 进度条就永远和音频对不上（拖动落点 = 比例 × 这个数）。
+    /// 《不凡2024》声明 4:12、实际 4:47；《半岛铁盒》声明 5:19、实际 5:32。
+    /// 所以这里只做两件事：记下"声明值"（诊断用），以及在**还没有实测值**时用它占位。
+    /// 一旦实测值到了（`durationConfirmed`），声明值永远不许把它改回去。
     private func adoptDuration(_ seconds: Double) {
         guard seconds.isFinite, seconds > 0 else { return }
+        declaredDuration = seconds
+        // 一旦有过实测值，声明值就再也不许动它（这正是"越修越远"的老路）
+        guard !durationMeasured else { return }
         guard abs(seconds - duration) > 0.2 else { return }
         duration = seconds
+        updateDurationNote()
         refetchLyricsIfDurationChanged()
+    }
+
+    /// 采纳一个**实测**的时长（解码到 EOF / 播到真结尾）
+    private func adoptMeasured(_ seconds: Double, source: String) {
+        guard seconds.isFinite, seconds > 1 else { return }
+        let changed = abs(seconds - duration) > 0.2
+        duration = seconds
+        durationConfirmed = true
+        durationMeasured = true
+        updateDurationNote()
+        if changed {
+            PlaybackTrace.shared.log("时长", "\(currentSong?.name ?? "—") 声明 \(Int(declaredDuration))s"
+                                     + " → 实测 \(Int(seconds))s（\(source)）")
+            refetchLyricsIfDurationChanged()
+            updateNowPlaying()
+        }
+    }
+
+    /// 播放页那行小字：只有"声明"和"实测"差 1 秒以上才出现
+    private func updateDurationNote() {
+        guard durationConfirmed, declaredDuration > 1,
+              abs(duration - declaredDuration) > 1 else {
+            durationNote = nil
+            return
+        }
+        let d = Int(declaredDuration)
+        let t = Int(duration)
+        durationNote = "时长以音频为准：\(d / 60):\(String(format: "%02d", d % 60))"
+            + " → \(t / 60):\(String(format: "%02d", t % 60))"
+    }
+
+    /// 后台量真长：本地文件才量；远程流没有整份字节，只能等"播到真结尾"。
+    private func beginDurationProbe(song: Song) {
+        guard let url = DownloadManager.shared.localFileURL(for: song) else { return }
+        // 已经确认过 → 一次都不再量（这就是"不重复加载"）
+        if durationConfirmed { return }
+        if let fact = DurationTruthStore.shared.fact(for: url), fact.confirmed {
+            adoptMeasured(fact.seconds, source: "缓存")
+            return
+        }
+        guard durationTaskSongID != song.id else { return }
+        durationTaskSongID = song.id
+        let id = song.id
+        let task = Task.detached(priority: .utility) { () -> Double? in
+            TrueDuration.decodedSeconds(of: url)
+        }
+        durationTask = task
+        Task { @MainActor [weak self] in
+            let measured = await task.value
+            guard let self else { return }
+            if self.currentSong?.id == id, self.durationTaskSongID == id {
+                // 量不出来（文件损坏/格式不支持）→ 清掉任务，别让后面的拖动每次都白等 1.2 秒
+                if measured == nil { self.durationTask = nil }
+            }
+            guard let measured, measured > 1 else { return }
+            // 落库（同一个文件只量这一次）
+            DurationTruthStore.shared.store(url: url, seconds: measured, confirmed: true)
+            guard self.currentSong?.id == id else { return }
+            self.adoptMeasured(measured, source: "解码实测")
+        }
+    }
+
+    /// 等一个测量任务最多 `atMost` 秒（拖动前用：宁可等一会儿，也不能按错的总长算落点）
+    private func measuredWithin(_ seconds: Double, of task: Task<Double?, Never>) async -> Double? {
+        await withTaskGroup(of: Double?.self) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 
     /// 真实时长与"取词时用的目标时长"差了 8 秒以上 → 重取一次词（r69）。

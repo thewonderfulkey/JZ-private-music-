@@ -116,6 +116,7 @@
 		B00000000000000000000095 /* StorageAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000094 /* StorageAudit.swift */; };
 		B00000000000000000000096 /* StorageAuditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000095 /* StorageAuditSheet.swift */; };
 		B00000000000000000000097 /* StorageAuditRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000096 /* StorageAuditRules.swift */; };
+		B00000000000000000000098 /* DurationTruth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000097 /* DurationTruth.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -227,6 +228,7 @@
 		F00000000000000000000094 /* StorageAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAudit.swift; sourceTree = "<group>"; };
 		F00000000000000000000095 /* StorageAuditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAuditSheet.swift; sourceTree = "<group>"; };
 		F00000000000000000000096 /* StorageAuditRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAuditRules.swift; sourceTree = "<group>"; };
+		F00000000000000000000097 /* DurationTruth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurationTruth.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -346,6 +348,7 @@
 				F00000000000000000000073 /* PlaylistImport.swift */,
 				F00000000000000000000076 /* ListLocate.swift */,
 				F00000000000000000000094 /* StorageAudit.swift */,
+				F00000000000000000000097 /* DurationTruth.swift */,
 				F00000000000000000000096 /* StorageAuditRules.swift */,
 			);
 			path = Services;
@@ -650,6 +653,7 @@
 				B00000000000000000000073 /* ListLocate.swift in Sources */,
 				B00000000000000000000074 /* NowPlayingLocate.swift in Sources */,
 				B00000000000000000000095 /* StorageAudit.swift in Sources */,
+				B00000000000000000000098 /* DurationTruth.swift in Sources */,
 				B00000000000000000000096 /* StorageAuditSheet.swift in Sources */,
 				B00000000000000000000097 /* StorageAuditRules.swift in Sources */,
 			);
@@ -790,7 +794,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 269;
+				CURRENT_PROJECT_VERSION = 270;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -799,7 +803,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.91;
+				MARKETING_VERSION = 2.4.92;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -814,7 +818,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 269;
+				CURRENT_PROJECT_VERSION = 270;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -823,7 +827,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.91;
+				MARKETING_VERSION = 2.4.92;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -837,7 +841,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 269;
+				CURRENT_PROJECT_VERSION = 270;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -846,7 +850,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.91;
+				MARKETING_VERSION = 2.4.92;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -861,7 +865,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 269;
+				CURRENT_PROJECT_VERSION = 270;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -870,7 +874,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.91;
+				MARKETING_VERSION = 2.4.92;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

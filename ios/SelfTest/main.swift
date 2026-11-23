@@ -5716,6 +5716,24 @@ do {
     check("总长是 NaN 也不能崩", SeekTargetRules.target(fraction: 0.5, duration: .nan) == 0)
 }
 
+// MARK: - 真实时长的缓存键（2026-11-24：一个文件只量一次，文件变了必须重测）
+
+section("时长缓存：键跟着文件走，文件一变就重测")
+
+do {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("jz-duration-key-probe.bin")
+    try? Data(repeating: 0x41, count: 1024).write(to: tmp)
+    let k1 = DurationTruthStore.key(for: tmp)
+    check("同一个文件：键稳定（第二次播放一定命中缓存）",
+          k1 == DurationTruthStore.key(for: tmp))
+    try? Data(repeating: 0x42, count: 2048).write(to: tmp)
+    let k2 = DurationTruthStore.key(for: tmp)
+    check("文件大小变了：键必须变（重新下载后自动重测）", k1 != k2)
+    check("键里带路径与大小", k2.contains(tmp.lastPathComponent) && k2.contains("2048"))
+    try? FileManager.default.removeItem(at: tmp)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
