@@ -94,6 +94,12 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var lastFileStateReport: String?
     /// 上一次写回 / 检查里"没对齐"的明细（弹窗的「查看明细」与「只重跑这些」读它）
     @Published var lastUnresolved: [SongInfoIssue] = []
+    /// 时长校准（实测 + 修 FLAC 头）进度；nil = 没在跑（2026-11-23）
+    @Published var durationCalibrationProgress: SongInfoWriteProgress?
+    /// 最近一次时长校准的明细行（弹窗用）
+    @Published var lastDurationReport: String?
+    /// 取消标记（每首检查一次）
+    var durationCalibrationCancelled = false
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -371,14 +377,30 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 播放时量到"真实音频比容器声明的长"：记下来，下次起播的进度条就准了（2026-11-23）。
     ///
     /// 只在差 >1 秒时才写，避免每拍都碰 `items`（那会让下载页缓存整套失效）。
+    /// 记完顺手把 FLAC 头也修好（老板 2026-11-23：量准之后能不能修文件头 → 能，只改 36 bit）。
     func adoptMeasuredDuration(songID: String, seconds: Double) {
         guard seconds > 1 else { return }
         guard let idx = items.firstIndex(where: { $0.song.id == songID && $0.status == .completed })
         else { return }
         let previous = items[idx].measuredDuration ?? items[idx].song.duration
         guard abs(previous - seconds) > 1 else { return }
+        let path = items[idx].localPath
         items[idx].measuredDuration = seconds
         persist()
+        guard let path, DurationRepairRules.needsRepair(declaredSec: previous, trueSec: seconds)
+        else { return }
+        let backupDir = durationBackupDirectory
+        Task.detached(priority: .utility) {
+            // 等一拍：刚播完的歌，AVPlayer 可能还握着这个文件
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            let url = URL(fileURLWithPath: path)
+            guard let head = try? FileHandle(forReadingFrom: url) else { return }
+            let prefix = (try? head.read(upToCount: 64 * 1024)) ?? nil
+            try? head.close()
+            guard let prefix, FlacDurationHeader.site(inFileData: prefix) != nil else { return }
+            _ = DurationCalibration.repairFlacTotalSamples(fileURL: url, seconds: seconds,
+                                                           backupDir: backupDir, songID: songID)
+        }
     }
 
     func localFileURL(for song: Song) -> URL? {
@@ -3349,6 +3371,10 @@ extension DownloadManager {
                     lines.append("未对齐 \(issueList.count) 首 —— 点「查看明细」看名单，可复制、可只重跑这些。")
                 }
                 self.lastFileStateReport = lines.joined(separator: "\n")
+                // 2026-11-23：对齐检查完**顺手**校准时长（老板："放「检查文件对齐」"）。
+                // 两件事拆开跑：对齐是只读元数据（秒级），校准要解码整首（分钟级），
+                // 各自有进度条，谁都不会把另一个的进度盖掉。
+                _ = self.calibrateDurations()
             }
         }
         return targets.count
@@ -3362,6 +3388,186 @@ extension DownloadManager {
         if data.count >= 12, data.starts(with: [0x52, 0x49, 0x46, 0x46]),
            Array(data[8..<12]) == Array("WEBP".utf8) { return "image/webp" }
         return "image/jpeg"
+    }
+
+    // MARK: - 时长校准：实测 + 修 FLAC 头（2026-11-23）
+    //
+    // 老板的验收口径是「准」：拖动进度条 = 音频精确跳到那一点继续放。所以 672 首全都要
+    // **真实时长**，不能信元数据（《半岛铁盒》：列表写 5:19，实际能解出 ≥5:32）。
+    // 一次校准做三件事：解码量真实时长 → 落库（列表/播放页/进度条统一用）→ 只对 FLAC 修文件头。
+    //
+    // 为什么只修 FLAC（老板 2026-11-23 定）：FLAC 的时长就是 STREAMINFO 里 36 bit 的
+    // `total_samples`，改它不碰音频帧、不碰块头（CRC-8 只覆盖块头），风险最低；
+    // mp3 的 Xing 要重算帧数、m4a 的 mvhd 要和样本表自洽，收益不值这个风险。
+
+    /// FLAC 头修复的备份目录：只存"被改的那 34 字节 + 偏移"，672 首全库不到 1 MB。
+    var durationBackupDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("DurationBackup", isDirectory: true)
+    }
+
+    /// 正在播的那一首（`PlayerEngine` 每次起播更新）：校准/修头时**跳过**它 ——
+    /// AVPlayer 还开着这个文件，往头里写字虽然只 5 个字节，也没必要冒这个险。
+    var currentPlayingSongID: String?
+
+    /// 全库校准（`skipSongID` = 正在播的那一首，不碰它：AVPlayer 还开着这个文件）
+    @discardableResult
+    func calibrateDurations(skipSongID: String? = nil) -> Int {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in _ = self?.calibrateDurations(skipSongID: skipSongID) }
+            return 0
+        }
+        let targets = items.filter { $0.status == .completed && $0.localPath != nil }
+        guard !targets.isEmpty else {
+            lastDurationReport = "还没有下载或导入的歌"
+            return 0
+        }
+        durationCalibrationCancelled = false
+        durationCalibrationProgress = SongInfoWriteProgress(done: 0, total: targets.count, name: "")
+        CrashReporter.logMetadata("duration | 开始校准，\(targets.count) 首")
+        let backupDir = durationBackupDirectory
+        let playingID = skipSongID ?? currentPlayingSongID
+
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var measured: [(UUID, Double)] = []
+            var repaired: [(String, String)] = []
+            var lines: [String] = []
+            var repairedCount = 0
+            var failed = 0
+            var done = 0
+            var lastProgressAt = Date.distantPast
+            // 并发 2：解码是 CPU + IO 的重活，并发太高会把正在播的歌挤掉
+            var start = 0
+            let concurrency = 2
+            while start < targets.count {
+                if await MainActor.run(body: { self.durationCalibrationCancelled }) { break }
+                let end = min(start + concurrency, targets.count)
+                let chunk = Array(targets[start..<end])
+                let results = await withTaskGroup(
+                    of: (UUID, String, Double?, Double, Bool, String?).self
+                ) { group in
+                    for item in chunk {
+                        group.addTask {
+                            guard let path = item.localPath,
+                                  FileManager.default.fileExists(atPath: path) else {
+                                return (item.id, item.song.name, nil, 0, false, nil)
+                            }
+                            let url = URL(fileURLWithPath: path)
+                            guard let trueSec = DurationCalibration.measureTrueDuration(fileURL: url),
+                                  trueSec > 1 else {
+                                return (item.id, item.song.name, nil, 0, false, "读不出真实时长")
+                            }
+                            let declared = item.measuredDuration ?? item.song.duration
+                            guard DurationRepairRules.needsRepair(declaredSec: declared,
+                                                                  trueSec: trueSec) else {
+                                return (item.id, item.song.name, trueSec, declared, false, nil)
+                            }
+                            // 只修 FLAC：能用 `FlacDurationHeader.site` 解析出来的才算
+                            var didRepair = false
+                            var note: String? = nil
+                            if item.song.id != playingID,
+                               let head = try? FileHandle(forReadingFrom: url) {
+                                let prefix = (try? head.read(upToCount: 64 * 1024)) ?? nil
+                                try? head.close()
+                                if let prefix, FlacDurationHeader.site(inFileData: prefix) != nil {
+                                    didRepair = DurationCalibration.repairFlacTotalSamples(
+                                        fileURL: url, seconds: trueSec,
+                                        backupDir: backupDir, songID: item.song.id)
+                                    if !didRepair { note = "修文件头失败（已保留备份，可回滚）" }
+                                }
+                            }
+                            return (item.id, item.song.name, trueSec, declared, didRepair, note)
+                        }
+                    }
+                    var out: [(UUID, String, Double?, Double, Bool, String?)] = []
+                    for await r in group { out.append(r) }
+                    return out
+                }
+
+                for (id, name, trueSec, declared, didRepair, note) in results {
+                    done += 1
+                    if let trueSec {
+                        measured.append((id, trueSec))
+                        if didRepair {
+                            repairedCount += 1
+                            repaired.append((id.uuidString, name))
+                            lines.append(DurationRepairRules.summaryText(
+                                name: name, declaredSec: declared, trueSec: trueSec, repaired: true))
+                        } else if abs(trueSec - declared) > DurationRepairRules.toleranceSec {
+                            lines.append(DurationRepairRules.summaryText(
+                                name: name, declaredSec: declared, trueSec: trueSec, repaired: false)
+                                + (note.map { "（\($0)）" } ?? ""))
+                        }
+                    } else {
+                        failed += 1
+                        if lines.count < 30 { lines.append("\(name)：\(note ?? "读不出来")") }
+                    }
+                    let now = Date()
+                    if done == targets.count || now.timeIntervalSince(lastProgressAt) > 0.3 {
+                        lastProgressAt = now
+                        let snapshot = (done: done, total: targets.count, name: name)
+                        await MainActor.run {
+                            self.durationCalibrationProgress = SongInfoWriteProgress(
+                                done: snapshot.done, total: snapshot.total, name: snapshot.name)
+                        }
+                    }
+                }
+                start = end
+            }
+
+            let measuredSnapshot = measured
+            let report = lines
+            let summary = "时长校准（\(targets.count) 首）：实测成功 \(measuredSnapshot.count)"
+                + " · 修了文件头 \(repairedCount)"
+                + (failed > 0 ? " · 读不出 \(failed)" : "")
+            CrashReporter.logMetadata("duration | \(summary)")
+            await MainActor.run {
+                var changed = false
+                for (id, trueSec) in measuredSnapshot {
+                    guard let idx = self.items.firstIndex(where: { $0.id == id }) else { continue }
+                    if abs((self.items[idx].measuredDuration ?? 0) - trueSec) > 0.5 {
+                        self.items[idx].measuredDuration = trueSec
+                        changed = true
+                    }
+                }
+                if changed { self.persist() }
+                self.durationCalibrationProgress = nil
+                var text = [summary]
+                if !report.isEmpty { text.append(contentsOf: report.prefix(20)) }
+                if report.count > 20 { text.append("…其余 \(report.count - 20) 行见「诊断/metadata.log」") }
+                text.append("修过头的文件可「还原时长修复」一键回滚（备份只存被改的 34 字节）。")
+                self.lastDurationReport = text.joined(separator: "\n")
+            }
+        }
+        return targets.count
+    }
+
+    /// 还原所有修过的 FLAC 头（老板 2026-11-23：可回滚）
+    @discardableResult
+    func rollbackDurationRepairs() -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: durationBackupDirectory, includingPropertiesForKeys: nil)) ?? []
+        guard !files.isEmpty else { return 0 }
+        var restored = 0
+        for backup in files where backup.pathExtension == "json" {
+            let songID = backup.deletingPathExtension().lastPathComponent
+            guard let item = items.first(where: {
+                $0.song.id.filter { $0.isLetter || $0.isNumber } == songID
+            }), let path = item.localPath else { continue }
+            if DurationCalibration.rollbackFlacTotalSamples(
+                fileURL: URL(fileURLWithPath: path),
+                backupDir: durationBackupDirectory,
+                songID: item.song.id) {
+                restored += 1
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx].measuredDuration = nil
+                }
+            }
+        }
+        if restored > 0 { persist() }
+        lastDurationReport = "已把 \(restored) 首的文件头还原成修复前的样子，并清掉了实测时长。"
+        return restored
     }
 }
 

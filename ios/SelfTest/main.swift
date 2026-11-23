@@ -5738,6 +5738,75 @@ do {
           TrackDurationRules.seekTarget(fraction: 2, duration: 319) == 318.5)
 }
 
+// MARK: - FLAC 头的 total_samples（2026-11-23：修文件头，只改 36 bit）
+
+section("FLAC 时长字段：读得出、改得准、不碰别的字节")
+
+do {
+    // 造一个最小 FLAC 头：`fLaC` + STREAMINFO 块头 + 34 字节块体
+    // 块体：minblock(2) maxblock(2) minframe(3) maxframe(3) + 8 字节打包字段
+    var body = [UInt8](repeating: 0, count: 34)
+    body[0] = 0x10; body[1] = 0x00   // min block size 4096
+    body[2] = 0x10; body[3] = 0x00
+    // 采样率 44100 = 0x0AC44（20 bit）
+    body[10] = 0x0A
+    body[11] = 0xC4
+    body[12] = 0x43          // 高 4 位 = 采样率低位 4 位；其余是声道/位深
+    body[13] = 0x50          // 高 4 位 = 位深；低 4 位 = total_samples 的最高 4 位
+    let samples: UInt64 = 319 * 44_100        // 319 秒
+    body[13] = (body[13] & 0xF0) | UInt8((samples >> 32) & 0x0F)
+    body[14] = UInt8((samples >> 24) & 0xFF)
+    body[15] = UInt8((samples >> 16) & 0xFF)
+    body[16] = UInt8((samples >> 8) & 0xFF)
+    body[17] = UInt8(samples & 0xFF)
+
+    var file: [UInt8] = Array("fLaC".utf8)
+    file += [0x80, 0x00, 0x00, 34]            // last=1, type=0(STREAMINFO), 长度 34
+    file += body
+
+    let site = FlacDurationHeader.site(inFileData: Data(file))
+    check("能解析出 STREAMINFO 的位置", site != nil)
+    check("total_samples 偏移 = fLaC(4) + 块头(4) + 块体第 13 字节",
+          site?.totalSamplesOffset == 4 + 4 + 13, "\(site?.totalSamplesOffset ?? -1)")
+    check("采样率读对", site?.sampleRate == 44_100, "\(site?.sampleRate ?? 0)")
+    check("total_samples 读对", site?.totalSamples == samples, "\(site?.totalSamples ?? 0)")
+    check("备份用的块体是完整的 34 字节", site?.streamInfoBody.count == 34)
+
+    // 改大 13 秒（就是《半岛铁盒》那种情况）
+    let five = Array(body[13..<18])
+    let bigger = FlacDurationHeader.totalSamples(seconds: 332, sampleRate: 44_100)
+    if let bigger, let patched = FlacDurationHeader.patched(five, totalSamples: bigger) {
+        check("写回后能读回同一个值",
+              FlacDurationHeader.totalSamples(patched) == bigger,
+              "\(FlacDurationHeader.totalSamples(patched) ?? 0)")
+        check("**高 4 位原样保留**（那是位深/声道那半个字节）", patched[0] & 0xF0 == five[0] & 0xF0)
+        check("其它 4 个字节确实变了", Array(patched[1...]) != Array(five[1...]))
+        // 把这个 5 字节写回块体，整个头仍然解析得出来
+        var file2 = file
+        for (i, b) in patched.enumerated() { file2[21 + i] = b }
+        let site2 = FlacDurationHeader.site(inFileData: Data(file2))
+        check("改完整个头仍然可解析，采样率不变",
+              site2?.sampleRate == 44_100 && site2?.totalSamples == bigger)
+    } else {
+        check("写回后能读回同一个值", false, "构造失败")
+    }
+
+    check("不是 FLAC：解析不出来", FlacDurationHeader.site(inFileData: Data("ID3xxxxxxx".utf8)) == nil)
+    check("空数据不崩", FlacDurationHeader.site(inFileData: Data()) == nil)
+    check("越界值（超过 36 bit）拒绝写",
+          FlacDurationHeader.patched(five, totalSamples: 1 << 37) == nil)
+    check("秒 → 样本数按采样率换算",
+          FlacDurationHeader.totalSamples(seconds: 332, sampleRate: 44_100) == 332 * 44_100)
+
+    // 判定口径
+    check("差 0.5 秒不修（容器舍入）",
+          !DurationRepairRules.needsRepair(declaredSec: 319, trueSec: 319.5))
+    check("差 13 秒要修", DurationRepairRules.needsRepair(declaredSec: 319, trueSec: 332))
+    check("报告文案：5:19 → 5:32（+13 秒）",
+          DurationRepairRules.summaryText(name: "半岛铁盒", declaredSec: 319, trueSec: 332,
+                                         repaired: true).contains("5:19 → 5:32（+13 秒）已修文件头"))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -1481,3 +1481,131 @@ enum CompanionRetryRules {
     /// 重试满额后仍没词的冷却（秒）：回前台时按它再试一次，不再永久钉死
     static let cooldownAfterGivingUp: TimeInterval = 3600
 }
+
+// MARK: - FLAC 头里的 total_samples（2026-11-23：给"修文件头"用）
+//
+// 老板 2026-11-23：①拖动进度条要**准**（拖到哪就从哪放）；②672 首全都要真实时长；
+// ③量准之后**能不能把文件头也修好**。答案是能——FLAC 的时长就写在 STREAMINFO 的
+// 36 bit `total_samples` 里，改它不碰音频帧、也不碰元数据块头（所以块头的 CRC-8 依然有效）。
+//
+// 这层只做**字节层面的纯计算**（偏移 / 读 / 写 5 个字节），不读写文件；
+// 真正落盘在 `AudioTagEmbedder.repairFlacTotalSamples`（写前备份、写后回读校验）。
+enum FlacDurationHeader {
+
+    /// total_samples 在文件里的位置与现值
+    struct Site: Equatable {
+        /// STREAMINFO 块体（34 字节）在文件里的起点
+        var streamInfoOffset: Int
+        /// total_samples 那 5 个字节在文件里的起点（块体第 13 字节起）
+        var totalSamplesOffset: Int
+        var sampleRate: UInt32
+        var totalSamples: UInt64
+        /// 块体贴出来（34 字节），备份用
+        var streamInfoBody: [UInt8]
+    }
+
+    /// 解析 `fLaC` + 第一个元数据块（必须是 STREAMINFO）
+    ///
+    /// 允许开头挂一段 ID3v2（写回时会被丢掉，但别人的库确实有这种文件）。
+    static func site(inFileData data: Data) -> Site? {
+        let bytes = [UInt8](data)
+        var magic = 0
+        if bytes.count >= 10, bytes[0] == 0x49, bytes[1] == 0x44, bytes[2] == 0x33 {
+            let version = bytes[3]
+            var size = 0
+            if version < 3 {
+                size = (Int(bytes[6] & 0x7F) << 14) | (Int(bytes[7] & 0x7F) << 7)
+                    | Int(bytes[8] & 0x7F)
+            } else {
+                size = (Int(bytes[6] & 0x7F) << 21) | (Int(bytes[7] & 0x7F) << 14)
+                    | (Int(bytes[8] & 0x7F) << 7) | Int(bytes[9] & 0x7F)
+            }
+            var total = 10 + size
+            if version >= 4, bytes[5] & 0x10 != 0 { total += 10 }
+            guard total >= 10, total < bytes.count else { return nil }
+            magic = total
+        }
+        guard magic + 4 + 4 + 34 <= bytes.count,
+              bytes[magic] == 0x66, bytes[magic + 1] == 0x4C,   // fLaC
+              bytes[magic + 2] == 0x61, bytes[magic + 3] == 0x43 else { return nil }
+
+        let blockHeader = magic + 4
+        let type = Int(bytes[blockHeader] & 0x7F)
+        guard type == 0 else { return nil }                       // 第一块必须是 STREAMINFO
+        let bodyOffset = blockHeader + 4
+        guard bodyOffset + 34 <= bytes.count else { return nil }
+        let body = Array(bytes[bodyOffset..<(bodyOffset + 34)])
+
+        let rate = (UInt32(body[10]) << 12) | (UInt32(body[11]) << 4) | (UInt32(body[12]) >> 4)
+        guard rate > 0 else { return nil }
+        let five = Array(body[13..<18])
+        guard let samples = totalSamples(five) else { return nil }
+        return Site(streamInfoOffset: bodyOffset,
+                    totalSamplesOffset: bodyOffset + 13,
+                    sampleRate: rate,
+                    totalSamples: samples,
+                    streamInfoBody: body)
+    }
+
+    /// 5 个字节 → 36 bit 的 total_samples
+    static func totalSamples(_ five: [UInt8]) -> UInt64? {
+        guard five.count == 5 else { return nil }
+        let high = UInt64(five[0] & 0x0F)
+        let low = UInt64(five[1]) << 24 | UInt64(five[2]) << 16
+            | UInt64(five[3]) << 8 | UInt64(five[4])
+        return (high << 32) | low
+    }
+
+    /// 生成改好 total_samples 的 5 个字节。
+    ///
+    /// **高 4 位必须原样保留**：那是同一个字节里"位深"的后 4 位（20 bit 采样率 + 3 bit 声道
+    /// + 5 bit 位深 + 36 bit 总样本数，正好压在这 8 个字节里），改错就会变成一个坏文件。
+    static func patched(_ five: [UInt8], totalSamples: UInt64) -> [UInt8]? {
+        guard five.count == 5, totalSamples > 0, totalSamples < (1 << 36) else { return nil }
+        var out = five
+        out[0] = (five[0] & 0xF0) | UInt8((totalSamples >> 32) & 0x0F)
+        out[1] = UInt8((totalSamples >> 24) & 0xFF)
+        out[2] = UInt8((totalSamples >> 16) & 0xFF)
+        out[3] = UInt8((totalSamples >> 8) & 0xFF)
+        out[4] = UInt8(totalSamples & 0xFF)
+        return out
+    }
+
+    /// 秒 → 总样本数（四舍五入；采样率来自文件本身，不信外面传的）
+    static func totalSamples(seconds: Double, sampleRate: UInt32) -> UInt64? {
+        guard seconds.isFinite, seconds > 0, sampleRate > 0 else { return nil }
+        let samples = (seconds * Double(sampleRate)).rounded()
+        guard samples > 0, samples < Double(1 << 36) else { return nil }
+        return UInt64(samples)
+    }
+}
+
+// MARK: - 时长校准的判定口径（2026-11-23）
+
+enum DurationRepairRules {
+
+    /// 声明与实测差多少秒才值得改文件头。
+    /// 1 秒以内的差是容器舍入，改它没意义还可能把别人写的好头改坏。
+    static let toleranceSec: Double = 1.0
+
+    /// 要不要修：两边都得是有效正数，且差值超过容忍度
+    static func needsRepair(declaredSec: Double, trueSec: Double) -> Bool {
+        guard declaredSec.isFinite, trueSec.isFinite, declaredSec > 0, trueSec > 0 else { return false }
+        return abs(trueSec - declaredSec) > toleranceSec
+    }
+
+    /// 报告里那一行：`《半岛铁盒》 5:19 → 5:32（+13 秒）已修`
+    static func summaryText(name: String, declaredSec: Double, trueSec: Double,
+                            repaired: Bool) -> String {
+        let delta = Int((trueSec - declaredSec).rounded())
+        let sign = delta >= 0 ? "+" : ""
+        let tail = repaired ? "已修文件头" : "只记下真实时长"
+        return "\(name)：\(clockText(declaredSec)) → \(clockText(trueSec))"
+            + "（\(sign)\(delta) 秒）\(tail)"
+    }
+
+    static func clockText(_ seconds: Double) -> String {
+        let total = Int(max(0, seconds.rounded()))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}

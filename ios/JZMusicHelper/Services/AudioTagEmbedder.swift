@@ -632,3 +632,130 @@ enum AudioTagEmbedder {
         return [UInt8](handle.readData(ofLength: count))
     }
 }
+
+
+// MARK: - 真实时长：测量与 FLAC 头修复（2026-11-23）
+//
+// 老板的验收口径是「**准**」：拖动进度条 = 音频精确跳到那一点继续放，和点歌词跳那一句同一件事。
+// 所以唯一真相是**解码出来的长度**：元数据会错、文件头也会错（《半岛铁盒》头里写 5:19，
+// 实际能解出 ≥5:32），界面必须按真实长度画条、算剩余、算拖动落点。
+//
+// 两件事都在这儿：
+//   · `measureTrueDuration`：解码到 EOF 数帧（**只读**）；
+//   · `repairFlacTotalSamples`：把量到的长度写回 FLAC 头的 `total_samples`（**只写 5 个字节**），
+//     写前备份被改的那 34 字节、写后回读校验；`rollbackFlacTotalSamples` 能一键还原。
+enum DurationCalibration {
+
+    /// 解码到 EOF 数帧，返回真实秒数。只读文件，不改任何东西。
+    ///
+    /// 为什么不能用 `AVAudioFile.length`：那也是读 STREAMINFO，头错了它跟着错。
+    /// 每块 262144 帧（约 6 秒 @44.1k），一首 5 分钟的歌约 50 次 read。
+    static func measureTrueDuration(fileURL: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: fileURL) else { return nil }
+        let format = file.processingFormat
+        let rate = format.sampleRate
+        guard rate > 0 else { return nil }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1 << 18) else {
+            return nil
+        }
+        var total: AVAudioFramePosition = 0
+        while true {
+            do {
+                try file.read(into: buffer)
+            } catch {
+                break
+            }
+            if buffer.frameLength == 0 { break }
+            total += AVAudioFramePosition(buffer.frameLength)
+        }
+        guard total > 0 else { return nil }
+        return Double(total) / rate
+    }
+
+    /// 备份文件名（按 song.id 归一到字母数字，避免路径里有怪字符）
+    static func backupURL(backupDir: URL, songID: String) -> URL {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+        let name = String(songID.filter { allowed.contains($0) }.prefix(60))
+        return backupDir.appendingPathComponent(name.isEmpty ? "unknown" : name)
+            .appendingPathExtension("json")
+    }
+
+    private struct BackupRecord: Codable {
+        var streamInfoOffset: Int
+        var body: Data
+        var savedAt: Date
+    }
+
+    /// 修 FLAC 的 `total_samples`：**只写 5 个字节**，写前把被改的那 34 字节（STREAMINFO 块体）
+    /// 存成一份 json 备份，写后回读校验。
+    ///
+    /// 为什么不做"整文件重写 + 原子替换"：改这 5 个字节不改变任何长度/偏移，
+    /// 整文件重写既慢又有风险（35MB 的 FLAC 每首都要拷一遍）；就地改 5 字节 + 回读校验 +
+    /// 失败自动还原，已经是最小改动面。
+    ///
+    /// - Returns: 真的改了 → true；不是 FLAC / 已经是这个值 / 写失败 → false
+    @discardableResult
+    static func repairFlacTotalSamples(fileURL: URL, seconds: Double,
+                                       backupDir: URL, songID: String) -> Bool {
+        guard let handle = try? FileHandle(forUpdating: fileURL) else { return false }
+        defer { try? handle.close() }
+        guard let prefix = try? handle.read(upToCount: 64 * 1024),
+              let site = FlacDurationHeader.site(inFileData: prefix),
+              let samples = FlacDurationHeader.totalSamples(seconds: seconds,
+                                                            sampleRate: site.sampleRate) else {
+            return false
+        }
+        guard samples != site.totalSamples else { return false }
+        let five = Array([UInt8](prefix)[site.totalSamplesOffset..<(site.totalSamplesOffset + 5)])
+        guard let patched = FlacDurationHeader.patched(five, totalSamples: samples) else { return false }
+
+        // ① 先备份（只存被改的那 34 字节 + 偏移；672 首全库不到 1MB，整文件备份是 24GB）
+        try? FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        let record = BackupRecord(streamInfoOffset: site.streamInfoOffset,
+                                  body: Data(site.streamInfoBody),
+                                  savedAt: Date())
+        if let data = try? JSONEncoder().encode(record) {
+            try? data.write(to: backupURL(backupDir: backupDir, songID: songID), options: .atomic)
+        }
+
+        // ② 就地写这 5 个字节
+        do {
+            try handle.seek(toOffset: UInt64(site.totalSamplesOffset))
+            try handle.write(contentsOf: Data(patched))
+            try handle.synchronize()
+        } catch {
+            return false
+        }
+
+        // ③ 回读校验：读回来不是我们写的值，就当失败（并把原 5 字节写回去）
+        try? handle.seek(toOffset: UInt64(site.totalSamplesOffset))
+        let check = (try? handle.read(upToCount: 5)).flatMap { $0 } ?? Data()
+        if [UInt8](check) != patched {
+            try? handle.seek(toOffset: UInt64(site.totalSamplesOffset))
+            try? handle.write(contentsOf: Data(five))
+            try? handle.synchronize()
+            return false
+        }
+        return true
+    }
+
+    /// 把某首的 FLAC 头还原成备份里的样子（老板要求"可回滚"）
+    @discardableResult
+    static func rollbackFlacTotalSamples(fileURL: URL, backupDir: URL, songID: String) -> Bool {
+        let url = backupURL(backupDir: backupDir, songID: songID)
+        guard let data = try? Data(contentsOf: url),
+              let record = try? JSONDecoder().decode(BackupRecord.self, from: data) else {
+            return false
+        }
+        guard let handle = try? FileHandle(forUpdating: fileURL) else { return false }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: UInt64(record.streamInfoOffset))
+            try handle.write(contentsOf: record.body)
+            try handle.synchronize()
+            return true
+        } catch {
+            return false
+        }
+    }
+}
