@@ -5701,6 +5701,43 @@ do {
             && pairJay.songs.map(\.name) == jayOnly.map { $0.song.name })
 }
 
+// MARK: - 总长与越界（2026-11-23：《半岛铁盒》拖动后"唱完了还在唱"）
+
+section("总长与越界：容器声明比真实音频短时的口径")
+
+do {
+    check("起播总长：没有量过的长度就用元数据",
+          TrackDurationRules.initialDuration(metadata: 319, measured: nil) == 319)
+    check("起播总长：量到的比元数据长就用量到的",
+          TrackDurationRules.initialDuration(metadata: 319, measured: 332) == 332)
+    check("起播总长：量到的更短时不缩水（只往长里修）",
+          TrackDurationRules.initialDuration(metadata: 319, measured: 300) == 319)
+    check("起播总长：元数据是 NaN 也不能崩",
+          TrackDurationRules.initialDuration(metadata: .nan, measured: 200) == 200)
+
+    check("越界：位置等于总长不算越界",
+          !TrackDurationRules.isOverrun(currentTime: 319, duration: 319))
+    check("越界：超出 1 秒（在 2 秒余量内）不算",
+          !TrackDurationRules.isOverrun(currentTime: 320, duration: 319))
+    check("越界：超出 2 秒以上才算",
+          TrackDurationRules.isOverrun(currentTime: 321.5, duration: 319))
+    check("越界：总长为 0 时永远不算（还没解析出来）",
+          !TrackDurationRules.isOverrun(currentTime: 30, duration: 0))
+
+    check("记录真实长度：留 0.5 秒余量",
+          TrackDurationRules.measuredDuration(currentTime: 321.5) == 322)
+    check("记录真实长度：非法位置给 0（宁可不写）",
+          TrackDurationRules.measuredDuration(currentTime: .nan) == 0)
+
+    check("拖到最右端：不落到总长本身（留 0.5 秒）",
+          TrackDurationRules.seekTarget(fraction: 1, duration: 319) == 318.5)
+    check("拖到中间：按比例",
+          TrackDurationRules.seekTarget(fraction: 0.5, duration: 319) == 159.5)
+    check("拖到最左：0", TrackDurationRules.seekTarget(fraction: -1, duration: 319) == 0)
+    check("越界拖动：仍然不超过总长-0.5",
+          TrackDurationRules.seekTarget(fraction: 2, duration: 319) == 318.5)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

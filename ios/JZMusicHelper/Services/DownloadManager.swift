@@ -363,6 +363,24 @@ final class DownloadManager: NSObject, ObservableObject {
     /// 第四十轮补丁 4：记录里的绝对路径可能失效（旧版 `Music` 目录被搬走/被用户删掉、
     /// 文件夹被移动过）。这时按"文件名 → 同基名"在 `Download/Music` 里找一次，
     /// 找到就把记录改过来——否则会出现"列表里显示已下载，点播放却只有封面"的现象。
+    /// 这首歌"量到过的真实音频长度"（没有就 nil）——进度条用，见 `DownloadItem.measuredDuration`。
+    func measuredDuration(for songID: String) -> Double? {
+        items.first(where: { $0.song.id == songID && $0.status == .completed })?.measuredDuration
+    }
+
+    /// 播放时量到"真实音频比容器声明的长"：记下来，下次起播的进度条就准了（2026-11-23）。
+    ///
+    /// 只在差 >1 秒时才写，避免每拍都碰 `items`（那会让下载页缓存整套失效）。
+    func adoptMeasuredDuration(songID: String, seconds: Double) {
+        guard seconds > 1 else { return }
+        guard let idx = items.firstIndex(where: { $0.song.id == songID && $0.status == .completed })
+        else { return }
+        let previous = items[idx].measuredDuration ?? items[idx].song.duration
+        guard abs(previous - seconds) > 1 else { return }
+        items[idx].measuredDuration = seconds
+        persist()
+    }
+
     func localFileURL(for song: Song) -> URL? {
         let started = CFAbsoluteTimeGetCurrent()
         defer { PerfProbe.noteFileLookup(CFAbsoluteTimeGetCurrent() - started) }
