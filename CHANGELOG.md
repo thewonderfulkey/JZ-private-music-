@@ -1,3 +1,27 @@
+### 出包记录（v2.4.91 / 269）
+
+| 项 | 值 |
+|---|---|
+| CI | **run 3**（`6ffe6db`）✅ |
+| 产物 | `JZ-Music-v2.4.91-6ffe6db-r3-ios-unsigned.ipa` · **3,532,365 B** · sha256 `3df4f9a7580ac192…` |
+| 主二进制 | 13,236,800 B / `a6a20e8577a12ba1`（v2.4.90 是 13,351,520 B / `394edf38…`）→ 出包闸通过，不是空包 |
+| 包内版本 | 2.4.91 / 269（已核对）· 插件 JZWidgets 已嵌入 |
+| 群消息 | 02:47:27 包 + 说明卡 |
+
+**主人话**：进度条拖到哪就该从哪放 —— 这是最基础的功能，系统播放器准，JZ 不准。
+
+**根因**：进度条的分子（已播时间）问的是播放器，分母（总长）却是 `max(接口元数据, 自己标定的 measuredDuration)`，而且"只许变大、不许被播放器真值改小" —— 两把尺子。拖动落点 = 比例 × 这个数，分母一歪，拖到哪儿都偏；文件比这个数长时条提前 100%、剩余钉在 -0:00、歌还在唱（录屏 62–75s、174–184s 两段为证）。
+
+**改法**：总长只由 `item.duration` 写入（`adoptDuration` 可增可减），起播瞬间用接口时长占位；拖动落点 = 比例 × 总长（`SeekTargetRules`，删掉 0.5 秒尾巴）。
+
+**删除**（净 −726 行）：`DurationCalibration` / `FlacDurationHeader` / `DurationRepairRules` / `DownloadItem.measuredDuration` / `adoptMeasuredDuration` / `detectDurationOverrun` / `measureCurrentTrackInBackground` / 全库校准与还原修头 / 下载页两个按钮与进度条 / 相关自检断言。
+
+**CI**：打包任务 `timeout-minutes` 30 → 90（GitHub 把排队时间也算进去，13:18 那次"失败且无日志"是它自己杀的）。
+
+**通知**：`lark.py` 加 `clean_text`，修掉"截断日志带孤立代理字符 → json 编码抛错 → 失败卡片静默丢失"。
+
+**待实机验证**：① 拖到中间，条上时间 = 歌里位置（同曲用系统播放器对）；② 条到 100% 时歌正好结束；③ 拖到最右端直接到结尾。
+
 ### 出包记录（v2.4.90 / 268）
 
 | 项 | 值 |
