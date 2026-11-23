@@ -5676,6 +5676,29 @@ do {
     check("contains：这位歌手还在不在（删光后调用方要能把筛选退回「全部」）",
           DownloadArtistFilter.contains("周杰伦", in: items)
             && !DownloadArtistFilter.contains("邓紫棋", in: items))
+
+    // 定位配对（2026-11-23 真机："筛选切回全部了，但没滚过去"）
+    let pair = ListLocate.pair(items)
+    check("定位配对：songs 与 rowIDs 同长", pair.songs.count == items.count && pair.rowIDs.count == items.count)
+    check("定位配对：第 i 个 song 就是第 i 行（顺序原样搬运）",
+          pair.songs == items.map(\.song) && pair.rowIDs == items.map(\.id))
+    // 真实调用是"在 pair.songs 里算下标，再拿它取 pair.rowIDs"——这条直接钉住那一步
+    if let idx = ListLocate.index(of: items[4].song, in: pair.songs) {
+        check("定位配对：算出的下标能取到同一行（不错位）", pair.rowIDs[idx] == items[4].id, "idx=\(idx)")
+    } else {
+        check("定位配对：算出的下标能取到同一行（不错位）", false, "没找到下标")
+    }
+    // 反序输入必须跟着反（绝不自己重排——以前就是在这里把两套顺序混起来的）
+    let reversed = Array(items.reversed())
+    let pairRev = ListLocate.pair(reversed)
+    check("定位配对：反序输入两列一起反，不自己排序",
+          pairRev.rowIDs == reversed.map(\.id) && pairRev.songs == reversed.map(\.song))
+    // 筛选后的子集：两列都只含这一位
+    let jayOnly = DownloadArtistFilter.filter(items, artist: "周杰伦")
+    let pairJay = ListLocate.pair(jayOnly)
+    check("定位配对：筛选后的子集两列同样对齐",
+          pairJay.rowIDs.count == jayOnly.count
+            && pairJay.songs.map(\.name) == jayOnly.map { $0.song.name })
 }
 
 // MARK: - 汇总

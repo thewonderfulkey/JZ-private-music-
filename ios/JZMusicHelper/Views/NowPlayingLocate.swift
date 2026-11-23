@@ -33,6 +33,13 @@ final class SongLocator {
         highlightedSongID == song.id
     }
 
+    /// 只弹一句提示（不滚动、不动高亮）——
+    /// 给"定位前就判定这一步没必要做"的调用方用（例如下载页筛着别的歌手、而这首根本不在下载里）。
+    @MainActor
+    func notice(_ text: String) {
+        flashToast(text)
+    }
+
     /// 定位一次（列表行用 `Song.id` 作为 ScrollView 的 `.id()`）。
     /// - Parameters:
     ///   - current: `player.currentSong`

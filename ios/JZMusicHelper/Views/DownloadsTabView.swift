@@ -666,29 +666,7 @@ struct DownloadsTabView: View {
                         }
                         .accessibilityLabel("多选")
                         LocateNowPlayingButton {
-                            // 2026-11-23：筛着别的歌手时点「定位」必然找不到——先把筛选退回「全部」，
-                            // 否则这个键又变成"点了没反应"（第 45 轮踩过同款观感）。
-                            if let artist = artistFilter, let current = player.currentSong,
-                               DownloadArtistFilter.artistKey(current.singer) != artist {
-                                artistFilter = nil
-                            }
-                            // 行可能还在"未加载区"：先把 limit 撑到那一行，再滚（下一帧才有这行）
-                            let revealed = revealRowForCurrentSong()
-                            let scrollToCurrent = {
-                                // 下载页的行按 `DownloadItem.id` 认（同一首歌可以有两档音质，`song.id` 会重复）。
-                                // 第 42 轮：行的 identity 就是 `item.id`（不再挂 String id），所以这里直接传 UUID。
-                                locator.locate(current: player.currentSong,
-                                               songs: downloads.completedSongs,
-                                               rowIDs: finished.map(\.id),
-                                               scroll: { id in
-                                                   proxy.scrollTo(id, anchor: .center)
-                                               })
-                            }
-                            if revealed {
-                                DispatchQueue.main.async(execute: scrollToCurrent)
-                            } else {
-                                scrollToCurrent()
-                            }
+                            locateNowPlaying(proxy: proxy)
                         }
                     }
                 }
@@ -833,6 +811,52 @@ struct DownloadsTabView: View {
         }
         visibleLimit = limit
         return true
+    }
+
+    // MARK: 「定位到正在播放」（2026-11-23 修：以前滚到镜像行 / 越界后干脆不滚）
+
+    /// 点一下「定位」：该切筛选就切、该撑行数就撑，最后滚到正在播放那一行并闪一下。
+    ///
+    /// 两个真机 bug（2026-11-23 20:57 录屏，"筛选切回全部了，但没滚过去"）：
+    ///   ① `songs` 用的是 `downloads.completedSongs`（全库 + 落库顺序），`rowIDs` 用的是
+    ///      `finished`（显示顺序 + 已筛选）—— 下标在两套顺序之间搬运，顺序相反时滚到**镜像行**，
+    ///      筛了歌手后长度还不同，越界后 `scrollTo` 静默空转。现在两边只从 `ListLocate.pair` 出。
+    ///   ② 清筛选与"撑行数 + 滚"挤在同一拍：`onChange(of: artistFilter)` 会把分页打回首帧，
+    ///      刚撑开的行又没了，目标行根本没被建出来 → 滚不动。现在清完**下一拍**再滚。
+    private func locateNowPlaying(proxy: ScrollViewProxy) {
+        guard let current = player.currentSong else {
+            locator.notice("还没有在播放的歌")
+            return
+        }
+
+        // ① 筛着别的歌手：先退回「全部」，下一拍再滚（理由见方法注释第 ②）
+        if let artist = artistFilter,
+           DownloadArtistFilter.artistKey(current.singer) != artist {
+            // 这首压根不在下载里：切回全部也滚不到，别白清掉用户正在用的筛选，只说一句实话
+            guard ListLocate.index(of: current, in: downloads.completedSongs) != nil else {
+                locator.notice("《\(current.name)》不在下载里")
+                return
+            }
+            artistFilter = nil
+            DispatchQueue.main.async { self.locateNowPlaying(proxy: proxy) }
+            return
+        }
+
+        // ② 行可能还没被建出来（分页在首帧）：先把 limit 撑到那一行，再滚（下一帧才有这行）
+        let revealed = revealRowForCurrentSong()
+        let scrollToCurrent = {
+            // ③ 两列同源同序：显示顺序（新→老），而且就是当前筛选之后的那一份
+            let pair = ListLocate.pair(finished)
+            locator.locate(current: current,
+                           songs: pair.songs,
+                           rowIDs: pair.rowIDs,
+                           scroll: { id in proxy.scrollTo(id, anchor: .center) })
+        }
+        if revealed {
+            DispatchQueue.main.async(execute: scrollToCurrent)
+        } else {
+            scrollToCurrent()
+        }
     }
 
     // MARK: 多选（2026-11-21 老板：多选按钮 + 全选 + 批量删除）
@@ -1158,9 +1182,11 @@ struct DownloadsTabView: View {
                 return
             }
             RowTap.afterHighlight {
-                let songs = downloads.completedSongs
-                if let index = songs.firstIndex(where: { $0.id == item.song.id }) {
-                    player.play(queue: songs, startAt: index)
+                // 2026-11-23：筛着歌手时，点一首歌之后的下一首也留在这个人身上
+                //（与「播放全部」同一口径——筛了谁就是"只听这位歌手"）
+                let queue = scopeSongs
+                if let index = queue.firstIndex(where: { $0.id == item.song.id }) {
+                    player.play(queue: queue, startAt: index)
                 } else {
                     player.playSingle(item.song)
                 }
@@ -1186,6 +1212,9 @@ struct DownloadsTabView: View {
         }, onEdit: { id in
             editingItem = downloads.items.first(where: { $0.id == id })
         }))
+        // 2026-11-23：定位成功那一行闪一下。以前这一页**根本没挂**这个修饰符
+        //（其它 8 个列表页都有），所以就算滚对了也看不出"定到哪了"。
+        .locatedFlash(active: locator.isHighlighted(item.song))
     }
 
     // MARK: 正在下载（唯一会画进度条的行）

@@ -50,4 +50,17 @@ enum ListLocate {
         }
         return true
     }
+
+    /// 把**同一份显示顺序**的下载条目一次拆成 `songs` + `rowIDs` —— 两者同源、同序、同长。
+    ///
+    /// 为什么必须走这一个口子（2026-11-23 真机："点定位确实切回全部了，但没滚过去"）：
+    /// 调用点当时传的是 `songs: downloads.completedSongs`（全库 + **落库顺序**，老→新）
+    /// 配 `rowIDs: finished.map(\.id)`（**显示顺序**，新→老，而且已按歌手筛选）。
+    /// `index(of:in:)` 是在 `songs` 里算下标的，再拿这个下标去 `rowIDs` 取行 id：
+    ///   · 顺序相反 → 滚到**镜像那一行**（v2.4.73 把列表改成"新的在最上面"之后一直如此）；
+    ///   · 筛了歌手 → 两个数组长度都不一样，越界后连滚动都不发（静默没反应）。
+    /// 现在两列只从这一个函数产出，调用点想传错都没有别的写法。
+    static func pair(_ items: [DownloadItem]) -> (songs: [Song], rowIDs: [UUID]) {
+        (items.map(\.song), items.map(\.id))
+    }
 }
