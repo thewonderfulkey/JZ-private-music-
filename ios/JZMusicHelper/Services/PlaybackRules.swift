@@ -471,50 +471,20 @@ enum PlaybackRestoreRules {
     }
 }
 
+// MARK: - 拖动落点（纯函数，2026-11-23）
 
-// MARK: - 总长与越界（纯函数，2026-11-23）
-//
-// 老板《半岛铁盒》：「拖动进度条之后跟时间条对不上，明明都唱完了还在唱」。
-// 量出来：这份本地 FLAC 的**容器声明 5:19，实际能解出 ≥5:32**。进度条按声明走，
-// 于是 5:19 就 100% / 剩余 -0:00，歌还要唱 13 秒。
-//
-// r66 也报过一模一样的话（代码里那条注释），当时的做法是"每拍把 duration +0.5"——
-// 结果就是进度条永远 100%、剩余永远 -0:00，**这个症状正是那条兜底自己造出来的**。
-// 现在改成：连续两拍越过声明总长 → 认定这一首已经播完（切下一首），并把量到的真实长度记下来，
-// 下次起播进度条就准了。
-enum TrackDurationRules {
+/// 手指在哪就落在哪：**落点 = 比例 × 总长**，不夹尾巴、不乘第二把尺子。
+///
+/// 历史：以前这里留 0.5 秒尾巴（拖到最右摸不到最后半秒），而且总长用的是我们自己存的
+/// 一个数（接口元数据 / 我们自己标定的"实测值"），和音频真长不是一回事 —— 比例一乘，
+/// 拖到"中间"落到的就不是中间。现在总长只有播放器一个来源，这里只做纯比例换算。
+enum SeekTargetRules {
 
-    /// 起播时的总长：元数据与"以前量到的真实长度"取大的那个。
-    /// 元数据偏短（坏头文件）时，第二次起播就靠这个把进度条摆正。
-    static func initialDuration(metadata: Double, measured: Double?) -> Double {
-        max(max(0, metadata.isFinite ? metadata : 0), max(0, measured ?? 0))
-    }
-
-    /// 越过声明总长多少秒算"越界"。留 2 秒余量：正常的元数据常常比音频短一两秒，
-    /// 那种不该被当成"播完了"直接砍掉尾巴。
-    static let overrunToleranceSec: Double = 2.0
-
-    /// 连续几拍（0.5 秒一拍）才算确认，免得 seek 途中的一帧毛刺就切歌。
-    static let overrunTicksToConfirm = 2
-
-    static func isOverrun(currentTime: Double, duration: Double) -> Bool {
-        guard duration > 0, currentTime.isFinite else { return false }
-        return currentTime > duration + overrunToleranceSec
-    }
-
-    /// 越界确认后记下的"真实长度"：再多留 0.5 秒余量，下次起播才不会又贴边触发。
-    static func measuredDuration(currentTime: Double) -> Double {
-        guard currentTime.isFinite, currentTime > 0 else { return 0 }
-        return currentTime + 0.5
-    }
-
-    /// 拖到最右端时不要 seek 到总长本身：AVPlayer 会 clamp 到末尾，容易直接触发结束/卡在 100%。
-    /// 留最后 0.5 秒，让它自然收尾。
-    static let tailGuardSec: Double = 0.5
-
-    static func seekTarget(fraction: Double, duration: Double) -> Double {
-        guard duration > 0, duration.isFinite else { return 0 }
-        let f = min(max(fraction.isFinite ? fraction : 0, 0), 1)
-        return min(duration * f, max(0, duration - tailGuardSec))
+    static func target(fraction: Double, duration: Double) -> Double {
+        guard duration.isFinite, duration > 0 else { return 0 }
+        let f = fraction.isFinite ? fraction : 0
+        return duration * min(max(f, 0), 1)
     }
 }
+
+

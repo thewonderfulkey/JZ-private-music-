@@ -306,19 +306,6 @@ final class PlayerEngine {
     /// （老板录屏：「淋雨一直走」刚起播就被切走，就是旧 item 的 didPlayToEnd 迟到了）
     private var lastAdvanceAt = Date.distantPast
 
-    /// 连续几拍"位置越过声明总长"（2026-11-23）。到 `TrackDurationRules.overrunTicksToConfirm`
-    /// 就认定这一首播完 —— 本地坏头 FLAC 的容器总长会比真实音频短，见 `detectDurationOverrun`。
-    private var overrunTicks = 0
-
-    /// 这一首的总长以"实测"为准：起播用的是以前量到的真实长度，或者刚播到越界。
-    /// 之后 `item.duration` 报的那个短值不许把它改回去（否则"第二次就准了"是假的）。
-    private var trustsMeasuredDuration = false
-
-    /// 越界只记一次日志（每 0.5 秒刷一行会把诊断刷爆）
-    private var overrunLogged = false
-    /// 已经后台量过时长的歌（同一首不重复量）
-    private var measuredSongID: String?
-
     /// 进入心动模式时的队列下标：它之后的才是"心动自己追加的歌"。
     /// 「上一首」之后再按「下一首」要靠它回到刚才那首，而不是在旧歌单里往下走。
     private var heartbeatStartIndex = -1
@@ -631,10 +618,9 @@ final class PlayerEngine {
     }
 
     func seek(toFraction fraction: Double) {
-        guard duration > 0 else { return }
-        // 2026-11-23：拖到最右端不 seek 到总长本身（AVPlayer 会 clamp 到末尾，容易直接触发结束
-        // 或停在"100% / -0:00"那一帧），留最后 0.5 秒让它自然收尾。
-        seek(toSeconds: TrackDurationRules.seekTarget(fraction: fraction, duration: duration))
+        // 手指在哪就是哪：落点 = 比例 × 总长（纯比例，见 `SeekTargetRules`）。
+        // 总长现在只有播放器一个来源，所以"条上看到的比例"和"歌里的位置"是同一把尺子。
+        seek(toSeconds: SeekTargetRules.target(fraction: fraction, duration: duration))
     }
 
     /// 点某一句歌词 → 跳到那一句。
@@ -826,14 +812,11 @@ final class PlayerEngine {
 
     private func resetProgress() {
         currentTime = 0
-        // 2026-11-23：起播总长 = max(元数据, 以前量到的真实长度)。
-        // 坏头文件（容器声明比音频短）第二次起播就靠这里把进度条摆正，不用再等一次越界。
-        let metadata = Double(currentSong?.durationSec ?? 0)
-        let measured = currentSong.flatMap { DownloadManager.shared.measuredDuration(for: $0.id) }
-        duration = TrackDurationRules.initialDuration(metadata: metadata, measured: measured)
-        trustsMeasuredDuration = (measured ?? 0) > metadata + 1
-        overrunTicks = 0
-        overrunLogged = false
+        // 总长只有**一个**来源：播放器自己（`item.duration`，ready 之后由 `adoptDuration` 写入）。
+        // 这里先用接口给的时长占个位——播放器还没就绪的那一瞬间，条不该是 0。
+        // 2026-11-23 起删掉了 `max(元数据, 我们自己标定的 measured)` 和"只许变大"的锁：
+        // 那套自造的数字会让条和音频用两把尺子，拖到哪儿都不对。
+        duration = Double(currentSong?.durationSec ?? 0)
         bufferedTime = 0
         errorText = nil
         // r77：换曲时把 seek 状态也清掉。上一首的 completion 有可能因为 item 被换掉
@@ -994,10 +977,6 @@ final class PlayerEngine {
         // 每首真正起播都记一次事件（不限心动模式）：画像是靠全部播放历史学的
         heartbeat.trackStarted(song)
         updateNowPlaying()
-        // 2026-11-23：告诉下载页"这首正在播"——全库校准/修头时跳过它（AVPlayer 还开着这个文件）。
-        // 顺手后台量一次真实时长（没量过的歌），量完当场把条改对，不阻塞起播。
-        DownloadManager.shared.currentPlayingSongID = song.id
-        measureCurrentTrackInBackground()
         // 起播就记一次（位置 0）：万一进程在这儿被杀，下次车载连上也知道"上一首是它"
         flushSnapshot()
     }
@@ -1204,16 +1183,7 @@ final class PlayerEngine {
             statusText = "忽略切歌瞬间的迟到结束通知"
             return
         }
-        // 播到真结尾了：这时 currentTime 就是这条音频的真实长度，覆盖掉容器/元数据那份
-        if currentTime > duration { duration = currentTime }
-        // 2026-11-23：真结尾比声明总长还长 → 说明头写短了。**这里记下真实长度并修头**，
-        // 第二次起播的进度条就准了（老板："所有歌都要真实准确的数字"）。
-        if let song = currentSong, currentTime > 1,
-           DurationRepairRules.needsRepair(declaredSec: duration, trueSec: currentTime) {
-            let empirical = TrackDurationRules.measuredDuration(currentTime: currentTime)
-            duration = empirical
-            DownloadManager.shared.adoptMeasuredDuration(songID: song.id, seconds: empirical)
-        }
+        // 播到真结尾了。总长本来就跟播放器一致，这里不再改数字、也不修文件头。
         // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门
         flushSnapshot(finished: true)
         switch mode {
@@ -1347,13 +1317,14 @@ final class PlayerEngine {
     /// 连续 3 首都没源就停下来给一句人话，不把整个队列烧光。
     private var skipLimit: Int { PlaybackRules.autoSkipLimit }
 
-    /// 采纳播放项的时长（只往"更可信"的方向走：有效、且和现有值差 > 0.5 秒）
+    /// 采纳播放项的时长：**播放器说多长就多长**（可增可减），条和音频永远用同一把尺子。
+    ///
+    /// 2026-11-23 修复：以前是"只许变大 + 只信我们自己标定的数"，一旦那个数偏了，
+    /// 进度条就永远和音频对不上（拖动落点 = 比例 × 这个数）。
     private func adoptDuration(_ seconds: Double) {
         guard seconds.isFinite, seconds > 0 else { return }
-        // 2026-11-23：这一首的总长以实测为准时（坏头文件），item.duration 报的短值不许改回去
-        if trustsMeasuredDuration, seconds < duration { return }
-        guard abs(seconds - duration) > 0.5 else { return }
-        duration = max(seconds, currentTime)
+        guard abs(seconds - duration) > 0.2 else { return }
+        duration = seconds
         refetchLyricsIfDurationChanged()
     }
 
@@ -1481,12 +1452,6 @@ final class PlayerEngine {
                 }
                 if let item = self.player.currentItem {
                     self.adoptDuration(item.duration.seconds)
-                    // 2026-11-23：**不再把 duration 每拍 +0.5 往上糊**。
-                    // 本地坏头 FLAC 的容器总长可能比真实音频短（《半岛铁盒》声明 5:19、实际 ≥5:32），
-                    // 那时的表现是进度条先到 100%、剩余 -0:00、歌还在唱——r66 那句
-                    // 「明明进度完了还在唱」正是这条"继续抬高总长"的兜底自己造出来的。
-                    // 现在：连续两拍确认越界 → 当这一首播完（切歌），并把量到的真实长度记下来。
-                    self.detectDurationOverrun()
                     let ranges = item.loadedTimeRanges
                     if let last = ranges.last {
                         let range = last.timeRangeValue
@@ -1499,55 +1464,6 @@ final class PlayerEngine {
         }
     }
 
-    /// 位置越过"声明总长"：本地坏头 FLAC 会这样（声明 5:19、实际 5:32）。
-    ///
-    /// **不切歌、不砍尾巴**（老板 2026-11-23 的口径：拖进度条是为了让歌跳到那一点继续放，
-    /// 核心是"准"，不是"到点就换下一首"）。这里只做两件事：
-    ///   ① 把条按当前进度撑开（别停在"剩余 -0:00 但还在唱"那种假死），
-    ///   ② 记一条诊断 + 让 `DownloadManager` 把这一首的真实长度量出来并修头，下次起播就准。
-    private func detectDurationOverrun() {
-        guard currentSong != nil, isPlaying, !isResolving else {
-            overrunTicks = 0
-            return
-        }
-        guard TrackDurationRules.isOverrun(currentTime: currentTime, duration: duration) else {
-            overrunTicks = 0
-            return
-        }
-        overrunTicks += 1
-        guard overrunTicks >= TrackDurationRules.overrunTicksToConfirm else { return }
-        overrunTicks = 0
-        duration = TrackDurationRules.measuredDuration(currentTime: currentTime)
-        guard !overrunLogged else { return }
-        overrunLogged = true
-        PlaybackTrace.shared.log("总长偏短",
-                                 "\(currentSong?.name ?? "—") 已越过声明总长，先按实测撑开；本条不切歌")
-        measureCurrentTrackInBackground()
-    }
-
-    /// 后台量一次当前这首的真实长度（本地文件才量），量完落库 + 修头。
-    /// 起播时也会调一次：**不阻塞起播**，量完如果差 >1 秒就当场把总长改对。
-    private func measureCurrentTrackInBackground() {
-        guard let song = currentSong,
-              let url = DownloadManager.shared.localFileURL(for: song),
-              DownloadManager.shared.measuredDuration(for: song.id) == nil,
-              measuredSongID != song.id else { return }
-        measuredSongID = song.id
-        Task.detached(priority: .utility) { [weak self] in
-            guard let trueSec = DurationCalibration.measureTrueDuration(fileURL: url) else { return }
-            await MainActor.run {
-                guard let self else { return }
-                DownloadManager.shared.adoptMeasuredDuration(songID: song.id, seconds: trueSec)
-                // 量的就是这一首：立刻把条改对（用户多半还在前奏）
-                if self.currentSong?.id == song.id, trueSec > self.duration + 1 {
-                    let previous = Int(self.duration)
-                    self.duration = trueSec
-                    self.trustsMeasuredDuration = true
-                    PlaybackTrace.shared.log("时长校准", "\(song.name) 实测 \(Int(trueSec))s（原 \(previous)s）")
-                }
-            }
-        }
-    }
 
     private func teardownObservers() {
         statusObservation?.invalidate()

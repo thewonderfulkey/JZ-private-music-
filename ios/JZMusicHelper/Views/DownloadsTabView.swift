@@ -48,7 +48,6 @@ struct DownloadsTabView: View {
     /// 批量编辑（只改歌手/专辑）
     @State private var showBatchEdit = false
     /// 2026-11-23：还原修过的 FLAC 头（老板要求"可回滚"）
-    @State private var showRollbackDurationConfirm = false
 
     // 2026-11-22：`gaps`（补全缺口计数）+「补全信息」入口已下线（老板：不准、也没见到效果）。
     // 每首歌「修改信息 → 保存」时的自动匹配（SongMetadataEditor → MetadataMatcher）不受影响。
@@ -145,15 +144,12 @@ struct DownloadsTabView: View {
     /// 在 SwiftUI 里会互相打架，所以这里合成一个。
     private var activeReport: (title: String, message: String)? {
         if let text = downloads.lastFileStateReport { return ("文件对齐检查", text) }
-        // 2026-11-23：对齐检查完会自动接着校准时长（要解码整首，慢），结果单独报一次
-        if let text = downloads.lastDurationReport { return ("时长校准", text) }
         if let text = downloads.lastSongInfoWriteReport { return ("歌曲信息写回", text) }
         return nil
     }
 
     private func clearReports() {
         downloads.lastFileStateReport = nil
-        downloads.lastDurationReport = nil
         downloads.lastSongInfoWriteReport = nil
     }
 
@@ -198,18 +194,6 @@ struct DownloadsTabView: View {
             Button("好") { downloads.lastImportReport = nil }
         } message: {
             Text(downloads.lastImportReport ?? "")
-        }
-        // 2026-11-23：把修过的 FLAC 头还原（备份只存"被改的那 34 字节"，一键可回滚）
-        .confirmationDialog("把修过的 FLAC 头还原成修复前的样子？",
-                            isPresented: $showRollbackDurationConfirm, titleVisibility: .visible) {
-            Button("还原（改回原来的时长声明）", role: .destructive) {
-                let n = downloads.rollbackDurationRepairs()
-                flash(n == 0 ? "没有需要还原的文件" : "已还原 \(n) 首的文件头")
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("只把 STREAMINFO 里那 34 个字节写回去，音频一个字节都不动。"
-                 + "还原后这几首的显示时长会退回原来那个（不准的）值。")
         }
         .confirmationDialog("把同一首歌的多条合成一条？（只留音质更好的）",                            isPresented: $showDedupeConfirm, titleVisibility: .visible) {
             Button("整理", role: .destructive) {
@@ -327,20 +311,12 @@ struct DownloadsTabView: View {
             .disabled(deduping)
             Divider()
             // 第 51 轮 A 方案：只读检查（不写文件），给每行算出"文件里 vs 列表上"的小圆点。
-            // 2026-11-23：检查完**顺手**校准时长（解码量真实长度 + 只修 FLAC 的头），
-            // 所以按钮文案带上"时长"——老板的要求是"所有歌都要真实准确的数字"。
             Button {
                 let n = downloads.scanFileStates()
-                flash(n == 0 ? "没有可检查的歌" : "开始检查 \(n) 首，随后校准时长…")
+                flash(n == 0 ? "没有可检查的歌" : "开始检查 \(n) 首…")
             } label: {
-                Label("检查文件对齐与时长（封面/标签/歌词/真实时长）",
+                Label("检查文件对齐（封面/标签/歌词）",
                       systemImage: "doc.text.magnifyingglass")
-            }
-            // 2026-11-23：修过头的文件可一键还原（备份只存被改的那 34 字节）
-            Button {
-                showRollbackDurationConfirm = true
-            } label: {
-                Label("还原时长修复（把 FLAC 头改回去）", systemImage: "arrow.uturn.backward")
             }
             Divider()
             // 2026-11-22（老板："空间从 20 多 G 变 40 多 G，我找不到多余的文件"）：
@@ -455,10 +431,6 @@ struct DownloadsTabView: View {
                              onStop: { downloads.cancelSongInfoWrite() })
         } else if let p = downloads.fileStateScanProgress {
             writeProgressRow(title: "正在检查文件对齐", progress: p, onStop: nil)
-        } else if let p = downloads.durationCalibrationProgress {
-            // 2026-11-23：解码整首量真实时长（672 首约十几到几十分钟），必须有进度和"停止"
-            writeProgressRow(title: "正在校准时长（解码实测）", progress: p,
-                             onStop: { downloads.durationCalibrationCancelled = true })
         }
     }
 
@@ -1387,23 +1359,16 @@ private struct DownloadRow: View {
     /// 以前这里写的是「本地导入 · 无损 FLAC · 27.3 MB」，占了歌手的位置 —— 老板看图后的原话是
     /// "歌手显示本地导入、专辑显示无损 FLAC"，实际是信息位错位，不是数据被写脏。
     /// 音质/大小改到右侧小字（`qualityLine`），来源只留一个「本地」胶囊感的细字。
-    /// 右侧显示的时长：**实测值优先**（2026-11-23）。
+    /// 右侧显示的时长：列表上写的那个（跟接口/文件元数据一致）。
     ///
-    /// 元数据可能是错的（《半岛铁盒》元数据 5:19、真实 5:32），列表显示 5:19、播放器 5:32
-    /// 就是老板说的"对不上"。校准过就用真实值，没校准过才退回元数据。
+    /// 2026-11-23 修复：以前这里优先显示"我们自己标定的实测时长"，那套数已经删掉了——
+    /// 进度条和列表现在都只用播放器/文件自己的值，不再有两把尺子。
     private var displayDurationText: String {
-        guard let measured = item.measuredDuration, measured > 1 else {
-            return item.song.durationText
-        }
-        return DownloadRow.clockText(measured)
+        item.song.durationText
     }
 
-    private static func clockText(_ seconds: Double) -> String {
-        let total = Int(max(0, seconds.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-
-    private var artistLine: String {        let singer = item.song.singer.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var artistLine: String {
+        let singer = item.song.singer.trimmingCharacters(in: .whitespacesAndNewlines)
         let album = item.song.album.trimmingCharacters(in: .whitespacesAndNewlines)
         if singer.isEmpty && album.isEmpty { return "未知歌手" }
         if album.isEmpty { return singer }
