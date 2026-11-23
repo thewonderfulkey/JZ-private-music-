@@ -120,6 +120,8 @@ final class PlayerEngine {
     private(set) var durationConfirmed = false
     /// 有没有拿到过**实测**值（哪怕还没确认）。有过的值不许被"声明值"改回去。
     private var durationMeasured = false
+    /// 当前值来自多强的证据：0=声明值 1=解码到 EOF 2=可跳区间末位/缓存 3=播到真结尾
+    private var durationSourceRank = 0
     /// 正在后台量的那一首（同一首不重复量）
     private var durationTask: Task<Double?, Never>?
     private var durationTaskSongID: String?
@@ -642,7 +644,7 @@ final class PlayerEngine {
             let measured = await self?.measuredWithin(1.2, of: task)
             guard let self else { return }
             if let measured, measured > 1 {
-                self.adoptMeasured(measured, source: "解码实测")
+                self.adoptMeasured(measured, source: "解码实测", rank: 1)
             }
             self.seek(toSeconds: SeekTargetRules.target(fraction: f, duration: self.duration))
         }
@@ -847,6 +849,7 @@ final class PlayerEngine {
         duration = declared
         durationConfirmed = false
         durationMeasured = false
+        durationSourceRank = 0
         durationNote = nil
         durationTask = nil
         durationTaskSongID = nil
@@ -855,6 +858,7 @@ final class PlayerEngine {
             duration = fact.seconds
             durationConfirmed = fact.confirmed
             durationMeasured = true
+            durationSourceRank = 2
             updateDurationNote()
         }
         bufferedTime = 0
@@ -1233,7 +1237,7 @@ final class PlayerEngine {
             let heard = currentTime
             DurationTruthStore.shared.recordPlaybackEnd(url: url, seconds: heard)
             if !durationConfirmed || abs(heard - duration) > 1 {
-                adoptMeasured(heard, source: "播放实测")
+                adoptMeasured(heard, source: "播放实测", rank: 3)
             }
         }
         // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门
@@ -1385,9 +1389,18 @@ final class PlayerEngine {
         refetchLyricsIfDurationChanged()
     }
 
-    /// 采纳一个**实测**的时长（解码到 EOF / 播到真结尾）
-    private func adoptMeasured(_ seconds: Double, source: String) {
+    /// 采纳一个**实测**的时长。
+    ///
+    /// `rank` 是证据强度：1 = 解码到 EOF，2 = 播放器可跳区间末位 / 以前量过的缓存，3 = 播到真结尾。
+    /// **强证据不许被弱证据覆盖**（解码值有些文件会停在声明长度，反而比播放器末位弱）。
+    private func adoptMeasured(_ seconds: Double, source: String, rank: Int) {
         guard seconds.isFinite, seconds > 1 else { return }
+        guard rank >= durationSourceRank else {
+            PlaybackTrace.shared.log("时长", "\(currentSong?.name ?? "—") 忽略较弱来源 \(source)"
+                                     + " \(Int(seconds))s（现有 rank=\(durationSourceRank)）")
+            return
+        }
+        durationSourceRank = rank
         let changed = abs(seconds - duration) > 0.2
         duration = seconds
         durationConfirmed = true
@@ -1420,7 +1433,7 @@ final class PlayerEngine {
         // 已经确认过 → 一次都不再量（这就是"不重复加载"）
         if durationConfirmed { return }
         if let fact = DurationTruthStore.shared.fact(for: url), fact.confirmed {
-            adoptMeasured(fact.seconds, source: "缓存")
+            adoptMeasured(fact.seconds, source: "缓存", rank: 2)
             return
         }
         guard durationTaskSongID != song.id else { return }
@@ -1441,7 +1454,7 @@ final class PlayerEngine {
             // 落库（同一个文件只量这一次）
             DurationTruthStore.shared.store(url: url, seconds: measured, confirmed: true)
             guard self.currentSong?.id == id else { return }
-            self.adoptMeasured(measured, source: "解码实测")
+            self.adoptMeasured(measured, source: "解码实测", rank: 1)
         }
     }
 
@@ -1583,6 +1596,15 @@ final class PlayerEngine {
                 }
                 if let item = self.player.currentItem {
                     self.adoptDuration(item.duration.seconds)
+                    // 2026-11-24：播放器的"可跳区间末位"是第二条证据。
+                    // 有的文件 `duration` 报的是容器声明的短值，但可跳区间一直延到真实末尾
+                    // （《不凡2024》4:12 / 4:47）。比声明值长 1 秒以上才采信，且不许被解码值改小。
+                    if let r = item.seekableTimeRanges.last?.timeRangeValue {
+                        let end = r.start.seconds + r.duration.seconds
+                        if end.isFinite, end > self.duration + 1, end < self.duration + 3600 {
+                            self.adoptMeasured(end, source: "播放器末位", rank: 2)
+                        }
+                    }
                     let ranges = item.loadedTimeRanges
                     if let last = ranges.last {
                         let range = last.timeRangeValue
