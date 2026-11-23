@@ -100,6 +100,9 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published var lastDurationReport: String?
     /// 取消标记（每首检查一次）
     var durationCalibrationCancelled = false
+    /// 正在播的那一首（`PlayerEngine` 每次起播更新）：校准/修头时**跳过**它 ——
+    /// AVPlayer 还开着这个文件，往头里写字虽然只 5 个字节，也没必要冒这个险。
+    var currentPlayingSongID: String?
 
     private let backgroundID = "com.jz.musichelper.downloads"
 
@@ -3405,10 +3408,6 @@ extension DownloadManager {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appendingPathComponent("DurationBackup", isDirectory: true)
     }
-
-    /// 正在播的那一首（`PlayerEngine` 每次起播更新）：校准/修头时**跳过**它 ——
-    /// AVPlayer 还开着这个文件，往头里写字虽然只 5 个字节，也没必要冒这个险。
-    var currentPlayingSongID: String?
 
     /// 全库校准（`skipSongID` = 正在播的那一首，不碰它：AVPlayer 还开着这个文件）
     @discardableResult
