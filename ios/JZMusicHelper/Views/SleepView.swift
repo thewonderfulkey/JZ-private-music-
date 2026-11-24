@@ -11,12 +11,16 @@ struct SleepView: View {
 
     private var engine: SleepAudioEngine { .shared }
     private var library: SleepLibrary { .shared }
+    private var store: SleepPresetStore { .shared }
 
     @State private var category = SleepCategory.all.first?.id ?? "nature"
     @State private var volumeTarget: SleepSound?
     @State private var showTimerMenu = false
     @State private var now = Date()
-    @State private var showPresetEditor = false
+    @State private var showCustomTimer = false
+    @State private var customMinutes = ""
+    @State private var showSavePreset = false
+    @State private var presetName = ""
 
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let columns = Array(repeating: GridItem(.flexible(), spacing: Tokens.Spacing.s), count: 4)
@@ -58,11 +62,35 @@ struct SleepView: View {
             ForEach(SleepTimerMinutes.allCases) { m in
                 Button(m.title) { Haptics.success(); engine.startTimer(m) }
             }
-            if engine.timerSelection != nil {
+            Button("自定义…") {
+                customMinutes = ""
+                showCustomTimer = true
+            }
+            if engine.timerEndsAt != nil {
                 Button("关闭定时", role: .destructive) { Haptics.tabChanged(); engine.cancelTimer() }
             }
         } message: {
             Text("到点后先淡出 30 秒再停，明晚点一下就能原样回来。")
+        }
+        .alert("自定义定时", isPresented: $showCustomTimer) {
+            TextField("分钟（1–720）", text: $customMinutes)
+                .keyboardType(.numberPad)
+            Button("开始") {
+                if let m = Int(customMinutes), SleepTimerMinutes.customRange.contains(m) {
+                    Haptics.success()
+                    engine.startTimer(minutes: m)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("到点后先淡出 30 秒再停。")
+        }
+        .alert("保存为搭配组合", isPresented: $showSavePreset) {
+            TextField("给它起个名字", text: $presetName)
+            Button("保存") { saveCurrentMix() }
+            Button("取消", role: .cancel) { presetName = "" }
+        } message: {
+            Text("会存下当前这几层和各自的音量，下次一键调出来。")
         }
         .sheet(item: $volumeTarget) { sound in
             SleepVolumeSheet(sound: sound).presentationDetents([.height(220)])
@@ -148,13 +176,22 @@ struct SleepView: View {
             ScrollView(.horizontal) {
                 HStack(spacing: Tokens.Spacing.s) {
                     ForEach(SleepPreset.builtIn) { p in
-                        Button {
-                            Haptics.success()
-                            engine.apply(p)
-                        } label: {
-                            presetCard(p)
-                        }
-                        .buttonStyle(.plain)
+                        Button { Haptics.success(); engine.apply(p) } label: { presetCard(p) }
+                            .buttonStyle(.plain)
+                    }
+                    ForEach(store.custom) { p in
+                        Button { Haptics.success(); engine.apply(p) } label: { presetCard(p) }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    Haptics.warning()
+                                    store.delete(p.id)
+                                } label: { Label("删除这个组合", systemImage: "trash") }
+                            }
+                    }
+                    if !engine.activeIDs.isEmpty {
+                        Button { Haptics.tabChanged(); showSavePreset = true } label: { saveCard }
+                            .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -164,11 +201,20 @@ struct SleepView: View {
     }
 
     private func presetCard(_ p: SleepPreset) -> some View {
-        let on = !p.mix.isEmpty && p.mix.allSatisfy { engine.activeIDs.contains($0.0) }
+        let on = !p.mix.isEmpty && p.mix.allSatisfy { engine.activeIDs.contains($0.soundID) }
+        let custom = p.isCustom
         return VStack(alignment: .leading, spacing: 4) {
-            Text(p.name)
-                .font(FontRole.songTitle.weight(.semibold))
-                .foregroundStyle(on ? Tokens.Palette.paper : .primary)
+            HStack(spacing: 4) {
+                Text(p.name)
+                    .font(FontRole.songTitle.weight(.semibold))
+                    .lineLimit(1)
+                if custom {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 9))
+                        .opacity(0.7)
+                }
+            }
+            .foregroundStyle(on ? Tokens.Palette.paper : .primary)
             Text(p.caption)
                 .font(FontRole.metadata)
                 .foregroundStyle(on ? Tokens.Palette.paper.opacity(0.85) : .secondary)
@@ -181,6 +227,33 @@ struct SleepView: View {
             RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
                 .fill(on ? Tokens.Palette.vermilion : Tokens.Palette.paperElevated)
         )
+    }
+
+    private var saveCard: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Tokens.Palette.vermilion)
+            Text("存下当前混音")
+                .font(FontRole.metadata)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 148, height: 78)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .strokeBorder(Tokens.Palette.vermilion.opacity(0.45),
+                              style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        )
+    }
+
+    private func saveCurrentMix() {
+        let mix = engine.currentMix()
+        guard !mix.isEmpty else { presetName = ""; return }
+        let name = presetName
+        presetName = ""
+        Haptics.success()
+        store.save(name: name, mix: mix)
     }
 
     // MARK: 分类
@@ -361,6 +434,7 @@ private struct SleepVolumeSheet: View {
     @Environment(\.dismiss) private var dismiss
     private var engine: SleepAudioEngine { .shared }
     private var library: SleepLibrary { .shared }
+    private var store: SleepPresetStore { .shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.m) {

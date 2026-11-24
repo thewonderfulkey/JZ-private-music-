@@ -240,35 +240,61 @@ struct SleepCategory: Identifiable, Hashable {
     }
 }
 
-// MARK: - 内置的搭配组合
+// MARK: - 搭配组合
 //
-// 每条 = 若干 (声音 id, 音量)。用户也可以自己存，存的那部分见 SleepPresetStore。
-struct SleepPreset: Identifiable {
+// 一条组合 = 若干「声音 + 音量」。内置 6 套，用户还能自己命名存进去（见 SleepPresetStore）。
+struct SleepMixItem: Codable, Hashable, Identifiable {
+    let soundID: String
+    let volume: Float
+    var id: String { soundID }
+}
+
+struct SleepPreset: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let caption: String
-    /// (soundID, volume 0...1)
-    let mix: [(String, Float)]
+    let mix: [SleepMixItem]
+    /// 用户自存的（可以删）
+    var isCustom: Bool = false
+
+    /// 从当前混音生成一条，名字由用户给
+    static func make(id: String, name: String, mix: [SleepMixItem]) -> SleepPreset {
+        let caption = mix.compactMap { SleepSound.find($0.soundID)?.name }
+            .joined(separator: " + ")
+        return SleepPreset(id: id, name: name,
+                           caption: caption.isEmpty ? "\(mix.count) 层" : caption,
+                           mix: mix, isCustom: true)
+    }
 
     static let builtIn: [SleepPreset] = [
         SleepPreset(id: "rainy-night", name: "雨夜", caption: "大雨 + 远雷 + 窗上的雨", mix: [
-            ("heavy-rain", 0.70), ("thunder", 0.25), ("rain-on-window", 0.45)]),
+            SleepMixItem(soundID: "heavy-rain", volume: 0.70),
+            SleepMixItem(soundID: "thunder", volume: 0.25),
+            SleepMixItem(soundID: "rain-on-window", volume: 0.45)]),
         SleepPreset(id: "seaside", name: "海边", caption: "浪 + 风 + 远处海鸥", mix: [
-            ("waves", 0.80), ("wind", 0.30), ("seagulls", 0.12)]),
+            SleepMixItem(soundID: "waves", volume: 0.80),
+            SleepMixItem(soundID: "wind", volume: 0.30),
+            SleepMixItem(soundID: "seagulls", volume: 0.12)]),
         SleepPreset(id: "forest-night", name: "森林夜", caption: "虫鸣 + 树梢风 + 猫头鹰", mix: [
-            ("crickets", 0.60), ("wind-in-trees", 0.45), ("owl", 0.18)]),
+            SleepMixItem(soundID: "crickets", volume: 0.60),
+            SleepMixItem(soundID: "wind-in-trees", volume: 0.45),
+            SleepMixItem(soundID: "owl", volume: 0.18)]),
         SleepPreset(id: "fireplace", name: "壁炉", caption: "柴火 + 窗外风", mix: [
-            ("campfire", 0.80), ("howling-wind", 0.20)]),
+            SleepMixItem(soundID: "campfire", volume: 0.80),
+            SleepMixItem(soundID: "howling-wind", volume: 0.20)]),
         SleepPreset(id: "journey", name: "旅途", caption: "车厢 + 车窗上的雨", mix: [
-            ("train", 0.70), ("rain-on-window", 0.35)]),
+            SleepMixItem(soundID: "train", volume: 0.70),
+            SleepMixItem(soundID: "rain-on-window", volume: 0.35)]),
         SleepPreset(id: "deep-sleep", name: "深睡", caption: "棕噪铺底 + 帐篷雨", mix: [
-            ("brown-noise", 0.55), ("rain-on-tent", 0.40), ("campfire", 0.15)]),
+            SleepMixItem(soundID: "brown-noise", volume: 0.55),
+            SleepMixItem(soundID: "rain-on-tent", volume: 0.40),
+            SleepMixItem(soundID: "campfire", volume: 0.15)]),
     ]
 }
 
 // MARK: - 定时关闭
 //
-// 15 / 30 / 60 / 90 分钟，到点 **30 秒淡出**再停。
+// 常用四档 + 自定义分钟数，到点 **30 秒淡出**再停。
 enum SleepTimerMinutes: Int, CaseIterable, Identifiable {
     case m15 = 15, m30 = 30, m60 = 60, m90 = 90
 
@@ -276,4 +302,7 @@ enum SleepTimerMinutes: Int, CaseIterable, Identifiable {
     var title: String { "\(rawValue) 分钟" }
 
     static let fadeOutSeconds: Double = 30
+
+    /// 自定义定时的合法范围（分钟）
+    static let customRange = 1...720
 }

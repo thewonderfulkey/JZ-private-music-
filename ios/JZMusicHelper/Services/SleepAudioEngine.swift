@@ -34,6 +34,8 @@ final class SleepAudioEngine {
     private(set) var isPlaying = false
     private(set) var timerEndsAt: Date?
     private(set) var timerSelection: SleepTimerMinutes?
+    /// 自定义定时的分钟数（用四档时为 nil）
+    private(set) var timerMinutes: Int?
     /// 正在下载/准备的那几层（UI 上显示转圈）
     private(set) var preparing: Set<String> = []
     /// 定时到点停过：保留层记忆，点一下原样回来
@@ -196,26 +198,47 @@ final class SleepAudioEngine {
 
     /// 套用整段预设：先把别的关掉，再按混音打开
     func apply(_ preset: SleepPreset) {
-        for id in activeIDs where !preset.mix.contains(where: { $0.0 == id }) {
+        let wanted = Set(preset.mix.map { $0.soundID })
+        for id in activeIDs where !wanted.contains(id) {
             activeIDs.removeAll { $0 == id }
         }
-        for (id, v) in preset.mix {
-            levels[id] = v
-            if !activeIDs.contains(id) { switchOn(id) } else { applyVolumes() }
+        for item in preset.mix {
+            levels[item.soundID] = min(max(item.volume, 0), 1)
+            if !activeIDs.contains(item.soundID) {
+                switchOn(item.soundID)
+            } else {
+                applyVolumes()
+            }
         }
-        for id in activeIDs where !preset.mix.contains(where: { $0.0 == id }) {
-            if let l = layers[id] { l.node.stop(); l.envelope = 0 }
+        for id in activeIDs where !wanted.contains(id) {
+            if let l = layers[id] { l.node.stop(); l.envelope = 0; l.queued = false }
         }
+        applyVolumes()
+        publishNowPlaying()
+    }
+
+    /// 当前混音 → 一条可以保存的组合
+    func currentMix() -> [SleepMixItem] {
+        activeIDs.map { SleepMixItem(soundID: $0, volume: levels[$0] ?? 0.7) }
     }
 
     // MARK: - 定时
 
     func startTimer(_ minutes: SleepTimerMinutes) {
+        startTimer(minutes: minutes.rawValue)
+    }
+
+    /// 自定义定时（分钟）。1–720，超范围夹住。
+    func startTimer(minutes: Int) {
+        let m = min(max(minutes, SleepTimerMinutes.customRange.lowerBound),
+                    SleepTimerMinutes.customRange.upperBound)
         timerTask?.cancel()
-        timerSelection = minutes
-        timerEndsAt = Date().addingTimeInterval(TimeInterval(minutes.rawValue * 60))
+        fadeTask?.cancel(); fadeTask = nil
+        timerMinutes = m
+        timerSelection = SleepTimerMinutes(rawValue: m)
+        timerEndsAt = Date().addingTimeInterval(TimeInterval(m * 60))
         timerTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(minutes.rawValue) * 60 * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(m) * 60 * 1_000_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.beginTimerFadeOut() }
         }
@@ -226,6 +249,7 @@ final class SleepAudioEngine {
         fadeTask?.cancel(); fadeTask = nil
         timerEndsAt = nil
         timerSelection = nil
+        timerMinutes = nil
         master = 1
         applyVolumes()
     }
@@ -233,6 +257,7 @@ final class SleepAudioEngine {
     private func beginTimerFadeOut() {
         timerEndsAt = nil
         timerSelection = nil
+        timerMinutes = nil
         guard isPlaying else { return }
         let steps = Int(SleepTimerMinutes.fadeOutSeconds * 10)
         fadeTask?.cancel()
@@ -268,7 +293,7 @@ final class SleepAudioEngine {
     func stopAll() {
         timerTask?.cancel(); timerTask = nil
         fadeTask?.cancel(); fadeTask = nil
-        timerEndsAt = nil; timerSelection = nil
+        timerEndsAt = nil; timerSelection = nil; timerMinutes = nil
         ticker?.invalidate(); ticker = nil
         for l in layers.values { l.node.stop(); l.envelope = 0; l.queued = false }
         activeIDs.removeAll()
