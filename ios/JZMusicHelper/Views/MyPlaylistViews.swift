@@ -306,6 +306,7 @@ struct MyPlaylistDetailView: View {
                 Text(meta(playlist))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)   // 副行可以省略，按钮文案不能（老板 2026-11-24）
             }
             Spacer(minLength: 0)
             PlayAllButtons(isEnabled: !(playlist.songs.isEmpty)) {

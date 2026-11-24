@@ -459,6 +459,9 @@ struct SectionHeader: View {
                 Button(actionTitle, action: action)
                     .font(.footnote)
                     .foregroundStyle(Tokens.Palette.vermilion)
+                    .lineLimit(1)
+                    // 老板 2026-11-24：按钮文案不许被左边的标题挤成"…"，宽度按内容取
+                    .fixedSize(horizontal: true, vertical: false)
                     .buttonStyle(.press)
             }
         }

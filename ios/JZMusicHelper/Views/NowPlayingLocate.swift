@@ -177,7 +177,9 @@ struct LocateNowPlayingButton: View {
                     .font(.caption.weight(.semibold))
                 Text("定位")
                     .font(.footnote.weight(.semibold))
+                    .lineLimit(1)
             }
+            .fixedSize(horizontal: true, vertical: false)   // 两个字也得完整显示
             .foregroundStyle(Tokens.Palette.vermilion)
             .padding(.horizontal, Tokens.Spacing.xs)
             .frame(minHeight: 30)

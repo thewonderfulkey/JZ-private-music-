@@ -108,6 +108,7 @@ struct ChartSongsView: View {
                     Text(meta(page))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)   // 副行可以省略，按钮文案不能（老板 2026-11-24）
                 }
                 Spacer(minLength: 0)
                 PlayAllButtons(isEnabled: !(page.songs.isEmpty)) {
