@@ -1,3 +1,28 @@
+### 出包记录（v2.4.103 / 281）· 助眠模式 v2（Moodist 声音 + URL）
+
+| 项 | 值 |
+|---|---|
+| CI | **r238**（`3eed49e`）✅ · r237（`fc989c3`）失败，见下 |
+| 产物 | `JZ-Music-v2.4.103-3eed49e-r238-ios-unsigned.ipa` · **3,703,854 B** · sha256 `5a6f4e25…3d7512f` |
+| 主二进制 | 13,902,312 B / `f58b6416f9c983f5` → 出包闸通过 |
+| 包内版本 | 2.4.103 / 281 |
+| 包内证据 | `SleepLibrary` / `SleepAudioEngine` / `moodist.mvze.net` 三串都在；**包内 0 个音频文件** |
+
+**结论：包体回到 3.5 MB。** 84 条声音一条都没打进包，全部按 URL 取。
+
+**主人话（11-25）**：「完全采用 Moodist，每一个声音都是一个 url，可以把这些所有声音内置；UI 参考 moodist.mvze.net 重新设计；点助眠模块出来的是新页面而不是全屏覆盖；独立声音和搭配组合都要放进去；顺便修侧边栏太靠顶。」
+
+**落码**：
+- `SleepCatalog`：84 条（8 分类）+ 6 套内置组合，中文名全部翻译；`SleepSound.baseURL` 一个常量换自建 CDN。
+- `SleepLibrary`：两层存储——播放缓存（`Caches`，200 MB LRU，点一下就能响）/ 用户下载（`Application Support`，永不自动清理，排除 iCloud 备份）。播放优先级 **用户下载 > 播放缓存 > 网络**，下过之后完全不发请求。
+- `SleepAudioEngine`：AVAudioEngine 多轨、双 `AVAudioFile` 交替排队做无缝循环、每层独立音量、定时 15/30/60/90 到点 30 秒淡出并保留层记忆。
+- `SleepView`：分类横滑 + 4 列图标网格 + 底部正在播放条；下载角标、长按调音量/下载；**push 进导航栈**（底部五格栏还在）。
+- 侧边栏：`ignoresSafeArea` 从整块面板挪到只作用于背景，内容回到安全区。
+
+**r237 失败原因**（已修）：中间版 `SleepCache.swift` 里 `guard let url = sound.url` 之后又写了 `let url = try await task.value`，`invalid redeclaration of 'url'`。该文件已被 `SleepLibrary.swift` 取代。
+
+**待实机验证**：① 点圆钮**不闪退**且出声（这是上一版栽的地方）；② 侧边栏标题在状态栏下面；③ 长按某条声音 → 下载 → 飞行模式下仍能播。
+
 ### 出包记录（v2.4.102 / 280）· 助眠模式
 
 | 项 | 值 |
