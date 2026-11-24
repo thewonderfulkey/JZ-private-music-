@@ -471,6 +471,27 @@ enum PlaybackRestoreRules {
     }
 }
 
+// MARK: - seek 回读校验（纯函数，2026-11-24）
+
+/// 「跳完要回读，落偏了就重跳」的判定口径。
+///
+/// 老板实测：同一个 4:00 连拖三次，听到的分别是 3:29 / 2:06（准）/ 3:57 —— 说明真机上的
+/// seek 会落偏，而且偏多少不固定。既然我们不能要求系统每次都精准，就必须**自己核对**：
+/// 落地和请求差超过 `toleranceSec` 就再发一次，最多 `maxRetry` 次。
+enum SeekVerify {
+
+    /// 容忍多少秒的落点误差（再小就没有意义：一帧 48k 采样才 0.02 秒）
+    static let toleranceSec: Double = 0.4
+
+    /// 最多重跳几次（两次足够收敛，再多就是播放器真做不到）
+    static let maxRetry: Int = 2
+
+    static func shouldRetry(off: Double, attempt: Int) -> Bool {
+        guard off.isFinite, off >= 0, attempt < maxRetry else { return false }
+        return off > toleranceSec
+    }
+}
+
 // MARK: - 到点收尾（纯函数，2026-11-24）
 
 /// 文件头写的长度就是这首歌的长度，**播放位置到了就算播完**。

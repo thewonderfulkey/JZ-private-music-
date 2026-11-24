@@ -604,11 +604,44 @@ final class PlayerEngine {
             positionMs: Int(target * 1000) + lyricOffsetMs)
         lyricScrollIndex = lyricIndex
         updateNowPlaying()
+        issueSeek(target: target, token: token, attempt: 0)
+    }
+
+    /// 真正把 seek 发出去，并**回读落地位置**、必要时重跳（2026-11-24）。
+    ///
+    /// 三条保证（老板：「什么时候拖拽都应该是同一个时间点」）：
+    ///   ① 播放项没就绪就先等它就绪 —— 在没就绪的 item 上 seek，AVPlayer 会落偏；
+    ///   ② 跳完回读 `currentTime()`，不是"发出去就当成功了"；
+    ///   ③ 落地差超过 `SeekVerify.toleranceSec` 就重跳（最多 `SeekVerify.maxRetry` 次），
+    ///      这样"同一个 4:00 拖三次"不会再出现 3:29 / 2:06 / 3:57 三种结果。
+    private func issueSeek(target: Double, token: Int, attempt: Int) {
+        if attempt == 0, let item = player.currentItem, item.status != .readyToPlay {
+            Task { @MainActor [weak self] in
+                for _ in 0..<20 {
+                    guard let self, self.seekToken == token else { return }
+                    if self.player.currentItem?.status == .readyToPlay { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                guard let self, self.seekToken == token else { return }
+                self.issueSeek(target: target, token: token, attempt: attempt)
+            }
+            return
+        }
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
-            guard finished, let self else { return }
             Task { @MainActor in
-                guard self.seekToken == token else { return }
+                guard let self, self.seekToken == token else { return }
+                // 让播放头把新位置吐出来再读（completion 回来说明已经落定）
+                try? await Task.sleep(nanoseconds: 20_000_000)
+                let landed = self.preciseTime
+                let off = abs(landed - target)
+                if SeekVerify.shouldRetry(off: off, attempt: attempt) {
+                    PlaybackTrace.shared.log("seek 重跳",
+                                             "目标 \(Int(target))s / 实际落地 \(Int(landed))s"
+                                             + "（差 \(Int(off))s，第 \(attempt + 1) 次重跳）")
+                    self.issueSeek(target: target, token: token, attempt: attempt + 1)
+                    return
+                }
                 self.settleSeek()
             }
         }

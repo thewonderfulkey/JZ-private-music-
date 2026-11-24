@@ -673,9 +673,13 @@ struct NowPlayingView: View {
                     let f = min(max(value.location.x / max(width, 1), 0), 1)
                     dragSeconds = f * player.duration
                 }
-                .onEnded { _ in
-                    // 直接跳到"屏幕上显示的那个秒数"——不再乘第二次
-                    if let s = dragSeconds { player.seek(toSeconds: s) }
+                .onEnded { value in
+                    // 松手这一刻的位置，**当场**换算成秒数去跳（2026-11-24）。
+                    // 不再去读 `dragSeconds`（界面状态是异步刷新的，读到的可能是拖动前段的旧值，
+                    // 实测因此差了 32 秒）。这里用的就是手指抬起时的那个点。
+                    guard player.duration > 0 else { dragSeconds = nil; return }
+                    let f = min(max(value.location.x / max(width, 1), 0), 1)
+                    player.seek(toSeconds: f * player.duration)
                     dragSeconds = nil
                 }
         )

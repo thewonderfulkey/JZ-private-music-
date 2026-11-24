@@ -5733,6 +5733,20 @@ do {
           !TrackEndRules.isReached(currentTime: .nan, duration: 252))
 }
 
+// MARK: - seek 回读校验（2026-11-24：落偏就重跳）
+
+section("seek 回读：落偏超过 0.4 秒就重跳，最多两次")
+
+do {
+    check("落在目标上（差 0.05 秒）：不重跳", !SeekVerify.shouldRetry(off: 0.05, attempt: 0))
+    check("差 0.4 秒以内：不重跳", !SeekVerify.shouldRetry(off: 0.4, attempt: 0))
+    check("差 0.5 秒：重跳", SeekVerify.shouldRetry(off: 0.5, attempt: 0))
+    check("差 32 秒（老板实测那次）：重跳", SeekVerify.shouldRetry(off: 32, attempt: 0))
+    check("已经重跳两次：不再跳（播放器就这能力）",
+          !SeekVerify.shouldRetry(off: 32, attempt: SeekVerify.maxRetry))
+    check("误差是 NaN 不能崩", !SeekVerify.shouldRetry(off: .nan, attempt: 0))
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")
