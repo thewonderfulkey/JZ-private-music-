@@ -5768,8 +5768,10 @@ do {
     let b = dl("B", 500)
     let tie = DownloadItem.newestFirst([a, b]).map(\.song.name)
     check("同一秒：后入的先显示", tie == ["B", "A"])
-    check("再排一次顺序不变（渲染稳定）",
-          DownloadItem.newestFirst(DownloadItem.newestFirst([a, b])).map(\.song.name) == tie)
+    // 时间都不同时，排好的再排一次不该变（渲染稳定）。同一秒的那几条由落库位置决定，
+    // 换一个输入顺序本来就会换结果，不属于"抖"，所以不拿它做幂等断言。
+    check("再排一次不变（时间都不同）",
+          DownloadItem.newestFirst(shown).map(\.song.name) == shown.map(\.song.name))
 }
 
 // MARK: - 汇总
