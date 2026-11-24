@@ -33,7 +33,9 @@ jobs:
   logic-tests:
     name: logic tests (swiftc)
     runs-on: macos-15
-    timeout-minutes: 10
+    # 2026-11-25：macOS 跑测排队+编译经常吃掉 10 分钟，原来的 10 分钟上限会把整个 job
+    # 判成 cancelled（不是编译错误，也不发红卡），后面的打包被 skip，群里什么都没有。
+    timeout-minutes: 35
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
