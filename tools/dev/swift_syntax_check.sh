@@ -6,6 +6,12 @@ cd /mnt/d/Projects/Private_music || exit 1
 FILES=(
   ios/JZMusicHelper/Services/AudioPlayer.swift
   ios/JZMusicHelper/Views/NowPlayingView.swift
+  ios/JZMusicHelper/Views/PlaylistDetailView.swift
+  ios/JZMusicHelper/Views/ChartSongsView.swift
+  ios/JZMusicHelper/Views/NewSongsView.swift
+  ios/JZMusicHelper/Views/ArtistDetailView.swift
+  ios/JZMusicHelper/Views/MyPlaylistViews.swift
+  ios/JZMusicHelper/Views/PlayAllButtons.swift
   ios/JZMusicHelper/Services/PlaybackRules.swift
   ios/SelfTest/main.swift
 )

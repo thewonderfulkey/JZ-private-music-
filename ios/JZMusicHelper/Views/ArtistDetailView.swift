@@ -113,24 +113,15 @@ struct ArtistDetailView: View {
                 Spacer(minLength: 0)
             }
 
-            Button {
+            PlayAllButtons(isEnabled: !(songs.isEmpty)) {
                 play(songs, at: 0)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "play.fill").font(.caption)
-                    Text("播放全部")
-                        .font(FontRole.button)
+            } onShuffle: {
+                // 打乱后整份进队列：和「我的收藏 / 下载页」的随机同一个口径
+                RowTap.afterHighlight {
+                    player.replaceQueue(songs, shuffle: true)
+                    router.showPlayer = true
                 }
-                .frame(minHeight: 34)
-                .padding(.horizontal, Tokens.Spacing.m)
-                .background(
-                    RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
-                        .fill(Tokens.Palette.vermilion)
-                )
-                .foregroundStyle(.white)
             }
-            .buttonStyle(.press)
-            .disabled(songs.isEmpty)
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .padding(.bottom, Tokens.Spacing.xs)
