@@ -23,7 +23,7 @@ struct SleepView: View {
     @State private var presetName = ""
 
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: Tokens.Spacing.s), count: 4)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: Tokens.Spacing.s), count: 2)
 
     private var remaining: TimeInterval? {
         guard let ends = engine.timerEndsAt else { return nil }
@@ -296,10 +296,12 @@ struct SleepView: View {
                           isPreparing: engine.preparing.contains(s.id),
                           isDownloaded: library.isDownloaded(s.id),
                           isDownloading: library.downloading.contains(s.id),
+                          level: Double(engine.level(for: s.id)),
                           onTap: {
                               if engine.activeIDs.contains(s.id) { Haptics.tabChanged() } else { Haptics.success() }
                               engine.toggle(s.id)
                           },
+                          onLevel: { engine.setLevel(Float($0), for: s.id) },
                           onLongPress: { Haptics.tabChanged(); volumeTarget = s })
             }
         }
@@ -307,7 +309,7 @@ struct SleepView: View {
     }
 
     private var footerNote: some View {
-        Text("点一下开一层，可以叠着听；长按单独调音量或下载到本地。\n已下载 \(library.downloaded.count) 个 · 本地 \(fmt(library.libraryBytes)) · 缓存 \(fmt(library.cacheBytes))")
+        Text("点左边图标开一层，拖动卡里的滑杆单独调音量；长按可以下载到本地。\n已下载 \(library.downloaded.count) 个 · 本地 \(fmt(library.libraryBytes)) · 缓存 \(fmt(library.cacheBytes))")
             .font(FontRole.metadata)
             .foregroundStyle(.tertiary)
             .multilineTextAlignment(.center)
@@ -364,8 +366,19 @@ struct SleepView: View {
     }
 }
 
-// MARK: - 单个声音钮
+/// 按下就缩一点（老板一直嫌点击反馈不明显）
+private struct SleepIconBlockStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(Tokens.Motion.pressDown, value: configuration.isPressed)
+    }
+}
 
+// MARK: - 单个声音卡
+//
+// 版式照 Moodist 的卡片：左边一块图标、右边名字 + **卡内音量滑杆**。
+// 老板要的「每个声音单独的声音大小配置」就放在卡里，不用长按。
 private struct SleepTile: View {
 
     let sound: SleepSound
@@ -373,56 +386,95 @@ private struct SleepTile: View {
     let isPreparing: Bool
     let isDownloaded: Bool
     let isDownloading: Bool
+    let level: Double
     let onTap: () -> Void
+    let onLevel: (Double) -> Void
     let onLongPress: () -> Void
 
-    @State private var pressed = false
     @State private var didLongPress = false
 
     var body: some View {
-        VStack(spacing: 5) {
-            ZStack {
-                Circle()
-                    .fill(isOn ? Tokens.Palette.vermilion : Tokens.Palette.paperElevated)
-                    .frame(width: 62, height: 62)
-                if isPreparing || isDownloading {
-                    ProgressView().tint(isOn ? Tokens.Palette.paper : .secondary)
-                } else {
-                    Image(systemName: sound.symbol)
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(isOn ? Tokens.Palette.paper : Color.secondary)
+        HStack(spacing: 0) {
+            // 左：图标块（点它开关）
+            Button {
+                if didLongPress { didLongPress = false; return }
+                onTap()
+            } label: {
+                ZStack {
+                    Rectangle()
+                        .fill(isOn ? Tokens.Palette.vermilion : Tokens.Palette.paperElevated)
+                    if isPreparing || isDownloading {
+                        ProgressView().tint(isOn ? Tokens.Palette.paper : .secondary)
+                    } else {
+                        Image(systemName: sound.symbol)
+                            .font(.system(size: 20, weight: .regular))
+                            .foregroundStyle(isOn ? Tokens.Palette.paper : Color.secondary)
+                    }
                 }
-                if isDownloaded {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(isOn ? Tokens.Palette.paper : Tokens.Palette.vermilion)
-                        .offset(x: 21, y: -21)
-                }
+                .frame(width: 52)
+                .contentShape(Rectangle())
             }
-            Text(sound.name)
-                .font(.caption2)
-                .foregroundStyle(isOn ? .primary : .secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            .buttonStyle(SleepIconBlockStyle())
+
+            // 右：名字 + 音量
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(sound.name)
+                        .font(.footnote.weight(isOn ? .semibold : .regular))
+                        .foregroundStyle(isOn ? .primary : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    if isDownloaded {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Tokens.Palette.vermilion.opacity(0.8))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                // 长按名字（不是滑杆）才能调出下载面板
+                .onLongPressGesture(minimumDuration: 0.4) {
+                    didLongPress = true
+                    onLongPress()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { didLongPress = false }
+                }
+                HStack(spacing: 5) {
+                    Image(systemName: "speaker.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.tertiary)
+                    Slider(value: Binding(get: { level }, set: onLevel), in: 0...1)
+                        .controlSize(.mini)
+                        .tint(isOn ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                }
+                .frame(height: 14)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity)
-        .scaleEffect(pressed ? 0.93 : 1)
-        .animation(Tokens.Motion.pressDown, value: pressed)
+        .frame(height: 74)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .fill(isOn ? Tokens.Palette.vermilion.opacity(0.10) : Tokens.Palette.paperElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .strokeBorder(isOn ? Tokens.Palette.vermilion.opacity(0.45) : .clear, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
         .contentShape(Rectangle())
-        .onLongPressGesture(minimumDuration: 0.35, pressing: { pressed = $0 }, perform: {
-            didLongPress = true
-            onLongPress()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { didLongPress = false }
-        })
-        .onTapGesture {
-            if didLongPress { didLongPress = false; return }
-            onTap()
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(sound.name)，\(SleepCategory.name(sound.category))")
-        .accessibilityValue(isOn ? "开" : "关")
+        .accessibilityValue("\(isOn ? "开" : "关")，音量 \(Int(level * 100))%")
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { onTap() }
+        .accessibilityAdjustableAction { dir in
+            switch dir {
+            case .increment: onLevel(min(1, level + 0.1))
+            case .decrement: onLevel(max(0, level - 0.1))
+            @unknown default: break
+            }
+        }
     }
 }
 
