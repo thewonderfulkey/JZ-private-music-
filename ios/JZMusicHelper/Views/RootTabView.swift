@@ -228,7 +228,8 @@ struct RootTabView: View {
                 return
             }
             player.replaceQueue(favorites, shuffle: true)
-            library.recordPlayed(favorites.first!)
+            // 抽到的可能是任意一首：记"听了哪首"要记真正起播的那首，不能写死第一首
+            if let song = player.currentSong { library.recordPlayed(song) }
             router.tab = .favorites
             router.showPlayer = true
         case .startRecognition:

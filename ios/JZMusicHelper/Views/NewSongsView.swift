@@ -103,11 +103,8 @@ struct NewSongsView: View {
             PlayAllButtons(isEnabled: !(releases.isEmpty)) {
                 play(releases.map(\.song), at: 0)
             } onShuffle: {
-                // 打乱后整份进队列：和「我的收藏 / 下载页」的随机同一个口径
-                RowTap.afterHighlight {
-                    player.replaceQueue(releases.map(\.song), shuffle: true)
-                    router.showPlayer = true
-                }
+                // 抽一首直接起播，不弹播放页（停在每日新歌页看底部悬浮条）
+                player.replaceQueue(releases.map(\.song), shuffle: true)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

@@ -723,10 +723,25 @@ final class PlayerEngine {
         goTo(newIndex)
     }
 
-    /// 队列整体替换（收藏页「播放全部」/ 资料库「随机播放」）
-    func replaceQueue(_ songs: [Song], startAt start: Int = 0, shuffle: Bool = false) {
-        if shuffle { mode = .shuffle }
-        play(queue: songs, startAt: start)
+    /// 队列整体替换（页头「播放全部」/「随机」；Siri 的「从收藏里随机起播」也走这里）
+    ///
+    /// 2026-11-24 修：`shuffle: true` 以前**只切播放模式**、起播下标永远是 0，
+    /// 于是七个页面的「随机」全都变成"从第一首开始放"；再点一次目标还是第 0 首、
+    /// 而它正在播（`shouldReuseCurrentSong` → `adoptQueue`），表现为"又回到当前这首"。
+    /// 现在**先抽签再起播**：等概率抽一份候选、排除正在播的那首，每点一次重新抽。
+    ///
+    /// - Parameter start: 明确指定下标（调用方自己算好的）；nil = 随机模式下由这里抽
+    func replaceQueue(_ songs: [Song], startAt start: Int? = nil, shuffle: Bool = false) {
+        guard !songs.isEmpty else { return }
+        guard shuffle else {
+            play(queue: songs, startAt: start ?? 0)
+            return
+        }
+        mode = .shuffle
+        let pick = start ?? ShuffleStart.index(ids: songs.map { $0.id },
+                                               currentID: currentSong?.id,
+                                               randomIn: { Int.random(in: $0) }) ?? 0
+        play(queue: songs, startAt: pick)
     }
 
     /// 队列追加（发现页「播放全部」先起播 5 首，其余解析完再补进队列；已在队列里的不重复加）

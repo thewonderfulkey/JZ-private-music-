@@ -166,7 +166,6 @@ struct FavoritesView: View {
                         Button {
                             guard !library.favorites.isEmpty else { return }
                             player.replaceQueue(library.favorites, shuffle: true)
-                            router.showPlayer = true
                         } label: {
                             Label("随机", systemImage: "shuffle")
                                 .font(.footnote)

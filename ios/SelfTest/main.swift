@@ -5817,6 +5817,54 @@ do {
     check("同一首连续记两次只算一次", h.stepBack(from: 1) == 4 && h.stepBack(from: 4) == nil)
 }
 
+// MARK: - 点「随机」抽哪一首起播（2026-11-24：抽一首，不能老是第一首）
+
+section("随机起播：等概率抽一首，且不抽正在播的那首")
+
+do {
+    let ids = ["a", "b", "c", "d", "e"]
+
+    // 正在播 c（下标 2）：候选 = a,b,d,e —— 任何随机数都不该落在 c
+    var seen = Set<Int>()
+    for r in 0..<4 {
+        if let i = ShuffleStart.index(ids: ids, currentID: "c", randomIn: { _ in r }) {
+            seen.insert(i)
+        }
+    }
+    check("四个随机数铺满 a,b,d,e（c 被排除）", seen == [0, 1, 3, 4])
+    check("抽出来的永远不是正在播的那首", !seen.contains(2))
+
+    // 没有在播时：候选就是整份列表，第 0 首也能被抽到
+    check("没有在播时第 0 首也在候选里",
+          ShuffleStart.index(ids: ids, currentID: nil, randomIn: { _ in 0 }) == 0)
+
+    // 连点多次：每抽一次，currentID 跟着变，下一次候选里就没有它
+    var current = "a"
+    var picks: [String] = []
+    for r in [0, 1, 2, 3] {
+        guard let i = ShuffleStart.index(ids: ids, currentID: current, randomIn: { _ in r }) else {
+            check("随机起播不该返回 nil", false)
+            break
+        }
+        current = ids[i]
+        picks.append(current)
+    }
+    check("连点四次，每次都换了一首",
+          picks.count == 4 && zip(picks, picks.dropFirst()).allSatisfy { pair in pair.0 != pair.1 },
+          "picks=\(picks)")
+
+    // 只有一首：没得挑，就是它（不能 nil、不能崩）
+    check("只有一首就是它",
+          ShuffleStart.index(ids: ["x"], currentID: "x", randomIn: { _ in 0 }) == 0)
+
+    // 导入歌单里同一首常出现两次：另一条同 id 也不算换歌
+    check("重复的同 id 也被排除（只剩 c 可抽）",
+          ShuffleStart.index(ids: ["a", "b", "b", "c"], currentID: "b", randomIn: { _ in 1 }) == 3)
+
+    check("空列表没有起播下标",
+          ShuffleStart.index(ids: [], currentID: nil, randomIn: { _ in 0 }) == nil)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

@@ -24,7 +24,7 @@ struct PlayAllButtons: View {
             }
             .buttonStyle(.press)
             .disabled(!isEnabled)
-            .accessibilityHint("把这份列表打乱后从第一首开始放")
+            .accessibilityHint("从这份列表里随机挑一首开始播放")
         }
     }
 

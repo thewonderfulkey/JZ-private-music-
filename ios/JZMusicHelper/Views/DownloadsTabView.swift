@@ -1334,10 +1334,11 @@ struct DownloadsTabView: View {
         let songs = scopeSongs
         guard !songs.isEmpty else { return }
         if shuffle {
+            // 抽一首直接起播，不弹播放页（停在下载页看底部悬浮条）
             player.replaceQueue(songs, shuffle: true)
-        } else {
-            player.play(queue: songs, startAt: 0)
+            return
         }
+        player.play(queue: songs, startAt: 0)
         router.showPlayer = true
     }
 

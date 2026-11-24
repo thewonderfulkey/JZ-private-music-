@@ -520,6 +520,36 @@ struct ShuffleHistory: Equatable {
     }
 }
 
+// MARK: - 点「随机」时抽哪一首起播（纯函数，2026-11-24）
+
+/// 老板 2026-11-24：「页头的随机按钮，点一下要真从这份列表里随机挑一首；连点多次每次都要换」。
+///
+/// 以前这里**根本没有抽签**：`replaceQueue(_, shuffle: true)` 只把播放模式切成随机，
+/// 起播下标永远是 0 —— 于是七个页面全都是"从第一首开始放"；再点一次目标还是第 0 首，
+/// 而那一首正在播（`shouldReuseCurrentSong` 命中 → `adoptQueue`），观感就是"又回到当前这首"。
+///
+/// 规则（和"随机播放"本身同一口径）：
+///   · 等概率抽一份候选，候选里**必须排除正在播的那一首**（列表只有一首时没得选，就是它）；
+///   · 用 id 而不是下标判断"是不是同一首"：导入的歌单里同一首常出现两次，
+///     抽到另一条不算换歌，观感仍是"点了没反应"。
+enum ShuffleStart {
+
+    /// 抽一个起播下标；nil = 列表为空
+    ///
+    /// - Parameters:
+    ///   - ids: 列表每一首的 id，按显示顺序
+    ///   - currentID: 正在播的那首的 id（没有在播就传 nil）
+    ///   - randomIn: 注入的随机源（测试里给确定性实现），范围语义同 `Int.random(in:)`
+    static func index(ids: [String], currentID: String?, randomIn: (Range<Int>) -> Int) -> Int? {
+        guard !ids.isEmpty else { return nil }
+        let candidates = ids.indices.filter { currentID == nil || ids[$0] != currentID }
+        // 整份列表都是同一首（或只有那一首）：没得挑，就放它
+        guard !candidates.isEmpty else { return 0 }
+        let pick = randomIn(0..<candidates.count)
+        return candidates[min(max(pick, 0), candidates.count - 1)]
+    }
+}
+
 // MARK: - seek 回读校验（纯函数，2026-11-24）
 
 /// 「跳完要回读，落偏了就重跳」的判定口径。
