@@ -366,6 +366,57 @@ struct SleepView: View {
     }
 }
 
+/// 迷你音量滑杆：轨道 3pt、圆点 11pt。
+/// 系统 Slider 最小档（`.mini`）的圆点对 74pt 高的卡来说还是太大，所以自绘一个。
+private struct MiniSlider: View {
+
+    let value: Double
+    let tint: Color
+    let onChange: (Double) -> Void
+
+    private let knob: CGFloat = 11
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = max(geo.size.width, knob + 1)
+            let usable = w - knob
+            let x = CGFloat(min(max(value, 0), 1)) * usable
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(tint.opacity(0.22))
+                    .frame(height: 3)
+                Capsule()
+                    .fill(tint)
+                    .frame(width: max(3, x + knob / 2), height: 3)
+                Circle()
+                    .fill(tint)
+                    .frame(width: knob, height: knob)
+                    .offset(x: x)
+            }
+            .frame(width: w, height: geo.size.height, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        let p = (v.location.x - knob / 2) / max(usable, 1)
+                        onChange(Double(min(max(p, 0), 1)))
+                    }
+            )
+        }
+        .accessibilityElement()
+        .accessibilityLabel("音量")
+        .accessibilityValue("\(Int(value * 100))%")
+        .accessibilityAdjustableAction { dir in
+            switch dir {
+            case .increment: onChange(min(1, value + 0.1))
+            case .decrement: onChange(max(0, value - 0.1))
+            @unknown default: break
+            }
+        }
+    }
+}
+
 /// 按下就缩一点（老板一直嫌点击反馈不明显）
 private struct SleepIconBlockStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -442,11 +493,12 @@ private struct SleepTile: View {
                     Image(systemName: "speaker.fill")
                         .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
-                    Slider(value: Binding(get: { level }, set: onLevel), in: 0...1)
-                        .controlSize(.mini)
-                        .tint(isOn ? Tokens.Palette.vermilion : Color.secondary.opacity(0.5))
+                    MiniSlider(value: level,
+                               tint: isOn ? Tokens.Palette.vermilion : Color.secondary.opacity(0.55),
+                               onChange: onLevel)
+                        .frame(height: 16)
                 }
-                .frame(height: 14)
+                .frame(height: 16)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)

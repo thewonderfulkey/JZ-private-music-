@@ -105,22 +105,30 @@ final class SleepAudioEngine {
     func switchOn(_ id: String) {
         guard let sound = SleepSound.find(id) else { return }
         if !activeIDs.contains(id) { activeIDs.append(id) }
-        stoppedByTimer = false
-        isPlaying = true
         master = 1
         startTicker()
         applyVolumes()
-        publishNowPlaying()
 
+        // 已经加载过的那几层走这条快捷路径。
+        // **这里必须也 ensureEngine()**：定时到点 / 全部关掉都会把引擎 stop 掉并释放会话，
+        // 只 schedule + play 等于把声音排进一台停着的发动机 —— 界面在播、一点声都没有。
         if layers[id]?.connected == true {
-            // 已经准备好了，直接拉起
-            if let layer = layers[id] {
-                if !layer.queued { schedule(layer) }
-                layer.node.play()
+            ensureEngine()
+            guard engineRunning, let layer = layers[id] else {
+                if activeIDs.contains(id) { activeIDs.removeAll { $0 == id } }
+                if activeIDs.isEmpty { isPlaying = false }
+                return
             }
+            if !layer.queued { schedule(layer); schedule(layer) }
+            layer.node.play()
+            stoppedByTimer = false
+            isPlaying = true
+            applyVolumes()
+            publishNowPlaying()
             return
         }
-        guard preparing.contains(id) == false else { return }
+
+        guard !preparing.contains(id) else { return }
         preparing.insert(id)
         Task { await prepareAndStart(sound) }
     }
@@ -140,7 +148,10 @@ final class SleepAudioEngine {
             schedule(layer)
             schedule(layer)
             layer.node.play()
+            isPlaying = true
+            stoppedByTimer = false
             applyVolumes()
+            publishNowPlaying()
         } catch {
             setError("「\(sound.name)」没准备好：\(error.localizedDescription)")
             activeIDs.removeAll { $0 == sound.id }
@@ -165,6 +176,11 @@ final class SleepAudioEngine {
     func resume() {
         guard !activeIDs.isEmpty else { return }
         ensureEngine()
+        guard engineRunning else {
+            isPlaying = false
+            publishNowPlaying()
+            return
+        }
         for id in activeIDs {
             guard let l = layers[id] else {
                 // 还没准备好的层：重新走一遍准备流程
@@ -337,14 +353,18 @@ final class SleepAudioEngine {
         layers.removeValue(forKey: l.sound.id)
     }
 
+    /// 每一次进来都先尝试激活会话（可能被定时收尾/其它 App 抢走过），再确保引擎在跑。
+    /// 失败时把 engineRunning 留成 false，下一次点击还能重试——以前是 try? 吞掉、
+    /// 引擎状态留着“已启动”，于是一次失败就永久哑。
     private func ensureEngine() {
-        activateSession()
+        _ = activateSession()
         guard !engineRunning else { return }
         engine.prepare()
         do {
             try engine.start()
             engineRunning = true
         } catch {
+            engineRunning = false
             setError("音频引擎起不来：\(error.localizedDescription)")
         }
         wireObserversIfNeeded()
@@ -420,11 +440,19 @@ final class SleepAudioEngine {
 
     // MARK: - 会话 / 中断
 
-    private func activateSession() {
+    @discardableResult
+    private func activateSession() -> Bool {
         let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playback, mode: .default, options: [])
-        try? s.setActive(true)
-        sessionActive = true
+        do {
+            try s.setCategory(.playback, mode: .default, options: [])
+            try s.setActive(true)
+            sessionActive = true
+            return true
+        } catch {
+            sessionActive = false
+            setError("音频会话起不来：\(error.localizedDescription)")
+            return false
+        }
     }
 
     private func deactivateSession() {
