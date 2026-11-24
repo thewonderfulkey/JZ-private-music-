@@ -384,7 +384,7 @@ private struct MiniSlider: View {
 
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(tint.opacity(0.22))
+                    .fill(Color.primary.opacity(0.12))   // 只有轨道是淡的，圆点不透明
                     .frame(height: 3)
                 Capsule()
                     .fill(tint)
@@ -476,9 +476,9 @@ private struct SleepTile: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                     if isDownloaded {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Tokens.Palette.vermilion.opacity(0.8))
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.green)
                     }
                     Spacer(minLength: 0)
                 }
@@ -494,7 +494,7 @@ private struct SleepTile: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
                     MiniSlider(value: level,
-                               tint: isOn ? Tokens.Palette.vermilion : Color.secondary.opacity(0.55),
+                               tint: isOn ? Tokens.Palette.vermilion : Color.secondary,
                                onChange: onLevel)
                         .frame(height: 16)
                 }
@@ -557,9 +557,9 @@ private struct SleepVolumeSheet: View {
             }
             HStack(spacing: Tokens.Spacing.s) {
                 Image(systemName: SleepLibrary.shared.isDownloaded(sound.id)
-                      ? "arrow.down.circle.fill" : "arrow.down.circle")
+                      ? "checkmark.circle.fill" : "arrow.down.circle")
                     .foregroundStyle(SleepLibrary.shared.isDownloaded(sound.id)
-                                     ? Tokens.Palette.vermilion : Color.secondary)
+                                     ? Color.green : Color.secondary)
                 Text(SleepLibrary.shared.isDownloaded(sound.id) ? "已下载到本地，飞行模式也能听"
                                                                : "还没下载，播放时才拉取")
                     .font(FontRole.metadata)

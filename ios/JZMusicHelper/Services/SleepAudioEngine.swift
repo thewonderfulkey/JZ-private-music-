@@ -178,6 +178,7 @@ final class SleepAudioEngine {
         ensureEngine()
         guard engineRunning else {
             isPlaying = false
+            setError("声音没能启动，点一下重试")
             publishNowPlaying()
             return
         }
@@ -212,23 +213,31 @@ final class SleepAudioEngine {
 
     func level(for id: String) -> Float { levels[id] ?? 0.7 }
 
-    /// 套用整段预设：先把别的关掉，再按混音打开
+    /// 套用整段预设：先关掉不该在的，再按混音打开，**最后确保在播**。
+    ///
+    /// 2026-11-25 修：以前这里只调整"哪几层开着"，如果目标组合里每一条都**已经在列表里**
+    /// （定时停过之后就是这种状态：activeIDs 保留、但 isPlaying=false、引擎已停），
+    /// 一条 switchOn 都不会走，等于点下去什么都没发生 —— 不报错也不出声。
     func apply(_ preset: SleepPreset) {
         let wanted = Set(preset.mix.map { $0.soundID })
+
+        // 不在组合里的层：先从 activeIDs 摘掉（节点由 ticker 的包络收尾停掉）
         for id in activeIDs where !wanted.contains(id) {
             activeIDs.removeAll { $0 == id }
         }
+
         for item in preset.mix {
             levels[item.soundID] = min(max(item.volume, 0), 1)
             if !activeIDs.contains(item.soundID) {
                 switchOn(item.soundID)
-            } else {
-                applyVolumes()
             }
         }
-        for id in activeIDs where !wanted.contains(id) {
-            if let l = layers[id] { l.node.stop(); l.envelope = 0; l.queued = false }
-        }
+
+        // 关键：定时到点 / 手动暂停之后套用组合，必须把播放拉起来
+        stoppedByTimer = false
+        if !isPlaying { resume() }
+
+        startTicker()
         applyVolumes()
         publishNowPlaying()
     }
