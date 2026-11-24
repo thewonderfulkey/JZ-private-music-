@@ -117,11 +117,6 @@
 		B00000000000000000000096 /* StorageAuditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000095 /* StorageAuditSheet.swift */; };
 		B00000000000000000000097 /* StorageAuditRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000096 /* StorageAuditRules.swift */; };
 		B00000000000000000000098 /* PlayAllButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000097 /* PlayAllButtons.swift */; };
-		B00000000000000000000080 /* SleepCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000080 /* SleepCatalog.swift */; };
-		B00000000000000000000081 /* SleepAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000081 /* SleepAudioEngine.swift */; };
-		B00000000000000000000082 /* SleepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000082 /* SleepView.swift */; };
-		B00000000000000000000083 /* DiscoverSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000083 /* DiscoverSidebar.swift */; };
-		B00000000000000000000084 /* SleepLoops in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000084 /* SleepLoops */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -234,11 +229,6 @@
 		F00000000000000000000095 /* StorageAuditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAuditSheet.swift; sourceTree = "<group>"; };
 		F00000000000000000000096 /* StorageAuditRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAuditRules.swift; sourceTree = "<group>"; };
 		F00000000000000000000097 /* PlayAllButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayAllButtons.swift; sourceTree = "<group>"; };
-		F00000000000000000000080 /* SleepCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepCatalog.swift; sourceTree = "<group>"; };
-		F00000000000000000000081 /* SleepAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepAudioEngine.swift; sourceTree = "<group>"; };
-		F00000000000000000000082 /* SleepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepView.swift; sourceTree = "<group>"; };
-		F00000000000000000000083 /* DiscoverSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverSidebar.swift; sourceTree = "<group>"; };
-		F00000000000000000000084 /* SleepLoops */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SleepLoops; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -278,7 +268,6 @@
 				F00000000000000000000012 /* Assets.xcassets */,
 				F00000000000000000000013 /* Info.plist */,
 				G00000000000000000000007 /* Recognizer */,
-				F00000000000000000000084 /* SleepLoops */,
 			);
 			path = JZMusicHelper;
 			sourceTree = "<group>";
@@ -360,8 +349,6 @@
 				F00000000000000000000076 /* ListLocate.swift */,
 				F00000000000000000000094 /* StorageAudit.swift */,
 				F00000000000000000000096 /* StorageAuditRules.swift */,
-				F00000000000000000000080 /* SleepCatalog.swift */,
-				F00000000000000000000081 /* SleepAudioEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -401,8 +388,6 @@
 				F00000000000000000000075 /* MyPlaylistViews.swift */,
 				F00000000000000000000077 /* NowPlayingLocate.swift */,
 				F00000000000000000000095 /* StorageAuditSheet.swift */,
-				F00000000000000000000082 /* SleepView.swift */,
-				F00000000000000000000083 /* DiscoverSidebar.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -539,7 +524,6 @@
 				B0000000000000000000003B /* recognizer.html in Resources */,
 				B0000000000000000000003C /* afp_wasm_b64.js in Resources */,
 				B0000000000000000000003D /* sandbox.bundle.js in Resources */,
-				B00000000000000000000084 /* SleepLoops in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -672,10 +656,6 @@
 				B00000000000000000000095 /* StorageAudit.swift in Sources */,
 				B00000000000000000000096 /* StorageAuditSheet.swift in Sources */,
 				B00000000000000000000097 /* StorageAuditRules.swift in Sources */,
-				B00000000000000000000080 /* SleepCatalog.swift in Sources */,
-				B00000000000000000000081 /* SleepAudioEngine.swift in Sources */,
-				B00000000000000000000082 /* SleepView.swift in Sources */,
-				B00000000000000000000083 /* DiscoverSidebar.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

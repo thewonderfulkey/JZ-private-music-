@@ -76,24 +76,13 @@ final class NowPlayingCenter {
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                // 助眠占着音频会话时，系统面归助眠管，别去动放歌的引擎
-                if SleepAudioEngine.shared.isSleeping {
-                    SleepAudioEngine.shared.resume()
-                } else {
-                    self?.engine?.toggle()
-                }
-            }
+            Task { @MainActor in self?.engine?.toggle() }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
             Task { @MainActor in
-                if SleepAudioEngine.shared.isSleeping {
-                    SleepAudioEngine.shared.pause()
-                    return
-                }
                 guard let engine = self?.engine, engine.isPlaying else { return }
                 engine.toggle()
             }
@@ -102,31 +91,19 @@ final class NowPlayingCenter {
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                if SleepAudioEngine.shared.isSleeping {
-                    SleepAudioEngine.shared.togglePlayPause()
-                } else {
-                    self?.engine?.toggle()
-                }
-            }
+            Task { @MainActor in self?.engine?.toggle() }
             return .success
         }
 
         center.nextTrackCommand.isEnabled = true
         center.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                guard !SleepAudioEngine.shared.isSleeping else { return }
-                self?.engine?.nextTrack()
-            }
+            Task { @MainActor in self?.engine?.nextTrack() }
             return .success
         }
 
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                guard !SleepAudioEngine.shared.isSleeping else { return }
-                self?.engine?.previousTrack()
-            }
+            Task { @MainActor in self?.engine?.previousTrack() }
             return .success
         }
 
@@ -134,7 +111,6 @@ final class NowPlayingCenter {
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             Task { @MainActor in
-                guard !SleepAudioEngine.shared.isSleeping else { return }
                 guard let engine = self?.engine, engine.duration > 0 else { return }
                 engine.seek(toFraction: e.positionTime / engine.duration)
             }
@@ -185,8 +161,6 @@ final class NowPlayingCenter {
                 duration: Double,
                 buffered: Double,
                 playMode: PlayMode) {
-        // 助眠模式开着的时候，系统"正在播放"卡片归助眠管，这里不要覆盖
-        guard !SleepAudioEngine.shared.isSleeping else { return }
         guard let song else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             MPNowPlayingInfoCenter.default().playbackState = .stopped

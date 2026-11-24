@@ -70,10 +70,6 @@ final class AppRouter {
     var pendingRecognize = false
     /// 播放页（全屏）是否展示。点歌 / 点迷你条 / 快捷指令都往这里写。
     var showPlayer = false
-    /// 发现页左上角 ☰ 拉出的侧边栏（只在发现页有入口）
-    var showSidebar = false
-    /// 助眠模式（全屏）
-    var showSleep = false
 }
 
 // MARK: - 点歌条的延迟执行（第三十九轮）
