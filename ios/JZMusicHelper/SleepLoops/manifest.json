@@ -1,0 +1,88 @@
+{
+  "source": "BV12CnRzPEJs P2 (影视飓风 伴眠样片 10h)",
+  "loudness": -20.0,
+  "loop_seconds": 300.0,
+  "crossfade_seconds": 8.0,
+  "items": [
+    {
+      "id": "fire",
+      "name": "篝火",
+      "source_start": 675,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "fire.m4a",
+      "bytes": 3775167,
+      "note": "夜晚篝火，柴火爆裂"
+    },
+    {
+      "id": "lake",
+      "name": "湖水",
+      "source_start": 2030,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "lake.m4a",
+      "bytes": 3690044,
+      "note": "湖畔夜景，静水轻拍"
+    },
+    {
+      "id": "sea",
+      "name": "海浪",
+      "source_start": 9980,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "sea.m4a",
+      "bytes": 3682251,
+      "note": "礁石海岸，涌浪拍岸"
+    },
+    {
+      "id": "stream",
+      "name": "溪流",
+      "source_start": 31560,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "stream.m4a",
+      "bytes": 3672671,
+      "note": "林间溪流与小瀑布"
+    },
+    {
+      "id": "rain",
+      "name": "雨叶",
+      "source_start": 5050,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "rain.m4a",
+      "bytes": 3797858,
+      "note": "雨点打在阔叶上"
+    },
+    {
+      "id": "wind",
+      "name": "风",
+      "source_start": 33255,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "wind.m4a",
+      "bytes": 3671470,
+      "note": "风车丘陵，风过草坡"
+    },
+    {
+      "id": "plants",
+      "name": "植被",
+      "source_start": 13860,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "plants.m4a",
+      "bytes": 3674239,
+      "note": "竹林，竹竿与竹叶摩擦"
+    },
+    {
+      "id": "forest",
+      "name": "虫林",
+      "source_start": 21760,
+      "source_duration": 300.0,
+      "lufs": -20.0,
+      "file": "forest.m4a",
+      "bytes": 3700251,
+      "note": "林间虫鸣与鸟"
+    }
+  ]
+}

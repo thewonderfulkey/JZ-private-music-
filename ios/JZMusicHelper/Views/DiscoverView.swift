@@ -59,6 +59,12 @@ struct DiscoverView: View {
             }
         }
         .navigationTitle("发现")
+        // 侧边栏入口（老板口径：和网易云一样，发现页左上角一个三横钮）
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                SidebarMenuButton { router.showSidebar = true }
+            }
+        }
         .navigationDestination(isPresented: $showSearch) {
             SearchView()
         }
