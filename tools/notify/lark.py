@@ -216,6 +216,12 @@ def main():
             display = args.name or os.path.basename(apk_path)
             if file_ext and not display.lower().endswith(file_ext):
                 display += file_ext
+            # 飞书文件消息上限 30 MB（实测：20 MB 能传，32 MB 回 234006）。
+            # 2026-11-25：助眠模式把包顶到 32 MB，这里 400 被 except 吞掉、CI 绿着、群里什么都没有。
+            _size = os.path.getsize(apk_path)
+            if _size > 30 * 1024 * 1024:
+                raise RuntimeError(
+                    f"文件 {_size:,} B 超过飞书文件消息 30 MB 上限，注定发不出去")
             key = upload_file(token, apk_path, display)
             mid = send_message(token, chat_id, "file", {"file_key": key})
             md5 = hashlib.md5(open(apk_path, "rb").read()).hexdigest().upper()
@@ -231,6 +237,12 @@ def main():
     except Exception as e:
         print(f"机器人通道失败，回退 webhook：{e}", file=sys.stderr)
         send_webhook(cfg, fallback)
+        if has_apk:
+            # 文件没送达就别让 CI 显示绿。以前这里只打印 "OK"，包没进群也没人知道。
+            _sz = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
+            print(f"！！文件未送达：{os.path.basename(apk_path)}（{_sz:,} B）——"
+                  f"群里只有回退文本，没有包", file=sys.stderr)
+            sys.exit(2)
     print("OK")
 
 

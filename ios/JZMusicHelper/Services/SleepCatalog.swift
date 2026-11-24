@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 助眠模式的声音目录
 //
-// 八条内置素材，全部是**5 分钟严格无缝环**（`ios/JZMusicHelper/SleepLoops/*.m4a`）。
+// 八条内置素材，全部是**4 分钟严格无缝环**（`ios/JZMusicHelper/SleepLoops/*.m4a`）。
 // 素材来源与响度口径见同目录 `manifest.json`：-20 LUFS 目标、真峰值 ≤ -3 dBFS、
 // 80 Hz 二级×2 高通、8 秒等功率交叉淡化做环。
 //
