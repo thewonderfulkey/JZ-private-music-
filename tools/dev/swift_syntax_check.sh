@@ -4,7 +4,6 @@
 export PATH=/home/zhou/swift/usr/bin:$PATH
 cd /mnt/d/Projects/Private_music || exit 1
 FILES=(
-  ios/JZMusicHelper/Services/DurationTruth.swift
   ios/JZMusicHelper/Services/AudioPlayer.swift
   ios/JZMusicHelper/Views/NowPlayingView.swift
   ios/JZMusicHelper/Services/PlaybackRules.swift

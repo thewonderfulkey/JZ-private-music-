@@ -112,21 +112,17 @@ final class PlayerEngine {
     private(set) var errorText: String?
 
     private(set) var currentTime: Double = 0
+    /// 总长：**起播时按文件头定一次，之后冻结**（2026-11-24）。
+    ///
+    /// 老板拿 VLC 对照过：《不凡2024》就是 4:12 —— 我本地把这个文件挖到底也是这样
+    /// （48kHz/24bit，STREAMINFO total_samples=12,102,400 → 252.133s，解码出来一模一样的 252.133s）。
+    /// 以前这里会被"播放器后来报的值 / 我们自己量出来的值"反复覆盖，一拖进度条总长就变，
+    /// 这就是「拖到哪都不对」的根。锁一次、谁都不许再改。
     private(set) var duration: Double = 0
-
-    /// 接口/容器**声明**的总长（诊断用；不等于真实长度）
-    private(set) var declaredDuration: Double = 0
-    /// 当前 `duration` 是否已由"解码实测 / 播放实测"确认
-    private(set) var durationConfirmed = false
-    /// 有没有拿到过**实测**值（哪怕还没确认）。有过的值不许被"声明值"改回去。
-    private var durationMeasured = false
-    /// 当前值来自多强的证据：0=声明值 1=解码到 EOF 2=可跳区间末位/缓存 3=播到真结尾
-    private var durationSourceRank = 0
-    /// 正在后台量的那一首（同一首不重复量）
-    private var durationTask: Task<Double?, Never>?
-    private var durationTaskSongID: String?
-    /// 播放页那行小字：`声明 4:12 / 实测 4:47`（只在两者不一致时出现，给老板一眼看出差在哪）
-    private(set) var durationNote: String?
+    /// 总长是否已被文件头锁定（锁上之后谁都不许改）
+    private var durationLocked = false
+    /// 越过声明总长已经判过"播完"（防止同一首重复触发切歌）
+    private var endGuardFired = false
 
     /// 精确播放位置（秒）：直接向 AVPlayer 取，供逐字歌词按 30fps 推进使用。
     /// 常规 UI 仍用 `currentTime`（0.5 秒一次的时间观察者），避免全页高频重绘。
@@ -632,22 +628,9 @@ final class PlayerEngine {
     }
 
     func seek(toFraction fraction: Double) {
+        // 手指在哪就是哪：落点 = 比例 × 总长。总长是文件头锁定的那个数，seek 不会改它。
         let f = min(max(fraction.isFinite ? fraction : 0, 0), 1)
-        // 已经确认过真长 → 直接落点，零等待
-        guard !durationConfirmed, let task = durationTask else {
-            seek(toSeconds: SeekTargetRules.target(fraction: f, duration: duration))
-            return
-        }
-        // 还没确认：最多等 1.2 秒拿解码值再落点。
-        // 宁可等这一下，也不能拿"声明的总长"去乘比例 —— 那正是拖到哪都不对的根。
-        Task { @MainActor [weak self] in
-            let measured = await self?.measuredWithin(1.2, of: task)
-            guard let self else { return }
-            if let measured, measured > 1 {
-                self.adoptMeasured(measured, source: "解码实测", rank: 1)
-            }
-            self.seek(toSeconds: SeekTargetRules.target(fraction: f, duration: self.duration))
-        }
+        seek(toSeconds: SeekTargetRules.target(fraction: f, duration: duration))
     }
 
     /// 点某一句歌词 → 跳到那一句。
@@ -839,28 +822,11 @@ final class PlayerEngine {
 
     private func resetProgress() {
         currentTime = 0
-        // 总长的取值顺序（2026-11-24）：
-        //   ① 这首歌量过（缓存里已确认）→ 直接用真值，一次都不再量；
-        //   ② 没量过 → 先用接口时长占位（几十毫秒内条就有数），起播后在后台解码量真值。
-        // 播放器自己报的 `item.duration` **只是"声明值"**：《不凡2024》声明 4:12、实际 4:47，
-        // 所以它只用来兜底显示，不许覆盖实测值（见 `adoptDuration`）。
-        let declared = Double(currentSong?.durationSec ?? 0)
-        declaredDuration = declared
-        duration = declared
-        durationConfirmed = false
-        durationMeasured = false
-        durationSourceRank = 0
-        durationNote = nil
-        durationTask = nil
-        durationTaskSongID = nil
-        if let song = currentSong, let url = DownloadManager.shared.localFileURL(for: song),
-           let fact = DurationTruthStore.shared.fact(for: url) {
-            duration = fact.seconds
-            durationConfirmed = fact.confirmed
-            durationMeasured = true
-            durationSourceRank = 2
-            updateDurationNote()
-        }
+        // 总长：先用接口时长占位（播放器还没就绪的那一瞬间，条不该是 0）。
+        // 真正锁定发生在 `adoptDuration`：文件头报多少就是多少，之后冻结。
+        duration = Double(currentSong?.durationSec ?? 0)
+        durationLocked = false
+        endGuardFired = false
         bufferedTime = 0
         errorText = nil
         // r77：换曲时把 seek 状态也清掉。上一首的 completion 有可能因为 item 被换掉
@@ -1023,8 +989,6 @@ final class PlayerEngine {
         updateNowPlaying()
         // 起播就记一次（位置 0）：万一进程在这儿被杀，下次车载连上也知道"上一首是它"
         flushSnapshot()
-        // 没量过就后台量一次真长（不阻塞起播）；量完当场把条改对
-        beginDurationProbe(song: song)
     }
 
     /// 取流（2026-11-20 老板口径重写：**先到先用 + 同曲换源 + 全程 ≤320k**）。
@@ -1229,17 +1193,8 @@ final class PlayerEngine {
             statusText = "忽略切歌瞬间的迟到结束通知"
             return
         }
-        // 播到真结尾了：**这时播放头停的位置就是这首歌的真实长度**，耳朵听到的、
-        // 比任何声明值都可信。记进事实库（以后每次起播都直接用），并与解码值对账。
-        if let song = currentSong,
-           let url = DownloadManager.shared.localFileURL(for: song),
-           currentTime > 5 {
-            let heard = currentTime
-            DurationTruthStore.shared.recordPlaybackEnd(url: url, seconds: heard)
-            if !durationConfirmed || abs(heard - duration) > 1 {
-                adoptMeasured(heard, source: "播放实测", rank: 3)
-            }
-        }
+        // 播到结尾了（AVPlayer 自己的结束通知 = 音频真的放完了）。
+        // 这里**不改总长**：总长是文件头锁定的，播放结束不产生新数字。
         // 这一轮已经放完：快照标 finished，下次车载连上就不"续播"它，改放热门
         flushSnapshot(finished: true)
         switch mode {
@@ -1249,6 +1204,7 @@ final class PlayerEngine {
             player.play()
             currentTime = 0
             isPlaying = true
+            endGuardFired = false   // 重播了，到点收尾要重新生效
         case .listLoop, .shuffle:
             guard let next = plannedNextForAdvance() else { return }
             // B4：自然播完是连续播放，**不先暂停**（静音就是空档被挂起的起点）
@@ -1349,6 +1305,7 @@ final class PlayerEngine {
             player.play()
             isPlaying = true
             currentTime = 0
+            endGuardFired = false   // 重播了，到点收尾要重新生效
             heartbeat.trackStarted(song)
             updateNowPlaying()
         }
@@ -1373,106 +1330,26 @@ final class PlayerEngine {
     /// 连续 3 首都没源就停下来给一句人话，不把整个队列烧光。
     private var skipLimit: Int { PlaybackRules.autoSkipLimit }
 
-    /// 采纳播放器报的时长 —— 注意：**那是"容器声明的值"，不是真实长度**。
+    /// 采纳文件头报的时长：**只认第一次**，锁上之后任何后来的值（包括播放器自己重新算的、
+    /// 我们量出来的）都不许改它。
     ///
-    /// 《不凡2024》声明 4:12、实际 4:47；《半岛铁盒》声明 5:19、实际 5:32。
-    /// 所以这里只做两件事：记下"声明值"（诊断用），以及在**还没有实测值**时用它占位。
-    /// 一旦实测值到了（`durationConfirmed`），声明值永远不许把它改回去。
+    /// 为什么锁：这个文件的文件头就是对的（48kHz/24bit，total_samples=12,102,400 → 4:12.13，
+    /// 本地解码出来一模一样）。以前我们让"后面报的值"反复覆盖，一拖进度条总长就从 4:12 变成 4:47。
     private func adoptDuration(_ seconds: Double) {
         guard seconds.isFinite, seconds > 0 else { return }
-        declaredDuration = seconds
-        // 一旦有过实测值，声明值就再也不许动它（这正是"越修越远"的老路）
-        guard !durationMeasured else { return }
-        guard abs(seconds - duration) > 0.2 else { return }
+        guard !durationLocked else { return }
+        guard abs(seconds - duration) > 0.2 else {
+            durationLocked = true   // 和占位值一致，也算锁定
+            return
+        }
         duration = seconds
-        updateDurationNote()
+        durationLocked = true
         refetchLyricsIfDurationChanged()
     }
 
     /// 采纳一个**实测**的时长。
     ///
     /// `rank` 是证据强度：1 = 解码到 EOF，2 = 播放器可跳区间末位 / 以前量过的缓存，3 = 播到真结尾。
-    /// **强证据不许被弱证据覆盖**（解码值有些文件会停在声明长度，反而比播放器末位弱）。
-    private func adoptMeasured(_ seconds: Double, source: String, rank: Int) {
-        guard seconds.isFinite, seconds > 1 else { return }
-        guard rank >= durationSourceRank else {
-            PlaybackTrace.shared.log("时长", "\(currentSong?.name ?? "—") 忽略较弱来源 \(source)"
-                                     + " \(Int(seconds))s（现有 rank=\(durationSourceRank)）")
-            return
-        }
-        durationSourceRank = rank
-        let changed = abs(seconds - duration) > 0.2
-        duration = seconds
-        durationConfirmed = true
-        durationMeasured = true
-        updateDurationNote()
-        if changed {
-            PlaybackTrace.shared.log("时长", "\(currentSong?.name ?? "—") 声明 \(Int(declaredDuration))s"
-                                     + " → 实测 \(Int(seconds))s（\(source)）")
-            refetchLyricsIfDurationChanged()
-            updateNowPlaying()
-        }
-    }
-
-    /// 播放页那行小字：只有"声明"和"实测"差 1 秒以上才出现
-    private func updateDurationNote() {
-        guard durationConfirmed, declaredDuration > 1,
-              abs(duration - declaredDuration) > 1 else {
-            durationNote = nil
-            return
-        }
-        let d = Int(declaredDuration)
-        let t = Int(duration)
-        durationNote = "时长以音频为准：\(d / 60):\(String(format: "%02d", d % 60))"
-            + " → \(t / 60):\(String(format: "%02d", t % 60))"
-    }
-
-    /// 后台量真长：本地文件才量；远程流没有整份字节，只能等"播到真结尾"。
-    private func beginDurationProbe(song: Song) {
-        guard let url = DownloadManager.shared.localFileURL(for: song) else { return }
-        // 已经确认过 → 一次都不再量（这就是"不重复加载"）
-        if durationConfirmed { return }
-        if let fact = DurationTruthStore.shared.fact(for: url), fact.confirmed {
-            adoptMeasured(fact.seconds, source: "缓存", rank: 2)
-            return
-        }
-        guard durationTaskSongID != song.id else { return }
-        durationTaskSongID = song.id
-        let id = song.id
-        let task = Task.detached(priority: .utility) { () -> Double? in
-            TrueDuration.decodedSeconds(of: url)
-        }
-        durationTask = task
-        Task { @MainActor [weak self] in
-            let measured = await task.value
-            guard let self else { return }
-            if self.currentSong?.id == id, self.durationTaskSongID == id {
-                // 量不出来（文件损坏/格式不支持）→ 清掉任务，别让后面的拖动每次都白等 1.2 秒
-                if measured == nil { self.durationTask = nil }
-            }
-            guard let measured, measured > 1 else { return }
-            // 落库（同一个文件只量这一次）
-            DurationTruthStore.shared.store(url: url, seconds: measured,
-                                            source: "decode", confirmed: true)
-            guard self.currentSong?.id == id else { return }
-            self.adoptMeasured(measured, source: "解码实测", rank: 1)
-        }
-    }
-
-    /// 等一个测量任务最多 `atMost` 秒（拖动前用：宁可等一会儿，也不能按错的总长算落点）
-    private func measuredWithin(_ seconds: Double, of task: Task<Double?, Never>) async -> Double? {
-        await withTaskGroup(of: Double?.self) { group in
-            group.addTask { await task.value }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
-    }
-
     /// 真实时长与"取词时用的目标时长"差了 8 秒以上 → 重取一次词（r69）。
     ///
     /// 为什么值一次重取：歌词候选的分数里有"时长差"这一档，差 8 秒足够让排序翻盘
@@ -1596,15 +1473,17 @@ final class PlayerEngine {
                     }
                 }
                 if let item = self.player.currentItem {
+                    // 总长只在这里锁一次（= 文件头写的长度），之后谁都不许改
                     self.adoptDuration(item.duration.seconds)
-                    // 2026-11-24：播放器的"可跳区间末位"是第二条证据。
-                    // 有的文件 `duration` 报的是容器声明的短值，但可跳区间一直延到真实末尾
-                    // （《不凡2024》4:12 / 4:47）。比声明值长 1 秒以上才采信，且不许被解码值改小。
-                    if let r = item.seekableTimeRanges.last?.timeRangeValue {
-                        let end = r.start.seconds + r.duration.seconds
-                        if end.isFinite, end > self.duration + 1, end < self.duration + 3600 {
-                            self.adoptMeasured(end, source: "播放器末位", rank: 2)
-                        }
+                    // 已经放到文件头写的长度了 → 这一首就是播完了。
+                    // 这不是"砍尾巴"：文件里本来就只有这么多音频（这个文件本地解码实测 252.133s，
+                    // 和 STREAMINFO 完全一致，VLC 也是播到 4:12 就结束）。真文件永远不会触发这条。
+                    if self.durationLocked, self.isPlaying, !self.endGuardFired,
+                       TrackEndRules.isReached(currentTime: self.currentTime, duration: self.duration) {
+                        self.endGuardFired = true
+                        PlaybackTrace.shared.log("到点收尾",
+                                                 "\(self.currentSong?.name ?? "—") 已到文件头长度 \(Int(self.duration))s")
+                        self.handleTrackFinished()
                     }
                     let ranges = item.loadedTimeRanges
                     if let last = ranges.last {

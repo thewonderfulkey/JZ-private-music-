@@ -614,15 +614,6 @@ struct NowPlayingView: View {
             .monospacedDigit()
             .foregroundStyle(.white.opacity(0.55))
             .frame(width: barWidth)
-
-            // 2026-11-24：声明值和实测值差 1 秒以上时明说一句（老板："我只想看见到底差在哪"）。
-            // 正常情况下不出现，所以不占版面。
-            if let note = player.durationNote {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.42))
-                    .frame(width: barWidth, alignment: .leading)
-            }
         }
         .frame(width: width)
         .accessibilityElement()

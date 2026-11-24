@@ -42,6 +42,15 @@ struct JZMusicHelperApp: App {
                 DownloadLocation.applyBackupExclusion(excludeFromBackup)
             }
         }
+        // 2026-11-24：清掉以前那套"自造时长"留下的后台文件（它们记的就是错数，留着没意义）
+        //   · DurationTruth.json —— v2.4.92 的"实测时长"账本
+        //   · DurationBackup/   —— v2.4.89 修 FLAC 头的备份（那套已整体删除）
+        Task.detached(priority: .utility) {
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            try? FileManager.default.removeItem(at: docs.appendingPathComponent("DurationTruth.json"))
+            try? FileManager.default.removeItem(at: docs.appendingPathComponent("DurationBackup",
+                                                                               isDirectory: true))
+        }
     }
 
     var body: some Scene {

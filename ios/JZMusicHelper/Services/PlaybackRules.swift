@@ -471,6 +471,24 @@ enum PlaybackRestoreRules {
     }
 }
 
+// MARK: - 到点收尾（纯函数，2026-11-24）
+
+/// 文件头写的长度就是这首歌的长度，**播放位置到了就算播完**。
+///
+/// 为什么需要：AVPlayer 有时会越过文件头声明的长度继续往下喂样本（《不凡2024》声明 4:12、
+/// 播放器却走到 4:47），表现就是"条到 100% 了还在唱"。VLC 播到 4:12 就结束 —— 我们也一样。
+/// 这不是"砍尾巴"：文件里本来就只有这些音频（本地解码实测与 STREAMINFO 完全一致）。
+enum TrackEndRules {
+
+    /// 差这么多秒就算到了（避免浮点误差永远差一点点）
+    static let toleranceSec: Double = 0.05
+
+    static func isReached(currentTime: Double, duration: Double) -> Bool {
+        guard duration.isFinite, duration > 1, currentTime.isFinite else { return false }
+        return currentTime >= duration - toleranceSec
+    }
+}
+
 // MARK: - 拖动落点（纯函数，2026-11-23）
 
 /// 手指在哪就落在哪：**落点 = 比例 × 总长**，不夹尾巴、不乘第二把尺子。
