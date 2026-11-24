@@ -5747,6 +5747,31 @@ do {
     check("误差是 NaN 不能崩", !SeekVerify.shouldRetry(off: .nan, attempt: 0))
 }
 
+// MARK: - 下载列表排序 = 播放顺序（2026-11-24：新下载的在最上面，循环也必须从上往下）
+
+section("下载页顺序：显示怎么排，列表循环就怎么放")
+
+do {
+    func dl(_ name: String, _ sec: Double) -> DownloadItem {
+        DownloadItem(song: song(.qq, name, "歌手"), streamURL: "file:///\(name).flac",
+                     backendName: "import", quality: .lossless, fileName: "\(name).flac",
+                     status: .completed, totalBytes: 1_000,
+                     createdAt: Date(timeIntervalSince1970: sec))
+    }
+    let old = dl("老歌", 100)
+    let mid = dl("中间", 200)
+    let new = dl("新歌", 300)
+    let shown = DownloadItem.newestFirst([old, mid, new])
+    check("新下载的排最上面", shown.map(\.song.name) == ["新歌", "中间", "老歌"])
+    // 同一秒完成的（同一批导入）：后入的先显示，而且两次渲染顺序一致（行不会来回跳）
+    let a = dl("A", 500)
+    let b = dl("B", 500)
+    let tie = DownloadItem.newestFirst([a, b]).map(\.song.name)
+    check("同一秒：后入的先显示", tie == ["B", "A"])
+    check("再排一次顺序不变（渲染稳定）",
+          DownloadItem.newestFirst(DownloadItem.newestFirst([a, b])).map(\.song.name) == tie)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

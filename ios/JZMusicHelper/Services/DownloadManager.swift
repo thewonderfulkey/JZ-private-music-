@@ -517,9 +517,11 @@ final class DownloadManager: NSObject, ObservableObject {
         return candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })?.path
     }
 
-    /// 已下载完成的歌（按下载顺序）：从下载页点一首时，**整列**就是播放队列。
-    /// 第五轮老板反馈 ②："播放列表只有一首歌，列表循环也来回只放这一首"——根因就是从列表点歌时
-    /// 只把点中的那一首塞进队列。只在主线程调用（`items` 只在主线程改）。
+    /// 已下载完成的歌，**落库顺序（老→新）**。
+    ///
+    /// ⚠️ 2026-11-24 起：**不要拿它当播放队列**。下载页的显示顺序是"新→老"
+    /// （`DownloadItem.newestFirst`），队列必须跟显示一致，否则列表循环会倒着放上一首。
+    /// 现在这里只用于"这首歌在不在下载里"这类存在性判断。
     var completedSongs: [Song] {
         items.filter { $0.status == .completed }.map(\.song)
     }

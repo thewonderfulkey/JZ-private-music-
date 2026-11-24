@@ -1318,8 +1318,16 @@ struct DownloadsTabView: View {
     ///
     /// 没筛歌手时跟以前完全一样（全库）；筛了某位歌手，这两个键就变成
     /// "把这位歌手下载的歌全放一遍"——老板要的正是这件事，不用再回长列表里一首首点。
+    ///
+    /// 2026-11-24（老板）：「新下载的歌显示在最上面，但列表循环时却倒着放上一首」。
+    /// 根因：列表排序只做在展示层（`newestFirst`），播放队列却用的是落库顺序
+    /// （`DownloadManager.completedSongs`，最老的在前）—— 两边顺序相反。
+    /// 现在队列**直接用展示顺序**（同样按 `newestFirst`），不分页、不受首屏限制，
+    /// 所以"看到的第几首"就是"循环时的第几首"。
     private var scopeSongs: [Song] {
-        artistFilter == nil ? downloads.completedSongs : finished.map(\.song)
+        let completed = downloads.items.filter { $0.status == .completed }
+        let scoped = DownloadArtistFilter.filter(completed, artist: artistFilter)
+        return DownloadItem.newestFirst(scoped).map(\.song)
     }
 
     private func playAll(shuffle: Bool) {
