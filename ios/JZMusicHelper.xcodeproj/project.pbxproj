@@ -119,7 +119,7 @@
 		B00000000000000000000098 /* PlayAllButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000097 /* PlayAllButtons.swift */; };
 		B00000000000000000000080 /* SleepCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000080 /* SleepCatalog.swift */; };
 		B00000000000000000000081 /* SleepAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000081 /* SleepAudioEngine.swift */; };
-		B00000000000000000000082 /* SleepCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000082 /* SleepCache.swift */; };
+		B00000000000000000000082 /* SleepLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000082 /* SleepLibrary.swift */; };
 		B00000000000000000000083 /* SleepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000083 /* SleepView.swift */; };
 		B00000000000000000000084 /* DiscoverSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000084 /* DiscoverSidebar.swift */; };
 /* End PBXBuildFile section */
@@ -236,7 +236,7 @@
 		F00000000000000000000097 /* PlayAllButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayAllButtons.swift; sourceTree = "<group>"; };
 		F00000000000000000000080 /* SleepCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepCatalog.swift; sourceTree = "<group>"; };
 		F00000000000000000000081 /* SleepAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepAudioEngine.swift; sourceTree = "<group>"; };
-		F00000000000000000000082 /* SleepCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepCache.swift; sourceTree = "<group>"; };
+		F00000000000000000000082 /* SleepLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepLibrary.swift; sourceTree = "<group>"; };
 		F00000000000000000000083 /* SleepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepView.swift; sourceTree = "<group>"; };
 		F00000000000000000000084 /* DiscoverSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverSidebar.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -361,7 +361,7 @@
 				F00000000000000000000096 /* StorageAuditRules.swift */,
 				F00000000000000000000080 /* SleepCatalog.swift */,
 				F00000000000000000000081 /* SleepAudioEngine.swift */,
-				F00000000000000000000082 /* SleepCache.swift */,
+				F00000000000000000000082 /* SleepLibrary.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -673,7 +673,7 @@
 				B00000000000000000000097 /* StorageAuditRules.swift in Sources */,
 				B00000000000000000000080 /* SleepCatalog.swift in Sources */,
 				B00000000000000000000081 /* SleepAudioEngine.swift in Sources */,
-				B00000000000000000000082 /* SleepCache.swift in Sources */,
+				B00000000000000000000082 /* SleepLibrary.swift in Sources */,
 				B00000000000000000000083 /* SleepView.swift in Sources */,
 				B00000000000000000000084 /* DiscoverSidebar.swift in Sources */,
 			);

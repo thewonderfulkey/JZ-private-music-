@@ -115,7 +115,7 @@ final class SleepAudioEngine {
     private func prepareAndStart(_ sound: SleepSound) async {
         defer { preparing.remove(sound.id) }
         do {
-            let url = try await SleepCache.shared.file(for: sound)
+            let url = try await SleepLibrary.shared.playableFile(for: sound)
             guard let layer = makeLayer(sound, url: url) else { return }
             connect(layer)                       // ① 先接线
             ensureEngine()                       // ② 再启动引擎

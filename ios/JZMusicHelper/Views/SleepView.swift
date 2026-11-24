@@ -10,6 +10,7 @@ import SwiftUI
 struct SleepView: View {
 
     private var engine: SleepAudioEngine { .shared }
+    private var library: SleepLibrary { .shared }
 
     @State private var category = SleepCategory.all.first?.id ?? "nature"
     @State private var volumeTarget: SleepSound?
@@ -50,6 +51,7 @@ struct SleepView: View {
         .navigationTitle("助眠")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { libraryMenu }
             ToolbarItem(placement: .topBarTrailing) { timerButton }
         }
         .confirmationDialog("定时关闭", isPresented: $showTimerMenu, titleVisibility: .visible) {
@@ -79,6 +81,36 @@ struct SleepView: View {
                     .onTapGesture { engine.clearError() }
             }
         }
+    }
+
+    // MARK: 下载 / 存储
+
+    private var libraryMenu: some View {
+        Menu {
+            Button {
+                Haptics.success()
+                Task { await library.download(category: category) }
+            } label: {
+                Label("下载「\(SleepCategory.name(category))」全部", systemImage: "arrow.down.to.line")
+            }
+            Button {
+                Haptics.tabChanged()
+                library.clearCache()
+            } label: {
+                Label("清理播放缓存", systemImage: "trash")
+            }
+            if !library.downloaded.isEmpty {
+                Button(role: .destructive) {
+                    library.removeAllDownloads()
+                } label: {
+                    Label("删除全部已下载", systemImage: "trash.fill")
+                }
+            }
+        } label: {
+            Image(systemName: library.downloading.isEmpty ? "arrow.down.circle" : "arrow.down.circle.fill")
+                .foregroundStyle(library.downloading.isEmpty ? Color.secondary : Tokens.Palette.vermilion)
+        }
+        .accessibilityLabel("下载与存储")
     }
 
     // MARK: 定时
@@ -189,6 +221,8 @@ struct SleepView: View {
                 SleepTile(sound: s,
                           isOn: engine.activeIDs.contains(s.id),
                           isPreparing: engine.preparing.contains(s.id),
+                          isDownloaded: library.isDownloaded(s.id),
+                          isDownloading: library.downloading.contains(s.id),
                           onTap: {
                               if engine.activeIDs.contains(s.id) { Haptics.tabChanged() } else { Haptics.success() }
                               engine.toggle(s.id)
@@ -200,7 +234,7 @@ struct SleepView: View {
     }
 
     private var footerNote: some View {
-        Text("点一下开一层，可以叠着听；长按单独调音量。声音首次播放需要联网，之后本地就有。")
+        Text("点一下开一层，可以叠着听；长按单独调音量或下载到本地。\n已下载 \(library.downloaded.count) 个 · 本地 \(fmt(library.libraryBytes)) · 缓存 \(fmt(library.cacheBytes))")
             .font(FontRole.metadata)
             .foregroundStyle(.tertiary)
             .multilineTextAlignment(.center)
@@ -245,6 +279,10 @@ struct SleepView: View {
         .padding(.bottom, Tokens.Spacing.s)
     }
 
+    private func fmt(_ b: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
+    }
+
     private var barTitle: String {
         let n = engine.activeIDs.count
         if engine.isPlaying { return "正在播放（\(n)）" }
@@ -260,6 +298,8 @@ private struct SleepTile: View {
     let sound: SleepSound
     let isOn: Bool
     let isPreparing: Bool
+    let isDownloaded: Bool
+    let isDownloading: Bool
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -272,12 +312,18 @@ private struct SleepTile: View {
                 Circle()
                     .fill(isOn ? Tokens.Palette.vermilion : Tokens.Palette.paperElevated)
                     .frame(width: 62, height: 62)
-                if isPreparing {
+                if isPreparing || isDownloading {
                     ProgressView().tint(isOn ? Tokens.Palette.paper : .secondary)
                 } else {
                     Image(systemName: sound.symbol)
                         .font(.system(size: 22, weight: .regular))
                         .foregroundStyle(isOn ? Tokens.Palette.paper : Color.secondary)
+                }
+                if isDownloaded {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(isOn ? Tokens.Palette.paper : Tokens.Palette.vermilion)
+                        .offset(x: 21, y: -21)
                 }
             }
             Text(sound.name)
@@ -314,6 +360,7 @@ private struct SleepVolumeSheet: View {
     let sound: SleepSound
     @Environment(\.dismiss) private var dismiss
     private var engine: SleepAudioEngine { .shared }
+    private var library: SleepLibrary { .shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.m) {
@@ -330,6 +377,29 @@ private struct SleepVolumeSheet: View {
                                       set: { engine.setLevel(Float($0), for: sound.id) }), in: 0...1)
                 Image(systemName: "speaker.wave.3.fill").font(.caption).foregroundStyle(.secondary)
             }
+            HStack(spacing: Tokens.Spacing.s) {
+                Image(systemName: SleepLibrary.shared.isDownloaded(sound.id)
+                      ? "arrow.down.circle.fill" : "arrow.down.circle")
+                    .foregroundStyle(SleepLibrary.shared.isDownloaded(sound.id)
+                                     ? Tokens.Palette.vermilion : Color.secondary)
+                Text(SleepLibrary.shared.isDownloaded(sound.id) ? "已下载到本地，飞行模式也能听"
+                                                               : "还没下载，播放时才拉取")
+                    .font(FontRole.metadata)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(SleepLibrary.shared.isDownloaded(sound.id) ? "删除" : "下载") {
+                    Haptics.tabChanged()
+                    if SleepLibrary.shared.isDownloaded(sound.id) {
+                        SleepLibrary.shared.removeDownload(sound)
+                    } else {
+                        Task { await SleepLibrary.shared.download(sound) }
+                    }
+                }
+                .font(FontRole.metadata.weight(.semibold))
+                .tint(Tokens.Palette.vermilion)
+                .disabled(SleepLibrary.shared.downloading.contains(sound.id))
+            }
+
             Button {
                 Haptics.tabChanged()
                 if engine.activeIDs.contains(sound.id) { engine.switchOff(sound.id) } else { engine.switchOn(sound.id) }
