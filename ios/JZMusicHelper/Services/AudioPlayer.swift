@@ -614,15 +614,25 @@ final class PlayerEngine {
         }
     }
 
-    /// seek 完成回调：只做"尽早切回真实位置"，不做任何钉住/冻结。
+    /// seek 完成回调：**以播放器回报的真实位置为准**（第四条规矩）。
     ///
-    /// 回调回来时若播放头已经在目标 ±`seekLandToleranceMs` 内，说明真落地了 → 立刻用真实位置；
-    /// 否则什么都不做，等乐观窗口到期（最迟 1.5 秒）自然切换。
+    /// 落点在目标附近 → 立刻用真实位置；明显落偏 → 记一条诊断并**马上停止"假装在目标"**，
+    /// 让条和歌词立刻跟到真实位置。以前这里会继续按目标显示最多 8 秒，
+    /// 那 8 秒里屏幕和耳朵就是两条线（老板看到的"拖完对不上"）。
     private func settleSeek() {
         let raw = Int(preciseTime * 1000)
-        if let opt = seekOptimistic,
-           abs(raw - opt.targetMs) <= LyricsUXRules.seekLandToleranceMs {
-            seekOptimistic = nil
+        if let opt = seekOptimistic {
+            let offMs = abs(raw - opt.targetMs)
+            if offMs <= LyricsUXRules.seekLandToleranceMs {
+                seekOptimistic = nil
+            } else if offMs > 2_000 {
+                // 明显没落到目标（真机上 seek 偶尔会这样）→ 立刻以真实位置为准，
+                // 不再按目标"假装"下去。1.2~2 秒的小偏差交给乐观窗口自然过期。
+                PlaybackTrace.shared.log("seek 落点偏了",
+                                         "目标 \(opt.targetMs / 1000)s / 实际落地 \(raw / 1000)s"
+                                         + "（差 \(offMs / 1000)s），按真实位置显示")
+                seekOptimistic = nil
+            }
         }
         updateLyricIndex()
     }

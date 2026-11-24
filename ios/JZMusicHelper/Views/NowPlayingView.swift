@@ -38,8 +38,13 @@ struct NowPlayingView: View {
     @State private var showSourceDetail = false
     @State private var showQueue = false
     @State private var showLyrics = false
-    /// 拖动中的进度（0...1）；nil 表示没在拖，显示真实进度
-    @State private var dragFraction: Double?
+    /// 拖动中的**绝对秒数**（2026-11-24）。
+    ///
+    /// 老板：「用绝对秒数去跳，不要用什么百分比相乘」。
+    /// 以前存的是百分比，松手时再乘一次总长 —— 如果这中间总长被换掉（歌单时长 → 文件时长），
+    /// 同一根手指就被两把尺子算了两遍，落点和屏幕差几十秒。现在拖动算出来的秒数**既用于显示、
+    /// 也用于跳转**，只算一次。
+    @State private var dragSeconds: Double?
     /// 收起播放页的下拽距离
     @State private var sheetOffset: CGFloat = 0
 
@@ -61,7 +66,13 @@ struct NowPlayingView: View {
         return 393
     }
 
-    private var shownFraction: Double { dragFraction ?? player.displayProgress }
+    private var shownFraction: Double {
+        if let s = dragSeconds {
+            guard player.duration > 0 else { return 0 }
+            return min(max(s / player.duration, 0), 1)
+        }
+        return player.displayProgress
+    }
 
     private var bufferedFraction: Double {
         guard player.duration > 0 else { return 0 }
@@ -111,7 +122,7 @@ struct NowPlayingView: View {
             // 切歌时只清掉拖动中的进度；歌词模式**保留**——
             // 列表循环自动播下一首时，老板正看着歌词，不该被弹回封面。
             .onChange(of: player.currentSong?.id) { _, _ in
-                dragFraction = nil
+                dragSeconds = nil
             }
     }
 
@@ -628,7 +639,7 @@ struct NowPlayingView: View {
     }
 
     private var currentShownTime: Double {
-        if let f = dragFraction { return f * player.duration }
+        if let s = dragSeconds { return s }
         return player.displayTime
     }
 
@@ -657,11 +668,15 @@ struct NowPlayingView: View {
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    dragFraction = min(max(value.location.x / max(width, 1), 0), 1)
+                    // 把手指位置**当场**换算成绝对秒数，之后显示和跳转都用这一个数
+                    guard player.duration > 0 else { return }
+                    let f = min(max(value.location.x / max(width, 1), 0), 1)
+                    dragSeconds = f * player.duration
                 }
                 .onEnded { _ in
-                    if let f = dragFraction { player.seek(toFraction: f) }
-                    dragFraction = nil
+                    // 直接跳到"屏幕上显示的那个秒数"——不再乘第二次
+                    if let s = dragSeconds { player.seek(toSeconds: s) }
+                    dragSeconds = nil
                 }
         )
     }
