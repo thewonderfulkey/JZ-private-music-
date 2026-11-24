@@ -5774,6 +5774,49 @@ do {
           DownloadItem.newestFirst(shown).map(\.song.name) == shown.map(\.song.name))
 }
 
+// MARK: - 随机播放的"上一首/下一首"（2026-11-24：上一首要回到刚才那首）
+
+section("随机播放：上一首回到刚才那首，不是再随机一首")
+
+do {
+    var h = ShuffleHistory()
+    check("刚开始：没有上一首可回", h.stepBack(from: 5) == nil)
+
+    // A(0) → 随机到 B(3)
+    h.recordAdvance(from: 0)
+    check("从 A 随机到 B 之后，上一首 = A", h.stepBack(from: 3) == 0)
+    check("返回之后再按下一首 = B（回到原来那条线）", h.stepForward(from: 0) == 3)
+    check("回来后没有多余的前进记录", h.stepForward(from: 3) == nil)
+
+    // 连续两首：A(0) → B(3) → C(7)
+    h.reset()
+    h.recordAdvance(from: 0)
+    h.recordAdvance(from: 3)
+    check("两首之后，上一首 = B", h.stepBack(from: 7) == 3)
+    check("再上一首 = A", h.stepBack(from: 3) == 0)
+    check("回到底了：没有更早的", h.stepBack(from: 0) == nil)
+    check("往回退了两次，再下一首 = B", h.stepForward(from: 0) == 3)
+    check("再下一首 = C", h.stepForward(from: 3) == 7)
+
+    // 返回之后重新随机：前进记录必须作废（否则会串回旧路线）
+    h.reset()
+    h.recordAdvance(from: 0)
+    _ = h.stepBack(from: 3)              // A←B
+    h.recordAdvance(from: 0)             // 从 A 重新随机到别处
+    check("重新随机之后，前进记录清空", h.stepForward(from: 9) == nil)
+
+    // 手动点别的歌也算一次前进
+    h.reset()
+    h.recordAdvance(from: 2)
+    check("手动点歌之后也能回到刚才那首", h.stepBack(from: 8) == 2)
+
+    // 同一首重复记录不会污染
+    h.reset()
+    h.recordAdvance(from: 4)
+    h.recordAdvance(from: 4)
+    check("同一首连续记两次只算一次", h.stepBack(from: 1) == 4 && h.stepBack(from: 4) == nil)
+}
+
 // MARK: - 汇总
 
 print("\n================ 结果 ================")

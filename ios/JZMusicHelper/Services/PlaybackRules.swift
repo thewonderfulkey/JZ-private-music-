@@ -471,6 +471,55 @@ enum PlaybackRestoreRules {
     }
 }
 
+// MARK: - 随机播放的"来过这里"记录（纯函数，2026-11-24）
+
+/// 老板 2026-11-24：「随机播放时上一首应该回到刚才那首 A，而不是又随机一首 C」。
+///
+/// 规则（和网易云/Apple Music 一致）：
+///   · 走「下一首」→ 把当前这首记进 back，并清空 forward（新的随机路线开始）；
+///   · 「上一首」→ 从 back 取，同时把当前塞进 forward；
+///   · 返回之后再按「下一首」→ 优先走 forward（回到刚才那首 B），forward 空了才重新随机。
+///   · 手动点别的歌 / 换播放模式 → 整份清空。
+struct ShuffleHistory: Equatable {
+
+    /// 已经放过的（最近的在最后）
+    private(set) var back: [Int] = []
+    /// "返回过"之后留下的前进路线
+    private(set) var forward: [Int] = []
+
+    /// 最多记这么多条（长列表随机会跑很久，留 200 条够用）
+    static let limit = 200
+
+    var canGoBack: Bool { !back.isEmpty }
+
+    /// 前进到别的歌：记下"来的地方"，并清掉前进路线
+    mutating func recordAdvance(from current: Int) {
+        guard current >= 0 else { return }
+        if back.last != current { back.append(current) }
+        if back.count > Self.limit { back.removeFirst(back.count - Self.limit) }
+        forward.removeAll()
+    }
+
+    /// 上一首：回 back 的最后一首（把当前这首留给"再按下一首"）
+    mutating func stepBack(from current: Int) -> Int? {
+        guard let prev = back.popLast() else { return nil }
+        if current >= 0 { forward.append(current) }
+        return prev
+    }
+
+    /// 下一首：如果刚从"上一首"退回来，就走回原来那条线
+    mutating func stepForward(from current: Int) -> Int? {
+        guard let next = forward.popLast() else { return nil }
+        if current >= 0 { back.append(current) }
+        return next
+    }
+
+    mutating func reset() {
+        back.removeAll()
+        forward.removeAll()
+    }
+}
+
 // MARK: - seek 回读校验（纯函数，2026-11-24）
 
 /// 「跳完要回读，落偏了就重跳」的判定口径。

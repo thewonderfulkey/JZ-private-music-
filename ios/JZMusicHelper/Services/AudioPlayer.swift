@@ -413,6 +413,7 @@ final class PlayerEngine {
         sameSongSwitches = 0
         plannedNext = nil
         prefetchSongID = nil
+        shuffleHistory.reset()   // 换了一列歌：随机历史作废
         resetProgress()
         prepareLyrics(for: songs[target])
         syncHeartbeatSeed(songs[target])
@@ -450,6 +451,7 @@ final class PlayerEngine {
         sameSongSwitches = 0
         plannedNext = nil
         prefetchSongID = nil
+        shuffleHistory.reset()   // 换了一列歌：随机历史作废
         resetProgress()
         pendingRestoreSeconds = positionSeconds.isFinite ? max(0, positionSeconds) : 0
         prepareLyrics(for: songs[target])
@@ -520,6 +522,9 @@ final class PlayerEngine {
         updateNowPlaying()
     }
 
+    /// 随机播放的"来过这里"记录（2026-11-24）：上一首要回到刚才那首，不是再随机一首
+    private var shuffleHistory = ShuffleHistory()
+
     /// 下一首（用户点的，或播完自动推进）
     func nextTrack() {
         guard !queue.isEmpty else { return }
@@ -539,6 +544,11 @@ final class PlayerEngine {
             }
             return
         }
+        // 随机播放：刚才按过"上一首"的话，先回到原来那条线（A→B→返回A，再按下一首应该回 B）
+        if mode == .shuffle, let fwd = shuffleHistory.stepForward(from: index) {
+            goTo(fwd, recordHistory: false)
+            return
+        }
         guard let next = PlaybackRules.nextIndex(
             count: queue.count, current: index, mode: mode,
             randomIn: { Int.random(in: $0) }) else { return }
@@ -547,6 +557,15 @@ final class PlayerEngine {
 
     func previousTrack() {
         guard !queue.isEmpty else { return }
+        // 随机播放：回到**真的刚放过的那一首**（不是再随机一首）
+        if mode == .shuffle {
+            guard let prev = shuffleHistory.stepBack(from: index) else {
+                statusText = "已经是这次随机的第一首"
+                return
+            }
+            goTo(prev, recordHistory: false)
+            return
+        }
         guard let prev = PlaybackRules.previousIndex(
             count: queue.count, current: index, mode: mode,
             randomIn: { Int.random(in: $0) }) else { return }
@@ -556,6 +575,7 @@ final class PlayerEngine {
     func cycleMode() {
         mode = mode.cycled()
         statusText = mode.displayName
+        shuffleHistory.reset()   // 换了模式：随机历史作废
     }
 
     /// 直接指定播放模式（播放页菜单里选某一档）
@@ -563,6 +583,7 @@ final class PlayerEngine {
         guard mode != newMode else { return }
         mode = newMode
         statusText = newMode.displayName
+        shuffleHistory.reset()
         updateNowPlaying()
     }
 
@@ -726,8 +747,12 @@ final class PlayerEngine {
     ///   **自然播完 = false**（老板 2026-11-20 拍板 B4：连续播放不是切歌，静音正是空档被挂起的起点，
     ///   而且预取命中时根本不该有任何空档）。
     private func goTo(_ newIndex: Int, localURL: URL? = nil, streamURL: String? = nil,
-                      pauseFirst: Bool = true) {
+                      pauseFirst: Bool = true, recordHistory: Bool = true) {
         guard queue.indices.contains(newIndex) else { return }
+        // 随机播放：把"从哪首来的"记下来，上一首才能回到那一首（返回/前进自己那两条路不记）
+        if mode == .shuffle, recordHistory, newIndex != index {
+            shuffleHistory.recordAdvance(from: index)
+        }
         lastAdvanceAt = Date()
         PlaybackTrace.shared.log("goTo", "→\(newIndex)/\(queue.count) pauseFirst=\(pauseFirst)")
         heartbeat.trackEnded(listened: preciseTime, completed: false)
