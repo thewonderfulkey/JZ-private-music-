@@ -37,6 +37,7 @@ final class SleepLibrary {
     private let libraryDir: URL
     private let maxCacheBytes: Int64 = 200 * 1024 * 1024
     private var inFlight: [String: Task<URL, Error>] = [:]
+    private var errorTask: Task<Void, Never>?
 
     private init() {
         let fm = FileManager.default
@@ -61,22 +62,22 @@ final class SleepLibrary {
 
     func isDownloaded(_ id: String) -> Bool { downloaded.contains(id) }
 
-    func libraryURL(_ id: String) -> URL {
-        libraryDir.appendingPathComponent("\(id).mp3")
+    func libraryURL(_ sound: SleepSound) -> URL {
+        libraryDir.appendingPathComponent("\(sound.id).\(sound.fileExtension)")
     }
 
-    func cacheURL(_ id: String) -> URL {
-        cacheDir.appendingPathComponent("\(id).mp3")
+    func cacheURL(_ sound: SleepSound) -> URL {
+        cacheDir.appendingPathComponent("\(sound.id).\(sound.fileExtension)")
     }
 
     /// 播放时优先拿哪个文件：用户下载 > 播放缓存 > nil（需要联网）
     func localFile(for sound: SleepSound) -> URL? {
-        let lib = libraryURL(sound.id)
+        let lib = libraryURL(sound)
         if FileManager.default.fileExists(atPath: lib.path) {
             touch(lib)
             return lib
         }
-        let cache = cacheURL(sound.id)
+        let cache = cacheURL(sound)
         if FileManager.default.fileExists(atPath: cache.path) {
             touch(cache)
             return cache
@@ -92,7 +93,7 @@ final class SleepLibrary {
         guard let url = sound.url else { throw SleepLibraryError.badURL }
         let task = Task<URL, Error> { [cacheDir] in
             let tmp = try await Self.fetch(sound: sound, from: url)
-            let dest = cacheDir.appendingPathComponent("\(sound.id).mp3")
+            let dest = cacheDir.appendingPathComponent("\(sound.id).\(sound.fileExtension)")
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: tmp, to: dest)
             return dest
@@ -109,19 +110,19 @@ final class SleepLibrary {
 
     func download(_ sound: SleepSound) async {
         guard !isDownloaded(sound.id), !downloading.contains(sound.id) else { return }
-        guard let url = sound.url else { lastError = "声音地址无效"; return }
+        guard let url = sound.url else { setError("声音地址无效"); return }
         downloading.insert(sound.id)
         defer { downloading.remove(sound.id) }
         do {
             let tmp = try await Self.fetch(sound: sound, from: url)
-            let dest = libraryURL(sound.id)
+            let dest = libraryURL(sound)
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: tmp, to: dest)
             // 下到库里之后，播放缓存那份就没用了
-            try? FileManager.default.removeItem(at: cacheURL(sound.id))
+            try? FileManager.default.removeItem(at: cacheURL(sound))
             reload()
         } catch {
-            lastError = "「\(sound.name)」下载失败：\(error.localizedDescription)"
+            setError("「\(sound.name)」下载失败：\(error.localizedDescription)")
         }
     }
 
@@ -132,7 +133,7 @@ final class SleepLibrary {
     }
 
     func removeDownload(_ sound: SleepSound) {
-        try? FileManager.default.removeItem(at: libraryURL(sound.id))
+        try? FileManager.default.removeItem(at: libraryURL(sound))
         reload()
     }
 
@@ -153,6 +154,17 @@ final class SleepLibrary {
     }
 
     func clearError() { lastError = nil }
+
+    /// 报错只停 4 秒，不常显
+    private func setError(_ text: String) {
+        lastError = text
+        errorTask?.cancel()
+        errorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.lastError = nil }
+        }
+    }
 
     // MARK: 内部
 
@@ -180,7 +192,7 @@ final class SleepLibrary {
             guard let items = try? fm.contentsOfDirectory(at: dir,
                                                           includingPropertiesForKeys: [.fileSizeKey],
                                                           options: .skipsHiddenFiles) else { return (ids, total) }
-            for u in items where u.pathExtension.lowercased() == "mp3" {
+            for u in items where ["mp3", "wav"].contains(u.pathExtension.lowercased()) {
                 ids.insert(u.deletingPathExtension().lastPathComponent)
                 total += Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
             }

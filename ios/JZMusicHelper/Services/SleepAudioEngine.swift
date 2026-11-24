@@ -41,7 +41,19 @@ final class SleepAudioEngine {
     /// 最近一次出错（给 UI 提示用）
     private(set) var lastError: String?
 
+    private var errorTask: Task<Void, Never>?
+
     func clearError() { lastError = nil }
+
+    private func setError(_ text: String) {
+        lastError = text
+        errorTask?.cancel()
+        errorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.lastError = nil }
+        }
+    }
 
     /// 助眠是否正在占用音频会话——`NowPlayingCenter` 用它决定要不要让路
     var isSleeping: Bool { sessionActive }
@@ -128,7 +140,7 @@ final class SleepAudioEngine {
             layer.node.play()
             applyVolumes()
         } catch {
-            lastError = "「\(sound.name)」没准备好：\(error.localizedDescription)"
+            setError("「\(sound.name)」没准备好：\(error.localizedDescription)")
             activeIDs.removeAll { $0 == sound.id }
             if activeIDs.isEmpty { isPlaying = false }
         }
@@ -276,7 +288,7 @@ final class SleepAudioEngine {
         do {
             l.files = [try AVAudioFile(forReading: url), try AVAudioFile(forReading: url)]
         } catch {
-            lastError = "「\(sound.name)」打不开：\(error.localizedDescription)"
+            setError("「\(sound.name)」打不开：\(error.localizedDescription)")
             return nil
         }
         engine.attach(l.node)
@@ -308,7 +320,7 @@ final class SleepAudioEngine {
             try engine.start()
             engineRunning = true
         } catch {
-            lastError = "音频引擎起不来：\(error.localizedDescription)"
+            setError("音频引擎起不来：\(error.localizedDescription)")
         }
         wireObserversIfNeeded()
     }

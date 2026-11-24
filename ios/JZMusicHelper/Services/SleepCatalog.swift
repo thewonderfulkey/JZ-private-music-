@@ -26,6 +26,14 @@ struct SleepSound: Identifiable, Hashable, Sendable {
 
     var url: URL? { URL(string: Self.baseURL + path) }
 
+    /// 源文件扩展名。**必须跟着它存盘**：AVAudioFile 是按扩展名挑解析器的，
+    /// 把 RIFF(WAV) 内容存成 `.mp3` 会直接抛 `dta?`（1685348671）。
+    /// 噪声那三条（白/粉/棕）在 Moodist 上是 .wav，其余 81 条是 .mp3。
+    var fileExtension: String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? "mp3" : ext
+    }
+
     static let all: [SleepSound] = [
         // MARK: 自然
         SleepSound(id: "river", name: "河流", english: "River", category: "nature",
