@@ -30,6 +30,8 @@ struct DiscoverView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showSearch = false
+    /// 助眠页（push 进导航栈，不是全屏 cover）
+    @State private var showSleep = false
     /// 轻提示（换一批之后的确认）
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -59,6 +61,21 @@ struct DiscoverView: View {
             }
         }
         .navigationTitle("发现")
+        // 侧边栏入口（和网易云一样，发现页左上角三横钮）
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                SidebarMenuButton { router.showSidebar = true }
+            }
+        }
+        // 助眠页：进新页面而不是盖全屏，底部五格栏保持可见
+        .navigationDestination(isPresented: $showSleep) { SleepView() }
+        .onChange(of: router.pendingSleep) { _, want in
+            guard want else { return }
+            router.pendingSleep = false
+            // 两套声音不混着放
+            if player.isPlaying { player.toggle() }
+            showSleep = true
+        }
         .navigationDestination(isPresented: $showSearch) {
             SearchView()
         }

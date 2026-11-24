@@ -47,9 +47,15 @@ struct RootTabView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            tabPages
-            JZTabBar(selection: tabBinding, downloadBadge: activeDownloads)
+        ZStack(alignment: .leading) {
+            VStack(spacing: 0) {
+                tabPages
+                JZTabBar(selection: tabBinding, downloadBadge: activeDownloads)
+            }
+            // 侧边栏：盖在 Tab 之上、全屏播放页之下
+            SidebarOverlay(isOpen: Binding(get: { router.showSidebar },
+                                           set: { router.showSidebar = $0 }),
+                           onSleep: { router.pendingSleep = true })
         }
         .tint(Tokens.Palette.vermilion)
         .background(Tokens.Palette.paper.ignoresSafeArea())
