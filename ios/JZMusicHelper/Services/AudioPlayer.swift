@@ -915,7 +915,7 @@ final class PlayerEngine {
                                      format: localURL.pathExtension.lowercased(),
                                      note: "已下载")
             statusText = "本地文件 · \(localURL.lastPathComponent)"
-            start(item: AVPlayerItem(url: localURL), song: song, source: local)
+            start(item: Self.makeItem(url: localURL), song: song, source: local)
             return
         }
 
@@ -931,7 +931,7 @@ final class PlayerEngine {
                                          format: pending.url.pathExtension.lowercased(),
                                          note: "播放中预取")
                 statusText = "心动缓存 · \(pending.url.lastPathComponent)"
-                start(item: AVPlayerItem(url: pending.url), song: song, source: local)
+                start(item: Self.makeItem(url: pending.url), song: song, source: local)
                 // 这里**不做后台升档**（老板 2026-11-19 反馈：切下一首卡 10 秒、还被自动切走）。
                 // 原因：升档会 replaceCurrentItem 换成远端流，新 item 缓冲期间进度停在 0:00；
                 // 一旦那条远端源失败/时长对不上就会走 rejectSource → 自动跳歌。
@@ -954,7 +954,7 @@ final class PlayerEngine {
                                    note: "播放中预取")
             statusText = "预取 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
             PlaybackTrace.shared.log("预取命中", "\(song.name)")
-            start(item: AVPlayerItem(url: url), song: song, source: src)
+            start(item: Self.makeItem(url: url), song: song, source: src)
             return
         }
         pendingStream = nil
@@ -991,13 +991,28 @@ final class PlayerEngine {
         // A7：播放链的诚实标注（无损只用于下载）
         statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
             + " · \(PlaybackQualityRules.label)"
-        start(item: AVPlayerItem(url: url), song: song, source: src)
+        start(item: Self.makeItem(url: url), song: song, source: src)
         // 2026-11-22 **不再做"起播后升档"**：`swapToBetterSource` 会 `replaceCurrentItem` + seek，
         // 缓冲从 0 重来，就是老板说的"开头 10 秒左右卡一下"。
         // 档位已经在 `resolveStream` 第①步（`DownloadResolver.startPick`）挑好了：
         // 320k 一到就用 320k 起播，拿不到才等满窗口用手上最高的一档。
         // 函数与 `upgradedSongID` 留着是为了回滚（把下面这行注释放开即可）。
         // schedulePlaybackUpgrade(for: song)
+    }
+
+    /// 造播放项：**本地文件必须带 `AVURLAssetPreferPreciseDurationAndTimingKey`**。
+    ///
+    /// 2026-11-24 血的教训：不加这个 key，AVFoundation 对 FLAC 只做"字节估算"来定位，
+    /// 24bit/48k 的那个文件上实测落偏 35 秒（时钟说 4:00、实际在放 3:27），而且当前时间
+    /// 还报得像没事一样，回读都发现不了。加上这个 key 它会去读文件自带的 seek 索引
+    /// （VLC 一直准，就是因为它走 libFLAC 的索引）。
+    private static func makeItem(url: URL) -> AVPlayerItem {
+        if url.isFileURL {
+            let asset = AVURLAsset(url: url,
+                                   options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            return AVPlayerItem(asset: asset)
+        }
+        return AVPlayerItem(url: url)
     }
 
     /// 装配并起播一个 item（本地文件与在线取流共用这一处）
@@ -1153,7 +1168,7 @@ final class PlayerEngine {
         // 换源保留进度：ready 之后由 pendingRestoreSeconds 归位（见 wire(item:)）
         pendingRestoreSeconds = (pos.isFinite && pos > 1) ? pos : nil
         statusText = "换源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
-        start(item: AVPlayerItem(url: url), song: song, source: src)
+        start(item: Self.makeItem(url: url), song: song, source: src)
     }
 
     // MARK: 播放项装配
