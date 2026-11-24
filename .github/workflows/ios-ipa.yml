@@ -23,7 +23,7 @@ on:
       - ".github/workflows/ios-ipa.yml"
 
 # 2026-11-25：GitHub 托管的 macOS 跑测偶发被回收，表现为 job「cancelled」（不是编译失败、
-# 也不发红卡），重推一次通常就过。
+# 也不发红卡），重推一次通常就过。2026-11-25 05:3x 又连续被取消，继续重试。
 concurrency:
   group: ios-ipa
   cancel-in-progress: false
