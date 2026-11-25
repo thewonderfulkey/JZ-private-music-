@@ -128,6 +128,8 @@ final class PlayerEngine {
     private var durationVerified = false
     /// 当前这首的缓存会话（走字节层时非空）——用来"断了续拉"，不再偷偷换源
     private var cacheSession: CacheSession?
+    /// 字节层没跑起来时已经回退过一次（本次运行不再尝试，避免来回抖）
+    private var cacheFallbackUsed = false
     /// 越过声明总长已经判过"播完"（防止同一首重复触发切歌）
     private var endGuardFired = false
 
@@ -1091,7 +1093,8 @@ final class PlayerEngine {
             var verified = false
             if case .match = gate { verified = true }
 
-            if let built = PlaybackCache.shared.playbackItem(
+            if !cacheFallbackUsed,
+               let built = PlaybackCache.shared.playbackItem(
                 song: song, source: candidate, container: candidate.format,
                 resolver: { [weak self] tried in
                     guard let self else { return nil }
@@ -1612,7 +1615,21 @@ final class PlayerEngine {
     /// 走缓存层时"这份文件真的取不全了"：**不换源、不跳下一首**，停在原地给一句人话。
     ///
     /// 老板 2026-11-25 定：「不允许播错的，继续重新找相同文件；所有的源全都找不到相同文件，那就停即可」。
+    ///
+    /// 唯一的例外是**字节层本身没跑起来**（一秒都没出声）：这不是"源不对"，是这套新机制在这个
+    /// 环境里不可用（例如自定义 scheme 被系统拒）。这时退回直连、并在本次运行里关掉缓存层，
+    /// 否则用户会一首歌都放不出来 —— 宁可回到旧行为，也不能让 App 变砖。
     private func stopBecauseFileUnavailable(reason: String) {
+        let neverStarted = currentTime < 1 && preciseTime < 1
+        if neverStarted, cacheSession != nil, !cacheFallbackUsed {
+            cacheFallbackUsed = true
+            PlaybackTrace.shared.log("缓存层回退", "\(currentSong?.name ?? "—")：\(reason)，改直连")
+            statusText = "缓存不可用，改直连播放"
+            cacheSession?.cancel()
+            cacheSession = nil
+            beginLoad()
+            return
+        }
         PlaybackTrace.shared.log("缓存停止",
                                  "\(currentSong?.name ?? "—")：\(reason)")
         isPlaying = false
