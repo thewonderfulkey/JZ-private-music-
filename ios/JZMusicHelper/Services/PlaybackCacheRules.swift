@@ -70,6 +70,24 @@ enum PlaybackCacheRules {
         return true
     }
 
+    /// **半截的 .part 能不能接着写**（2026-11-25 真机事故后加的硬规则）。
+    ///
+    /// 事故：第一遍把某首歌下了一半，切走再回来时重新解析可能拿到**另一个版本/另一个后端**，
+    /// 旧代码直接从 .part 的末尾续写 —— 两个文件的字节混在一个文件里，播放器读出来的就是垃圾，
+    /// 表现为"一直抖、一直失败、换源也放不出来"（因为每次重试都续写同一个坏文件）。
+    ///
+    /// 现在的口径：**.part 必须带身份（首段指纹）**，而且这次要写的源必须指纹一致才允许续；
+    /// 没有身份、指纹不同、或旧文件比新源还长 → 一律不要这段，从 0 重下。
+    static func canResume(partBytes: Int64, partHash: String?,
+                          newHash: String?, newBytes: Int64) -> Bool {
+        guard partBytes > 0 else { return false }
+        guard let ph = partHash, !ph.isEmpty else { return false }
+        guard let nh = newHash, !nh.isEmpty else { return false }
+        guard ph == nh else { return false }
+        if newBytes > 0, partBytes > newBytes { return false }
+        return true
+    }
+
     /// 缓存条数超了要删哪几个：**最早缓存的那首先走**（老板 2026-11-25 定：
     /// "缓存满了就用最新的替换掉最旧的，保持缓存不涨，头进尾出"）。
     ///

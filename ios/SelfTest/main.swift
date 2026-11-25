@@ -5946,6 +5946,20 @@ func r251CacheAssertions() {
     check("两样都没有 → 不算同一份",
           !PlaybackCacheRules.sameFile(oldBytes: 0, newBytes: 0, oldHash: nil, newHash: nil))
 
+    section("半截 .part 只能续同一份文件")
+    check("指纹一致才能续",
+          PlaybackCacheRules.canResume(partBytes: 1000, partHash: "aa",
+                                       newHash: "aa", newBytes: 5000))
+    check("指纹不同 → 不许续",
+          !PlaybackCacheRules.canResume(partBytes: 1000, partHash: "aa",
+                                        newHash: "bb", newBytes: 5000))
+    check("没有身份 → 不许续",
+          !PlaybackCacheRules.canResume(partBytes: 1000, partHash: nil,
+                                        newHash: "aa", newBytes: 5000))
+    check("旧文件比新源还长 → 不许续",
+          !PlaybackCacheRules.canResume(partBytes: 6000, partHash: "aa",
+                                        newHash: "aa", newBytes: 5000))
+
     section("播放缓存：头进尾出（最早缓存的先走，跳过正在播的）")
     let now = Date()
     let ordered: [(id: String, cachedAt: Date)] = [

@@ -90,15 +90,21 @@ final class PlaybackCache: @unchecked Sendable {
         return ok
     }
 
-    /// 起播前的"文件自己的索引"闸门（2026-11-25）。
+    /// 起播前的一次探测（2026-11-25）：文件自己的索引 + 首段指纹。
     ///
-    /// 只取头部 128KB（大多数歌不到 0.2 秒），用 `MediaIndexRules` 解出**文件自己写的长度**，
-    /// 再和曲目时长比 ±5 秒。这是老板要的"只相信文件自己的索引"：
-    ///   · 解得出且对得上 → `.match`（显示百分比、允许判播完）
-    ///   · 解得出但对不上 → `.mismatch`（这一条不是同一份，换下一条，不播错的）
-    ///   · 解不出         → `.unverified`（不是"错的"，只是没证据：播，但不显示百分比、不判播完）
-    func indexGate(song: Song, source: StreamSource) async -> PlaybackCacheRules.DurationGate {
-        guard PlaybackCacheRules.enabled, let url = URL(string: source.url) else { return .unverified }
+    /// 只取头部 128KB（大多数歌不到 0.2 秒），一次请求同时拿到两样东西：
+    ///   · 索引解出的时长 → 和曲目比 ±5 秒（`gate`）
+    ///   · 首 4KB 的 SHA256 → **半截 .part 能不能接着写**（`PlaybackCacheRules.canResume`）
+    /// 指纹是硬要求：没有它就无法证明"这次的源和上次那半截是同一份文件"。
+    struct Probe {
+        let gate: PlaybackCacheRules.DurationGate
+        let headHash: String?
+        let totalBytes: Int64
+    }
+
+    func probe(song: Song, source: StreamSource) async -> Probe {
+        let empty = Probe(gate: .unverified, headHash: nil, totalBytes: source.totalBytes)
+        guard PlaybackCacheRules.enabled, let url = URL(string: source.url) else { return empty }
         var req = URLRequest(url: url)
         req.timeoutInterval = 8
         req.setValue("bytes=0-131071", forHTTPHeaderField: "Range")
@@ -106,17 +112,23 @@ final class PlaybackCache: @unchecked Sendable {
         req.setValue(StreamVerifier.referer(forHost: url.host), forHTTPHeaderField: "Referer")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse, http.statusCode < 400, !data.isEmpty else {
-            return .unverified
+            return empty
         }
+        var total = source.totalBytes
+        if total <= 0, let range = http.value(forHTTPHeaderField: "Content-Range"),
+           let slash = range.lastIndex(of: "/"), let n = Int64(range[range.index(after: slash)...]) {
+            total = n
+        }
+        let headHash = SHA256.hash(data: data.prefix(4096))
+            .map { String(format: "%02x", Int($0)) }.joined()
         let sniffed = StreamVerifier.sniffHead([UInt8](data.prefix(16)))
         let container = sniffed == "unknown" ? source.format.lowercased() : sniffed
-        let sec = MediaIndexRules.duration(head: data, container: container,
-                                           totalBytes: source.totalBytes)
+        let sec = MediaIndexRules.duration(head: data, container: container, totalBytes: total)
         let gate = PlaybackCacheRules.gate(candidate: sec, expected: song.duration)
         trace("索引闸门",
               "\(song.name) \(container) 文件 \(sec.map { "\(Int($0))s" } ?? "解不出")"
               + " / 曲目 \(Int(song.duration))s → \(gate)")
-        return gate
+        return Probe(gate: gate, headHash: headHash, totalBytes: total)
     }
 
     func touch(_ songID: String) {
@@ -162,14 +174,20 @@ final class PlaybackCache: @unchecked Sendable {
     // MARK: 给播放器造 item
 
     /// 造一个"从我们这里取字节"的播放项。返回 nil 表示缓存关闭/不可用，调用方退回直连。
-    func playbackItem(song: Song, source: StreamSource, container: String,
+    ///
+    /// `headHash` 来自 `probe`：`CacheSession` 只用它判断"上次那半截 .part 还是不是这份文件"。
+    func playbackItem(song: Song, source: StreamSource, container: String, headHash: String?,
                       resolver: @escaping (Set<String>) async -> StreamSource?)
         -> (item: AVPlayerItem, session: CacheSession)? {
         guard PlaybackCacheRules.enabled, SettingsStore.shared.playbackCacheLimit > 0,
               source.totalBytes > 0 else { return nil }
         var made: (item: AVPlayerItem, session: CacheSession)?
         queue.sync {
+            // 同一首歌**只许有一个写者**：先把旧的会话停掉，否则两个会话会同时往一个 .part 里写
+            // （真机事故：字节交错 → 播放器读出来是垃圾 → 一直抖、一直失败）
+            sessions[song.id]?.cancel()
             let session = CacheSession(song: song, source: source, container: container,
+                                       expectedHeadHash: headHash,
                                        resolver: resolver, store: self)
             sessions[song.id] = session
             guard let url = URL(string: "jzcache://song/\(session.token)") else { return }
@@ -189,8 +207,15 @@ final class PlaybackCache: @unchecked Sendable {
         queue.async {
             if let existing = self.sessions[song.id], !existing.finished { return }
             if self.entries[song.id]?.completed == true { return }
-            let session = CacheSession(song: song, source: source,
-                                       container: source.format, resolver: { _ in nil }, store: self)
+            // 预取没有探测指纹可对，**不许续写旧半截**：先清掉，从 0 下（多下几 MB，换一个确定的正确）
+            let name = PlaybackCacheRules.fileName(songID: song.id)
+            for suffix in [".part", ".part.json"] {
+                try? FileManager.default.removeItem(
+                    at: self.directory.appendingPathComponent(name + suffix))
+            }
+            let session = CacheSession(song: song, source: source, container: source.format,
+                                       expectedHeadHash: nil,
+                                       resolver: { _ in nil }, store: self)
             self.sessions[song.id] = session
             session.start()
         }
@@ -267,6 +292,8 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     private let song: Song
     private var source: StreamSource
     private let container: String
+    /// 这次要写的源的首段指纹（来自起播前的 probe）；nil = 没有证据，那就不许续写旧半截
+    private let expectedHeadHash: String?
     private let resolver: (Set<String>) async -> StreamSource?
     private unowned let store: PlaybackCache
 
@@ -300,11 +327,12 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     var contentType: String
     var contentLength: Int64 { totalBytes }
 
-    init(song: Song, source: StreamSource, container: String,
+    init(song: Song, source: StreamSource, container: String, expectedHeadHash: String?,
          resolver: @escaping (Set<String>) async -> StreamSource?, store: PlaybackCache) {
         self.song = song
         self.source = source
         self.container = container
+        self.expectedHeadHash = expectedHeadHash
         self.resolver = resolver
         self.store = store
         self.contentType = PlaybackCacheRules.contentType(container: container,
@@ -335,21 +363,59 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
         queue.async {
             self.task?.cancel()
             self.task = nil
+            self.savePartMeta()
+            try? self.handle?.close()
+            self.handle = nil
+            self.finished = true
             self.fillError("已取消")
         }
     }
 
+    /// `.part` 的身份（首段指纹 + 已下字节）：续写之前必须对得上，对不上就从 0 重下
+    private struct PartMeta: Codable {
+        let headHash: String
+        let bytes: Int64
+    }
+
+    private var sidecarURL: URL { URL(fileURLWithPath: partURL.path + ".json") }
+
     private func openFile() {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: partURL.path)
+        let existing = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        let stored = (try? Data(contentsOf: sidecarURL))
+            .flatMap { try? JSONDecoder().decode(PartMeta.self, from: $0) }
+        let resume = PlaybackCacheRules.canResume(partBytes: existing,
+                                                  partHash: stored?.headHash,
+                                                  newHash: expectedHeadHash,
+                                                  newBytes: totalBytes)
+        if existing > 0, !resume {
+            // 真机事故的根：旧半截和这次要写的不是同一份，混在一起就是垃圾音频
+            trace("缓存丢弃", "\(song.name)：旧半截 \(existing)B 不是这份，从 0 重下")
+            try? FileManager.default.removeItem(at: partURL)
+            try? FileManager.default.removeItem(at: sidecarURL)
+        }
         if !FileManager.default.fileExists(atPath: partURL.path) {
             FileManager.default.createFile(atPath: partURL.path, contents: nil)
         }
         handle = try? FileHandle(forWritingTo: partURL)
-        let attrs = try? FileManager.default.attributesOfItem(atPath: partURL.path)
-        frontier = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        let size = (try? FileManager.default.attributesOfItem(atPath: partURL.path))
+            .flatMap { $0[.size] as? NSNumber }?.int64Value ?? 0
+        frontier = resume ? size : 0
         _ = try? handle?.seekToEnd()
     }
 
+    private func savePartMeta() {
+        guard let h = headHash, frontier > 0 else { return }
+        let meta = PartMeta(headHash: h, bytes: frontier)
+        guard let data = try? JSONEncoder().encode(meta) else { return }
+        try? data.write(to: sidecarURL, options: .atomic)
+    }
+
     private func request(path: String) {
+        if totalBytes > 0, frontier >= totalBytes {
+            finishFile()          // 上次已经下完，只是没来得及改名
+            return
+        }
         guard let url = URL(string: path) else { fail(); return }
         var req = URLRequest(url: url)
         req.timeoutInterval = 20
@@ -408,6 +474,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
             self.frontier += Int64(chunk.count)
             if self.headHash == nil, self.frontier >= 4096 {
                 self.headHash = self.hashOfHead()
+                self.savePartMeta()
             }
             self.pump()
         }
@@ -445,6 +512,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
         handle = nil
         try? FileManager.default.removeItem(at: finalURL)
         try? FileManager.default.moveItem(at: partURL, to: finalURL)
+        try? FileManager.default.removeItem(at: sidecarURL)
         store.finished(song: song, source: source, container: container,
                        file: finalURL, bytes: max(frontier, totalBytes))
         pump()
@@ -508,6 +576,11 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     }
 
     private func fail() {
+        // 坏掉的半截文件必须删掉：留着的话下一次还会续写它，永远好不了（真机事故就是这么"一直抖"的）
+        try? handle?.close()
+        handle = nil
+        try? FileManager.default.removeItem(at: partURL)
+        try? FileManager.default.removeItem(at: sidecarURL)
         fillError("这一首的文件取不全了（源都换过，但不是同一份）")
     }
 

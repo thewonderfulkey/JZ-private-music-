@@ -1080,8 +1080,8 @@ final class PlayerEngine {
         var candidate = src
         var rejected: [String] = []
         for _ in 0..<4 {
-            let gate = await PlaybackCache.shared.indexGate(song: song, source: candidate)
-            if case .mismatch(let diff) = gate {
+            let probe = await PlaybackCache.shared.probe(song: song, source: candidate)
+            if case .mismatch(let diff) = probe.gate {
                 rejected.append(candidate.url)
                 rejectedSourceURLs.insert(candidate.url)
                 PlaybackTrace.shared.log("时长不符",
@@ -1091,24 +1091,28 @@ final class PlayerEngine {
                 continue
             }
             var verified = false
-            if case .match = gate { verified = true }
+            if case .match = probe.gate { verified = true }
+            // 服务端没给总字节时，用探测拿到的那个（缓存层要它才能报 contentLength）
+            var ready = candidate
+            if ready.totalBytes <= 0, probe.totalBytes > 0 { ready.totalBytes = probe.totalBytes }
 
             if !cacheFallbackUsed,
                let built = PlaybackCache.shared.playbackItem(
-                song: song, source: candidate, container: candidate.format,
+                song: song, source: ready, container: ready.format,
+                headHash: probe.headHash,
                 resolver: { [weak self] tried in
                     guard let self else { return nil }
                     return await self.refreshSource(for: song, tried: tried)
                 }) {
                 cacheSession?.cancel()
                 cacheSession = built.session
-                start(item: built.item, song: song, source: candidate,
+                start(item: built.item, song: song, source: ready,
                       durationVerified: verified)
                 return
             }
             // 缓存层不可用（拿不到总字节）→ 退回直连
-            guard let url = URL(string: candidate.url) else { break }
-            start(item: Self.makeItem(url: url), song: song, source: candidate,
+            guard let url = URL(string: ready.url) else { break }
+            start(item: Self.makeItem(url: url), song: song, source: ready,
                   durationVerified: verified)
             return
         }

@@ -109,6 +109,22 @@ check("只有指纹（总长缺失）也能判",
 check("两样都没有 → 不算同一份",
       !PlaybackCacheRules.sameFile(oldBytes: 0, newBytes: 0, oldHash: nil, newHash: nil))
 
+// MARK: - 半截 .part 能不能续写（2026-11-25 真机事故：续错文件 → 一直抖）
+
+print("— 半截文件续写身份")
+check("指纹一致才能续", PlaybackCacheRules.canResume(partBytes: 1000, partHash: "aa",
+                                                    newHash: "aa", newBytes: 5000))
+check("指纹不同 → 不许续（换版本）", !PlaybackCacheRules.canResume(partBytes: 1000, partHash: "aa",
+                                                             newHash: "bb", newBytes: 5000))
+check("没有身份 → 不许续（旧 .part 一律重下）", !PlaybackCacheRules.canResume(partBytes: 1000, partHash: nil,
+                                                                newHash: "aa", newBytes: 5000))
+check("新源没指纹 → 不许续", !PlaybackCacheRules.canResume(partBytes: 1000, partHash: "aa",
+                                                     newHash: nil, newBytes: 5000))
+check("旧文件比新源还长 → 不许续", !PlaybackCacheRules.canResume(partBytes: 6000, partHash: "aa",
+                                                          newHash: "aa", newBytes: 5000))
+check("空 .part → 从头下", !PlaybackCacheRules.canResume(partBytes: 0, partHash: "aa",
+                                                     newHash: "aa", newBytes: 5000))
+
 // MARK: - LRU
 
 print("— 淘汰（头进尾出：最早缓存的先走，跳过正在播的）")
