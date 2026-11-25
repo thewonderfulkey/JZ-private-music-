@@ -104,6 +104,14 @@ final class PlayerEngine {
     private var upgradeTask: Task<Void, Never>?
     private var upgradedSongID: String?
 
+    // MARK: 播放体验打点（2026-11-26，只读，不参与任何调度）
+    //
+    // R1（不许播一半重头播）：同一首歌被装进播放器几次 + 进度有没有回退。
+    // 这两个数只用来出诊断，**不改变任何播放行为**——改行为要单独走门禁。
+    private var itemReplacementSongID: String?
+    private var itemReplacementCount = 0
+    private var lastTickSeconds: Double?
+
     private(set) var isPlaying = false
     private(set) var isResolving = false
     /// 状态行（解析中 / 音源信息 / 跳歌提示）
@@ -1278,6 +1286,19 @@ final class PlayerEngine {
         errorText = nil
         // 已经起播：这次换曲不再需要后台豁免
         endResolveBackgroundTask()
+        // R1 打点：这首歌被装进播放器第几次（1 = 正常；>1 说明中途换过源/重来过）
+        let reinstall = itemReplacementSongID == song.id
+        if reinstall {
+            itemReplacementCount += 1
+        } else {
+            itemReplacementSongID = song.id
+            itemReplacementCount = 1
+        }
+        lastTickSeconds = nil
+        PlaybackTrace.shared.log("item 替换",
+            "\(song.name) ← \(source.backendName) \(source.format.uppercased()) "
+            + "\(source.kbps)kbps 本曲第\(itemReplacementCount)次"
+            + (reinstall ? "（同曲重装）" : ""))
         PlaybackTrace.shared.log("play", "\(song.name) ← \(source.backendName) "
             + "\(source.format.uppercased()) \(source.kbps)kbps")
         wire(item: item, song: song, source: source)
@@ -1886,6 +1907,15 @@ final class PlayerEngine {
                 guard let self else { return }
                 let seconds = time.seconds
                 if seconds.isFinite {
+                    // R1 打点：正在播的时候进度往回跳 >1s = 用户听见"重头播/跳回去"。
+                    // 这里只记录，不纠正——纠正要改播放行为，得单独立项。
+                    if let previous = self.lastTickSeconds,
+                       PlaybackTraceRules.isBackwardJump(from: previous, to: seconds,
+                                                         isPlaying: self.isPlaying) {
+                        PlaybackTrace.shared.log("进度回退",
+                            "\(self.currentSong?.name ?? "—") \(Int(previous))s → \(Int(seconds))s")
+                    }
+                    self.lastTickSeconds = seconds
                     self.currentTime = seconds
                     self.updateLyricIndex()
                     // B1：剩余 20~30 秒时把下一首的源解析好（"播完不换歌"的正解）

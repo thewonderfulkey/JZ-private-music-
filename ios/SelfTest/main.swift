@@ -6241,9 +6241,51 @@ func r251CacheAssertions() {
     check("一个坏缓存文件只许回退 1 次", PlaybackCacheRules.maxCachedFileFallbacks == 1)
 }
 
+// MARK: 2026-11-26 三条丝滑红线的判定口径（老板拍板：丝滑 > 音质）
+//
+// 这三条阈值是「合格/不合格」的分界线，一处改了就等于改了验收标准。
+// 打点在 AudioPlayer（item 替换 / 进度回退）与 PlaybackCache（饥饿），
+// 分析脚本 tools/ios/analyze_trace.py 必须用同一组数——它读的是同一份 trace。
+func r267TraceAssertions() {
+    section("丝滑红线：三个阈值钉死（R1/R2/R3）")
+    check("R2 卡顿线 = 200ms", PlaybackTraceRules.starvationSec == 0.2)
+    check("R1 回退线 = 1s", PlaybackTraceRules.backwardJumpSec == 1.0)
+    check("R3 慢切歌 = 1.5s", PlaybackTraceRules.slowAdvanceSec == 1.5)
+    check("R3 卡住 = 10s", PlaybackTraceRules.stuckAdvanceSec == 10.0)
+
+    section("R2：饥饿 200ms 才算一次卡顿")
+    check("199ms 不算", !PlaybackTraceRules.isStarvation(lasted: 0.199))
+    check("200ms 算", PlaybackTraceRules.isStarvation(lasted: 0.2))
+    check("2s 算", PlaybackTraceRules.isStarvation(lasted: 2.0))
+    check("负数/NaN 不算", !PlaybackTraceRules.isStarvation(lasted: -1)
+          && !PlaybackTraceRules.isStarvation(lasted: .nan))
+
+    section("R1：只有正在播的时候回退才算违规")
+    check("播着从 100s 跳回 90s = 违规",
+          PlaybackTraceRules.isBackwardJump(from: 100, to: 90, isPlaying: true))
+    check("播着回退 0.5s 不算（浮点抖动）",
+          !PlaybackTraceRules.isBackwardJump(from: 100, to: 99.5, isPlaying: true))
+    check("暂停时数字变小不算违规",
+          !PlaybackTraceRules.isBackwardJump(from: 100, to: 0, isPlaying: false))
+    check("新 item 从 0 开始不算违规（装载时 isPlaying 还没置位）",
+          !PlaybackTraceRules.isBackwardJump(from: 200, to: 0, isPlaying: false))
+    check("NaN 不算", !PlaybackTraceRules.isBackwardJump(from: .nan, to: 1, isPlaying: true))
+
+    section("R3：切歌间隔的正常/慢/卡住")
+    check("0.3s 正常", PlaybackTraceRules.advanceKind(gap: 0.3) == .normal)
+    check("1.5s 仍算正常（边界）", PlaybackTraceRules.advanceKind(gap: 1.5) == .normal)
+    check("1.6s 算慢", PlaybackTraceRules.advanceKind(gap: 1.6) == .slow)
+    check("9.9s 算慢", PlaybackTraceRules.advanceKind(gap: 9.9) == .slow)
+    check("10s 算卡住", PlaybackTraceRules.advanceKind(gap: 10.0) == .stuck)
+    check("没有下一首（inf）算卡住",
+          PlaybackTraceRules.advanceKind(gap: .infinity) == .stuck)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
+r267TraceAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

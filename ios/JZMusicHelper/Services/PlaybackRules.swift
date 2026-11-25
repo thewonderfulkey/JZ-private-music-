@@ -620,4 +620,55 @@ enum SeekTargetRules {
     }
 }
 
+// MARK: - 播放体验的三个红线（纯判定，2026-11-26）
+//
+// 老板 2026-11-26 拍板的三条，凌驾于音质之上：
+//   R1 不许播一半重头播（中途换 item / 进度回退）
+//   R2 不许明显卡顿（连续无声 >200ms）
+//   R3 必须能自动切歌，且切歌不能久等
+//
+// 这里只放**阈值与判定**，因为它们是口径：改了会让「合格/不合格」翻面。
+// 真正打点在 AudioPlayer（item 替换 / 进度回退）与 PlaybackCache（饥饿）里，
+// 分析在 `tools/ios/analyze_trace.py` —— 三处的阈值必须来自这里，不许各写一份。
+enum PlaybackTraceRules {
+
+    /// R2：连续无声超过这个时长，算用户能感觉到的一次卡顿
+    static let starvationSec: TimeInterval = 0.2
+    /// R1：进度一次回退超过这个秒数，算"重头播/跳回去"
+    static let backwardJumpSec: Double = 1.0
+    /// R3：上一首结束到下一首出声，超过这个秒数算"久等"
+    static let slowAdvanceSec: TimeInterval = 1.5
+    /// R3：超过这个秒数还没进下一首，算"卡住"（不是慢，是坏）
+    static let stuckAdvanceSec: TimeInterval = 10.0
+
+    /// R2 判定：这段等待算不算一次卡顿
+    static func isStarvation(lasted: TimeInterval) -> Bool {
+        lasted.isFinite && lasted >= starvationSec
+    }
+
+    /// R1 判定：这次进度变化算不算回退
+    /// - Parameters:
+    ///   - isPlaying: 只有"正在播"的时候回退才是用户能听见的问题；
+    ///     暂停时用户拖进度条、换歌装载新 item 都会让数字变小，那些不是 R1 违规。
+    static func isBackwardJump(from previous: Double, to current: Double,
+                               isPlaying: Bool) -> Bool {
+        guard isPlaying, previous.isFinite, current.isFinite else { return false }
+        return current < previous - backwardJumpSec
+    }
+
+    /// R3 判定：切歌间隔算"正常 / 慢 / 卡住"
+    enum Advance: String {
+        case normal = "正常"
+        case slow = "慢"
+        case stuck = "卡住"
+    }
+
+    static func advanceKind(gap: TimeInterval) -> Advance {
+        if !gap.isFinite || gap >= stuckAdvanceSec { return .stuck }
+        if gap > slowAdvanceSec { return .slow }
+        return .normal
+    }
+}
+
+
 

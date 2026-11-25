@@ -444,6 +444,11 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     private var completed = false
     var finished = false
 
+    /// R2 饥饿打点（2026-11-26）：播放器在等字节、而我们这儿还没有 —— 从什么时候开始等、等到哪儿了。
+    /// 只用来打日志，不参与任何调度：pump 原本的行为一个字节都不改。
+    private var starvingSince: Date?
+    private var starvingOffset: Int64 = 0
+
     private var partURL: URL
     private var finalURL: URL
 
@@ -497,6 +502,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
         queue.async {
             self.task?.cancel()
             self.task = nil
+            self.finishStarvation()
             self.savePartMeta()
             try? self.handle?.close()
             self.handle = nil
@@ -728,6 +734,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     }
 
     private func finishAllRequests() {
+        finishStarvation()
         for p in pending { p.request.finishLoading() }
         pending.removeAll()
     }
@@ -767,7 +774,11 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
 
     /// 把已经落盘的字节喂给播放器；还不够就等下载推进
     private func pump() {
-        guard !pending.isEmpty else { return }
+        guard !pending.isEmpty else {
+            finishStarvation()
+            return
+        }
+        var served: Int64 = 0
         var keep: [Pending] = []
         for var p in pending {
             while p.sent < p.length || (p.toEndOfResource && !completed) {
@@ -778,6 +789,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
                 if let chunk = read(offset: p.offset + p.sent, length: n) {
                     p.request.dataRequest?.respond(with: chunk)
                     p.sent += Int64(chunk.count)
+                    served += Int64(chunk.count)
                 } else {
                     break
                 }
@@ -793,6 +805,23 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
             }
         }
         pending = keep
+        // 2026-11-26 R2 打点：这一轮一个字节都没喂出去、而播放器还在等 → 开始计时；
+        // 一旦喂出去了就先结账（可能是一段真实卡顿，也可能不到 200ms）。
+        if served > 0 || pending.isEmpty {
+            finishStarvation()
+        } else if starvingSince == nil {
+            starvingSince = Date()
+            starvingOffset = pending.first?.offset ?? 0
+        }
+    }
+
+    /// 结一次饥饿：只有达到 `PlaybackTraceRules.starvationSec` 才算一次「卡顿」。
+    private func finishStarvation() {
+        guard let began = starvingSince else { return }
+        let lasted = Date().timeIntervalSince(began)
+        starvingSince = nil
+        guard PlaybackTraceRules.isStarvation(lasted: lasted) else { return }
+        trace("饥饿", "\(song.name) 等了 \(Int(lasted * 1000))ms @\(starvingOffset)B")
     }
 
     private func read(offset: Int64, length: Int) -> Data? {
