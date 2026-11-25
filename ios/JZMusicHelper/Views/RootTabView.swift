@@ -83,6 +83,11 @@ struct RootTabView: View {
                 .environmentObject(downloads)
         }
         .onAppear {
+            // 助眠要开口时先把歌停掉（进助眠页那半边在下面 onChange 里）
+            let music = player
+            SleepAudioEngine.shared.onWillStart = { [weak music] in
+                if music?.isPlaying == true { music?.toggle() }
+            }
             visited.insert(router.tab)
             drainIntents()
             // 车载自动播放：连上车机 / 车载蓝牙就自动接着放（见 CarAudioAutoPlay）

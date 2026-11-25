@@ -175,8 +175,12 @@ final class NowPlayingCenter {
                 duration: Double,
                 buffered: Double,
                 playMode: PlayMode) {
-        // 助眠模式占着音频会话时，系统"正在播放"卡片归助眠管，这里不要覆盖
-        guard !SleepAudioEngine.shared.isSleeping else { return }
+        // 助眠占着会话时，卡片归助眠管——除非音乐真的开始放了：
+        // 那就让助眠立刻让位（放引擎、放会话、清卡），否则锁屏永远停在「助眠模式」。
+        if SleepAudioEngine.shared.isSleeping {
+            guard isPlaying else { return }
+            SleepAudioEngine.shared.yieldToMusic()
+        }
         guard let song else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             MPNowPlayingInfoCenter.default().playbackState = .stopped

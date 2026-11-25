@@ -91,6 +91,9 @@ final class SleepAudioEngine {
     /// 每层出厂音量
     static let defaultLevel: Float = 0.7
 
+    /// 助眠要开口之前先通知外面（外壳用它把正在放的歌停掉，两套声音不混）
+    var onWillStart: (() -> Void)?
+
     private init() {
         for s in SleepSound.all { levels[s.id] = Self.defaultLevel }
         // 关键：先把 output 链建出来（mainMixerNode 一旦被访问就自动接到 outputNode），
@@ -107,6 +110,7 @@ final class SleepAudioEngine {
 
     func switchOn(_ id: String) {
         guard let sound = SleepSound.find(id) else { return }
+        onWillStart?()
         if !activeIDs.contains(id) { activeIDs.append(id) }
         master = 1
         startTicker()
@@ -178,6 +182,7 @@ final class SleepAudioEngine {
 
     func resume() {
         guard !activeIDs.isEmpty else { return }
+        onWillStart?()
         ensureEngine()
         guard engineRunning else {
             isPlaying = false
@@ -243,6 +248,30 @@ final class SleepAudioEngine {
         startTicker()
         applyVolumes()
         publishNowPlaying()
+    }
+
+    /// 音乐要开播了：把音频会话和锁屏卡让回去，**但保留**开着哪几层和音量。
+    ///
+    /// 2026-11-25 修：以前只有「进助眠时暂停音乐」这半边，反方向（音乐开播时助眠让位）
+    /// 完全没有。于是退出助眠页、回去听歌时，助眠还在占着会话，
+    /// `NowPlayingCenter.update()` 又因为 `isSleeping == true` 直接 return，
+    /// 锁屏就一直停在「助眠模式 · 雨打帐篷 + 篝火」上。
+    func yieldToMusic() {
+        timerTask?.cancel(); timerTask = nil
+        fadeTask?.cancel(); fadeTask = nil
+        timerEndsAt = nil; timerSelection = nil; timerMinutes = nil
+        ticker?.invalidate(); ticker = nil
+        for l in layers.values {
+            l.node.stop()
+            l.envelope = 0
+            l.queued = false
+        }
+        isPlaying = false
+        master = 1
+        stoppedByTimer = false
+        stopEngine()
+        deactivateSession()
+        clearNowPlaying()
     }
 
     /// 一键重置：清空全部勾选，并把每条声音的音量恢复默认。
@@ -331,18 +360,10 @@ final class SleepAudioEngine {
     // MARK: - 全停
 
     func stopAll() {
-        timerTask?.cancel(); timerTask = nil
-        fadeTask?.cancel(); fadeTask = nil
-        timerEndsAt = nil; timerSelection = nil; timerMinutes = nil
-        ticker?.invalidate(); ticker = nil
-        for l in layers.values { l.node.stop(); l.envelope = 0; l.queued = false }
+        yieldToMusic()
         activeIDs.removeAll()
-        isPlaying = false
-        stoppedByTimer = false
-        master = 1
-        stopEngine()
-        deactivateSession()
-        clearNowPlaying()
+        for key in Array(levels.keys) { levels[key] = Self.defaultLevel }
+        publishNowPlaying()
     }
 
     // MARK: - 引擎装配
