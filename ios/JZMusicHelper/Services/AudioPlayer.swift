@@ -1690,6 +1690,9 @@ final class PlayerEngine {
             if !durationLocked || abs(duration - trusted) > 0.2 {
                 duration = trusted
                 durationLocked = true
+                // 歌词是按「曲目时长」取的；可信总长如果和它差了 8 秒以上，值得重取一次词
+                // （与文件头那条路同一个口径，别因为换了来源就漏掉这一步）
+                refetchLyricsIfDurationChanged()
             }
             return
         }
@@ -1750,6 +1753,8 @@ final class PlayerEngine {
         guard PlaybackCacheRules.isCacheBackedLocalSource(source.backendName) else { return false }
         // 不管还能不能重试，坏文件先删：留着它下一次点开还是同一个坑
         PlaybackCache.shared.discard(songID: song.id)
+        // 这份缓存已经判坏了，"补高档"那条后台任务也就没必要再为它跑
+        cacheUpgradePending[song.id] = nil
         guard cachedFileFallbacks < PlaybackCacheRules.maxCachedFileFallbacks else {
             PlaybackTrace.shared.log("缓存文件放弃", "\(song.name)：\(reason)")
             errorText = "《\(song.name)》的播放缓存读不出来，已删掉；再点一次播放就会走网络。"
