@@ -158,14 +158,22 @@ jobs:
         run: |
           set -uo pipefail
           BODY=$( {
-            echo "--- selftest.log ---"
-            tail -c 1500 build/selftest.log 2>/dev/null || echo "(无)"
+            # 先点名**哪几条断言挂了**——只发日志尾巴时，失败的那两行往往正好被截掉，
+            # 这一轮（r264）就是靠本地重跑才找到的，白等一轮 15 分钟的 macOS 排队。
+            echo "--- 失败的断言 ---"
+            grep -E "✗" build/selftest.log 2>/dev/null | head -20 || echo "(没有 ✗ 行：可能没跑到断言)"
+            echo
+            echo "--- 结果行 ---"
+            grep -E "通过 [0-9]+ / 失败|有断言失败|全部通过" build/selftest.log 2>/dev/null | tail -3 || echo "(无)"
+            echo
+            echo "--- selftest.log 尾巴 ---"
+            tail -c 1200 build/selftest.log 2>/dev/null || echo "(无)"
             echo
             echo "--- 编译错误 ---"
             grep -E "error:" build/selftest-build.log 2>/dev/null | head -12 || echo "(无 error: 行)"
             echo
             echo "--- selftest-build.log 尾巴 ---"
-            tail -c 1200 build/selftest-build.log 2>/dev/null || echo "(无)"
+            tail -c 900 build/selftest-build.log 2>/dev/null || echo "(无)"
           } | tail -c 3500 )
           python3 tools/notify/lark.py --fail --title "iOS 逻辑自测失败" --body "$BODY" || true
 

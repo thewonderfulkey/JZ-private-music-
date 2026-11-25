@@ -440,9 +440,13 @@ do {
     check("同档同码率取更快的",
           DownloadResolver.bestForStart([cand(k320, ms: 900), cand(k320, ms: 400)])?.elapsedMs == 400)
     check("一条都没有 → nil", DownloadResolver.bestForStart([]) == nil)
-    check("起播窗口 1.6s、够档门槛 = 320k 档（700）",
-          DownloadResolver.startWindow == 1.6 && DownloadResolver.startGoodEnoughTier == 700,
-          "window=\(DownloadResolver.startWindow) tier=\(DownloadResolver.startGoodEnoughTier)")
+    // 2026-11-26：起播窗口 1.6 → 2.6s，并多一条"只拿到低档时再等 1.2s"的宽限。
+    // 老板 11-25 录屏 ⑥：窗口太短 → 只有 97kbps 的 cyapi 先回就起播，而 320k 那几家 2–3s 才回。
+    check("起播窗口 2.6s（+低档宽限 1.2s）、够档门槛 = 320k 档（700）",
+          DownloadResolver.startWindow == 2.6
+            && DownloadResolver.startLowTierGrace == 1.2
+            && DownloadResolver.startGoodEnoughTier == 700,
+          "window=\(DownloadResolver.startWindow) grace=\(DownloadResolver.startLowTierGrace) tier=\(DownloadResolver.startGoodEnoughTier)")
     check("128k 达不到「够档」", DownloadResolver.tierOf(k128) < DownloadResolver.startGoodEnoughTier)
     check("320k 达到「够档」", DownloadResolver.tierOf(k320) >= DownloadResolver.startGoodEnoughTier)
 }
@@ -3039,8 +3043,11 @@ if let releases = KuwoPlaylist.parse(newSongsFixture) {
           "\(String(describing: releases.first(where: { $0.song.platformID == "670146452" })?.song.durationSec))")
     check("曲长正常时保持秒数", releases.first?.song.durationSec == 267,
           "\(String(describing: releases.first?.song.durationSec))")
-    check("封面取 pic（https）",
-          releases.first?.song.picURL == "https://img4.kuwo.cn/star/albumcover/500/s4s43/68/2072169166.jpg")
+    // 2026-11-26 老板拍板：**只废酷我封面 API**（音频照用）。这条断言因此从"取 pic"翻成"不许取"。
+    // 依据：本机 225 张普查，酷我搜索的 wmvpic 45/45 是 324×182 横图（剧照/字幕卡），
+    // QQ 60/60、酷狗 60/60 才是方形官方专辑图。封面统一交给 CoverResolver 的 QQ → iTunes 兜底。
+    check("酷我新歌不再自带封面（交兜底链）", releases.first?.song.picURL == nil,
+          releases.first?.song.picURL ?? "nil")
     check("收录于《专辑》有专辑就写、空专辑不写",
           releases.first?.albumLine == "收录于《涌泉相报》"
             && releases.first(where: { $0.song.platformID == "670146452" })?.albumLine == "",
