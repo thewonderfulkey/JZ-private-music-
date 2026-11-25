@@ -69,3 +69,6 @@ ios/JZMusicHelper.xcodeproj/project.pbxproj.bak-*
 
 # 飞书群里抓下来的附件（录屏/截屏/IPA 副本，别入库）
 tools/notify/inbox/
+
+# 本地一次性取证/试听素材（10h 音轨、录屏抽帧等），不进仓库
+.tmp_sleep/
