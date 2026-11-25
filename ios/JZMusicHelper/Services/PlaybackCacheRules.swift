@@ -35,10 +35,50 @@ enum PlaybackCacheRules {
         Int(averageSongBytes * Int64(clampLimit(limit)) / 1_000_000)
     }
 
-    /// 缓存文件名：只用歌 id 的稳定哈希，避免 id 里的 `/ : ?` 弄坏路径
-    static func fileName(songID: String) -> String {
-        "p_" + String(fnv1a(songID), radix: 16) + ".audio"
+    /// 缓存文件的"主干名"：只用歌 id 的稳定哈希，避免 id 里的 `/ : ?` 弄坏路径。
+    ///
+    /// 后缀**不在这里拼**——见 `fileExtension`。2026-11-25 真机事故就是这里写死成 `.audio` 造成的。
+    static func fileBase(songID: String) -> String {
+        "p_" + String(fnv1a(songID), radix: 16)
     }
+
+    /// 缓存文件的后缀：必须是**真容器**的扩展名。
+    ///
+    /// 2026-11-25 真机事故（v2.4.115）：缓存下好之后，回放走的是"把本地文件直接交给 AVFoundation"
+    /// 这条路。边下边播时格式是**我们在字节层里声明**的（`public.mp3`），可播本地文件时没人声明，
+    /// AVFoundation 只能按扩展名判类型——旧代码把文件统一起名 `p_xxx.audio`，`.audio` 不是任何
+    /// 音频容器，它认不出来 → item 一起来就失败 → 进度永远 0:00 → 被当成"源失效"去换源，
+    /// 换源又命中同一个文件，于是无限抖。删缓存就好，就是因为这条分支没被走。
+    static func fileExtension(container: String, format: String) -> String {
+        switch container.lowercased() {
+        case "mp3": return "mp3"
+        case "m4a", "mp4", "aac": return "m4a"
+        case "flac": return "flac"
+        case "wav": return "wav"
+        case "ogg", "opus": return "ogg"
+        default:
+            let f = format.lowercased()
+            return isPlayableExtension(f) ? f : "mp3"
+        }
+    }
+
+    /// 这个后缀 AVFoundation 认不认得出是音频容器（`load()` 用它清理历史遗留的 `.audio` 条目）
+    static func isPlayableExtension(_ ext: String) -> Bool {
+        ["mp3", "m4a", "mp4", "aac", "flac", "wav", "ogg", "opus", "aif", "aiff", "caf"]
+            .contains(ext.lowercased())
+    }
+
+    /// 这个 backendName 是不是"播本地缓存文件"（不是网络源）。
+    ///
+    /// 有两处必须认它，漏一处就是老 bug 复发：
+    /// ① 时长闸门豁免（本地文件不该被 ±25 秒的接口时长判成坏源）；
+    /// ② 播放失败时"这是个坏缓存文件，删掉改网络"的判定。
+    static func isCacheBackedLocalSource(_ backendName: String) -> Bool {
+        backendName == "播放缓存"
+    }
+
+    /// 一个坏缓存文件最多让 App 重试几次（0 = 只回网络重取一次，不许原地打转）
+    static let maxCachedFileFallbacks = 1
 
     /// 时长闸门：能确定"不是同一份"就不许播；读不出索引时算"未知"，允许播但不显示百分比、不判播完
     enum DurationGate: Equatable {

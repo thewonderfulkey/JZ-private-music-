@@ -5982,12 +5982,34 @@ func r251CacheAssertions() {
           && PlaybackCacheRules.victims(orderedByCachedAt: fifoFull, limit: 2,
                                         keeping: "").count == 1)
     check("文件名稳定且不含路径分隔符",
-          PlaybackCacheRules.fileName(songID: "netease:1/2")
-          == PlaybackCacheRules.fileName(songID: "netease:1/2")
-          && !PlaybackCacheRules.fileName(songID: "netease:1/2").contains("/"))
+          PlaybackCacheRules.fileBase(songID: "netease:1/2")
+          == PlaybackCacheRules.fileBase(songID: "netease:1/2")
+          && !PlaybackCacheRules.fileBase(songID: "netease:1/2").contains("/"))
     check("50 首 ≈ 480MB", PlaybackCacheRules.estimatedMB(limit: 50) == 480)
     check("mp3 的 UTI 正确",
           PlaybackCacheRules.contentType(container: "mp3", format: "mp3") == "public.mp3")
+
+    // MARK: 2026-11-25 真机事故：缓存文件必须带**真容器**后缀
+    //
+    // 事故形态：缓存下好后回放是"把本地文件直接交给 AVFoundation"，它按扩展名判类型；
+    // 旧版统一起名 `p_xxx.audio` → 认不出 → 起来就失败、进度永远 0:00 → 被当成源失效去换源
+    // → 又命中同一个坏文件 → 无限抖。删缓存就好，就是因为那条分支没被走。
+    section("播放缓存：文件名必须带真容器后缀（否则 AVFoundation 认不出）")
+    check("mp3 → .mp3", PlaybackCacheRules.fileExtension(container: "mp3", format: "mp3") == "mp3")
+    check("flac → .flac",
+          PlaybackCacheRules.fileExtension(container: "flac", format: "flac") == "flac")
+    check("m4a → .m4a", PlaybackCacheRules.fileExtension(container: "m4a", format: "m4a") == "m4a")
+    check("容器认不出时退回源格式", PlaybackCacheRules.fileExtension(container: "unknown",
+                                                              format: "flac") == "flac")
+    check("两样都认不出时不许留空",
+          PlaybackCacheRules.fileExtension(container: "unknown", format: "") == "mp3")
+    check("老版本的 .audio 不算可播后缀",
+          !PlaybackCacheRules.isPlayableExtension("audio")
+          && PlaybackCacheRules.isPlayableExtension("mp3"))
+    check("缓存命中的 backendName 必须被认出来",
+          PlaybackCacheRules.isCacheBackedLocalSource("播放缓存")
+          && !PlaybackCacheRules.isCacheBackedLocalSource("酷狗"))
+    check("一个坏缓存文件只许回退 1 次", PlaybackCacheRules.maxCachedFileFallbacks == 1)
 }
 
 // MARK: - 汇总

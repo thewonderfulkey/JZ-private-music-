@@ -153,10 +153,10 @@ check("缓存总量恒定：3 首上限 3 不挤，上限 2 只挤 1 首",
 
 print("— 杂项")
 check("文件名稳定且不含路径分隔符",
-      PlaybackCacheRules.fileName(songID: "netease:123/456") == PlaybackCacheRules.fileName(songID: "netease:123/456")
-      && !PlaybackCacheRules.fileName(songID: "netease:123/456").contains("/"))
+      PlaybackCacheRules.fileBase(songID: "netease:123/456") == PlaybackCacheRules.fileBase(songID: "netease:123/456")
+      && !PlaybackCacheRules.fileBase(songID: "netease:123/456").contains("/"))
 check("不同歌 → 不同文件名",
-      PlaybackCacheRules.fileName(songID: "a") != PlaybackCacheRules.fileName(songID: "b"))
+      PlaybackCacheRules.fileBase(songID: "a") != PlaybackCacheRules.fileBase(songID: "b"))
 check("min/max 夹住", PlaybackCacheRules.clampLimit(0) == PlaybackCacheRules.minLimit
       && PlaybackCacheRules.clampLimit(9999) == PlaybackCacheRules.maxLimit)
 check("50 首 ≈ 480MB", PlaybackCacheRules.estimatedMB(limit: 50) == 480)

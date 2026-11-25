@@ -208,7 +208,7 @@ final class PlaybackCache: @unchecked Sendable {
             if let existing = self.sessions[song.id], !existing.finished { return }
             if self.entries[song.id]?.completed == true { return }
             // 预取没有探测指纹可对，**不许续写旧半截**：先清掉，从 0 下（多下几 MB，换一个确定的正确）
-            let name = PlaybackCacheRules.fileName(songID: song.id)
+            let name = PlaybackCacheRules.fileBase(songID: song.id)
             for suffix in [".part", ".part.json"] {
                 try? FileManager.default.removeItem(
                     at: self.directory.appendingPathComponent(name + suffix))
@@ -234,6 +234,9 @@ final class PlaybackCache: @unchecked Sendable {
                               file: URL, bytes: Int64) {
         queue.async {
             let name = file.lastPathComponent
+            // 同一个 songID 只留一份：换了容器（mp3→m4a）会生成另一个后缀的文件，
+            // 旧那份必须清掉（否则既是垃圾、又可能被当成另一条缓存）
+            self.removeOtherFiles(songID: song.id, keeping: name)
             let entry = Entry(songID: song.id, fileName: name, totalBytes: bytes,
                               container: container,
                               contentType: PlaybackCacheRules.contentType(container: container,
@@ -243,6 +246,35 @@ final class PlaybackCache: @unchecked Sendable {
             self.sessions[song.id]?.finished = true
             self.save()
             self.enforceLimit(keeping: song.id)
+        }
+    }
+
+    /// 把这一首的缓存判成**坏的**：删索引、删文件（含半截）。播放层在"缓存文件读不出来"时调它。
+    ///
+    /// 同步执行是硬要求：调用方紧接着就 `beginLoad()` 重播，那一刻必须已经不命中——
+    /// 否则又会命中同一个坏文件，回到"无限换源"（2026-11-25 真机事故的形态）。
+    func discard(songID: String) {
+        queue.sync {
+            self.sessions[songID]?.cancel()
+            self.sessions[songID] = nil
+            if let e = self.entries.removeValue(forKey: songID) {
+                try? FileManager.default.removeItem(
+                    at: self.directory.appendingPathComponent(e.fileName))
+            }
+            self.removeOtherFiles(songID: songID, keeping: "")
+            self.save()
+        }
+    }
+
+    /// 清掉同一首歌除 `keeping` 之外的所有文件（旧后缀的成品、半截 `.part`、`.part.json`）
+    private func removeOtherFiles(songID: String, keeping: String) {
+        let base = PlaybackCacheRules.fileBase(songID: songID)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil) else { return }
+        for f in files {
+            let n = f.lastPathComponent
+            guard n.hasPrefix(base + "."), n != keeping else { continue }
+            try? FileManager.default.removeItem(at: f)
         }
     }
 
@@ -271,7 +303,23 @@ final class PlaybackCache: @unchecked Sendable {
     private func load() {
         guard let data = try? Data(contentsOf: indexURL),
               let list = try? JSONDecoder().decode([Entry].self, from: data) else { return }
-        entries = Dictionary(uniqueKeysWithValues: list.map { ($0.songID, $0) })
+        // 只收"后缀是已知音频容器"的条目：v2.4.112–115 缓存下来的是 `p_xxx.audio`，
+        // 那种文件 AVFoundation 认不出类型（2026-11-25 真机事故）。升级时直接丢掉并删文件，
+        // 否则老板装上新包、点开那首已经缓存过的歌，还是同一个 0:00 卡死。
+        var kept: [String: Entry] = [:]
+        var dropped: [Entry] = []
+        for e in list {
+            if PlaybackCacheRules.isPlayableExtension((e.fileName as NSString).pathExtension) {
+                kept[e.songID] = e
+            } else {
+                dropped.append(e)
+            }
+        }
+        for e in dropped {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(e.fileName))
+        }
+        entries = kept
+        if !dropped.isEmpty { save() }
     }
 
     private func save() {
@@ -337,9 +385,12 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
         self.store = store
         self.contentType = PlaybackCacheRules.contentType(container: container,
                                                           format: source.format)
-        let name = PlaybackCacheRules.fileName(songID: song.id)
-        self.partURL = store.directory.appendingPathComponent(name + ".part")
-        self.finalURL = store.directory.appendingPathComponent(name)
+        let base = PlaybackCacheRules.fileBase(songID: song.id)
+        // 落盘文件用**真容器**当后缀：缓存命中时这个文件会被直接交给 AVFoundation，
+        // 它按扩展名判类型（旧版写死 `.audio` → 认不出 → 一起播就失败，真机事故）
+        let ext = PlaybackCacheRules.fileExtension(container: container, format: source.format)
+        self.partURL = store.directory.appendingPathComponent(base + ".part")
+        self.finalURL = store.directory.appendingPathComponent(base + "." + ext)
         self.totalBytes = source.totalBytes
         super.init()
         let config = URLSessionConfiguration.default

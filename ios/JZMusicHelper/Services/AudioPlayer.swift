@@ -320,6 +320,9 @@ final class PlayerEngine {
     private var interrupted = false
     /// 同一首歌内已经换过几条源（A6）：换满 `PlaybackRules.maxSameSongSwitches` 才允许跳歌
     private var sameSongSwitches = 0
+    /// 这一首的**缓存文件**已经害我们回退过几次（2026-11-25）：坏文件删掉、回网络重取一次，
+    /// 再不行就停下说人话——绝不允许"命中坏文件 → 失败 → 再命中同一个坏文件"原地打转。
+    private var cachedFileFallbacks = 0
 
     /// 最近一次主动切歌的时间：切歌后 1.2 秒内收到的"播完"一定是上一首的迟到通知，必须忽略。
     /// （老板录屏：「淋雨一直走」刚起播就被切走，就是旧 item 的 didPlayToEnd 迟到了）
@@ -798,6 +801,7 @@ final class PlayerEngine {
         }
         plannedNext = nil
         sameSongSwitches = 0
+        cachedFileFallbacks = 0
         index = newIndex
         currentSong = queue[newIndex]
         rejectedSourceURLs.removeAll(); rejectedFingerprints.removeAll()
@@ -1164,6 +1168,10 @@ final class PlayerEngine {
         self.source = source
         consecutiveSkips = 0
         sameSongSwitches = 0
+        // 换成网络源/下载文件 = 这次不靠缓存，回退计数重新开始
+        if !PlaybackCacheRules.isCacheBackedLocalSource(source.backendName) {
+            cachedFileFallbacks = 0
+        }
         userPaused = false
         interrupted = false
         errorText = nil
@@ -1342,6 +1350,7 @@ final class PlayerEngine {
                     // 本地文件豁免：这首歌就是本地那份音频，"曲目时长"只是接口元数据，
                     // 拿它判本地文件会把好好的歌判成坏源 → 换源 → 跳歌（录屏里被自动切走的一类）。
                     let isLocalSource = source.backendName == "本地文件" || source.backendName == "心动缓存"
+                        || PlaybackCacheRules.isCacheBackedLocalSource(source.backendName)
                     // 走缓存层的：时长已经由"文件自己的索引"在起播前校验过，这里不再拿播放器的估算值二次判
                     if !isLocalSource, self.cacheSession == nil,
                        PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
@@ -1349,7 +1358,14 @@ final class PlayerEngine {
                     }
                     self.updateNowPlaying()
                 case .failed:
-                    // 走缓存层时"读不到"意味着连"同一份文件"都找不到了 → 停，不换源、不跳歌
+                    // ① 播的是"整首已缓存"那个本地文件、它读不出来 → 这个缓存文件是坏的：
+                    //    删掉它、回网络重取一次。**不许**走下面的"换源"——那条路会再命中同一个
+                    //    坏文件，形成"一直抖、一直弹已换源、删缓存才好"的死循环（2026-11-25 真机）。
+                    if self.handleCachedFileFailure(song: song, source: source,
+                                                    reason: "缓存文件读不出来") {
+                        break
+                    }
+                    // ② 走缓存层时"读不到"意味着连"同一份文件"都找不到了 → 停，不换源、不跳歌
                     if self.cacheSession != nil {
                         self.stopBecauseFileUnavailable(reason: "音频读取失败")
                     } else {
@@ -1384,6 +1400,10 @@ final class PlayerEngine {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                if self.handleCachedFileFailure(song: song, source: source,
+                                                reason: "缓存文件播到一半断了") {
+                    return
+                }
                 if self.cacheSession != nil {
                     // 缓存层已经把"换同一份文件"这件事做完了；到这儿就是真拿不到 → 停
                     self.stopBecauseFileUnavailable(reason: "播放中断")
@@ -1583,6 +1603,40 @@ final class PlayerEngine {
             }
             self.isLoadingLyrics = false
         }
+    }
+
+    /// 播的是"整首已缓存"那个本地文件、它读不出来时，唯一正确的处理：
+    /// **把这份缓存判成坏的（删掉），回网络重取一次**。
+    ///
+    /// 2026-11-25 真机事故的完整形态：缓存文件读不出来 → 被当成"源失效"去换源 → 换源又命中
+    /// 同一个文件 → 再失败 → 无限抖（屏幕停在 0:00、同一句「播放失败（源可能已失效），已换源」
+    /// 反复刷）。**删缓存就好**，正是因为那条"命中缓存"的分支终于没被走了。
+    ///
+    /// 两条硬规矩：
+    ///   ① 坏文件当场删（索引 + 文件一起），下一次 `completeFile` 必须已经不命中；
+    ///   ② 一首歌只许这样回退 `maxCachedFileFallbacks` 次，再坏就停下说人话，绝不原地打转。
+    ///
+    /// - Returns: true = 已经处理掉了，调用方不要再往下走"换源 / 停止"。
+    @discardableResult
+    private func handleCachedFileFailure(song: Song, source: StreamSource, reason: String) -> Bool {
+        guard PlaybackCacheRules.isCacheBackedLocalSource(source.backendName) else { return false }
+        // 不管还能不能重试，坏文件先删：留着它下一次点开还是同一个坑
+        PlaybackCache.shared.discard(songID: song.id)
+        guard cachedFileFallbacks < PlaybackCacheRules.maxCachedFileFallbacks else {
+            PlaybackTrace.shared.log("缓存文件放弃", "\(song.name)：\(reason)")
+            errorText = "《\(song.name)》的播放缓存读不出来，已删掉；再点一次播放就会走网络。"
+            isPlaying = false
+            isResolving = false
+            endResolveBackgroundTask()
+            updateNowPlaying()
+            return true
+        }
+        cachedFileFallbacks += 1
+        PlaybackTrace.shared.log("缓存文件坏", "\(song.name)：\(reason)，删掉改网络")
+        statusText = "缓存文件读不出来，改走网络"
+        beginResolveBackgroundTask()
+        beginLoad()
+        return true
     }
 
     /// 某一条源放不出来（403 / 坏容器 / 时长不符 / 播放中断）。
