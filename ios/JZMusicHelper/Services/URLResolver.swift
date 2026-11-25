@@ -600,7 +600,7 @@ enum DownloadResolver {
         for (i, c) in ranked.enumerated() {
             // 2026-11-26（老板 ①）：这条源以前下过、并被判定"不是这首歌" → 不再推荐，
             // 否则就会像 11-25 录屏那样：02:35 判死、03:47 又把它排在"最高可得"第一位。
-            if DownloadRejections.isRejected(c.source) {
+            if DownloadRejections.isRejected(c.source, song: song) {
                 debug.append("第\(i + 1)名 已判死（\(c.source.backendName) "
                              + "\(c.source.kbps)kbps）：下过、不是这首歌")
                 continue

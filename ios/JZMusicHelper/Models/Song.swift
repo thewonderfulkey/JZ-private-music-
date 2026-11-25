@@ -65,7 +65,11 @@ enum QualityLevel: String, Codable, CaseIterable, Identifiable, Hashable {
     func labeled(kbps: Int64) -> String {
         guard kbps > 0 else { return displayName }
         let nominal = nominalKbps
-        if nominal > 0, abs(kbps - nominal) <= 24 { return displayName }
+        if nominal == 0 {
+            // 无损：只要够无损量级就不啰嗦（601kbps 起算，与 `QualityFacts` 同一口径）
+            return kbps >= 601 ? displayName : "\(displayName)（实测 \(kbps)k，不够无损）"
+        }
+        if abs(kbps - nominal) <= 24 { return displayName }
         return "\(displayName)（实测 \(kbps)k）"
     }
 }

@@ -1490,11 +1490,8 @@ extension DownloadManager: URLSessionDownloadDelegate {
             // 下次点下载时 `DownloadResolver.plan` 会直接跳过它，不再"判死了又推荐一遍"。
             // 「文件不完整」不记：那是网络断了，不是"这份文件不是这首歌"，记下来会误杀好源。
             if !reason.contains("不完整") {
-                DownloadRejections.reject(
-                    fingerprint: DownloadRejections.fingerprint(
-                        url: item.url, format: item.format,
-                        totalBytes: item.totalBytes, kbps: item.kbps),
-                    reason: reason)
+                DownloadRejections.reject(songID: item.song.id, url: item.streamURL,
+                                          totalBytes: item.totalBytes, reason: reason)
             }
             items[idx] = item
             persist()

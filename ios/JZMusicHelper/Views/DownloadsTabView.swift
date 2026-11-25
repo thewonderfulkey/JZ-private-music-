@@ -1385,12 +1385,19 @@ private struct DownloadRow: View {
         return "\(singer) · \(album)"
     }
 
+    /// 落盘这一份的**实测码率**：体积 ÷ 时长。算不出就回 0（行上只写档位名）。
+    private var measuredKbps: Int64 {
+        let dur = item.song.durationSec
+        guard dur > 0, item.totalBytes > 0 else { return 0 }
+        return item.totalBytes * 8 / Int64(dur) / 1000
+    }
+
     /// 右侧小字：`无损 FLAC · 27.3 MB`（本地导入再加个"本地"前缀，信息不丢）
     private var qualityLine: String {
         let head = item.origin == "import" ? "本地 · " : ""
         // 2026-11-26（老板 ⑧）：档位名要带实测码率。以前这里只写「标准 128k · 2.6 MB」，
         // 而实际存下来的是 96kbps，看起来就是虚标。
-        return "\(head)\(item.quality.labeled(kbps: item.kbps)) · \(item.sizeText)"
+        return "\(head)\(item.quality.labeled(kbps: measuredKbps)) · \(item.sizeText)"
     }
 
     var body: some View {

@@ -77,28 +77,33 @@ check("码率未知只写档位", QualityLevel.high.labeled(kbps: 0) == "高品 
 
 print("— ④ 判死名单")
 DownloadRejections.clear()
-let bad = StreamSource(url: "https://api.x.cn/a?token=1", backendName: "妖狐酷我",
-                       platform: .kuwo, quality: .lossless, format: "flac", note: "")
-var badFull = bad
-badFull.totalBytes = 27_330_647
-badFull.kbps = 1016
-check("没记过就不算判死", !DownloadRejections.isRejected(badFull))
-DownloadRejections.reject(badFull, reason: "文件只有 5:01、曲目 3:35（差 86 秒）")
-check("记过就判死", DownloadRejections.isRejected(badFull))
-// 同一份文件换了 token（URL 不同、host/体积/码率相同）→ 仍然判死
-var sameFile = StreamSource(url: "https://api.x.cn/a?token=999", backendName: "妖狐酷我",
-                            platform: .kuwo, quality: .lossless, format: "flac", note: "")
-sameFile.totalBytes = 27_330_647
-sameFile.kbps = 1016
-check("换 token 仍然认得出是同一份", DownloadRejections.isRejected(sameFile))
+let zhongsong = song(.kuwo, "众", "黄霄雲", id: "kuwo_zhong")
+let badURL = "https://api.x.cn/a?token=1"
+let badBytes: Int64 = 27_330_647
+check("没记过就不算判死", !DownloadRejections.isRejected(songID: zhongsong.id,
+                                                    url: badURL, totalBytes: badBytes))
+DownloadRejections.reject(songID: zhongsong.id, url: badURL, totalBytes: badBytes,
+                          reason: "文件只有 5:01、曲目 3:35（差 86 秒）")
+check("记过就判死", DownloadRejections.isRejected(songID: zhongsong.id,
+                                              url: badURL, totalBytes: badBytes))
+// 同一份文件换了 token（URL 不同、host/体积相同）→ 仍然判死
+check("换 token 仍然认得出是同一份",
+      DownloadRejections.isRejected(songID: zhongsong.id,
+                                    url: "https://api.x.cn/a?token=999", totalBytes: badBytes))
 // 体积不同 = 另一份文件，不该误杀
-var otherFile = StreamSource(url: "https://api.x.cn/a?token=1", backendName: "妖狐酷我",
-                             platform: .kuwo, quality: .high, format: "mp3", note: "")
-otherFile.totalBytes = 8_620_845
-otherFile.kbps = 320
-check("体积/码率不同不误杀", !DownloadRejections.isRejected(otherFile))
+check("体积不同不误杀",
+      !DownloadRejections.isRejected(songID: zhongsong.id, url: badURL, totalBytes: 8_620_845))
+// 别的歌不受影响
+check("别的歌不受影响",
+      !DownloadRejections.isRejected(songID: "kuwo_other", url: badURL, totalBytes: badBytes))
+// StreamSource 便捷口径与下载落盘那边算出来的是同一串
+var badSrc = StreamSource(url: badURL, backendName: "妖狐酷我", platform: .kuwo,
+                          quality: .lossless, format: "flac", note: "")
+badSrc.totalBytes = badBytes
+badSrc.kbps = 1016
+check("StreamSource 口径也判死", DownloadRejections.isRejected(badSrc, song: zhongsong))
 DownloadRejections.clear()
-check("清空后不再判死", !DownloadRejections.isRejected(badFull))
+check("清空后不再判死", !DownloadRejections.isRejected(badSrc, song: zhongsong))
 
 print("— ④ 探头部只认「头里有长度」的容器")
 // m4a 的 moov 在尾部时，头里读不出长度 → duration 必须 nil（=不拦）

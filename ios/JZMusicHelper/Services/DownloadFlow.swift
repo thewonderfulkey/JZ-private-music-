@@ -171,7 +171,7 @@ final class DownloadFlow {
                let verdict = await DownloadHeadProbe.check(candidate, song: song),
                !verdict.ok {
                 guard !Task.isCancelled else { return }
-                DownloadRejections.reject(candidate, reason: verdict.reason)
+                DownloadRejections.reject(candidate, song: song, reason: verdict.reason)
                 PlaybackTrace.shared.log("下载前探头部判死", "\(song.name)：\(verdict.reason)")
                 plan = await DownloadResolver.plan(song: song, want: quality)
                 guard !Task.isCancelled else { return }

@@ -131,19 +131,28 @@ enum DownloadRejections {
         let at: Date
     }
 
-    /// 「同一份文件」的指纹：URL 里的 host + 容器 + 体积 + 实测码率（token 不参与）
-    static func fingerprint(url: String, format: String, totalBytes: Int64, kbps: Int64) -> String {
+    /// 「同一份文件」的指纹：**歌 + 主机 + 体积**。
+    ///
+    /// 为什么不用 URL 做键：这类 CDN 直链带 token，每次重新解析都变（实测同一条源两次不同 URL）。
+    /// 为什么不带容器/码率：`DownloadItem` 落库后只剩 `streamURL/总字节/档位`，
+    /// 而 `StreamSource` 那边有 `format/kbps`——两边算出来的指纹必须是**同一串**，
+    /// 否则"下完记的"和"下次排候选时查的"对不上，判死名单就形同虚设。
+    /// 所以只取两边都稳定可得的：主机 + 总字节；歌是分开的一维（同一份字节服务两首歌极少见）。
+    static func fingerprint(songID: String, url: String, totalBytes: Int64) -> String {
         let host = URL(string: url)?.host?.lowercased() ?? "-"
-        return "\(host)|\(format.lowercased())|\(totalBytes)|\(kbps)"
+        return "\(songID)|\(host)|\(totalBytes)"
     }
 
-    static func fingerprint(_ src: StreamSource) -> String {
-        fingerprint(url: src.url, format: src.format,
-                    totalBytes: src.totalBytes, kbps: src.kbps)
+    static func fingerprint(_ src: StreamSource, song: Song) -> String {
+        fingerprint(songID: song.id, url: src.url, totalBytes: src.totalBytes)
     }
 
-    static func isRejected(_ src: StreamSource) -> Bool {
-        isRejected(fingerprint: Self.fingerprint(src))
+    static func isRejected(songID: String, url: String, totalBytes: Int64) -> Bool {
+        isRejected(fingerprint: fingerprint(songID: songID, url: url, totalBytes: totalBytes))
+    }
+
+    static func isRejected(_ src: StreamSource, song: Song) -> Bool {
+        isRejected(fingerprint: Self.fingerprint(src, song: song))
     }
 
     static func isRejected(fingerprint fp: String) -> Bool {
@@ -151,8 +160,13 @@ enum DownloadRejections {
         return load().contains { $0.fp == fp && now.timeIntervalSince($0.at) < ttl }
     }
 
-    static func reject(_ src: StreamSource, reason: String) {
-        reject(fingerprint: Self.fingerprint(src), reason: reason)
+    static func reject(_ src: StreamSource, song: Song, reason: String) {
+        reject(fingerprint: Self.fingerprint(src, song: song), reason: reason)
+    }
+
+    static func reject(songID: String, url: String, totalBytes: Int64, reason: String) {
+        reject(fingerprint: fingerprint(songID: songID, url: url, totalBytes: totalBytes),
+               reason: reason)
     }
 
     static func reject(fingerprint fp: String, reason: String) {
