@@ -88,8 +88,11 @@ final class SleepAudioEngine {
     private var fadeTask: Task<Void, Never>?
     private var observersWired = false
 
+    /// 每层出厂音量
+    static let defaultLevel: Float = 0.7
+
     private init() {
-        for s in SleepSound.all { levels[s.id] = 0.7 }
+        for s in SleepSound.all { levels[s.id] = Self.defaultLevel }
         // 关键：先把 output 链建出来（mainMixerNode 一旦被访问就自动接到 outputNode），
         // 之后的 attach/connect 都是在"已经有一条合法链路"的图上做，避免运行中首次成形。
         _ = engine.mainMixerNode
@@ -237,6 +240,18 @@ final class SleepAudioEngine {
         stoppedByTimer = false
         if !isPlaying { resume() }
 
+        startTicker()
+        applyVolumes()
+        publishNowPlaying()
+    }
+
+    /// 一键重置：清空全部勾选，并把每条声音的音量恢复默认。
+    /// 节点交给 ticker 的包络淡出收尾（不会"啪"一下掐断），全静之后引擎和会话照常释放。
+    func resetAll() {
+        activeIDs.removeAll()
+        for key in Array(levels.keys) { levels[key] = Self.defaultLevel }
+        master = 1
+        stoppedByTimer = false
         startTicker()
         applyVolumes()
         publishNowPlaying()

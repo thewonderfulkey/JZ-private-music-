@@ -333,6 +333,18 @@ struct SleepView: View {
             }
             Spacer()
             Button {
+                Haptics.warning()
+                engine.resetAll()
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Tokens.Palette.paper))
+            }
+            .accessibilityLabel("重置：取消全部勾选并恢复默认音量")
+
+            Button {
                 Haptics.tabChanged()
                 engine.togglePlayPause()
             } label: {
