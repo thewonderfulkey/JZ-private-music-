@@ -4247,6 +4247,32 @@ do {
     check("什么都没有 → 空串", OiapiNeteaseAdapter.streamURL(from: [:]).isEmpty)
 }
 
+// MARK: - 网易官方取流（2026-11-25《众》"能下载不能在线"）
+
+section("网易官方 player/url：ids 必须百分号包方括号，否则 Swift 的 URL 直接是 nil")
+
+do {
+    check("档位 → br 999000 / 320000 / 128000",
+          NeteasePlayerAdapter.brParam(.lossless) == 999_000
+          && NeteasePlayerAdapter.brParam(.high) == 320_000
+          && NeteasePlayerAdapter.brParam(.standard) == 128_000,
+          "\(NeteasePlayerAdapter.brParam(.lossless))/\(NeteasePlayerAdapter.brParam(.high))")
+    let u = NeteasePlayerAdapter.url(ids: "1865532803", br: 320_000)
+    check("URL 里方括号是 %5B/%5D（不是裸方括号）",
+          u.contains("%5B1865532803%5D"), u)
+    check("这条 URL 能被 URL(string:) 解析（裸方括号会返回 nil）", URL(string: u) != nil, u)
+
+    let real: [String: Any] = ["code": 200,
+                               "data": [["url": "http://m10.music.126.net/a.mp3",
+                                         "type": "mp3", "size": 8_620_845, "br": 320_000]]]
+    check("现行形状 data[0].url", NeteasePlayerAdapter.streamURL(from: real)
+          == "http://m10.music.126.net/a.mp3", NeteasePlayerAdapter.streamURL(from: real))
+
+    let nullURL: [String: Any] = ["code": 200, "data": [["url": NSNull()]]]
+    check("版权受限（url 空/null）→ 空串", NeteasePlayerAdapter.streamURL(from: nullURL).isEmpty)
+    check("没有 data → 空串", NeteasePlayerAdapter.streamURL(from: ["code": 200]).isEmpty)
+}
+
 section("多源：酷我三条独立后端 + QQ 两条")
 do {
     let all = SourceRegistry.all

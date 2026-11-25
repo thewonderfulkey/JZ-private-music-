@@ -547,6 +547,69 @@ struct GdstudioNeteaseAdapter: StreamSourceAdapter {
     }
 }
 
+// MARK: - 网易系：官方播放地址（2026-11-25 补）
+//
+// 为什么必须补（老板 21:29 录屏："在线放不出来，但**能下载**"）：
+//   《众》在第三方聚合上几乎没有源（gdstudio 全档空 / meting 空 / 酷狗 502 / QQ 403），
+//   而**网易自己的** `enhance/player/url` 一直有：
+//     · br=320000 → mp3 320kbps 8,620,845 B（ID3 开头，AVFoundation 原生可播）
+//     · br=999000 → FLAC 47,977,837 B（fLaC 开头，容器干净）
+//   也就是说这首歌一直有 320k，只是我们从来没问过网易自己。
+//
+// 实测约定（2026-11-25）：
+//   · `ids` 必须带方括号；**Swift 的 URL(string:) 不接受裸 `[`/`]`，所以要用 %5B/%5D**；
+//   · 不是所有歌都有：`晴天`/`侧脸` 这条接口回 `url` 空（需要登录态），那就让它快点失败；
+//   · 链接带时间戳，约 20 分钟后失效 —— 绝不缓存 URL（与其它后端同口径）。
+struct NeteasePlayerAdapter: StreamSourceAdapter {
+    let name = "网易官方"
+    let platform: MusicPlatform = .netease
+
+    /// 档位 → br（纯函数，CI 断言）
+    static func brParam(_ q: QualityLevel) -> Int {
+        switch q {
+        case .lossless: return 999_000
+        case .high: return 320_000
+        case .standard: return 128_000
+        }
+    }
+
+    /// 取流 URL（纯函数）：`ids` 用百分号编码的方括号包起来
+    static func url(ids: String, br: Int) -> String {
+        "https://music.163.com/api/song/enhance/player/url?ids=%5B\(ids)%5D&br=\(br)"
+    }
+
+    /// 从响应里取直链 + 实测字段（纯函数）
+    /// 形状：`{"code":200,"data":[{"url":"http://…","type":"mp3","size":8620845,"br":320000}]}`
+    static func streamURL(from json: [String: Any]) -> String {
+        guard let data = json["data"] as? [[String: Any]], let first = data.first,
+              let url = first["url"] as? String, !url.isEmpty else { return "" }
+        return url
+    }
+
+    func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
+        let id = song.platformID.filter { $0.isNumber }
+        guard !id.isEmpty else { throw APIError.parse("网易官方：id 非法") }
+        let json = try await APIClient.shared.getJSON(
+            Self.url(ids: id, br: Self.brParam(quality)),
+            headers: ["Referer": "https://music.163.com/"], timeout: 10)
+        if let code = json["code"] as? Int, code != 200 {
+            throw APIError.parse("网易官方 code=\(code)")
+        }
+        var stream = Self.streamURL(from: json)
+        guard !stream.isEmpty else { throw APIError.parse("网易官方未返回 URL（版权受限/需登录态）") }
+        stream = UrlNormalizer.upgraded(stream)
+        guard let facts = await StreamVerifier.inspect(stream) else {
+            throw APIError.httpStatus(0)
+        }
+        let (q, fmt) = QualityFacts.of(facts, durationSec: song.durationSec)
+        return StreamSource(url: stream, backendName: name, platform: platform, quality: q,
+                            format: fmt, note: "网易官方播放地址（按 id 直查，实测标注）",
+                            directId: true,
+                            kbps: QualityFacts.kbps(facts.totalBytes, song.durationSec),
+                            totalBytes: facts.totalBytes, rangeOK: facts.rangeOK)
+    }
+}
+
 // MARK: - 网易系：oiapi（溯音 key 版）
 //
 // 2026-11-25 事故（v2.4.117 之后《众》彻底没源）：
@@ -958,6 +1021,9 @@ enum SourceRegistry {
         // （v2 `/v2/music/tencent/geturl` 恒回 code=503，v2.4.36 就是接错了这条）。
         // 它给真 320k/flac，但上游共享账号会风控（110001）→ 失败快、带冷却，只当机会性加分源。
         LuoyueQQAdapter(),
+        // 2026-11-25：《众》"在线放不出来、却能下载"的教训——先问网易自己。
+        // 它给 mp3 320k / FLAC，且是唯一对这首有源的通道（第三方全空）。
+        NeteasePlayerAdapter(),
         GdstudioNeteaseAdapter(),
         OiapiNeteaseAdapter(),
         YaohuKuwoAdapter(),
