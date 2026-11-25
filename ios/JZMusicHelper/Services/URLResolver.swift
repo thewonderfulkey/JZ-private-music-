@@ -163,7 +163,7 @@ enum SameSongCrossResolver {
                     for c in batch {
                         group.addTask {
                             let r = await URLResolver.shared.resolveResult(song: c, quality: quality)
-                            return SourcePicker.pick(r.sources, want: quality)
+                            return SourcePicker.pick(r.sources, want: quality).map { $0.matched(c) }
                         }
                     }
                     var out: [StreamSource?] = []
@@ -227,7 +227,7 @@ enum SameSongCrossResolver {
                         group.addTask {
                             let r = await URLResolver.shared.resolveResult(song: c, quality: want, timeout: 18)
                             if let s = SourcePicker.pick(r.sources, want: want) {
-                                return (s, "")
+                                return (s.matched(c), "")
                             }
                             // 失败原因（弹层诊断用）："网易·gdstudio 网易:超时" 这种
                             let reason = r.failed.map { "\($0.key):\($0.value)" }
@@ -305,13 +305,21 @@ enum SameSongCrossResolver {
         cands = cands.filter { seenKeys.insert(candKey($0)).inserted }
         cands = cands.filter { !triedKeys.contains(candKey($0)) }
 
-        // 排序（第三十四轮 + r120）：**先挑"能出目标档"的平台**，再"干净原唱永远优先"，最后才看同平台/时长。
+        // 排序（第三十四轮 + r120，2026-11-25 加身份位）：
+        // **先身份（就是这首歌 > 歌名相等 > 歌名相近 > 专辑兜底），再"能出目标档"的平台**，
+        // 然后"干净原唱永远优先"，最后才看同平台/时长。
         //
         // r120（《연애의 조건》）：以前「同平台优先」排在最前，QQ 那三条 128k 候选先被逐个解析，
         // 网易那条真无损排在后面；真机上预算一紧就"还没轮到网易就收工"，弹层于是写着"只有 128k"。
         // 现在按平台能力排序——无损先网易（gdstudio 稳定出 fLaC），320k/128k 也先网易（唯一按 br 给档的）。
+        //
+        // 2026-11-25：身份位必须最前。以前"错歌的 320k"能排到"对歌的 98kbps"前面，
+        // 直接导致《众》放成《侧脸》。
         if forDownload {
             cands.sort { a, b in
+                let ia = NameMatch.identityRank(src: song, cand: a)
+                let ib = NameMatch.identityRank(src: song, cand: b)
+                if ia != ib { return ia < ib }
                 let ra = downloadPlatformRank(a.platform, want: quality)
                 let rb = downloadPlatformRank(b.platform, want: quality)
                 if ra != rb { return ra < rb }
@@ -328,6 +336,9 @@ enum SameSongCrossResolver {
             }
         } else {
             cands.sort { a, b in
+                let ia = NameMatch.identityRank(src: song, cand: a)
+                let ib = NameMatch.identityRank(src: song, cand: b)
+                if ia != ib { return ia < ib }
                 let ca = StudioPick.isCleanTitle(a.name) && !StudioPick.isLiveAlbum(a.album)
                 let cb = StudioPick.isCleanTitle(b.name) && !StudioPick.isLiveAlbum(b.album)
                 if ca != cb { return ca && !cb }
@@ -391,16 +402,16 @@ enum SameSongCrossResolver {
         }
     }
 
-    /// 同曲判定：统一走 `NameMatch.sameRecording`（歌手优先 + 时长 ≤4s + 歌名只做辅助）。
+    /// 同曲判定：统一走 `NameMatch.sameRecording`（2026-11-25 起：**歌名证据是硬条件** + 歌手 + 时长 ≤4s）。
     ///
-    /// 2026-11-19 老板口径重写：旧口径要求「歌名归一化相等」，把《恋爱的条件》与
-    /// 《연애의 조건 (Love Options)》判成两首歌，于是译名不同的真无损候选全被挡在门外。
-    /// 现在歌名只在「时长未知」时兜底，不再是否决项；版本类标记仍然拦（见 `NameMatch.versionClass`）。
+    /// 2026-11-19 老板口径要求「歌手优先、歌名只做辅助」，是为了《恋爱的条件》/《연애의 조건》。
+    /// 但 2026-11-25《众》播成《侧脸》证明那条太松：同歌手、时长差 2.4 秒、歌名毫不相干也能过。
+    /// 现在译名案走 `NameMatch.titleEvidence` 的"专辑 + 时长 ≤1 秒"通道，其余情况歌名必须对得上。
     static func sameSong(src: Song, cand: Song) -> Bool {
         NameMatch.sameRecording(src: src, cand: cand)
     }
 
-    /// 同曲判定（池子级）：在老口径之上再挡一类**串成别的歌**。
+    /// 同曲判定（池子级）：在统一口径之上再挡一类**串成别的歌**。
     ///
     /// 2026-11-22（老板录屏《下一个天亮》播着播着变成《怎么会狠心伤害我》）：
     /// 这首歌的「歌手」是频道名 `我的音乐调频`，名下几十首互不相干的歌、时长都在 4 分钟上下；
@@ -408,11 +419,10 @@ enum SameSongCrossResolver {
     /// 后台升档时被换上，还把进度 seek 回去——听感就是"同一首唱到一半变成另一首"。
     ///
     /// `uploaderLike`（由整池子判出来，见 `NameMatch.looksLikeUploader`）为真时，
-    /// 只认**歌名归一化一致**的候选：译名/副标题都是括号里的，`normTitle` 会剥掉，
-    /// 所以真正的同曲换个平台仍然进得来；对不上的一律不进（宁可没有源，也不放错歌）。
+    /// 只认**歌名归一化一致**的候选（比"歌名证据"更窄一档：相似度/包含都不放行）。
     ///
-    /// 为什么不是所有歌都要求歌名一致：那会把《恋爱的条件》/《연애의 조건 (Love Options)》
-    /// 这类译名案（2026-11-19 老板口径）重新误杀。只有"这个歌手根本没这首"时才收紧。
+    /// 2026-11-25 之后这一层已经变成"双重保险"：`sameRecording` 本身也要求歌名证据，
+    /// 这里只是对"上传者名下的别的歌"再收紧一次（相似度那档也不给）。
     static func sameSong(src: Song, cand: Song, uploaderLike: Bool) -> Bool {
         guard sameSong(src: src, cand: cand) else { return false }
         guard uploaderLike else { return true }
@@ -435,18 +445,25 @@ enum DownloadResolver {
 
     // MARK: 打分（顺序不可反，改权重可以，改顺序不行）
     struct Score: Sendable, Comparable {
-        /// ① 音质档位：无损(FLAC/≥800k) > 320k > 256k > 128k
+        /// ① 身份等级（2026-11-25 新增，**排第一**）
+        ///
+        /// 0 = 就是这首歌（同平台同 id）/ 1 = 歌名完全相等 / 2 = 歌名相近 / 3 = 专辑+时长兜底 / 9 = 没证据。
+        /// 为什么必须排在音质前面：老板口径是"宁可 128k 的对歌，也不要 320k 的错歌"。
+        /// 事故：《众》只有 98kbps 的源，而《侧脸》有 320k，旧口径下错歌赢。
+        var identity: Int = 0
+        /// ② 音质档位：无损(FLAC/≥800k) > 320k > 256k > 128k
         let tier: Int
-        /// ② 版本匹配度：原唱 > 官方 Live > 其它
+        /// ③ 版本匹配度：原唱 > 官方 Live > 其它
         let version: Int
-        /// ③ 时长贴近度（越大越贴近）
+        /// ④ 时长贴近度（越大越贴近）
         let duration: Int
-        /// ④ 来源可靠性：实测有体积/码率、Range 正常、官方 CDN 直链优先
+        /// ⑤ 来源可靠性：实测有体积/码率、Range 正常、官方 CDN 直链优先
         let reliable: Int
-        /// ⑤ 响应速度：**只在同分时**用（越小越前）
+        /// ⑥ 响应速度：**只在同分时**用（越小越前）
         let ms: Int
 
         static func < (a: Score, b: Score) -> Bool {
+            if a.identity != b.identity { return a.identity > b.identity }   // 数字小 = 更可信
             if a.tier != b.tier { return a.tier < b.tier }
             if a.version != b.version { return a.version < b.version }
             if a.duration != b.duration { return a.duration < b.duration }
@@ -454,8 +471,10 @@ enum DownloadResolver {
             return a.ms > b.ms
         }
 
-        /// 诊断里那串 "1000/300/100/110"（档/版/时/可靠）
-        var short: String { "\(tier)/\(version)/\(duration)/\(reliable)" }
+        /// 诊断里那串 "身份/档/版/时/可靠"
+        var short: String {
+            "\(identity == 9 ? "错歌" : "id\(identity)")/\(tier)/\(version)/\(duration)/\(reliable)"
+        }
     }
 
     struct Candidate: Sendable {
@@ -639,7 +658,7 @@ enum DownloadResolver {
                         return nil
                     }
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
-                    return Candidate(song: job.song, source: src, elapsedMs: ms,
+                    return Candidate(song: job.song, source: src.matched(job.song), elapsedMs: ms,
                                      score: score(of: src, song: job.song, ref: song, ms: ms))
                 }
             }
@@ -709,7 +728,7 @@ enum DownloadResolver {
                         return nil
                     }
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
-                    return Candidate(song: job.song, source: src, elapsedMs: ms,
+                    return Candidate(song: job.song, source: src.matched(job.song), elapsedMs: ms,
                                      score: score(of: src, song: job.song, ref: song, ms: ms))
                 }
             }
@@ -782,7 +801,8 @@ enum DownloadResolver {
         if src.rangeOK == true { reliable += 20 }
         reliable += backendTrust(src.backendName)
 
-        return Score(tier: tierOf(src), version: version, duration: duration,
+        return Score(identity: NameMatch.identityRank(src: ref, cand: song),
+                     tier: tierOf(src), version: version, duration: duration,
                      reliable: reliable, ms: ms)
     }
 
@@ -834,7 +854,7 @@ enum DownloadResolver {
                         try await job.adapter.resolve(song: job.song, quality: want)
                     }
                     guard let src else { return nil }
-                    return RawCandidate(song: job.song, source: src,
+                    return RawCandidate(song: job.song, source: src.matched(job.song),
                                         elapsedMs: Int(Date().timeIntervalSince(t0) * 1000))
                 }
             }

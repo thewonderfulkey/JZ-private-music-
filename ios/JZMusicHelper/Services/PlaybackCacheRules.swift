@@ -21,8 +21,22 @@ enum PlaybackCacheRules {
     static let minLimit = 5
     static let maxLimit = 300
 
-    /// 参照时长的允许误差：老板 2026-11-25 定「±3~5 秒」，取上限 5 秒（比原来的 ±25 秒紧 5 倍）
-    static let durationToleranceSec: Double = 5
+    /// 参照时长的允许误差：**1.5 秒**（2026-11-25《众》播成《侧脸》之后收紧）。
+    ///
+    /// 演变：±25 秒 → ±5 秒 → ±1.5 秒。为什么必须再收：
+    /// 《众》215.5s 被换成了《侧脸》217.89s，差 2.39 秒——±5 秒的闸门**放它过去了**，
+    /// 于是"文件长度"这一条最后防线也没拦住。同一平台同一条母带的长度差通常 <0.5 秒，
+    /// 跨平台翻录 ≤1.5 秒，1.5 秒是既能拦住 2.4 秒的错歌、又不误杀正常翻录的位置。
+    static let durationToleranceSec: Double = 1.5
+
+    /// 超过这个差值就**判定不是同一份文件**（触发换源；全都不符就停下，不播错的）。
+    ///
+    /// 1.5–2.0 秒之间算"未核实"：允许播，但不显示百分比、不判播完（`durationVerified=false`）。
+    /// 这段灰区留给"母带尾部静音差异"这类真实存在的情况；2.0 秒以上一律不认。
+    static let durationMismatchSec: Double = 2.0
+
+    /// 缓存条目复核用的容差（比闸门更严：条目里存了"写的时候是哪条候选"）
+    static let cacheDurationToleranceSec: Double = 1.5
 
     /// 一首 320k / 4 分钟的歌大约这么大，只用于设置页显示"约 XX MB"
     static let averageSongBytes: Int64 = 9_600_000
@@ -94,7 +108,9 @@ enum PlaybackCacheRules {
         // 拿它当标准会把好源全判成"不是同一份"→ 一首歌都放不出来。
         guard expected.isFinite, expected >= 60, expected <= 15 * 60 else { return .unverified }
         let diff = abs(c - expected)
-        return diff <= tolerance ? .match(c) : .mismatch(diff)
+        if diff <= tolerance { return .match(c) }
+        // 灰区（1.5–2.0 秒）：允许播但不认；超过 2 秒直接判"不是同一份"
+        return diff > durationMismatchSec ? .mismatch(diff) : .unverified
     }
 
     /// 断流后换到的新直链，是不是**同一份文件**：
@@ -164,6 +180,23 @@ enum PlaybackCacheRules {
             h = h &* 0x0000_0100_0000_01b3
         }
         return h
+    }
+}
+
+// MARK: - 本地文件身份（2026-11-25）
+//
+// 下载链路用的是同一道身份闸，所以历史上下载下来的文件也可能是"别人的歌"。
+// 播放本地文件前先读它自己的头解长度：对不上就不播它（改在线解析），
+// 免得"文件是错的、界面是对的"再来一次。
+enum LocalAudioFacts {
+
+    /// 只读前 256KB（文件自己的索引），不整首读、不联网
+    static func duration(url: URL) -> Double? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 262_144), !head.isEmpty else { return nil }
+        let sniffed = StreamVerifier.sniffHead([UInt8](head.prefix(16)))
+        return MediaIndexRules.duration(head: head, container: sniffed, totalBytes: 0)
     }
 }
 

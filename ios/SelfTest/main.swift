@@ -229,23 +229,43 @@ section("同曲判定（译名不同也算同一首）")
 
 do {
     let src = song(.qq, "恋爱的条件", "BESTie (베스티)", album: "Love Options", dur: 194, id: "sim_src")
-    check("译名不同但同歌手同时长 → 判为同一首",
+    // 2026-11-25 修正口径：歌名重新成为**硬条件**，译名案改走"专辑 + 时长 ≤1 秒"通道。
+    // 所以候选要把专辑带上（真实数据：网易那条的专辑是「연애의 조건 (Love Options)」）。
+    check("译名不同，但同专辑 + 同时长 → 判为同一首（译名通道）",
           NameMatch.sameRecording(src: src,
                                   cand: song(.netease, "연애의 조건 (Love Options)", "BESTie",
-                                             dur: 194, id: "sim_ne")))
+                                             album: "연애의 조건 (Love Options)", dur: 194,
+                                             id: "sim_ne")))
     check("(Inst.) 伴奏版 → 拒",
           !NameMatch.sameRecording(src: src,
                                    cand: song(.netease, "연애의 조건 (Love Options) (Inst.)", "BESTie",
-                                              dur: 192, id: "sim_inst")))
+                                              album: "연애의 조건 (Love Options)", dur: 192,
+                                              id: "sim_inst")))
     check("别的歌 + 别的歌手 → 拒",
           !NameMatch.sameRecording(src: src,
                                    cand: song(.netease, "爱情转移", "陈奕迅", dur: 259, id: "sim_other")))
     check("同歌手但时长差 11s → 拒",
           !NameMatch.sameRecording(src: src,
                                    cand: song(.netease, "恋爱条件", "BESTie", dur: 205, id: "sim_long")))
-    check("同歌手同时长、歌名完全不同 → 通过（老板口径：歌名只做辅助）",
-          NameMatch.sameRecording(src: src,
-                                  cand: song(.qq, "LOVE OPTIONS", "BESTie", dur: 194, id: "sim_en")))
+    check("同歌手同时长、歌名完全不同、专辑也不同 → 拒（2026-11-25 新口径：宁可没源也别串歌）",
+          !NameMatch.sameRecording(src: src,
+                                   cand: song(.qq, "LOVE OPTIONS", "BESTie", dur: 194, id: "sim_en")))
+
+    // 2026-11-25 真机事故：《众》播成《侧脸》（同歌手、时长差 2.4 秒）
+    let zhong = song(.netease, "众", "黄霄雲", album: "众", dur: 215, id: "zhong_ne")
+    let ceyanNE = song(.netease, "侧脸", "黄霄雲", album: "侧脸", dur: 218, id: "ceyan_ne")
+    let ceyanQQ = song(.qq, "侧脸", "黄霄雲", album: "侧脸", dur: 217, id: "ceyan_qq")
+    let zhongQQ = song(.qq, "众", "黄霄雲", album: "众", dur: 215, id: "zhong_qq")
+    check("《众》vs《侧脸》（网易，差 3s）→ 拒", !NameMatch.sameRecording(src: zhong, cand: ceyanNE))
+    check("《众》vs《侧脸》（QQ，差 1.5s）→ 拒", !NameMatch.sameRecording(src: zhong, cand: ceyanQQ))
+    check("《众》vs《众》（另一平台，差 0.5s）→ 通过（跨源同曲仍要能补位）",
+          NameMatch.sameRecording(src: zhong, cand: zhongQQ))
+    check("身份等级：《众》vs《众》另一平台 = 1（歌名相等）",
+          NameMatch.identityRank(src: zhong, cand: zhongQQ) == 1,
+          "\(NameMatch.identityRank(src: zhong, cand: zhongQQ))")
+    check("身份等级：《众》vs《侧脸》= 9（没证据）",
+          NameMatch.identityRank(src: zhong, cand: ceyanQQ) == 9,
+          "\(NameMatch.identityRank(src: zhong, cand: ceyanQQ))")
 
     let frx = song(.qq, "发如雪", "周杰伦", album: "十一月的萧邦", dur: 300, id: "frx_src")
     check("发如雪 vs 发如雪(粤语版)/常颖杰 → 拒",
@@ -277,8 +297,8 @@ do {
     let realCover = song(.netease, "下一个天亮", "郭静", dur: 266, id: "ne_233882")
     let pool = [siblingExact, siblingEdge, siblingFar, realCover]
 
-    check("老口径确实放行（歌手同 + 时长差 0）",
-          SameSongCrossResolver.sameSong(src: pl, cand: siblingExact))
+    check("新口径直接拒：同歌手 + 时长差 0、但歌名完全不同（以前会放行）",
+          !SameSongCrossResolver.sameSong(src: pl, cand: siblingExact))
     check("池子里歌名一首都没对上 → 认作频道号/上传者",
           NameMatch.looksLikeUploader(pl, among: pool))
     check("收紧后：同上传者的别的歌（263s，差 0）→ 拒",
@@ -299,10 +319,15 @@ do {
                    song(.kuwo, "晴天", "周杰伦", dur: 269, id: "kw_qt")]
     check("真人歌手（他自己的歌在池子里）→ 不算频道号",
           !NameMatch.looksLikeUploader(jay, among: jayPool))
-    check("真人歌手不收严：同歌手同时长、歌名不同 → 照旧通过",
+    check("真人歌手也一样：歌名不同 → 拒（2026-11-25 起不再看是不是频道号）",
+          !SameSongCrossResolver.sameSong(
+            src: jay,
+            cand: song(.netease, "晴天娃娃", "周杰伦", dur: 269, id: "ne_qt_other"),
+            uploaderLike: false))
+    check("真人歌手：歌名一致 → 照旧通过",
           SameSongCrossResolver.sameSong(
             src: jay,
-            cand: song(.netease, "晴天 (周杰伦)", "周杰伦", dur: 269, id: "ne_qt"),
+            cand: song(.netease, "晴天", "周杰伦", dur: 269, id: "ne_qt"),
             uploaderLike: false))
 
     // 不误伤译名案（2026-11-19 老板口径）：名字不同但同歌手，池子里只有这一首（括号已被剥掉）。
@@ -5923,18 +5948,71 @@ func r251CacheAssertions() {
           MediaIndexRules.duration(head: Data(repeating: 0x11, count: 64),
                                    container: "mp3", totalBytes: 1_000) == nil)
 
-    section("时长闸门：±5 秒（原 ±25 秒）")
+    section("时长闸门：±1.5 秒判同一份 / >2 秒判不是（2026-11-25《众》事故后）")
     check("差 0 秒 → match", PlaybackCacheRules.gate(candidate: 200, expected: 200) == .match(200))
-    var g49 = false
-    if case .match = PlaybackCacheRules.gate(candidate: 204.9, expected: 200) { g49 = true }
-    check("差 4.9 秒 → match", g49)
-    var g51 = false
-    if case .mismatch = PlaybackCacheRules.gate(candidate: 205.1, expected: 200) { g51 = true }
-    check("差 5.1 秒 → mismatch", g51)
+    var g14 = false
+    if case .match = PlaybackCacheRules.gate(candidate: 201.4, expected: 200) { g14 = true }
+    check("差 1.4 秒 → match", g14)
+    var g18 = false
+    if case .unverified = PlaybackCacheRules.gate(candidate: 201.8, expected: 200) { g18 = true }
+    check("差 1.8 秒 → unverified（灰区：允许播，但不算核实过）", g18)
+    var g24 = false
+    if case .mismatch = PlaybackCacheRules.gate(candidate: 217.89, expected: 215.5) { g24 = true }
+    check("《众》215.5 vs《侧脸》217.89（差 2.39 秒）→ mismatch", g24)
     check("解不出索引 → unverified（不是 mismatch）",
           PlaybackCacheRules.gate(candidate: nil, expected: 200) == .unverified)
     check("曲目时长未知 → unverified",
           PlaybackCacheRules.gate(candidate: 200, expected: 0) == .unverified)
+    check("容差常量本身 = 1.5 / 2.0",
+          PlaybackCacheRules.durationToleranceSec == 1.5
+          && PlaybackCacheRules.durationMismatchSec == 2.0)
+
+    section("缓存条目身份复核（2026-11-25：错字节不许命中）")
+    let zhongRow = song(.netease, "众", "黄霄雲", album: "众", dur: 215,
+                        id: "netease_1865532803")
+    check("身份齐全、长度对得上 → 允许命中",
+          NameMatch.cacheIdentityOK(displayed: zhongRow, matchedName: "众", matchedSinger: "黄霄雲",
+                                    matchedDurationSec: 215.0, measuredDurationSec: 215.46))
+    check("条目里是《侧脸》的字节 → 不许命中",
+          !NameMatch.cacheIdentityOK(displayed: zhongRow, matchedName: "侧脸",
+                                     matchedSinger: "黄霄雲",
+                                     matchedDurationSec: 218.0, measuredDurationSec: 217.89))
+    check("歌名对但文件长度差 2.4 秒 → 不许命中",
+          !NameMatch.cacheIdentityOK(displayed: zhongRow, matchedName: "众",
+                                     matchedSinger: "黄霄雲",
+                                     matchedDurationSec: 215.0, measuredDurationSec: 217.89))
+    check("老条目没有身份 → 一律不许命中（升级时清空）",
+          !NameMatch.cacheIdentityOK(displayed: zhongRow, matchedName: nil,
+                                     matchedSinger: nil, matchedDurationSec: nil,
+                                     measuredDurationSec: nil))
+
+    section("来源标签要说实话（缓存/预取不许冒充平台直连）")
+    let cacheSrc = StreamSource(url: "jzcache://song/x", backendName: "播放缓存",
+                                platform: .netease, quality: .high, format: "mp3", note: "")
+    check("播放缓存 → 缓存", PlaybackQualityRules.originTag(cacheSrc) == "缓存")
+    let prefetchSrc = StreamSource(url: "https://x/a.mp3", backendName: "预取源",
+                                   platform: .netease, quality: .high, format: "mp3", note: "")
+    check("预取源 → 预取", PlaybackQualityRules.originTag(prefetchSrc) == "预取")
+    let liveSrc = StreamSource(url: "https://x/a.mp3", backendName: "gdstudio 网易",
+                              platform: .netease, quality: .high, format: "mp3", note: "")
+    check("真后端直连 → nil（按平台名显示）", PlaybackQualityRules.originTag(liveSrc) == nil)
+
+    section("打分：身份排在音质前面（老板口径：宁可 128k 对歌，不要 320k 错歌）")
+    let zhongRef = song(.netease, "众", "黄霄雲", album: "众", dur: 215, id: "netease_1865532803")
+    let ceyanSong = song(.qq, "侧脸", "黄霄雲", album: "侧脸", dur: 217, id: "qq_ceyan")
+    let zhongSong = song(.qq, "众", "黄霄雲", album: "众", dur: 215, id: "qq_zhong")
+    var hiWrong = StreamSource(url: "https://x/c.mp3", backendName: "落月 QQ",
+                               platform: .qq, quality: .high, format: "mp3", note: "")
+    hiWrong.kbps = 321
+    hiWrong.totalBytes = 8_716_728
+    var loRight = StreamSource(url: "https://x/z.m4a", backendName: "oiapi 网易",
+                               platform: .netease, quality: .standard, format: "m4a", note: "")
+    loRight.kbps = 98
+    loRight.totalBytes = 2_627_357
+    let sWrong = DownloadResolver.score(of: hiWrong, song: ceyanSong, ref: zhongRef, ms: 300)
+    let sRight = DownloadResolver.score(of: loRight, song: zhongSong, ref: zhongRef, ms: 1500)
+    check("错歌 320k 必须排在对歌 98kbps 之后", sRight > sWrong,
+          "right=\(sRight.short) wrong=\(sWrong.short)")
 
     section("断流续拉：是不是同一份文件")
     check("总长+指纹一样 → 同一份",

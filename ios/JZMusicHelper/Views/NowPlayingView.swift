@@ -440,9 +440,30 @@ struct NowPlayingView: View {
 
             chipsRow(width: width)
                 .padding(.top, 2)
+
+            // 2026-11-25《众》播成《侧脸》：播放页总长 3:38、列表里 03:35。
+            // 这类"文件长度 != 曲目长度"就是"放的不是这首歌"最便宜的证据，直接摊在标题下面。
+            if let note = durationMismatchNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(Tokens.Palette.vermilion.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+                    .accessibilityLabel(note)
+            }
         }
         .frame(width: width - Tokens.Spacing.xl * 2)
         .padding(.top, Tokens.Spacing.m)
+    }
+
+    /// 播放器实际吃到的文件长度 vs 曲目元数据长度（差 >1.5 秒才提示）
+    private var durationMismatchNote: String? {
+        guard let song = player.currentSong, song.duration > 1,
+              player.duration > 1 else { return nil }
+        let diff = player.duration - song.duration
+        guard abs(diff) > PlaybackCacheRules.durationMismatchSec else { return nil }
+        return "⚠️ 文件 \(Self.timeText(player.duration)) · 曲目 \(Self.timeText(song.duration))"
+            + "（差 \(Int(abs(diff).rounded())) 秒，可能不是这首歌）"
     }
 
     // MARK: 心动模式（推荐理由 + 不感兴趣）
@@ -524,7 +545,13 @@ struct NowPlayingView: View {
         if let source = player.source {
             if !source.format.isEmpty { out.append(source.format.uppercased()) }
             if source.kbps > 0 { out.append("\(source.kbps) kbps") }
-            if source.backendName != "本地文件" { out.append(source.platform.shortName) }
+            // 2026-11-25：来源要说实话。缓存/预取分支的 `platform` 抄的是**歌曲自己的平台**，
+            // 写成「网易」会让人以为是网易直连下来的字节——《众》播成《侧脸》时就是这样被掩盖的。
+            if let tag = PlaybackQualityRules.originTag(source) {
+                out.append(tag)
+            } else if source.platform != .local {
+                out.append(source.platform.shortName)
+            }
         }
         // A7（老板 2026-11-20）：在线播放固定 ≤320k、无损只用于下载——这一排必须说实话，
         // 不能再把「无损 FLAC」挂在在线播放上。本机文件（含下载下来的 FLAC）是例外：

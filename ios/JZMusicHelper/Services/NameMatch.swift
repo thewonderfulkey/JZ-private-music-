@@ -135,20 +135,146 @@ enum NameMatch {
             guard singerMatches(src.singer, cand.singer) else { return false }
         } else if srcSingers.isEmpty {
             // 两边都没有歌手信息：只能靠歌名
-            return titleMatches(src.name, cand.name)
+            return titleEvidence(src: src, cand: cand, requireDuration: false) != nil
         }
 
-        // ③ 时长硬闸门
+        // ③ 歌名证据（2026-11-25 起是**硬条件**，见下面 `titleEvidence` 的注释）
+        guard let evidence = titleEvidence(src: src, cand: cand) else { return false }
+
+        // ④ 时长硬闸门
         let sd = src.durationSec
         let cd = cand.durationSec
         if sd > 0 && cd > 0 {
-            guard abs(sd - cd) <= maxDurationDiffSec else { return false }
-            return true          // 歌手 + 时长都对上 → 歌名只做辅助（译名/副标题不同也放行）
+            let diff = abs(sd - cd)
+            // 专辑兜底这条只给"译名/外语名"用，容差必须比其他三条窄
+            if evidence == .albumDuration { return Double(diff) <= albumDurationToleranceSec }
+            return diff <= maxDurationDiffSec
         }
-
-        // ④ 时长未知（gdstudio 搜索不返回时长）→ 歌名归一化必须相同
-        return titleMatches(src.name, cand.name)
+        // ⑤ 时长未知（gdstudio 搜索不返回时长）：只认歌名证据；专辑通道必须有秒数
+        return evidence != .albumDuration
     }
+
+    // MARK: - 歌名证据（2026-11-25《众》/《侧脸》串歌）
+    //
+    // 事故：老板歌单里《众》（黄霄雲 215.5s）放出来是《侧脸》（同歌手 217.8s）。
+    // 旧口径「歌手 + 时长 ≤4s + 歌名只做辅助」把两首判成同一条录音，
+    // 于是"错歌的 320k"压过"对歌的 98kbps"，还被整首写进缓存。
+    //
+    // 新口径把歌名重新变成**硬条件**，但保留译名案（2026-11-19 老板口径：
+    // 《恋爱的条件》=《연애의 조건 (Love Options)》）的合法通道——那两首的歌名
+    // 归一化后毫不相干，靠的是「同一张专辑 + 时长几乎一致」这个证据。
+    //
+    // 为什么专辑通道要 ≤1 秒：译名只是换个写法，母带是同一个；而"同歌手的另一首歌"
+    // 时长天然会差一两秒（众 215.5 / 侧脸 217.8），1 秒这条线正好把两者分开。
+    static let albumDurationToleranceSec: Double = 1.0
+
+    /// 歌名"证据等级"：数字越小越强（`Score` 的第一排序位就是它）
+    enum TitleEvidence: Int, Comparable, Sendable {
+        /// 归一化后完全相等（去版本括号/标点/繁简）
+        case exact = 0
+        /// 短名（≥4 字）被长名包含 —— 录屏实证：「手写的从前」vs「手写的从前-优酸乳广告曲」
+        case contained = 1
+        /// 相似度 ≥0.75 —— 吃掉"差一两个字"
+        case similar = 2
+        /// 歌名完全不同，但**专辑一致 + 时长差 ≤1 秒**（译名/外语名，如《恋爱的条件》）
+        case albumDuration = 3
+
+        static func < (a: TitleEvidence, b: TitleEvidence) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// 这两个歌名之间有没有"是同一首"的证据？nil = 没有（2026-11-25 起一律拒）
+    ///
+    /// - Parameter requireDuration: false 用在"两边都没歌手"的兜底分支（那里只能看歌名）
+    static func titleEvidence(src: Song, cand: Song,
+                              requireDuration: Bool = true) -> TitleEvidence? {
+        let a = normTitle(src.name)
+        let b = normTitle(cand.name)
+        if !a.isEmpty, !b.isEmpty {
+            if a == b { return .exact }
+            let shorter = a.count <= b.count ? a : b
+            let longer = a.count <= b.count ? b : a
+            if shorter.count >= 4, longer.contains(shorter) { return .contained }
+        }
+        if !a.isEmpty, !b.isEmpty, FavoriteRules.titleSimilarity(src.name, cand.name) >= FavoriteRules.titleSimilarityFloor {
+            return .similar
+        }
+        // 译名通道：歌名完全不同，只能靠"同一张专辑 + 时长几乎一致"
+        guard requireDuration else { return nil }
+        guard src.durationSec > 0, cand.durationSec > 0,
+              Double(abs(src.durationSec - cand.durationSec)) <= albumDurationToleranceSec,
+              albumMatches(src.album, cand.album) else { return nil }
+        return .albumDuration
+    }
+
+    /// 身份等级（越小越可信）：0 = 就是这首歌（同平台同 id）/ 1 歌名相等 / 2 歌名相近 / 3 专辑兜底
+    ///
+    /// 9 = 没有任何证据（调用方必须当"不是这首歌"处理）
+    static func identityRank(src: Song, cand: Song) -> Int {
+        if src.platform == cand.platform && src.platformID == cand.platformID { return 0 }
+        guard let e = titleEvidence(src: src, cand: cand) else { return 9 }
+        switch e {
+        case .exact: return 1
+        case .contained, .similar: return 2
+        case .albumDuration: return 3
+        }
+    }
+
+    /// 专辑比对：**不剥括号**（"연애의 조건 (Love Options)" 里的 Love Options 就是证据），
+    /// 只做归一化（小写/去标点/去空白）后求包含；短的一边至少 3 个字，避免 "众" 这种单字误命中。
+    static func albumMatches(_ a: String, _ b: String) -> Bool {
+        func norm(_ raw: String) -> String {
+            var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .precomposedStringWithCanonicalMapping
+                .lowercased()
+            s = punct.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
+            return s.replacingOccurrences(of: " ", with: "")
+        }
+        let x = norm(a)
+        let y = norm(b)
+        guard !x.isEmpty, !y.isEmpty else { return false }
+        if x == y { return true }
+        let shorter = x.count <= y.count ? x : y
+        let longer = x.count <= y.count ? y : x
+        return shorter.count >= 3 && longer.contains(shorter)
+    }
+
+    /// 缓存/下载条目里的"候选身份"还对不对得上当前这首歌（2026-11-25）
+    ///
+    /// 命中缓存时用它复核：条目是给哪条候选写的、文件自己多长，都要和当前显示的歌对得上。
+    /// 对不上就当场作废——不然那份错文件会被一直喂给播放器（"删缓存才好"就是这条没做）。
+    ///
+    /// 判定顺序（任何一条不过 = 作废）：
+    ///   ① 条目没有候选身份（老版本写的）→ 不信；
+    ///   ② 候选歌名与当前歌过同一道歌名证据 → 过不了就是串歌；
+    ///   ③ 文件自己的长度能解出来时，与曲目时长差 ≤1.5 秒（《众》215.5 vs《侧脸》217.9 差 2.39 秒，卡在这）；
+    ///   ④ 候选声明时长有值时，与曲目时长差 ≤4 秒（专辑兜底那条要求 ≤1 秒）。
+    static func cacheIdentityOK(displayed: Song,
+                                matchedName: String?, matchedSinger: String?,
+                                matchedDurationSec: Double?, measuredDurationSec: Double?) -> Bool {
+        let name = matchedName ?? ""
+        guard !name.isEmpty else { return false }        // ① 没有身份 → 不信
+        let candDuration = measuredDurationSec ?? matchedDurationSec ?? displayed.duration
+        let cand = Song.make(platform: displayed.platform,
+                             platformID: matchedPlatformIDPlaceholder(name),
+                             name: name, singer: matchedSinger ?? displayed.singer,
+                             album: displayed.album, duration: candDuration, picURL: nil)
+        guard let evidence = titleEvidence(src: displayed, cand: cand) else { return false }  // ②
+        if let measured = measuredDurationSec, measured > 1, displayed.duration >= 60,
+           abs(measured - displayed.duration) > cacheDurationToleranceSec { return false } // ③
+        if let d = matchedDurationSec, d > 1, displayed.duration >= 60,
+           abs(d - displayed.duration) > Double(maxDurationDiffSec) { return false }        // ④
+        if evidence == .albumDuration, let d = matchedDurationSec, d > 1,
+           abs(d - displayed.duration) > albumDurationToleranceSec { return false }
+        return true
+    }
+
+    /// 只为构造一条"临时候选"用得上的假 id（`sameRecording` 会先把同 id 判成 false，所以必须不等于本歌）
+    private static func matchedPlatformIDPlaceholder(_ name: String) -> String {
+        "cache:" + name
+    }
+
+    /// 缓存条目实测时长与曲目声明时长的容差（2026-11-25：±5 秒太松，众 215.5 vs 侧脸 217.9 只差 2.4 秒）
+    static let cacheDurationToleranceSec: Double = 1.5
 
     // MARK: - 「歌手」其实是频道号 / 上传者（2026-11-22《下一个天亮》串歌）
 

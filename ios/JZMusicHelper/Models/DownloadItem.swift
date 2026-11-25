@@ -18,7 +18,28 @@ struct StreamSource: Identifiable, Codable, Hashable, Sendable {
     /// nil = 老数据/没探测（解码兼容：Optional 缺键不报错）。
     var rangeOK: Bool? = nil
 
+    // MARK: 身份（2026-11-25《众》播成《侧脸》之后加的）
+    //
+    // 一条流**实际对应的是哪一条候选**。绝大多数时候它就是当前这首歌；但跨源补位时
+    // 它可能是"别家的同一条录音"——正因为来源可能不是本歌自己的 id，落盘（缓存/下载）时
+    // 必须把这份身份一起记下来，事后才回答得出"这个文件是不是这首歌的"。
+    // 全部用 Optional：老 JSON 没有这些键，解码不能失败。
+    var matchedName: String? = nil
+    var matchedSinger: String? = nil
+    var matchedPlatformID: String? = nil
+    var matchedDurationSec: Double? = nil
+
     var id: String { "\(platform.rawValue)_\(backendName)_\(quality.rawValue)" }
+
+    /// 把"这条流对应哪条候选"钉在源上（纯拷贝，不动 URL / 码率 / 平台）
+    func matched(_ song: Song) -> StreamSource {
+        var copy = self
+        copy.matchedName = song.name
+        copy.matchedSinger = song.singer
+        copy.matchedPlatformID = song.platformID
+        copy.matchedDurationSec = song.duration
+        return copy
+    }
 
     /// 码率（kbps）：总字节 × 8 ÷ 时长；任一为 0 时回 0（表示算不出）
     static func kbps(totalBytes: Int64, durationSec: Int) -> Int64 {

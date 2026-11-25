@@ -273,6 +273,21 @@ enum PlaybackQualityRules {
 
     /// 播放页/设置页那句诚实标注（老板 2026-11-20 原话口径）
     static let label = "高品 320k（无损仅下载）"
+
+    /// 这条流到底从哪来的（2026-11-25《众》播成《侧脸》之后加的）
+    ///
+    /// 缓存/预取/心动缓存这几条分支的 `platform` 抄的是**歌曲自己的平台**，
+    /// 播放页如果照着它写「网易」，就会把"缓存里的一条候选"伪装成"网易直连"。
+    /// nil = 真的是某个后端直连出来的流，按平台名显示即可。
+    static func originTag(_ src: StreamSource) -> String? {
+        switch src.backendName {
+        case "播放缓存": return "缓存"
+        case "预取源": return "预取"
+        case "心动缓存": return "心动缓存"
+        case "本地文件": return "本地"
+        default: return nil
+        }
+    }
 }
 
 // MARK: - 加密容器（QQ 的 .mgg / O4M-O8M）

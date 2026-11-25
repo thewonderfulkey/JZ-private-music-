@@ -906,7 +906,7 @@ final class PlayerEngine {
         // 已下载的不用预取：`loadCurrent` 第一条分支直接播本地文件
         if DownloadManager.shared.localFileURL(for: song) != nil { return }
         // 已整首落盘过的也不用再解析
-        if PlaybackCache.shared.hasComplete(song.id) { return }
+        if PlaybackCache.shared.hasComplete(song) { return }
         if pendingStream?.songID == song.id || pendingLocal?.songID == song.id { return }
         let src = await resolveStream(for: song)
         guard !Task.isCancelled, prefetchSongID == song.id else { return }
@@ -966,28 +966,57 @@ final class PlayerEngine {
         // 真正起播（`start()` 里清），否则那句提示会被这一行立刻抹掉，用户什么也看不到。
 
         // 已下到本地的歌优先播本地文件：离线也能放，也省掉一次解析
+        //
+        // 2026-11-25：本地文件也要能是"别人的歌"——下载链路用的是同一道身份闸，
+        // 以前存过错文件（《众》那份就可能是《侧脸》）。这里只读文件自己的头解长度，
+        // 差 >2 秒就不播它、改走在线解析（宁可重取一次，不播错）。
         if let localURL = DownloadManager.shared.localFileURL(for: song) {
-            let local = StreamSource(url: localURL.absoluteString,
-                                     backendName: "本地文件",
-                                     platform: song.platform,
-                                     quality: quality,
-                                     format: localURL.pathExtension.lowercased(),
-                                     note: "已下载")
-            statusText = "本地文件 · \(localURL.lastPathComponent)"
-            start(item: Self.makeItem(url: localURL), song: song, source: local)
-            return
+            let fileSeconds = LocalAudioFacts.duration(url: localURL)
+            let mismatch = fileSeconds.map { secs in
+                song.duration > 0 && abs(secs - song.duration) > PlaybackCacheRules.durationMismatchSec
+            } ?? false
+            if mismatch, let secs = fileSeconds {
+                PlaybackTrace.shared.log("本地文件不符",
+                                         "\(song.name)：文件 \(Int(secs))s / 曲目 \(Int(song.duration))s，改在线解析")
+                statusText = "本地文件长度不符（\(Int(secs))s），改在线解析…"
+            } else {
+                let local = StreamSource(url: localURL.absoluteString,
+                                         backendName: "本地文件",
+                                         platform: song.platform,
+                                         quality: quality,
+                                         format: localURL.pathExtension.lowercased(),
+                                         note: "已下载")
+                statusText = "本地文件 · \(localURL.lastPathComponent)"
+                start(item: Self.makeItem(url: localURL), song: song, source: local)
+                return
+            }
         }
 
         // 已经整首落盘过的（播放缓存）：直接播本地文件——连解析都省了，也永远不会断流
-        if let cached = PlaybackCache.shared.completeFile(for: song.id) {
-            let local = StreamSource(url: cached.absoluteString,
+        //
+        // 2026-11-25：命中前先过身份复核（`cachedFile(for:)`）。以前只查"文件在不在"，
+        // 《众》的缓存里装着《侧脸》的字节也照样命中，于是错音频一直播下去。
+        if let cached = PlaybackCache.shared.cachedFile(for: song) {
+            // 码率：条目里存了总字节 + 文件自己的长度，算得出来就如实写（以前这里是 0，
+            // 播放页于是只剩"MP3 / 网易"，看不出它其实播的是缓存里的某条候选）
+            let kbps = StreamSource.kbps(totalBytes: cached.totalBytes,
+                                         durationSec: Int((cached.measuredDurationSec
+                                                           ?? song.duration).rounded()))
+            var local = StreamSource(url: cached.url.absoluteString,
                                      backendName: "播放缓存",
                                      platform: song.platform,
                                      quality: quality,
-                                     format: cached.pathExtension.lowercased(),
+                                     format: cached.url.pathExtension.lowercased(),
                                      note: "整首已缓存")
-            statusText = "播放缓存 · \(cached.lastPathComponent)"
-            start(item: Self.makeItem(url: cached), song: song, source: local,
+            local.kbps = kbps
+            local.totalBytes = cached.totalBytes
+            local.directId = false
+            local.matchedName = cached.matchedName
+            local.matchedSinger = cached.matchedSinger
+            local.matchedPlatformID = cached.matchedPlatformID
+            local.matchedDurationSec = cached.matchedDurationSec
+            statusText = "播放缓存 · \(cached.url.lastPathComponent)"
+            start(item: Self.makeItem(url: cached.url), song: song, source: local,
                   durationVerified: true)
             return
         }

@@ -22,6 +22,39 @@ struct SourceDetailView: View {
                     }
                 }
 
+                // 2026-11-25《众》播成《侧脸》：把"这条字节到底对应哪条候选"摊开。
+                // 结论只有两种：同一条录音，或者"不是这首歌"（后者要被一眼看见，而不是靠用户听出来）。
+                Section("匹配身份") {
+                    if let song = player.currentSong, let source = player.source {
+                        let matchedName = source.matchedName ?? ""
+                        if matchedName.isEmpty {
+                            Text("这条源没有身份记录（老数据/本地文件），无法核对")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            let played: Double? = player.duration > 1 ? player.duration : source.matchedDurationSec
+                            let ok = NameMatch.cacheIdentityOK(
+                                displayed: song, matchedName: matchedName,
+                                matchedSinger: source.matchedSinger,
+                                matchedDurationSec: source.matchedDurationSec,
+                                measuredDurationSec: played)
+                            LabeledContent("结论", value: ok ? "✅ 同一条录音" : "⚠️ 不是这首歌")
+                            LabeledContent("实际匹配", value: "\(matchedName)"
+                                           + (source.matchedSinger.map { " · \($0)" } ?? ""))
+                            if let d = source.matchedDurationSec, d > 1 {
+                                LabeledContent("候选时长", value: NowPlayingView.timeText(d))
+                            }
+                            if !ok {
+                                Text("这份字节不是当前这首歌的（长度或歌名对不上）。已缓存的那首会在下次播放时作废并重新解析；如果反复出现，把这段截图发出来。")
+                                    .font(.caption)
+                                    .foregroundStyle(Tokens.Palette.vermilion)
+                            }
+                        }
+                    } else {
+                        Text("还没有音源信息").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("当前播放") {
                     if let source = player.source {
                         LabeledContent("后端", value: source.backendName)

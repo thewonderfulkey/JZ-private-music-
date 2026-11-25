@@ -40,6 +40,16 @@ final class PlaybackCache: @unchecked Sendable {
         let savedAt: Date
         /// 最近一次播放（只用于显示/排查，不参与淘汰）
         var lastPlayedAt: Date
+        // MARK: 身份（2026-11-25《众》播成《侧脸》之后加的）
+        //
+        // 老条目没有这几项 → 解码成 nil → 一律当"来历不明"作废（升级时清一次，见 `load`）。
+        // 有身份才能回答：这份文件是给哪条候选写的、它自己有多长、和当前这首歌对不对得上。
+        var matchedName: String? = nil
+        var matchedSinger: String? = nil
+        var matchedPlatformID: String? = nil
+        var matchedDurationSec: Double? = nil
+        /// 文件自己的长度（下载完成后从本地文件头解出来的）
+        var measuredDurationSec: Double? = nil
     }
 
     private let queue = DispatchQueue(label: "jz.playback.cache", qos: .utility)
@@ -65,7 +75,54 @@ final class PlaybackCache: @unchecked Sendable {
 
     // MARK: 查询
 
+    /// 一次命中的缓存文件（带身份，供播放页的"音源详情"和起播时判断用）
+    struct CachedFile {
+        let url: URL
+        let totalBytes: Int64
+        let matchedName: String?
+        let matchedSinger: String?
+        let matchedPlatformID: String?
+        let matchedDurationSec: Double?
+        let measuredDurationSec: Double?
+    }
+
     /// 已经完整落盘的那一首（再播时优先用它，连解析都省了）
+    ///
+    /// 2026-11-25：这里现在**要过身份复核**。以前只查"条目在、文件在"，
+    /// 《众》的条目里装着《侧脸》的字节也照样命中，于是错音频永远播下去。
+    /// 对不上就当场作废（删条目 + 删文件）并返回 nil，调用方会重新解析。
+    func cachedFile(for song: Song) -> CachedFile? {
+        var out: CachedFile?
+        queue.sync {
+            guard let e = entries[song.id], e.completed else { return }
+            let url = directory.appendingPathComponent(e.fileName)
+            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            guard NameMatch.cacheIdentityOK(displayed: song,
+                                            matchedName: e.matchedName,
+                                            matchedSinger: e.matchedSinger,
+                                            matchedDurationSec: e.matchedDurationSec,
+                                            measuredDurationSec: e.measuredDurationSec) else {
+                entries[song.id] = nil
+                try? FileManager.default.removeItem(at: url)
+                self.removeOtherFiles(songID: song.id, keeping: "")
+                save()
+                Task { @MainActor in
+                    PlaybackTrace.shared.log("缓存作废",
+                                             "\(song.name)：条目里的候选不是这首歌，已删并重解析")
+                }
+                return
+            }
+            out = CachedFile(url: url, totalBytes: e.totalBytes,
+                             matchedName: e.matchedName, matchedSinger: e.matchedSinger,
+                             matchedPlatformID: e.matchedPlatformID,
+                             matchedDurationSec: e.matchedDurationSec,
+                             measuredDurationSec: e.measuredDurationSec)
+        }
+        if out != nil { touch(song.id) }
+        return out
+    }
+
+    /// 只查存在（UI 的「已缓存」标记用；不做身份复核，避免在滚动列表里触发删文件）
     func completeFile(for songID: String) -> URL? {
         var out: URL?
         queue.sync {
@@ -80,14 +137,10 @@ final class PlaybackCache: @unchecked Sendable {
     func isComplete(_ songID: String) -> Bool { completeFile(for: songID) != nil }
 
     /// 只查、**不更新最近播放时间**（预取用；否则会把没听过的歌顶成"最近用过"）
-    func hasComplete(_ songID: String) -> Bool {
-        var ok = false
-        queue.sync {
-            guard let e = entries[songID], e.completed else { return }
-            ok = FileManager.default.fileExists(
-                atPath: directory.appendingPathComponent(e.fileName).path)
-        }
-        return ok
+    ///
+    /// 2026-11-25：这里也要过身份复核——否则一条坏的缓存会让"预取"永远跳过这首歌。
+    func hasComplete(_ song: Song) -> Bool {
+        cachedFile(for: song) != nil
     }
 
     /// 起播前的一次探测（2026-11-25）：文件自己的索引 + 首段指纹。
@@ -237,16 +290,38 @@ final class PlaybackCache: @unchecked Sendable {
             // 同一个 songID 只留一份：换了容器（mp3→m4a）会生成另一个后缀的文件，
             // 旧那份必须清掉（否则既是垃圾、又可能被当成另一条缓存）
             self.removeOtherFiles(songID: song.id, keeping: name)
+            let measured = Self.measure(file: file, fallbackContainer: container, totalBytes: bytes)
             let entry = Entry(songID: song.id, fileName: name, totalBytes: bytes,
                               container: container,
                               contentType: PlaybackCacheRules.contentType(container: container,
                                                                           format: source.format),
-                              completed: true, savedAt: Date(), lastPlayedAt: Date())
+                              completed: true, savedAt: Date(), lastPlayedAt: Date(),
+                              matchedName: source.matchedName,
+                              matchedSinger: source.matchedSinger,
+                              matchedPlatformID: source.matchedPlatformID,
+                              matchedDurationSec: source.matchedDurationSec,
+                              measuredDurationSec: measured)
             self.entries[song.id] = entry
             self.sessions[song.id]?.finished = true
             self.save()
             self.enforceLimit(keeping: song.id)
+            Task { @MainActor in
+                PlaybackTrace.shared.log("缓存完成",
+                                         "\(song.name) ← \(source.matchedName ?? "?") "
+                                         + "文件 \(measured.map { "\(Int($0))s" } ?? "长度解不出")")
+            }
         }
+    }
+
+    /// 从刚下完的**本地文件**里解长度（文件自己的索引，不联网）
+    private static func measure(file: URL, fallbackContainer: String, totalBytes: Int64) -> Double? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 262_144)) ?? Data()
+        guard !head.isEmpty else { return nil }
+        let sniffed = StreamVerifier.sniffHead([UInt8](head.prefix(16)))
+        let container = sniffed == "unknown" ? fallbackContainer : sniffed
+        return MediaIndexRules.duration(head: head, container: container, totalBytes: totalBytes)
     }
 
     /// 把这一首的缓存判成**坏的**：删索引、删文件（含半截）。播放层在"缓存文件读不出来"时调它。
@@ -306,10 +381,16 @@ final class PlaybackCache: @unchecked Sendable {
         // 只收"后缀是已知音频容器"的条目：v2.4.112–115 缓存下来的是 `p_xxx.audio`，
         // 那种文件 AVFoundation 认不出类型（2026-11-25 真机事故）。升级时直接丢掉并删文件，
         // 否则老板装上新包、点开那首已经缓存过的歌，还是同一个 0:00 卡死。
+        //
+        // 2026-11-25 第二刀：**没有身份的条目一律作废**。v2.4.116 及以前的条目只记了
+        // "这是哪首歌的缓存"，没记"字节是从哪条候选下来的"——《众》的条目里就可能是
+        // 《侧脸》的字节。判断不了就删掉重下（一次性，最多 50 首）。
         var kept: [String: Entry] = [:]
         var dropped: [Entry] = []
         for e in list {
-            if PlaybackCacheRules.isPlayableExtension((e.fileName as NSString).pathExtension) {
+            let playable = PlaybackCacheRules.isPlayableExtension((e.fileName as NSString).pathExtension)
+            let identified = !((e.matchedName ?? "").isEmpty)
+            if playable && identified {
                 kept[e.songID] = e
             } else {
                 dropped.append(e)
@@ -317,6 +398,8 @@ final class PlaybackCache: @unchecked Sendable {
         }
         for e in dropped {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(e.fileName))
+            try? FileManager.default.removeItem(
+                at: directory.appendingPathComponent(e.fileName + ".json"))
         }
         entries = kept
         if !dropped.isEmpty { save() }
