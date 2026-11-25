@@ -1388,7 +1388,9 @@ private struct DownloadRow: View {
     /// 右侧小字：`无损 FLAC · 27.3 MB`（本地导入再加个"本地"前缀，信息不丢）
     private var qualityLine: String {
         let head = item.origin == "import" ? "本地 · " : ""
-        return "\(head)\(item.quality.displayName) · \(item.sizeText)"
+        // 2026-11-26（老板 ⑧）：档位名要带实测码率。以前这里只写「标准 128k · 2.6 MB」，
+        // 而实际存下来的是 96kbps，看起来就是虚标。
+        return "\(head)\(item.quality.labeled(kbps: item.kbps)) · \(item.sizeText)"
     }
 
     var body: some View {

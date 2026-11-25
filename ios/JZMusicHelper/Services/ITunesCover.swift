@@ -13,13 +13,19 @@ import Foundation
 // 所以这里要求：**歌名核心名相等（或包含）+ 歌手至少一个片段相等**，否则返回 nil 落占位图。
 enum ITunesCover {
 
-    /// 搜索 URL（纯函数，CI 可断言）。不指定 `country=cn`——中国区曲库对华语老歌反而更少，
-    /// 实测默认（美国区）能搜到 凉凉/Shape of You 这类。
-    static func searchURL(title: String, artist: String, limit: Int = 10) -> String {
+    /// 搜索 URL（纯函数，CI 可断言）。
+    ///
+    /// **必须带店（2026-11-26 实测）**：不带 `country` 走的是美国店，搜华语歌
+    /// 25 首里 0 首能中（`resultCount` 常常是 0 或全是《屋顶》这种不相干的）；
+    /// 换成 `country=tw` 后《稻香》《青花瓷》《晴天》都能出来；`country=cn` 直接 0 条。
+    /// 所以默认店是 `tw`，`fetch` 再补一个 `hk` 兜第二遍。
+    static func searchURL(title: String, artist: String, limit: Int = 10,
+                          country: String = "tw") -> String {
         let term = "\(title) \(artist)".trimmingCharacters(in: .whitespacesAndNewlines)
         let encoded = term.addingPercentEncoding(
             withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+=?/"))) ?? ""
         return "https://itunes.apple.com/search?term=\(encoded)&entity=song&limit=\(limit)"
+            + "&country=\(country)"
     }
 
     /// 把 `artworkUrl100` 换成更大尺寸（纯函数）
@@ -65,11 +71,17 @@ enum ITunesCover {
     }
 
     /// 网络取（失败静默返回 nil，由调用方落占位图）
+    ///
+    /// 两遍店：`tw`（首选，华语曲库最全）→ `hk`（差一点但偶有 tw 没有的）。
+    /// 每遍都要过严格匹配，所以多跑一遍不会把别人的封面贴上来。
     static func fetch(song: Song, timeout: TimeInterval = 6) async -> String? {
         guard !song.name.isEmpty else { return nil }
-        let url = searchURL(title: song.name, artist: song.singer)
-        guard let json = try? await APIClient.shared.getJSON(url, timeout: timeout) else { return nil }
-        return parse(json, title: song.name, artist: song.singer)
+        for country in ["tw", "hk"] {
+            let url = searchURL(title: song.name, artist: song.singer, country: country)
+            guard let json = try? await APIClient.shared.getJSON(url, timeout: timeout) else { continue }
+            if let hit = parse(json, title: song.name, artist: song.singer) { return hit }
+        }
+        return nil
     }
 
     // MARK: 归一

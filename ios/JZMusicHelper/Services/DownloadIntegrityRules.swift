@@ -108,3 +108,133 @@ enum DownloadIntegrityRules {
         return String(format: "%d:%02d", t / 60, t % 60)
     }
 }
+
+// MARK: - 下载「判死名单」（2026-11-26，老板 ①）
+//
+// 事故（11-25 录屏 02:35 → 03:52）：
+//   ① 02:35 《众》的无损下到 93% 才被判「文件只有 5:01、曲目 3:35——不是这首歌，已删除」；
+//   ② 03:47 再点下载，同一个源又被排到"最高可得"（面板写「只有 无损 FLAC」）——
+//      因为**下载侧根本没有"这条已经判死"的记忆**：播放侧有 `rejectedSourceURLs`，
+//      但那只是进程内、per-song；下载重开一次就全忘了。
+//
+// 这里补上持久化的判死名单：同一个「歌 + 主机 + 容器 + 体积 + 码率」不再推荐。
+// 为什么不用 URL 做键：这类 CDN 直链带 token，每次都变；体积+码率才是"同一份文件"的特征。
+enum DownloadRejections {
+
+    private static let key = "download_rejected_sources_v1"
+    private static let ttl: TimeInterval = 7 * 24 * 3600
+    private static let limit = 200
+
+    private struct Entry: Codable {
+        let fp: String
+        let reason: String
+        let at: Date
+    }
+
+    /// 「同一份文件」的指纹：URL 里的 host + 容器 + 体积 + 实测码率（token 不参与）
+    static func fingerprint(url: String, format: String, totalBytes: Int64, kbps: Int64) -> String {
+        let host = URL(string: url)?.host?.lowercased() ?? "-"
+        return "\(host)|\(format.lowercased())|\(totalBytes)|\(kbps)"
+    }
+
+    static func fingerprint(_ src: StreamSource) -> String {
+        fingerprint(url: src.url, format: src.format,
+                    totalBytes: src.totalBytes, kbps: src.kbps)
+    }
+
+    static func isRejected(_ src: StreamSource) -> Bool {
+        isRejected(fingerprint: Self.fingerprint(src))
+    }
+
+    static func isRejected(fingerprint fp: String) -> Bool {
+        let now = Date()
+        return load().contains { $0.fp == fp && now.timeIntervalSince($0.at) < ttl }
+    }
+
+    static func reject(_ src: StreamSource, reason: String) {
+        reject(fingerprint: Self.fingerprint(src), reason: reason)
+    }
+
+    static func reject(fingerprint fp: String, reason: String) {
+        var all = load().filter { Date().timeIntervalSince($0.at) < ttl }
+        all.removeAll { $0.fp == fp }
+        all.append(Entry(fp: fp, reason: reason, at: Date()))
+        if all.count > limit { all = Array(all.suffix(limit)) }
+        save(all)
+    }
+
+    /// 给下载面板显示用：这首歌有哪些源被判死过（最近一条原因）
+    static func reasons() -> [String] { load().map(\.reason) }
+
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
+
+    private static func load() -> [Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let rows = try? JSONDecoder().decode([Entry].self, from: data) else { return [] }
+        return rows
+    }
+
+    private static func save(_ rows: [Entry]) {
+        guard let data = try? JSONEncoder().encode(rows) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+// MARK: - 下全量之前先探头部（2026-11-26，老板 ⑩）
+//
+// 目标：把「下到 93% 才发现不是这首歌」提前到「下之前就知道」。
+// 做法与限制（都是实测过的）：
+//   · FLAC / WAV：STREAMINFO 就在文件头，Range 取前 256KB 就能解出总时长 → **可以硬拒**；
+//   · MP3：只有 Xing/Info 带帧数时能解，否则解不出 → 不拦（交给落盘后的完整校验）；
+//   · M4A：moov 有可能在文件**尾**，头里读不到 → 不拦；这里只试头部，尾巴留给下一轮。
+// 拿不到就返回 nil（= 不知道，不阻塞下载）——宁可放过，不能误杀。
+enum DownloadHeadProbe {
+
+    struct Verdict {
+        let ok: Bool
+        let reason: String
+        let durationSec: Double?
+    }
+
+    /// 与音频下载同一套头（部分 CDN 不带 Referer 直接 403）
+    private static func request(_ url: URL) -> URLRequest {
+        var r = URLRequest(url: url)
+        r.timeoutInterval = 8
+        r.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
+        r.setValue("https://music.qq.com/", forHTTPHeaderField: "Referer")
+        r.setValue("bytes=0-262143", forHTTPHeaderField: "Range")
+        return r
+    }
+
+    /// nil = 探不出来（不阻塞）；否则给出"能不能下"的结论
+    static func check(_ src: StreamSource, song: Song) async -> Verdict? {
+        guard let url = URL(string: src.url) else { return nil }
+        guard let (data, response) = try? await URLSession.shared.data(for: request(url)) else {
+            return nil
+        }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return nil   // 403/404 属于"这次拿不到"，不是"文件不对"
+        }
+        // 服务器不认 Range 时会回 200 + 整首（几十 MB）。那种情况我们不算数——
+        // 宁可当"不知道"，也不拿一份"已经被完整下载"的字节去判（而且这次请求的钱已经花掉了，
+        // 四个后端实测都认 Range、回 206，所以这条路基本不会走到）。
+        guard http.statusCode == 206 else { return nil }
+        guard data.count >= 256 else { return nil }
+        let head = data.prefix(262_144)
+        let container = StreamVerifier.sniffHead([UInt8](head.prefix(16)))
+        guard let fileSec = MediaIndexRules.duration(head: Data(head), container: container,
+                                                     totalBytes: src.totalBytes) else {
+            return nil   // 头里没有可信长度（mp3 无 Xing / m4a 的 moov 在尾部）→ 不拦
+        }
+        guard song.duration > 1 else { return Verdict(ok: true, reason: "", durationSec: fileSec) }
+        let diff = abs(fileSec - song.duration)
+        guard diff <= DownloadIntegrityRules.durationToleranceSec else {
+            return Verdict(ok: false,
+                           reason: "文件头只有 \(DownloadIntegrityRules.timeText(fileSec))、曲目 "
+                             + "\(DownloadIntegrityRules.timeText(song.duration))"
+                             + "（差 \(Int(diff.rounded())) 秒）—— 不是这首歌，没下载",
+                           durationSec: fileSec)
+        }
+        return Verdict(ok: true, reason: "", durationSec: fileSec)
+    }
+}

@@ -161,8 +161,21 @@ final class DownloadFlow {
         stage = .resolving
         resolveTask?.cancel()
         resolveTask = Task { @MainActor in
-            let plan = await DownloadResolver.plan(song: song, want: quality)
+            var plan = await DownloadResolver.plan(song: song, want: quality)
             guard !Task.isCancelled else { return }
+            // 2026-11-26（老板 ⑩）：**下全量之前先探头部**。
+            // 以前是下到 93%（27MB 走了两分钟）才用文件头判"不是这首歌"，白等；
+            // 现在确认候选后先 Range 取前 256KB：FLAC/WAV 的头里带总时长，差 >1.5s 就当场判死、
+            // 记进判死名单、重排一次候选。探不出来（mp3 无 Xing / m4a 的 moov 在尾部）就不拦。
+            if let candidate = plan.picked?.source ?? plan.fallback,
+               let verdict = await DownloadHeadProbe.check(candidate, song: song),
+               !verdict.ok {
+                guard !Task.isCancelled else { return }
+                DownloadRejections.reject(candidate, reason: verdict.reason)
+                PlaybackTrace.shared.log("下载前探头部判死", "\(song.name)：\(verdict.reason)")
+                plan = await DownloadResolver.plan(song: song, want: quality)
+                guard !Task.isCancelled else { return }
+            }
             apply(plan)
         }
     }

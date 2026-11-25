@@ -441,30 +441,21 @@ struct NowPlayingView: View {
             chipsRow(width: width)
                 .padding(.top, 2)
 
-            // 2026-11-25《众》播成《侧脸》：播放页总长 3:38、列表里 03:35。
-            // 这类"文件长度 != 曲目长度"就是"放的不是这首歌"最便宜的证据，直接摊在标题下面。
-            if let note = durationMismatchNote {
-                Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(Tokens.Palette.vermilion.opacity(0.9))
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 2)
-                    .accessibilityLabel(note)
-            }
+            // 2026-11-26：**那行红字撤掉了**（老板拍板）。
+            //
+            // 以前这里会显示「⚠️ 文件 4:20 · 曲目 3:27（差 53 秒，可能不是这首歌）」。
+            // 老板 11-26 的判断是：歌曲本身是对的，**是文件头的时间写错了**——
+            // 这行字既没有阻止播放，又天天在播放页吓人，属于"把内部矛盾摊给用户看"。
+            // 现在这类矛盾只记进「设置 → 播放诊断」（`时长头偏长` / `item ready`），
+            // 播放页只负责放歌。
         }
         .frame(width: width - Tokens.Spacing.xl * 2)
         .padding(.top, Tokens.Spacing.m)
     }
 
-    /// 播放器实际吃到的文件长度 vs 曲目元数据长度（差 >1.5 秒才提示）
-    private var durationMismatchNote: String? {
-        guard let song = player.currentSong, song.duration > 1,
-              player.duration > 1 else { return nil }
-        let diff = player.duration - song.duration
-        guard abs(diff) > PlaybackCacheRules.durationMismatchSec else { return nil }
-        return "⚠️ 文件 \(Self.timeText(player.duration)) · 曲目 \(Self.timeText(song.duration))"
-            + "（差 \(Int(abs(diff).rounded())) 秒，可能不是这首歌）"
-    }
+    // 2026-11-26 删除：`durationMismatchNote`（播放页那行红字）。
+    // 老板口径：文件是对的、头是错的 → 这行字只该进「播放诊断」，不该挂在播放页。
+    // 判定与打点见 `AudioPlayer.wire(item:)` 的 `时长头偏长` 分支。
 
     // MARK: 心动模式（推荐理由 + 不感兴趣）
 
@@ -559,7 +550,21 @@ struct NowPlayingView: View {
         let playingLocalFile = player.source.map {
             $0.backendName == "本地文件" || $0.backendName == "心动缓存"
         } ?? false
-        out.append(playingLocalFile ? "本地播放" : PlaybackQualityRules.label)
+        if playingLocalFile {
+            out.append("本地播放")
+        } else {
+            // 2026-11-26（老板 11-25 录屏 ⑥）：以前这里挂的是静态标签「高品 320k（无损仅下载）」，
+            // 于是屏幕上是「96 kbps」和「高品 320k」并排放——字面没错，读起来像在骗人。
+            // 现在只说一件事：**这一档拿到了没有**。拿到了就写 320k，没拿到就如实写"实测多少、目标多少"。
+            let actual = player.source?.kbps ?? 0
+            if actual >= 296 {
+                out.append("320k 档")
+            } else if actual > 0 {
+                out.append("实测 \(actual)k（目标 320k）")
+            } else {
+                out.append("音质待测")
+            }
+        }
         if isDownloaded { out.append("已下载") }
         return out
     }

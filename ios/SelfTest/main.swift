@@ -3259,29 +3259,29 @@ do {
     UserDefaults.standard.removeObject(forKey: "kw_artists_v1_999")
 }
 
-section("酷我封面（rid_pic 同平台兜底）")
+section("2026-11-26 酷我封面下线 / 酷狗歌手头像不再当封面")
 
-check("http 升 https，且 kwcdn 换成 kuwo.cn",
-      CoverResolver.ridPicURL(fromBody: "http://img1.kwcdn.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg")
-        == "https://img1.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg",
-      CoverResolver.ridPicURL(fromBody: "http://img1.kwcdn.kuwo.cn/star/albumcover/320/s3s94/93/211513640.jpg") ?? "nil")
-check("已经是 https 的原样保留",
-      CoverResolver.ridPicURL(fromBody: "https://img4.kuwo.cn/star/albumcover/320/a/b/1.jpg")
-        == "https://img4.kuwo.cn/star/albumcover/320/a/b/1.jpg")
-check("歌手头像不算专辑封面（宁可没图也别贴错）",
-      CoverResolver.ridPicURL(fromBody: "http://img1.kuwo.cn/star/starheads/320/s4s56/58/291211030.jpg") == nil)
-check("不是 URL 就不猜",
-      CoverResolver.ridPicURL(fromBody: "") == nil
-        && CoverResolver.ridPicURL(fromBody: "{\"code\":500}") == nil)
-check("前后空行只取第一行",
-      CoverResolver.ridPicURL(fromBody: "\n\nhttps://img1.kuwo.cn/a.jpg\n\n") == "https://img1.kuwo.cn/a.jpg")
+// 老板 2026-11-26 拍板：只废酷我封面 API，音频照用。
+// 本机 225 张普查（tools/probes/cover_census.py）：酷我 45/45 是 324×182 横图（曲图/剧照/字幕卡），
+// QQ 60/60、酷狗 60/60、网易 59/60 是方形官方专辑图 → 所以酷我这一路封面整条不要。
+check("酷我搜索结果的 picURL 必须是 nil（不再拼 wmvpic）", {
+    // 纯函数层面能守住的边界：release 解析不吃 pic 字段
+    let item: [String: Any] = ["rid": "228908", "name": "晴天", "artist": "周杰伦",
+                               "album": "叶惠美", "duration": 269,
+                               "pic": "http://img1.kuwo.cn/wmvpic/324/x.jpg",
+                               "albumpic": "http://img1.kuwo.cn/wmvpic/324/y.jpg"]
+    let release = KuwoPlaylist.release(from: item)
+    return !(release?.song.picURL?.isEmpty == false)
+}())
 
-let kuwoRidSong = song(.kuwo, "晴天", "周杰伦", id: "228908")
-check("酷我数字 rid 才走 rid_pic", CoverResolver.kuwoRid(kuwoRidSong) == "228908")
-check("非数字 platformID 不当 rid",
-      CoverResolver.kuwoRid(song(.kuwo, "晴天", "周杰伦", id: "abc")) == nil)
-check("别的平台不走 rid_pic",
-      CoverResolver.kuwoRid(song(.qq, "晴天", "周杰伦", id: "228908")) == nil)
+let kugouSofthead = Song.make(platform: .kugou, platformID: "h1", name: "断了的弦", singer: "周杰伦",
+                              album: "", duration: 297,
+                              picURL: "https://singerimg.kugou.com/uploadpic/softhead/500/x.jpg")
+check("酷狗 softhead（歌手头像）不再当封面", CoverResolver.isLegacyDeadCover(kugouSofthead))
+let kugouAlbum = Song.make(platform: .kugou, platformID: "h2", name: "断了的弦", singer: "周杰伦",
+                           album: "寻找周杰伦", duration: 297,
+                           picURL: "https://imge.kugou.com/stdmusic/500/x.jpg")
+check("酷狗正常专辑图不受影响", !CoverResolver.isLegacyDeadCover(kugouAlbum))
 
 // MARK: - 第二十轮：热门音乐改成「榜单优先、搜索兜底」
 
@@ -3364,6 +3364,10 @@ let itunesURL = ITunesCover.searchURL(title: "青花瓷", artist: "周杰伦")
 check("iTunes 搜索 URL 走 https 且带 entity=song",
       itunesURL.hasPrefix("https://itunes.apple.com/search?") && itunesURL.contains("entity=song"),
       itunesURL)
+// 2026-11-26 实测：不带 country 走美国店，华语歌 25 首 0 中；tw 才正常，cn 直接 0 条。
+check("iTunes 搜索必须带店（默认 tw）", itunesURL.contains("country=tw"), itunesURL)
+check("换店也是纯函数参数", ITunesCover.searchURL(title: "A", artist: "B", country: "hk")
+        .contains("country=hk"))
 check("歌名/歌手里的空格与 & 被正确编码",
       !ITunesCover.searchURL(title: "A & B", artist: "C D").contains("A & B"))
 check("artwork 100x100bb → 600x600bb",

@@ -73,3 +73,4 @@ tools/notify/inbox/
 # 本地一次性取证/试听素材（10h 音轨、录屏抽帧等），不进仓库
 .tmp_sleep/
 tools/probes/out/
+.tmp_video*/

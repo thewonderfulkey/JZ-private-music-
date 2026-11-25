@@ -2,17 +2,21 @@ import Foundation
 
 // MARK: - 封面兜底
 //
-// 兜底顺序（2026-11-17 起，iOS 比 Android 多出第 ① 步）：
-//   ① 酷我歌曲：按 **rid 同平台取专辑图**（`artistpicserver` 的 `rid_pic`）——同曲目必然同专辑图
-//   ② 其余平台 / ① 取不到：用「同歌名 + 同歌手」去 QQ 搜一次，严格匹配才取
-//   ③ 都取不到：返回 nil，让 UI 落占位图
+// 兜底顺序（2026-11-26 起：**酷我封面整条路废掉**）：
+//   ① 用「同歌名 + 同歌手」去 QQ 搜一次，严格匹配才取
+//   ② 都取不到：iTunes（华语必须带店，见 `ITunesCover`）
+//   ③ 仍取不到：返回 nil，让 UI 落占位图
 //
-// 为什么加 ①：实测（2026-11-16）酷我搜索结果里约两成没有 MVPIC 字段，
-// 以前这 20% 全靠 QQ 跨平台兜底——跨平台本质上是猜（同名不同专辑就会贴错图）。
-// 而榜单曲（`KuwoChart`）**一个封面字段都没有**，100 行全靠兜底，所以同平台取图是刚需。
+// 为什么废酷我（老板 2026-11-26 拍板，只废封面、音频照用）：
+//   本机 225 张普查（`tools/probes/cover_census.py`）——酷我搜索的 MVPIC 是**曲图**
+//   （`img1.kuwo.cn/wmvpic/`），45/45 全是 324×182 横图（影视剧照/综艺片花/带字幕的 MV 截图）；
+//   而 QQ 60/60、酷狗 60/60、网易 59/60 都是方形官方专辑图。
+//   同时废掉 `rid_pic`（`artistpicserver.kuwo.cn`）——那也是酷我的封面 API，
+//   留着它等于"picURL 空了又回去问酷我要图"，绕一圈还是同一批图。
 //
 // 为什么必须严格：模糊匹配会把别的版本的封面贴上来（翻唱 / 同名不同歌），比没有封面更糟。
-// 另外酷狗旧版 `imgessl` 封面已被 CDN 软失败（HTTP 200 但固定返回黑胶占位图），也当作没有。
+// 另外两类别"软失败"的图一律当没有：酷狗旧版 `imgessl`（CDN 回固定黑胶占位图）、
+// 酷狗 `singerimg/…/softhead/`（**歌手头像**，贴到歌曲行上就是张冠李戴）。
 //
 // 三条约束（照搬 Android，都是为了首屏不炸）：
 //   · 全局并发上限 3：首屏几十行同时没封面也不会打出请求风暴
@@ -73,21 +77,13 @@ actor CoverResolver {
         let task = Task<String?, Never> { [weak self] in
             guard let self else { return nil }
             await self.acquire()
-            // 依次尝试：① 酷我按 rid 同平台取图 → ② QQ 严格匹配 → ③ iTunes（公共兜底）。
-            // 每一级都跳过"已知加载不出来的地址"（见 `markDead`）——
-            // 之前把 rid_pic 返回的**404 地址**直接写进缓存，于是固定那几首歌永远没有封面。
+            // 依次尝试：① QQ 严格匹配 → ② iTunes（公共兜底）。
+            // 每一级都跳过"已知加载不出来的地址"（见 `markDead`）。
+            // 2026-11-26：酷我 `rid_pic` 这一级已删（老板拍板废酷我封面 API）。
             var url: String?
-            if let rid = Self.kuwoRid(song) {
-                if let cand = await Self.lookupKuwoRidCover(rid: rid, timeout: timeout),
-                   await !self.isDead(cand, key: key) {
-                    url = cand
-                }
-            }
-            if url == nil {
-                if let cand = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout),
-                   await !self.isDead(cand, key: key) {
-                    url = cand
-                }
+            if let cand = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout),
+               await !self.isDead(cand, key: key) {
+                url = cand
             }
             if url == nil {
                 if let cand = await ITunesCover.fetch(song: song, timeout: timeout),
@@ -107,52 +103,14 @@ actor CoverResolver {
         return result
     }
 
-    // MARK: 酷我同平台封面（rid_pic）
-
-    /// 只有酷我歌曲、且 `platformID` 是纯数字 rid 时才走这条路。
-    /// 酷我搜索给的是 `DC_TARGETID`（数字），榜单给的是 `id`（数字）——都不是数字的说明不是 rid，不猜。
-    static func kuwoRid(_ song: Song) -> String? {
-        guard song.platform == .kuwo else { return nil }
-        let rid = song.platformID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rid.isEmpty, rid.allSatisfy({ $0.isNumber }) else { return nil }
-        return rid
-    }
-
-    /// 按 rid 取酷我专辑图 URL。
-    ///
-    /// `artistpicserver` 的响应是**一段裸 URL 文本**（不是 JSON），而且给的地址有三个坑：
-    ///   · 协议是 `http`：iOS 已开 ATS 严格（`NSAllowsArbitraryLoads` 已移除），http 会被系统直接拦掉；
-    ///   · 域名常是 `img1.kwcdn.kuwo.cn`：这台机器实测该域**根本不提供 https**（TLS 直接失败），
-    ///     也就是说"图补上了但永远加载不出来"；
-    ///   · 同一路径在 `img1/2/4.kuwo.cn` 上 https 200 且字节一致（三张图实测同上同大小）。
-    ///
-    /// 所以统一做「升 https + `.kwcdn.kuwo.cn` → `.kuwo.cn`」。
-    /// 另外**拒收歌手头像**：`/starheads/` 是歌手图，贴到歌曲行上就是张冠李戴，比没图更糟
-    /// （实测有个别 rid 会返回 starheads）。纯函数，CI 有断言。
-    static func ridPicURL(fromBody body: String) -> String? {
-        let firstLine = body.split(whereSeparator: \.isNewline).first.map(String.init) ?? body
-        var url = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard url.hasPrefix("http://") || url.hasPrefix("https://") else { return nil }
-        guard !url.lowercased().contains("/starheads/") else { return nil }
-        if url.hasPrefix("http://") {
-            url = "https://" + url.dropFirst("http://".count)
-        }
-        if url.contains(".kwcdn.kuwo.cn") {
-            url = url.replacingOccurrences(of: ".kwcdn.kuwo.cn", with: ".kuwo.cn")
-        }
-        guard url.count <= 2048 else { return nil }
-        return url
-    }
-
-    static func lookupKuwoRidCover(rid: String, timeout: TimeInterval = 5) async -> String? {
-        let url = "https://artistpicserver.kuwo.cn/pic.web"
-            + "?type=rid_pic&pictype=url&content=list&size=320&rid=\(rid)"
-        guard let body = try? await APIClient.shared.getString(
-            url, headers: ["Referer": "https://www.kuwo.cn/"], timeout: timeout) else {
-            return nil
-        }
-        return ridPicURL(fromBody: body)
-    }
+    // MARK: 酷我同平台封面（rid_pic）—— 2026-11-26 整条删除
+    //
+    // 老板拍板：「只废掉酷我的封面 API，封面还是用其他平台的 API」。
+    // 这一级原本是 `artistpicserver.kuwo.cn/pic.web?type=rid_pic`（酷我自己的封面服务），
+    // 和搜索里的 wmvpic 是同一个坑（把非专辑图当封面），所以一起下线，
+    // 让兜底直接落到 QQ 严格匹配 → iTunes。
+    //
+    // 保留这段注释是为了下一个读到这里的人知道：**不是忘了写，是故意没有**。
 
     /// QQ 搜「歌名 歌手」→ 严格匹配（歌名完全相等 + 歌手任一片段相等 + 有封面）
     static func lookupQQCover(song: Song, limit: Int = 10,
@@ -192,10 +150,14 @@ actor CoverResolver {
             .filter { !$0.isEmpty }
     }
 
-    /// 酷狗旧版 imgessl 封面已被 CDN 软失败（HTTP 200 + 固定黑胶图），一律当没有封面
+    /// 这些封面一律当"没有"：
+    ///   · 酷狗旧版 `imgessl`：CDN 软失败（HTTP 200 + 固定黑胶图）；
+    ///   · 酷狗 `singerimg/…/softhead/`：**歌手头像/歌手上传图**，不是专辑封面，贴到歌曲行上是张冠李戴。
+    ///     2026-11-26 实测：搜《断了的弦》5 条候选里有 2 条封面指向 softhead。
     static func isLegacyDeadCover(_ song: Song) -> Bool {
         guard song.platform == .kugou, let pic = song.picURL else { return false }
-        return pic.lowercased().contains("imgessl")
+        let low = pic.lowercased()
+        return low.contains("imgessl") || low.contains("singerimg") || low.contains("/softhead")
     }
 
     static func cacheKeyFor(_ song: Song) -> String {

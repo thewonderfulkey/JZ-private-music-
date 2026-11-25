@@ -501,7 +501,26 @@ enum DownloadResolver {
         var empty: Bool { picked == nil && fallback == nil }
         var fallbackReason: String {
             let best = fallback?.quality.displayName ?? "—"
-            return "没有\(want.displayName)，最高可得\(best)"
+            let kbps = fallback?.kbps ?? 0
+            return kbps > 0 ? "没有\(want.displayName)，只能给\(best)（实测 \(kbps)k）"
+                            : "没有\(want.displayName)，只能给\(best)"
+        }
+    }
+
+    /// 目标档不可得时的兜底顺序（纯函数，CI 钉口径）。
+    ///
+    /// **先往下、再往上**，绝不默认越级：
+    ///   · 点无损没货 → 高品 320k → 标准 128k
+    ///   · 点高品没货 → 标准 128k → （实在没有才）无损
+    ///   · 点标准没货 → 高品 320k → 无损（标准已经是底下那一档，只能往上）
+    ///
+    /// 老板 2026-11-26：上一版点 320k 却给了「无损 FLAC」，而那份无损正是刚被判死的那一条，
+    /// 用户点下去就是再等两分钟白等。
+    static func fallbackPreference(_ want: QualityLevel) -> [QualityLevel] {
+        switch want {
+        case .lossless: return [.high, .standard]
+        case .high: return [.standard, .lossless]
+        case .standard: return [.high, .lossless]
         }
     }
 
@@ -577,14 +596,40 @@ enum DownloadResolver {
         var pickedRank = 0
         var fallback: StreamSource?
         var fallbackRank = 0
+        var passing: [(rank: Int, candidate: Candidate)] = []
         for (i, c) in ranked.enumerated() {
+            // 2026-11-26（老板 ①）：这条源以前下过、并被判定"不是这首歌" → 不再推荐，
+            // 否则就会像 11-25 录屏那样：02:35 判死、03:47 又把它排在"最高可得"第一位。
+            if DownloadRejections.isRejected(c.source) {
+                debug.append("第\(i + 1)名 已判死（\(c.source.backendName) "
+                             + "\(c.source.kbps)kbps）：下过、不是这首歌")
+                continue
+            }
             let v = DownloadPreflight.check(c.source, want: want, durationSec: song.durationSec)
             if !v.ok {
                 debug.append("第\(i + 1)名 校验不过：\(v.reason)")
                 continue
             }
-            if fallback == nil { fallback = c.source; fallbackRank = i + 1 }
+            passing.append((i + 1, c))
             if picked == nil, c.source.quality == want { picked = c; pickedRank = i + 1 }
+        }
+
+        // 目标档不可得时的兜底顺序：**先往下走，走到底才允许往上升**
+        // （老板 2026-11-26：点无损→没货就 320k→再没货 128k；点 320k 没货就该给 128k，
+        //   而不是"越级"塞一份无损——体积大，而且上一轮被闸门判死的往往正是那份无损）
+        if picked == nil {
+            for level in fallbackPreference(want) {
+                if let hit = passing.first(where: { $0.candidate.source.quality == level }) {
+                    fallback = hit.candidate.source
+                    fallbackRank = hit.rank
+                    break
+                }
+            }
+            // 三档都不在兜底顺序里（理论上不会发生）：退化成"排名最靠前的那条"
+            if fallback == nil, let first = passing.first {
+                fallback = first.candidate.source
+                fallbackRank = first.rank
+            }
         }
 
         if let p = picked {
@@ -675,9 +720,15 @@ enum DownloadResolver {
 
     // MARK: 起播挑选（2026-11-22：够档立刻起播，不够档才等窗口）
 
-    /// 起播窗口。320k 的后端实测都在 0.9–1.1s（酷狗官方 128k 0.88–1.01s、星海酷狗 320k 0.87–1.14s），
-    /// 1.6s 足够把"能拿到的最高档"收齐；拿不到就用手上最高的那条起播，不再事后换。
-    static let startWindow: TimeInterval = 1.6
+    /// 起播窗口。320k 的后端实测多在 0.9–1.1s，但**慢后端（妖狐酷我/官方无损）2–3s 才回**——
+    /// 2026-11-26 老板报"说好 320k 优先，实际一直在放 96–98k"，根因就是这个窗口太短：
+    /// 1.6s 一到，手上只有 cyapi 的 97kbps，就把它当结果起播了，而且起播后不再升档。
+    /// 现在给到 2.6s，并且在"只拿到低档"时再多等 `startLowTierGrace`。
+    static let startWindow: TimeInterval = 2.6
+
+    /// 只拿到低档时的"第二窗口"：再等这么久，看 320k / 无损能不能赶上来。
+    /// 代价是这一类歌起播最多慢 1.2s；换来的是"不静默降级"。
+    static let startLowTierGrace: TimeInterval = 1.2
 
     /// 「够档」的门槛：320k 档（`tierOf` 700）。到手就不用再等。
     static let startGoodEnoughTier = 700
@@ -703,51 +754,95 @@ enum DownloadResolver {
     ///
     /// **现在**：一次挑好，起播之后不再换 item。
     ///   · 320k 一到（`startGoodEnoughTier`）立刻起播 —— 和以前一样快（~1.0s）；
-    ///   · 拿不到 320k 就等满 `window`（1.6s），用手上最高的一档起播；
+    ///   · 拿不到 320k 就等满 `window`，**再多等 `lowTierGrace`**（只拿到低档时），
+    ///     看慢后端能不能把 320k/无损补上来（2026-11-26 老板：不许静默降级）；
     ///   · 窗口内一条都没有 → nil，由调用方继续走后面的兜底（完整排名 / 跨平台 / 无损兜底）。
     static func startPick(song: Song, want: QualityLevel,
-                          window: TimeInterval = startWindow) async -> Candidate? {
+                          window: TimeInterval = startWindow,
+                          lowTierGrace: TimeInterval = startLowTierGrace) async -> Candidate? {
         let jobs = primaryJobs(for: song).filter {
             !BackendHealth.shared.isCoolingDown($0.adapter.name)
         }
         guard !jobs.isEmpty else { return nil }
         let start = Date()
-        return await withTaskGroup(of: Candidate?.self) { group in
+        let hardDeadline = window + max(0, lowTierGrace)
+
+        /// 组里的一个结果：真候选 / 某个 job 空手而归 / 窗口到点的闹钟
+        enum Step: Sendable { case candidate(Candidate), jobFailed, wake }
+
+        return await withTaskGroup(of: Step.self) { group in
             for job in jobs {
                 group.addTask {
-                    // 每个后端最多用掉窗口剩下的时间（后端内部还有自己的超时）
-                    let left = max(0.5, window - Date().timeIntervalSince(start))
+                    // 每个后端最多用掉"硬截止"剩下的时间（后端内部还有自己的超时）
+                    let left = max(0.5, hardDeadline - Date().timeIntervalSince(start))
                     let t0 = Date()
                     guard let src = await withTimeoutOrNil(left, {
                         try await job.adapter.resolve(song: job.song, quality: want)
-                    }) else { return nil }
+                    }) else { return .jobFailed }
                     // 身份闸：primary 后端拿的就是这首歌自己；跨源条目才需要再验一次
                     if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
-                        return nil
+                        return .jobFailed
                     }
                     guard PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec) else {
-                        return nil
+                        return .jobFailed
                     }
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
-                    return Candidate(song: job.song, source: src.matched(job.song), elapsedMs: ms,
-                                     score: score(of: src, song: job.song, ref: song, ms: ms))
+                    return .candidate(Candidate(song: job.song, source: src.matched(job.song),
+                                                elapsedMs: ms,
+                                                score: score(of: src, song: job.song, ref: song, ms: ms)))
                 }
             }
+            // 闹钟：到 `window` 叫醒一次，好让我们在"只有低档"时决定要不要再等 grace
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0.1, window) * 1_000_000_000))
+                return .wake
+            }
+
             var best: Candidate?
-            for await c in group {
-                guard let c else { continue }
-                if let b = best {
-                    if c.score.tier > b.score.tier
-                        || (c.score.tier == b.score.tier && c.source.kbps > b.source.kbps) {
+            var outstanding = jobs.count
+            var graceGranted = false
+            for await step in group {
+                switch step {
+                case .candidate(let c):
+                    outstanding -= 1
+                    if let b = best {
+                        if c.score.tier > b.score.tier
+                            || (c.score.tier == b.score.tier && c.source.kbps > b.source.kbps) {
+                            best = c
+                        }
+                    } else {
                         best = c
                     }
-                } else {
-                    best = c
-                }
-                // 够档就立刻起播，剩下的候选直接取消（不再等）
-                if let b = best, b.score.tier >= startGoodEnoughTier {
+                    // 够档就立刻起播，剩下的候选直接取消（不再等）
+                    if let b = best, b.score.tier >= startGoodEnoughTier {
+                        group.cancelAll()
+                        return b
+                    }
+                    // 所有 job 都回来了：不用等闹钟
+                    if outstanding == 0 {
+                        group.cancelAll()
+                        return best
+                    }
+                case .jobFailed:
+                    outstanding -= 1
+                    if outstanding == 0 {
+                        group.cancelAll()
+                        return best
+                    }
+                case .wake:
+                    let elapsed = Date().timeIntervalSince(start)
+                    // 一条都没回来：不额外等，交给调用方的后续兜底（plan / 跨平台）
+                    if best == nil {
+                        group.cancelAll()
+                        return nil
+                    }
+                    if !graceGranted, elapsed < window + 0.05 {
+                        // 只拿到低档 → 再等一段，看 320k/无损能不能补上来
+                        graceGranted = true
+                        continue
+                    }
                     group.cancelAll()
-                    return b
+                    return best
                 }
             }
             return best

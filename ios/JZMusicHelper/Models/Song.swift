@@ -47,6 +47,27 @@ enum QualityLevel: String, Codable, CaseIterable, Identifiable, Hashable {
         case .lossless: return "无损 FLAC"
         }
     }
+
+    /// 档位名 + **实测码率**（2026-11-26 老板 ⑧：档位虚标）。
+    ///
+    /// 背景：`standard` 这一档的定义是 48–255kbps（见 `QualityFacts.standardBandKbps`），
+    /// 所以一条 96kbps 的源会被标成「标准 128k」，下载列表里就写着「标准 128k · 2.6 MB」——
+    /// 老板看到的就是"虚标"。实话是把实测值并排写出来。
+    var nominalKbps: Int64 {
+        switch self {
+        case .standard: return 128
+        case .high: return 320
+        case .lossless: return 0
+        }
+    }
+
+    /// 列表行用：「标准 128k（实测 96k）」；实测等于标称就只写档位名
+    func labeled(kbps: Int64) -> String {
+        guard kbps > 0 else { return displayName }
+        let nominal = nominalKbps
+        if nominal > 0, abs(kbps - nominal) <= 24 { return displayName }
+        return "\(displayName)（实测 \(kbps)k）"
+    }
 }
 
 // MARK: - 文本清洗（接口脏字符）

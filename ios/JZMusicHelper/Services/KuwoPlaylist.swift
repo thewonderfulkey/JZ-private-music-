@@ -251,11 +251,13 @@ enum KuwoPlaylist {
     }
 
     static func release(from item: [String: Any]) -> Release? {
-        // rid 是这一条的身份证：没有它就没法播放、也没法按 rid 取封面，直接丢掉
+        // rid 是这一条的身份证：没有它就没法播放、也没法按 rid 取流，直接丢掉
         guard let rid = text(item["rid"]), !rid.isEmpty, rid != "0" else { return nil }
         guard let rawName = text(item["name"]), !rawName.isEmpty else { return nil }
 
-        let pic = text(item["pic"]) ?? text(item["albumpic"]) ?? text(item["pic120"])
+        // 2026-11-26：酷我的封面字段（pic/albumpic/pic120）一律不用——见
+        // `KuwoSearchAdapter.search` 里的普查结论（酷我给的图基本不是专辑封面）。
+        // 这里留 nil，交给 `CoverResolver` 的 QQ 严格匹配兜底。
         let seconds = number(item["duration"])
         let duration = durationSec(seconds: seconds, minutes: text(item["songTimeMinutes"]))
 
@@ -266,7 +268,7 @@ enum KuwoPlaylist {
             singer: TextClean.text(text(item["artist"]) ?? ""),
             album: TextClean.text(text(item["album"]) ?? ""),
             duration: TimeInterval(duration),
-            picURL: pic
+            picURL: nil
         )
         return Release(song: song, releaseDate: text(item["releaseDate"]) ?? "")
     }

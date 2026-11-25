@@ -293,11 +293,31 @@ final class PlayerEngine {
     /// 续播断点：等这一条播放项 ready 之后再 seek（见 `play(queue:startAt:positionSeconds:)`）
     private var pendingRestoreSeconds: Double?
 
+    /// **可信总长**（2026-11-26 老板口径）：只有"文件自己的索引"能进这里。
+    ///
+    /// 背景：播放器手里原本有三把尺子在抢同一件事——接口元数据（列表里的 03:35）、
+    /// 播放器报的 `item.duration`（= 文件头写的长度，**可能是错的**）、以及真实音频长度。
+    /// 老板 11-25 录屏里的两种症状都是它造成的：
+    ///   · 头比真实长（《星辰大海》头 4:20 / 真 3:27）→ 音频先放完就切，进度条没走完；
+    ///   · 头比真实短（《手写的从前》头 3:28 / 曲目 4:57）→ 进度条先到头就切，音频还没完。
+    ///
+    /// 现在只有 `LocalAudioFacts`（读文件头里的 STREAMINFO / mvhd / Xing 帧数）算出来的长度
+    /// 才写进这个字段；**在线流永远不写**（那个长度是系统估算，不许拿来判"播完了"）。
+    private var trustedDurationSec: Double?
+
     /// 心动模式预取下来的本地文件（切歌那一秒直接用，不再走网络）
     private var pendingLocal: (songID: String, url: URL)?
 
     /// 心动模式已经解析好的流地址（没来得及下载时用，省掉再解析一遍的 1-8 秒）
     private var pendingStream: (songID: String, url: String)?
+
+    /// 缓存命中、但缓存里那份**码率不够**（<300k）的歌 → songID: 缓存实测码率。
+    ///
+    /// 老板 2026-11-26 定：这种情况「后台补高档、这次不换、下次播才用」。
+    /// 所以这里只登记，等这首歌**不播了**（`goTo` 换走）再动手——
+    /// 正在播的文件绝不能删（播放器还在按字节读它）。
+    private var cacheUpgradePending: [String: Int64] = [:]
+    private var cacheUpgradeTask: Task<Void, Never>?
 
     // MARK: 下一首预取（B1）/ 跨曲取源的后台任务（B2）/ 自愈状态（B3）
 
@@ -781,6 +801,12 @@ final class PlayerEngine {
             shuffleHistory.recordAdvance(from: index)
         }
         lastAdvanceAt = Date()
+        // 2026-11-26：离开一首"缓存只有低档"的歌时，后台把高档补进缓存（下次播就是高档）。
+        // 必须在 `currentSong` 改掉之前判断"离开的是谁"。
+        if let leaving = currentSong, let cachedKbps = cacheUpgradePending[leaving.id] {
+            cacheUpgradePending[leaving.id] = nil
+            scheduleCacheUpgrade(for: leaving, cachedKbps: cachedKbps)
+        }
         PlaybackTrace.shared.log("goTo", "→\(newIndex)/\(queue.count) pauseFirst=\(pauseFirst)")
         heartbeat.trackEnded(listened: preciseTime, completed: false)
         // 预取存下来的源只在"目标就是那首"时才留着；换了别的歌立刻作废
@@ -921,13 +947,45 @@ final class PlayerEngine {
         PlaybackTrace.shared.log("预取", "\(song.name) ← \(src.backendName) \(src.kbps)kbps")
     }
 
+    /// 缓存里那份码率不够 → **等它不播了**再后台重取一条更高档的，把缓存换掉。
+    ///
+    /// 老板 2026-11-26 定：「后台补高档、这次不换、下次播才用」。
+    /// 三条硬约束：
+    ///   ① 只在 `currentSong` 已经不是这首歌时动手（正在播的文件不能删）；
+    ///   ② 补档过程**不碰播放器**（不 replaceCurrentItem、不 seek）——那是 11-22 叫停的卡顿来源；
+    ///   ③ 拿到的必须明显更好（≥300k 且比原缓存高 50 以上）才替换，避免来回横跳。
+    private func scheduleCacheUpgrade(for song: Song, cachedKbps: Int64) {
+        cacheUpgradeTask?.cancel()
+        cacheUpgradeTask = Task { [weak self] in
+            guard let self else { return }
+            guard self.currentSong?.id != song.id else { return }
+            let plan = await DownloadResolver.plan(song: song, want: Self.playbackQuality)
+            guard !Task.isCancelled, self.currentSong?.id != song.id else { return }
+            let better = plan.ranked
+                .map(\.source)
+                .filter { PlaybackQualityRules.isPlayable($0) }
+                .first { $0.kbps >= 296 && $0.kbps > cachedKbps + 50 }
+            guard let better else {
+                PlaybackTrace.shared.log("补档无更好源", "\(song.name)（原 \(cachedKbps)kbps）")
+                return
+            }
+            // 先作废旧缓存（连同半截文件），再按新源整首落盘。这一步只动磁盘、不动播放器。
+            PlaybackCache.shared.cancel(songID: song.id)
+            PlaybackCache.shared.discard(songID: song.id)
+            PlaybackCache.shared.prefetch(song: song, source: better)
+            PlaybackTrace.shared.log("缓存补档",
+                "\(song.name)：\(cachedKbps)kbps → \(better.backendName) \(better.kbps)kbps（下次播生效）")
+        }
+    }
+
     private func resetProgress() {
         currentTime = 0
         // 总长：先用接口时长占位（播放器还没就绪的那一瞬间，条不该是 0）。
-        // 真正锁定发生在 `adoptDuration`：文件头报多少就是多少，之后冻结。
+        // 真正锁定发生在 `adoptDuration`：**有可信总长就锁可信总长**，没有才退回文件头。
         duration = Double(currentSong?.durationSec ?? 0)
         durationLocked = false
         durationVerified = false
+        trustedDurationSec = nil
         endGuardFired = false
         bufferedTime = 0
         errorText = nil
@@ -987,7 +1045,8 @@ final class PlayerEngine {
                                          format: localURL.pathExtension.lowercased(),
                                          note: "已下载")
                 statusText = "本地文件 · \(localURL.lastPathComponent)"
-                start(item: Self.makeItem(url: localURL), song: song, source: local)
+                start(item: Self.makeItem(url: localURL), song: song, source: local,
+                      trustedDuration: fileSeconds)
                 return
             }
         }
@@ -1016,8 +1075,17 @@ final class PlayerEngine {
             local.matchedPlatformID = cached.matchedPlatformID
             local.matchedDurationSec = cached.matchedDurationSec
             statusText = "播放缓存 · \(cached.url.lastPathComponent)"
+            // 缓存里这份码率不够（<300k）→ 记一笔，等这首歌不播了再后台补高档。
+            // 老板 2026-11-26：「后台补高档、这次不换、下次播才用」。
+            if kbps > 0, kbps < 296 {
+                cacheUpgradePending[song.id] = kbps
+                PlaybackTrace.shared.log("缓存低档",
+                    "\(song.name)：缓存只有 \(kbps)kbps，等切走后后台补档")
+            }
+            // 可信总长：条目里存的"文件自己的长度"优先；老条目没存就现读一次文件头
+            let trusted = cached.measuredDurationSec ?? LocalAudioFacts.duration(url: cached.url)
             start(item: Self.makeItem(url: cached.url), song: song, source: local,
-                  durationVerified: true)
+                  durationVerified: true, trustedDuration: trusted)
             return
         }
 
@@ -1033,7 +1101,8 @@ final class PlayerEngine {
                                          format: pending.url.pathExtension.lowercased(),
                                          note: "播放中预取")
                 statusText = "心动缓存 · \(pending.url.lastPathComponent)"
-                start(item: Self.makeItem(url: pending.url), song: song, source: local)
+                start(item: Self.makeItem(url: pending.url), song: song, source: local,
+                      trustedDuration: LocalAudioFacts.duration(url: pending.url))
                 // 这里**不做后台升档**（老板 2026-11-19 反馈：切下一首卡 10 秒、还被自动切走）。
                 // 原因：升档会 replaceCurrentItem 换成远端流，新 item 缓冲期间进度停在 0:00；
                 // 一旦那条远端源失败/时长对不上就会走 rejectSource → 自动跳歌。
@@ -1184,7 +1253,8 @@ final class PlayerEngine {
     /// - Parameter durationVerified: 这个总长是不是**有证据的**（本地精确 / 整首落盘 / 索引校验通过）。
     ///   只有 true 才允许"到点收尾"和精确百分比，见 `installTimeObserver`。
     private func start(item: AVPlayerItem, song: Song, source: StreamSource,
-                       durationVerified: Bool = false) {
+                       durationVerified: Bool = false,
+                       trustedDuration: Double? = nil) {
         // 最后一道闸：出声的必须是"当前显示的这一首"。
         // 取流代次已经拦过一轮，这里再兜一次——本地文件 / 预取 / 换源这些同步分支也走同一处。
         guard song.id == currentSong?.id else {
@@ -1194,6 +1264,8 @@ final class PlayerEngine {
         self.durationVerified = durationVerified
             || source.backendName == "本地文件"
             || source.backendName == "播放缓存"
+        // 可信总长：只有文件自己的索引解出来的值才算（在线流一律 nil）
+        self.trustedDurationSec = trustedDuration
         self.source = source
         consecutiveSkips = 0
         sameSongSwitches = 0
@@ -1252,6 +1324,14 @@ final class PlayerEngine {
         //    听感就是老板说的"开头 10 秒左右卡一下"（见 `DownloadResolver.startPick`）。
         if let quick = await DownloadResolver.startPick(song: song, want: PlayerEngine.playbackQuality),
            usable(quick.source) {
+            // 2026-11-26（老板 ⑥）：拿到的是低档时留一条诊断，别让"96k 静默降级"再无声发生。
+            // 补档这一步在 `startPick` 内部已经做过（只拿低档会多等 `startLowTierGrace`），
+            // 这里只负责把结论摊在「播放诊断」里。
+            if !PlaybackQualityRules.isTopTier(quick.source) {
+                PlaybackTrace.shared.log("起播低档",
+                    "\(song.name) ← \(quick.source.backendName) \(quick.source.kbps)kbps"
+                    + "（目标 320k，窗口内没有更高档）")
+            }
             return quick.source
         }
 
@@ -1418,6 +1498,16 @@ final class PlayerEngine {
                       finished === self.player.currentItem else {
                     self.statusText = "忽略上一首的迟到结束通知"
                     return
+                }
+                // 2026-11-26：**播放器的结束通知才是真相**。文件头比真实音频长时
+                // （《星辰大海》头 4:20 / 真 3:27），走的就是这条：歌确实放完了，
+                // 但进度条只走到 80%。这里把总长纠正成"真正放到哪儿"，
+                // 免得留下一根永远走不到头的条，也免得下一轮再拿这个错数去判"播完"。
+                if self.currentTime > 1, self.duration - self.currentTime > 2 {
+                    PlaybackTrace.shared.log("时长头偏长",
+                        "\(song.name)：头 \(Int(self.duration))s / 实际 \(Int(self.currentTime))s")
+                    self.duration = self.currentTime
+                    self.durationLocked = true
                 }
                 self.handleTrackFinished()
             }
@@ -1594,6 +1684,15 @@ final class PlayerEngine {
     /// 本地解码出来一模一样）。以前我们让"后面报的值"反复覆盖，一拖进度条总长就从 4:12 变成 4:47。
     private func adoptDuration(_ seconds: Double) {
         guard seconds.isFinite, seconds > 0 else { return }
+        // 有可信总长时，**播放器报的数一个字节都不采纳**：
+        // 它读的是文件头，而文件头正是老板 11-25 报的那个错（头 4:20 / 真 3:27）。
+        if let trusted = trustedDurationSec, trusted > 1 {
+            if !durationLocked || abs(duration - trusted) > 0.2 {
+                duration = trusted
+                durationLocked = true
+            }
+            return
+        }
         guard !durationLocked else { return }
         guard abs(seconds - duration) > 0.2 else {
             durationLocked = true   // 和占位值一致，也算锁定
@@ -1798,7 +1897,10 @@ final class PlayerEngine {
                     // 2026-11-25：**只有 `durationVerified` 才允许这一手**。
                     // 在线流那个总长是系统估算（不是文件索引），拿它判播完就是老板报的
                     // "歌没唱完自己切下一首"；没有证据就只等播放器自己的结束通知。
-                    if self.durationVerified, self.durationLocked, self.isPlaying, !self.endGuardFired,
+                    // 2026-11-26（老板 11-25 录屏）：还要再加一条——**必须有可信总长**。
+                    // 文件头会骗人（《手写的从前》头 3:28 / 真 4:57），拿它收尾就是"没唱完就切"。
+                    if self.durationVerified, self.trustedDurationSec != nil,
+                       self.durationLocked, self.isPlaying, !self.endGuardFired,
                        TrackEndRules.isReached(currentTime: self.currentTime, duration: self.duration) {
                         self.endGuardFired = true
                         PlaybackTrace.shared.log("到点收尾",

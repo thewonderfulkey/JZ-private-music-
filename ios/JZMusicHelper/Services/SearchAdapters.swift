@@ -371,12 +371,16 @@ struct KuwoSearchAdapter: SearchAdapter {
             let artist = item["ARTIST"] ?? ""
             let album = item["ALBUM"] ?? ""
             let dur = KuwoParser.parseDuration(item["DURATION"] ?? "")
-            // MVPIC 是酷我曲图路径，约 78% 有值；空值交给 CoverResolver 走 QQ 兜底
-            let mvpic = (item["MVPIC"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let pic = mvpic.isEmpty ? nil : "https://img1.kuwo.cn/wmvpic/\(mvpic)"
+            // 2026-11-26 老板拍板：**只废酷我的封面 API，音频照用**。
+            //
+            // 原因（本机 225 张封面普查，`tools/probes/cover_census.py`）：
+            // 酷我搜索的 MVPIC 给的是**曲图**（`img1.kuwo.cn/wmvpic/`），实测 45/45 全是
+            // 324×182 横图——影视剧照、综艺片花、MV 截图，甚至带字幕的画面；
+            // 而 QQ 60/60、酷狗 60/60、网易 59/60 都是方形的官方专辑图。
+            // 所以酷我这一路封面一律不要（picURL = nil），交给 `CoverResolver` 的
+            // QQ 严格匹配 → iTunes 兜底（实测 QQ 一路就能覆盖绝大多数华语歌）。
             let song = Song.make(platform: .kuwo, platformID: rid, name: name, singer: artist,
-                            album: album, duration: Double(dur), picURL: pic)
+                            album: album, duration: Double(dur), picURL: nil)
             // 变体不直接丢：整页都是变体时也要能出结果（否则界面显示"酷我 0 首"，像接口挂了）
             if KuwoParser.isVariant(name) { variants.append(song) } else { songs.append(song) }
         }
