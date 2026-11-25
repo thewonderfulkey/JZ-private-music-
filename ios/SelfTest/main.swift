@@ -4273,6 +4273,89 @@ do {
     check("没有 data → 空串", NeteasePlayerAdapter.streamURL(from: ["code": 200]).isEmpty)
 }
 
+// MARK: - 下载落盘后的「身份 + 完整性」（2026-11-25《众》下成了另一首歌的 FLAC）
+
+section("下载校验：文件自己的长度 + 来源候选身份（宁缺勿错）")
+
+do {
+    // 真实数据（2026-11-25 实测）：
+    //   · 官方 FLAC 47,977,837 B / 215.45s；曲目《众》215.5s → 差 0.05
+    //   · 错的那份 197s（3:17）→ 差 18 秒
+    let good = DownloadIntegrityRules.Facts(container: "flac", durationSec: 215.45,
+                                             bytes: 47_977_837)
+    check("官方 FLAC（215.45s）对《众》（215.5s）→ 通过",
+          DownloadIntegrityRules.check(facts: good, displayedTitle: "众",
+                                       displayedSinger: "黄霄雲", displayedDurationSec: 215,
+                                       matchedName: "众", matchedSinger: "黄霄雲",
+                                       expectedBytes: 47_977_837) == .ok(215.45))
+
+    let wrongLen = DownloadIntegrityRules.Facts(container: "flac", durationSec: 197,
+                                                 bytes: 21_000_000)
+    var rejected = false
+    var reason = ""
+    if case .reject(let r) = DownloadIntegrityRules.check(
+        facts: wrongLen, displayedTitle: "众", displayedSinger: "黄霄雲",
+        displayedDurationSec: 215, matchedName: "众", matchedSinger: "黄霄雲",
+        expectedBytes: 0) {
+        rejected = true; reason = r
+    }
+    check("下成了 3:17 的文件（差 18 秒）→ 拒", rejected, reason)
+    check("拒收文案要说清「不是这首歌」", reason.contains("不是这首歌"), reason)
+
+    let unknownContainer = DownloadIntegrityRules.Facts(container: "unknown",
+                                                         durationSec: 215, bytes: 1_000)
+    if case .reject = DownloadIntegrityRules.check(
+        facts: unknownContainer, displayedTitle: "众", displayedSinger: "黄霄雲",
+        displayedDurationSec: 215, matchedName: "众", matchedSinger: "黄霄雲",
+        expectedBytes: 0) {
+        check("认不出容器 → 拒", true)
+    } else {
+        check("认不出容器 → 拒", false)
+    }
+
+    let noIndex = DownloadIntegrityRules.Facts(container: "flac", durationSec: nil,
+                                                bytes: 21_000_000)
+    if case .reject = DownloadIntegrityRules.check(
+        facts: noIndex, displayedTitle: "众", displayedSinger: "黄霄雲",
+        displayedDurationSec: 215, matchedName: "众", matchedSinger: "黄霄雲",
+        expectedBytes: 0) {
+        check("文件里读不出长度（流式 FLAC）→ 拒", true)
+    } else {
+        check("文件里读不出长度（流式 FLAC）→ 拒", false)
+    }
+
+    let short = DownloadIntegrityRules.Facts(container: "flac", durationSec: 215.4,
+                                              bytes: 10_000_000)
+    if case .reject = DownloadIntegrityRules.check(
+        facts: short, displayedTitle: "众", displayedSinger: "黄霄雲",
+        displayedDurationSec: 215, matchedName: "众", matchedSinger: "黄霄雲",
+        expectedBytes: 47_977_837) {
+        check("字节只有预期的一小半 → 拒", true)
+    } else {
+        check("字节只有预期的一小半 → 拒", false)
+    }
+
+    // 身份：同歌手另一首（时长还刚好一样）——只有 identity 拦得住
+    let sameLenOther = DownloadIntegrityRules.Facts(container: "flac", durationSec: 215.2,
+                                                     bytes: 40_000_000)
+    var idRejected = false
+    var idReason = ""
+    if case .reject(let r) = DownloadIntegrityRules.check(
+        facts: sameLenOther, displayedTitle: "众", displayedSinger: "黄霄雲",
+        displayedDurationSec: 215, matchedName: "留不住的夏天", matchedSinger: "黄霄雲",
+        expectedBytes: 0) {
+        idRejected = true; idReason = r
+    }
+    check("来源候选是另一首歌（时长却接近）→ 拒", idRejected, idReason)
+
+    // 老流程没有身份记录：长度闸门仍然生效（这条不能变成"什么都放行"）
+    check("没有身份记录但长度对得上 → 放行（老流程）",
+          DownloadIntegrityRules.check(facts: good, displayedTitle: "众",
+                                       displayedSinger: "黄霄雲", displayedDurationSec: 215,
+                                       matchedName: nil, matchedSinger: nil,
+                                       expectedBytes: 0) == .ok(215.45))
+}
+
 section("多源：酷我三条独立后端 + QQ 两条")
 do {
     let all = SourceRegistry.all

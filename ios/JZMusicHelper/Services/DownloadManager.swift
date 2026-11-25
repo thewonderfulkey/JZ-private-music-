@@ -326,7 +326,11 @@ final class DownloadManager: NSObject, ObservableObject {
                                 fileName: fileName,
                                 status: .pending,
                                 totalBytes: max(expected, 0),
-                                expectedBytes: expected > 0 ? expected : nil)
+                                expectedBytes: expected > 0 ? expected : nil,
+                                matchedName: streamSource.matchedName,
+                                matchedSinger: streamSource.matchedSinger,
+                                matchedPlatformID: streamSource.matchedPlatformID,
+                                matchedDurationSec: streamSource.matchedDurationSec)
         let id = item.id
         guard let url = URL(string: streamSource.url) else {
             item.status = .failed
@@ -1455,6 +1459,45 @@ extension DownloadManager: URLSessionDownloadDelegate {
             items[idx] = item
             persist()
             return
+        }
+
+        // 身份 + 完整性（2026-11-25《众》下成了黄霄雲另一首 3:17 的 FLAC）
+        //
+        // 字节数只是必要条件，不是充分条件：上游不给 Content-Length 时它形同虚设，
+        // 而我们自己的文件名是「歌手 - 歌名」拼的，错文件看起来也和真的一样。
+        // 这里补上真正的判据：**文件自己报的长度**必须和曲目对得上，来源候选的歌名也必须对得上；
+        // 任何一条不过就删文件、标「无可靠源」——宁缺勿错。
+        let facts = LocalAudioFacts.facts(url: target)
+        let integrity = DownloadIntegrityRules.check(
+            facts: DownloadIntegrityRules.Facts(container: facts.container,
+                                                durationSec: facts.durationSec,
+                                                bytes: actualSize),
+            displayedTitle: item.song.name,
+            displayedSinger: item.song.singer,
+            displayedDurationSec: item.song.durationSec,
+            matchedName: item.matchedName,
+            matchedSinger: item.matchedSinger,
+            expectedBytes: expected)
+        switch integrity {
+        case .reject(let reason):
+            try? FileManager.default.removeItem(at: target)
+            item.localPath = nil
+            item.fileName = ""
+            item.progress = 0
+            item.status = .failed
+            item.errorMessage = "无可靠源：\(reason)"
+            items[idx] = item
+            persist()
+            markDirectoryCacheDirty()
+            PlaybackTrace.shared.log("下载拒收", "\(item.song.name)：\(reason)")
+            return
+        case .ok(let fileSeconds):
+            item.fileDurationSec = fileSeconds
+            if item.actualNote == nil, item.song.duration > 0,
+               abs(fileSeconds - item.song.duration) > 0.01 {
+                item.actualNote = "文件实测 \(DownloadIntegrityRules.timeText(fileSeconds))"
+                    + "（曲目 \(DownloadIntegrityRules.timeText(item.song.duration))）"
+            }
         }
 
         // 档位以实测为准：容器 / 码率与记录不一致时改回来（"标着无损其实是 320k"就死在这一步）

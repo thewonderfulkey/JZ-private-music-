@@ -188,15 +188,35 @@ enum PlaybackCacheRules {
 // 下载链路用的是同一道身份闸，所以历史上下载下来的文件也可能是"别人的歌"。
 // 播放本地文件前先读它自己的头解长度：对不上就不播它（改在线解析），
 // 免得"文件是错的、界面是对的"再来一次。
+//
+// 2026-11-25 晚：下载落盘后的「身份 + 完整性」校验也用它（`DownloadIntegrityRules`）——
+// 同一个读头函数，避免两处口径不一致。
 enum LocalAudioFacts {
 
-    /// 只读前 256KB（文件自己的索引），不整首读、不联网
-    static func duration(url: URL) -> Double? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    struct Facts {
+        /// 嗅探出来的容器（unknown = 认不出）
+        let container: String
+        /// 文件自己头里写的长度（nil = 解不出）
+        let durationSec: Double?
+    }
+
+    /// 读前 256KB 拿容器 + 文件自报长度（不整首读、不联网）
+    static func facts(url: URL) -> Facts {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return Facts(container: "unknown", durationSec: nil)
+        }
         defer { try? handle.close() }
-        guard let head = try? handle.read(upToCount: 262_144), !head.isEmpty else { return nil }
+        guard let head = try? handle.read(upToCount: 262_144), !head.isEmpty else {
+            return Facts(container: "unknown", durationSec: nil)
+        }
         let sniffed = StreamVerifier.sniffHead([UInt8](head.prefix(16)))
-        return MediaIndexRules.duration(head: head, container: sniffed, totalBytes: 0)
+        let secs = MediaIndexRules.duration(head: head, container: sniffed, totalBytes: 0)
+        return Facts(container: sniffed, durationSec: secs)
+    }
+
+    /// 只要长度（播放前那条闸门用）
+    static func duration(url: URL) -> Double? {
+        facts(url: url).durationSec
     }
 }
 

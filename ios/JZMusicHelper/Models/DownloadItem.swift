@@ -218,6 +218,21 @@ struct DownloadItem: Identifiable, Codable, Hashable {
     /// 可选类型：旧 downloads.json 没有这个键，解码不能失败。
     var fileMissing: Bool?
 
+    // MARK: 下载时的"身份 + 落盘实测"（2026-11-25《众》下成了另一首歌的 FLAC）
+    //
+    // 以前下载只看"字节数够不够"，于是：
+    //   · 上游不给 Content-Length 时，多大都算完成（`DownloadGuard.isComplete` 的 expected>0 短路）；
+    //   · 下下来的是同歌手的**另一首歌**也没人能发现（《众》下成了黄霄雲另一首 3:17 的 FLAC）。
+    // 现在落盘后必须回答两个问题：这份文件**是不是这首歌**、它**自报的长度对不对**。
+    // 全部可选：旧 downloads.json 没有这些键，解码不能失败。
+    /// 这条源实际对应哪条候选（跨源补位时可能不是本歌的 id，但歌名必须对得上）
+    var matchedName: String?
+    var matchedSinger: String?
+    var matchedPlatformID: String?
+    var matchedDurationSec: Double?
+    /// 落盘后从文件自己头里解出来的长度（解不出 = nil，会被判"无可靠源"）
+    var fileDurationSec: Double?
+
     /// 圆点用：由逐字段结论推出来（只是"懒得跑检查"时的兜底，不存盘）
     /// 界面上的状态：文件已不在 > 容器写不了 > 没对齐明细
     var fileState: SongFileState? {
@@ -249,7 +264,12 @@ struct DownloadItem: Identifiable, Codable, Hashable {
          companionNextAt: Date? = nil,
          companionReason: String? = nil,
          matchSuggest: Song? = nil,
-         fileTruth: SongFileTruth? = nil) {
+         fileTruth: SongFileTruth? = nil,
+         matchedName: String? = nil,
+         matchedSinger: String? = nil,
+         matchedPlatformID: String? = nil,
+         matchedDurationSec: Double? = nil,
+         fileDurationSec: Double? = nil) {
         self.id = id
         self.song = song
         self.streamURL = streamURL
@@ -275,6 +295,11 @@ struct DownloadItem: Identifiable, Codable, Hashable {
         self.companionReason = companionReason
         self.matchSuggest = matchSuggest
         self.fileTruth = fileTruth
+        self.matchedName = matchedName
+        self.matchedSinger = matchedSinger
+        self.matchedPlatformID = matchedPlatformID
+        self.matchedDurationSec = matchedDurationSec
+        self.fileDurationSec = fileDurationSec
     }
 
     var progressText: String {
