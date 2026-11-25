@@ -1489,7 +1489,12 @@ extension DownloadManager: URLSessionDownloadDelegate {
             items[idx] = item
             persist()
             markDirectoryCacheDirty()
-            PlaybackTrace.shared.log("下载拒收", "\(item.song.name)：\(reason)")
+            let songName = item.song.name
+            // `PlaybackTrace.log` 是 @MainActor（它要读 App 状态），这里可能不在主线程上，
+            // 所以跳一次主线再记——注意只捕获 String，不要捕获 item（它是值类型，但没必要带上下文）。
+            Task { @MainActor in
+                PlaybackTrace.shared.log("下载拒收", "\(songName)：\(reason)")
+            }
             return
         case .ok(let fileSeconds):
             item.fileDurationSec = fileSeconds
