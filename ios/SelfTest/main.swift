@@ -4218,8 +4218,36 @@ do {
     check("v2 的 503 会被拒", (try? LuoyueQQAdapter.parse(["code": 503])) == nil)
 }
 
-section("多源：酷我三条独立后端 + QQ 两条")
+// MARK: - oiapi 响应形状（2026-11-25：《众》彻底没源的根因）
 
+section("oiapi 网易：直链在 data.items[] 里（旧解析只认数组，一次都没成功过）")
+
+do {
+    // 真实响应（2026-11-25 20:5x 实测）：{"code":0,"data":{"items":[{"url":"http://…"}]}}
+    let real: [String: Any] = ["code": 0,
+                               "data": ["items": [["name": "众", "id": 1_865_532_803,
+                                                   "url": "http://m8.music.126.net/a.m4a"]]]]
+    check("现行形状 data.items[0].url", OiapiNeteaseAdapter.streamURL(from: real)
+          == "http://m8.music.126.net/a.m4a", OiapiNeteaseAdapter.streamURL(from: real))
+
+    let legacyArray: [String: Any] = ["code": 0, "data": [["url": "http://x/y.mp3"]]]
+    check("老形状 data[0].url 仍然认", OiapiNeteaseAdapter.streamURL(from: legacyArray)
+          == "http://x/y.mp3", OiapiNeteaseAdapter.streamURL(from: legacyArray))
+
+    let rootURL: [String: Any] = ["code": 0, "url": "http://x/z.mp3", "data": [String: Any]()]
+    check("根上的 url 也认", OiapiNeteaseAdapter.streamURL(from: rootURL) == "http://x/z.mp3")
+
+    // 受限歌：url 是 null（不是解析失败，是这首没有）
+    let nullURL: [String: Any] = ["code": 0, "data": ["items": [["name": "晴天", "url": NSNull()]]]]
+    check("url 为 null → 空串（按「未返回 URL」处理）",
+          OiapiNeteaseAdapter.streamURL(from: nullURL).isEmpty)
+
+    let emptyItems: [String: Any] = ["code": 0, "data": ["items": [Any]()]]
+    check("items 空 → 空串", OiapiNeteaseAdapter.streamURL(from: emptyItems).isEmpty)
+    check("什么都没有 → 空串", OiapiNeteaseAdapter.streamURL(from: [:]).isEmpty)
+}
+
+section("多源：酷我三条独立后端 + QQ 两条")
 do {
     let all = SourceRegistry.all
     let kuwo = all.filter { $0.platform == .kuwo }.map(\.name)

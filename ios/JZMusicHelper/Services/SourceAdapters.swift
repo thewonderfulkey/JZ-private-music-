@@ -548,11 +548,37 @@ struct GdstudioNeteaseAdapter: StreamSourceAdapter {
 }
 
 // MARK: - 网易系：oiapi（溯音 key 版）
-// 2026-11-16 实测：code=0 但 data 里没有 url（通道当前失效）。保留是为了它恢复时零改动，
-// 失败很快（一次 GET），不会拖慢整条解析链；kdstudio 仍是网易的主通道。
+//
+// 2026-11-25 事故（v2.4.117 之后《众》彻底没源）：
+//   这条通道从接进来那天起**一次都没成功过**——旧解析只认 `data` 是数组
+//   （`data as? [[String: Any]]`），而 oiapi 实际返回的是
+//   `{"code":0,"data":{"items":[{"url":…}]}}`，`data` 是**字典**。
+//   于是每次都走到"未返回 URL"那一句，被当成"通道失效"记在注释里（2026-11-16 的结论）。
+//   《众》在四个平台里只剩这一条源（gdstudio 全档空、meting 空、酷狗 502、QQ 403），
+//   所以它以前"能播"其实是跨源串到了同歌手的《侧脸》；身份闸堵住串歌之后，它就真的没源了。
 struct OiapiNeteaseAdapter: StreamSourceAdapter {
     let name = "oiapi 网易"
     let platform: MusicPlatform = .netease
+
+    /// 从响应里取直链（纯函数，CI 钉死三种形状）
+    ///
+    /// 现行形状：`data.items[0].url`；兼容老形状 `data[0].url` 与根上的 `url`。
+    /// 注意 `url` 可能是 `null`（无版权/受限歌）——那不是"解析失败"，是"这首没有"。
+    static func streamURL(from json: [String: Any]) -> String {
+        if let data = json["data"] as? [String: Any] {
+            if let items = data["items"] as? [[String: Any]],
+               let url = items.first?["url"] as? String, !url.isEmpty {
+                return url
+            }
+            if let url = data["url"] as? String, !url.isEmpty { return url }
+        }
+        if let data = json["data"] as? [[String: Any]],
+           let url = data.first?["url"] as? String, !url.isEmpty {
+            return url
+        }
+        if let url = json["url"] as? String, !url.isEmpty { return url }
+        return ""
+    }
 
     func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
         let url = "https://oiapi.net/api/Music_163"
@@ -560,11 +586,7 @@ struct OiapiNeteaseAdapter: StreamSourceAdapter {
             + "&type=json&level=\(quality.levelName)&n=1&id=\(song.platformID)"
         let json = try await APIClient.shared.getJSON(url, timeout: 12)
         if (json["code"] as? Int) != 0 { throw APIError.parse("oiapi 网易 code != 0") }
-        var stream = ""
-        if let data = json["data"] as? [[String: Any]], let first = data.first {
-            stream = first["url"] as? String ?? ""
-        }
-        if stream.isEmpty { stream = json["url"] as? String ?? "" }
+        var stream = Self.streamURL(from: json)
         guard !stream.isEmpty else { throw APIError.parse("oiapi 网易未返回 URL") }
         stream = UrlNormalizer.upgraded(stream)
         guard let facts = await StreamVerifier.inspect(stream) else {
