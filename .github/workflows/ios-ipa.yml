@@ -78,6 +78,7 @@ jobs:
             ios/JZMusicHelper/Services/SearchService.swift \
             ios/JZMusicHelper/Services/URLResolver.swift \
             ios/JZMusicHelper/Services/PlaybackRules.swift \
+            ios/JZMusicHelper/Services/PlaybackCacheRules.swift \
             ios/JZMusicHelper/Services/HeartbeatRules.swift \
             ios/JZMusicHelper/Services/DownloadGuard.swift \
             ios/JZMusicHelper/Services/DiscoverRules.swift \

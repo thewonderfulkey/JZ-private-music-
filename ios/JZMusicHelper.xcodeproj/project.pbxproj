@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B0000000000000000000009A /* PlaybackCacheRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000099 /* PlaybackCacheRules.swift */; };
+		B00000000000000000000099 /* PlaybackCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000098 /* PlaybackCache.swift */; };
 		B00000000000000000000001 /* JZMusicHelperApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* JZMusicHelperApp.swift */; };
 		B00000000000000000000002 /* Song.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* Song.swift */; };
 		B00000000000000000000003 /* DownloadItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* DownloadItem.swift */; };
@@ -144,6 +146,8 @@
 		F00000000000000000000016 /* NameMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameMatch.swift; sourceTree = "<group>"; };
 		F00000000000000000000017 /* StudioPick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPick.swift; sourceTree = "<group>"; };
 		F00000000000000000000018 /* KuwoParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KuwoParser.swift; sourceTree = "<group>"; };
+		F00000000000000000000098 /* PlaybackCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCache.swift; sourceTree = "<group>"; };
+		F00000000000000000000099 /* PlaybackCacheRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCacheRules.swift; sourceTree = "<group>"; };
 		F00000000000000000000019 /* PlaybackRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackRules.swift; sourceTree = "<group>"; };
 		F0000000000000000000001A /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		F0000000000000000000001B /* NowPlayingCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingCenter.swift; sourceTree = "<group>"; };
@@ -302,6 +306,8 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000004 /* APIClient.swift */,
+				F00000000000000000000099 /* PlaybackCacheRules.swift */,
+				F00000000000000000000098 /* PlaybackCache.swift */,
 				F00000000000000000000005 /* SearchService.swift */,
 				F00000000000000000000006 /* SearchAdapters.swift */,
 				F00000000000000000000007 /* URLResolver.swift */,
@@ -574,6 +580,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B00000000000000000000099 /* PlaybackCache.swift in Sources */,
+				B0000000000000000000009A /* PlaybackCacheRules.swift in Sources */,
 				B00000000000000000000001 /* JZMusicHelperApp.swift in Sources */,
 				B00000000000000000000002 /* Song.swift in Sources */,
 				B00000000000000000000003 /* DownloadItem.swift in Sources */,
@@ -818,7 +826,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 289;
+				CURRENT_PROJECT_VERSION = 290;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -827,7 +835,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.111;
+				MARKETING_VERSION = 2.4.112;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -842,7 +850,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 289;
+				CURRENT_PROJECT_VERSION = 290;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -851,7 +859,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.111;
+				MARKETING_VERSION = 2.4.112;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -865,7 +873,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 289;
+				CURRENT_PROJECT_VERSION = 290;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -874,7 +882,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.111;
+				MARKETING_VERSION = 2.4.112;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -889,7 +897,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 289;
+				CURRENT_PROJECT_VERSION = 290;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -898,7 +906,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.111;
+				MARKETING_VERSION = 2.4.112;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

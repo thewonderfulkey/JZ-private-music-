@@ -75,6 +75,8 @@ final class SettingsStore {
         static let lyricOffsetPerSong = "lyric_offset_by_song"
         /// 歌词缓存上限（`LyricsCacheRules.key`，LyricsService 直接读同一个键）
         static let lyricsCacheLimit = LyricsCacheRules.key
+        /// 播放缓存首数（`PlaybackCacheRules.key`，`PlaybackCache` 也读同一个键）
+        static let playbackCacheLimit = PlaybackCacheRules.key
         /// 车载（车机 / 车载蓝牙）连上就自动播
         static let carAutoPlay = "car_auto_play"
         /// 心动模式「熟悉度」：旧爱（收藏 / 下载过）在连播里的占比
@@ -123,6 +125,20 @@ final class SettingsStore {
             let clamped = LyricsCacheRules.clamp(lyricsCacheLimit)
             if clamped != lyricsCacheLimit { lyricsCacheLimit = clamped }
             defaults.set(clamped, forKey: Key.lyricsCacheLimit)
+        }
+    }
+
+    /// 播放缓存最多留多少首（2026-11-25）。
+    ///
+    /// 一首 320k / 4 分钟约 9.6MB，和歌词（几百 KB）不是一个量级，所以**单独一项**、不共用。
+    /// 超出按"最久没听"淘汰，正在播的那首永不淘汰（见 `PlaybackCacheRules.victims`）。
+    /// - Note: 最小 5 首；想要"完全不留缓存"就把 App 的存储清掉（不提供 0，避免误关后以为坏了）。
+    var playbackCacheLimit: Int {
+        didSet {
+            let clamped = PlaybackCacheRules.clampLimit(playbackCacheLimit)
+            if clamped != playbackCacheLimit { playbackCacheLimit = clamped }
+            defaults.set(clamped, forKey: Key.playbackCacheLimit)
+            PlaybackCache.shared.setLimit(clamped)
         }
     }
 
@@ -226,6 +242,10 @@ final class SettingsStore {
         let savedLimit = d.integer(forKey: Key.lyricsCacheLimit)
         lyricsCacheLimit = savedLimit > 0 ? LyricsCacheRules.clamp(savedLimit)
                                           : LyricsCacheRules.defaultLimit
+
+        let savedPlaybackCache = d.object(forKey: Key.playbackCacheLimit) as? Int
+        playbackCacheLimit = PlaybackCacheRules.clampLimit(savedPlaybackCache
+                                                           ?? PlaybackCacheRules.defaultLimit)
 
         carAutoPlay = d.object(forKey: Key.carAutoPlay) as? Bool ?? true
 

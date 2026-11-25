@@ -121,6 +121,13 @@ final class PlayerEngine {
     private(set) var duration: Double = 0
     /// 总长是否已被文件头锁定（锁上之后谁都不许改）
     private var durationLocked = false
+    /// 这个总长是不是**有证据的**（本地精确时长 / 完整落盘的缓存文件 / 索引校验通过）。
+    ///
+    /// 2026-11-25：只有它为 true 才允许"到点收尾"和显示精确百分比。
+    /// 在线流那个数是 AVFoundation 的估算，拿它判播完就会出现"歌没唱完自己切下一首"。
+    private var durationVerified = false
+    /// 当前这首的缓存会话（走字节层时非空）——用来"断了续拉"，不再偷偷换源
+    private var cacheSession: CacheSession?
     /// 越过声明总长已经判过"播完"（防止同一首重复触发切歌）
     private var endGuardFired = false
 
@@ -892,6 +899,8 @@ final class PlayerEngine {
     private func prefetch(song: Song) async {
         // 已下载的不用预取：`loadCurrent` 第一条分支直接播本地文件
         if DownloadManager.shared.localFileURL(for: song) != nil { return }
+        // 已整首落盘过的也不用再解析
+        if PlaybackCache.shared.hasComplete(song.id) { return }
         if pendingStream?.songID == song.id || pendingLocal?.songID == song.id { return }
         let src = await resolveStream(for: song)
         guard !Task.isCancelled, prefetchSongID == song.id else { return }
@@ -900,6 +909,9 @@ final class PlayerEngine {
             return
         }
         pendingStream = (songID: song.id, url: src.url)
+        // 2026-11-25：预取不再只是"解析 URL"——**整首落盘**，切过去时就是本地读，
+        // 既不依赖那一刻的网络，也不会中途断流（老板要的"切歌零等待"）。
+        PlaybackCache.shared.prefetch(song: song, source: src)
         PlaybackTrace.shared.log("预取", "\(song.name) ← \(src.backendName) \(src.kbps)kbps")
     }
 
@@ -909,6 +921,7 @@ final class PlayerEngine {
         // 真正锁定发生在 `adoptDuration`：文件头报多少就是多少，之后冻结。
         duration = Double(currentSong?.durationSec ?? 0)
         durationLocked = false
+        durationVerified = false
         endGuardFired = false
         bufferedTime = 0
         errorText = nil
@@ -959,6 +972,20 @@ final class PlayerEngine {
             return
         }
 
+        // 已经整首落盘过的（播放缓存）：直接播本地文件——连解析都省了，也永远不会断流
+        if let cached = PlaybackCache.shared.completeFile(for: song.id) {
+            let local = StreamSource(url: cached.absoluteString,
+                                     backendName: "播放缓存",
+                                     platform: song.platform,
+                                     quality: quality,
+                                     format: cached.pathExtension.lowercased(),
+                                     note: "整首已缓存")
+            statusText = "播放缓存 · \(cached.lastPathComponent)"
+            start(item: Self.makeItem(url: cached), song: song, source: local,
+                  durationVerified: true)
+            return
+        }
+
         // 心动模式预取下来的那一首：直接本地起播（这就是"切歌无缝"的关键）
         if let pending = pendingLocal, pending.songID == song.id {
             pendingLocal = nil
@@ -994,7 +1021,7 @@ final class PlayerEngine {
                                    note: "播放中预取")
             statusText = "预取 · \(src.format.isEmpty ? "流" : src.format.uppercased())"
             PlaybackTrace.shared.log("预取命中", "\(song.name)")
-            start(item: Self.makeItem(url: url), song: song, source: src)
+            await startRemote(song: song, src: src)
             return
         }
         pendingStream = nil
@@ -1023,7 +1050,7 @@ final class PlayerEngine {
         PlaybackTrace.shared.log("resolve 结束",
                                  "\(Int(Date().timeIntervalSince(startedAt) * 1000))ms \(outcome)")
 
-        guard let src = resolved, let url = URL(string: src.url) else {
+        guard let src = resolved else {
             handleNoSource()
             return
         }
@@ -1031,13 +1058,70 @@ final class PlayerEngine {
         // A7：播放链的诚实标注（无损只用于下载）
         statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
             + " · \(PlaybackQualityRules.label)"
-        start(item: Self.makeItem(url: url), song: song, source: src)
+        await startRemote(song: song, src: src)
         // 2026-11-22 **不再做"起播后升档"**：`swapToBetterSource` 会 `replaceCurrentItem` + seek，
         // 缓冲从 0 重来，就是老板说的"开头 10 秒左右卡一下"。
         // 档位已经在 `resolveStream` 第①步（`DownloadResolver.startPick`）挑好了：
         // 320k 一到就用 320k 起播，拿不到才等满窗口用手上最高的一档。
         // 函数与 `upgradedSongID` 留着是为了回滚（把下面这行注释放开即可）。
         // schedulePlaybackUpgrade(for: song)
+    }
+
+    /// 起播一条**在线**源（2026-11-25 改）：先过"文件自己的索引 + ±5 秒"闸门，
+    /// 能过就交给缓存字节层（整首落盘、断流续拉），过不了就换下一条，绝不"先播着看"。
+    ///
+    /// 走缓存层之后：播放器不再直连 CDN，断流/403 时我们换 token 续写同一个文件，
+    /// 播放器只感觉"读得慢"，不会报错、不会换 item、也不会出现"按旧总长提前切歌"。
+    private func startRemote(song: Song, src: StreamSource) async {
+        // 时长闸门：±5 秒。对不上就换下一条候选（最多 4 条），
+        // 全都对不上就**停**——不播错的、不跳下一首、也不从 0 重播（老板 2026-11-25 定）。
+        var candidate = src
+        var rejected: [String] = []
+        for _ in 0..<4 {
+            let gate = await PlaybackCache.indexGate(song: song, source: candidate)
+            if case .mismatch(let diff) = gate {
+                rejected.append(candidate.url)
+                rejectedSourceURLs.insert(candidate.url)
+                PlaybackTrace.shared.log("时长不符",
+                                         "\(song.name)：\(Int(diff))s 差，换下一条")
+                guard let next = await resolveStream(for: song) else { break }
+                candidate = next
+                continue
+            }
+            var verified = false
+            if case .match = gate { verified = true }
+
+            if let built = PlaybackCache.shared.playbackItem(
+                song: song, source: candidate, container: candidate.format,
+                resolver: { [weak self] tried in
+                    guard let self else { return nil }
+                    return await self.refreshSource(for: song, tried: tried)
+                }) {
+                cacheSession?.cancel()
+                cacheSession = built.session
+                start(item: built.item, song: song, source: candidate,
+                      durationVerified: verified)
+                return
+            }
+            // 缓存层不可用（拿不到总字节）→ 退回直连
+            guard let url = URL(string: candidate.url) else { break }
+            start(item: Self.makeItem(url: url), song: song, source: candidate,
+                  durationVerified: verified)
+            return
+        }
+        PlaybackTrace.shared.log("无同一份文件", "\(song.name)：试过 \(rejected.count) 条")
+        stopBecauseFileUnavailable(reason: "所有候选的时长都不是同一份")
+    }
+
+    /// 缓存层要求"换一条同一首歌的源"时走这里：把试过的 URL 记进坏源名单，再解析一次。
+    ///
+    /// 注意：**这不是"播放中偷偷换源"**——换来的新直链必须通过"同一份文件"校验
+    /// （总长 + 首段指纹），否则缓存层会继续要下一条；全都对不上就停，不播错的。
+    private func refreshSource(for song: Song, tried: Set<String>) async -> StreamSource? {
+        rejectedSourceURLs.formUnion(tried)
+        guard currentSong?.id == song.id else { return nil }
+        PlaybackTrace.shared.log("缓存续拉解析", "\(song.name)（已排除 \(tried.count) 条）")
+        return await resolveStream(for: song)
     }
 
     /// 造播放项：**本地文件必须带 `AVURLAssetPreferPreciseDurationAndTimingKey`**。
@@ -1056,13 +1140,20 @@ final class PlayerEngine {
     }
 
     /// 装配并起播一个 item（本地文件与在线取流共用这一处）
-    private func start(item: AVPlayerItem, song: Song, source: StreamSource) {
+    ///
+    /// - Parameter durationVerified: 这个总长是不是**有证据的**（本地精确 / 整首落盘 / 索引校验通过）。
+    ///   只有 true 才允许"到点收尾"和精确百分比，见 `installTimeObserver`。
+    private func start(item: AVPlayerItem, song: Song, source: StreamSource,
+                       durationVerified: Bool = false) {
         // 最后一道闸：出声的必须是"当前显示的这一首"。
         // 取流代次已经拦过一轮，这里再兜一次——本地文件 / 预取 / 换源这些同步分支也走同一处。
         guard song.id == currentSong?.id else {
             PlaybackTrace.shared.log("起播丢弃", "\(song.name)（已切到别的歌）")
             return
         }
+        self.durationVerified = durationVerified
+            || source.backendName == "本地文件"
+            || source.backendName == "播放缓存"
         self.source = source
         consecutiveSkips = 0
         sameSongSwitches = 0
@@ -1244,13 +1335,19 @@ final class PlayerEngine {
                     // 本地文件豁免：这首歌就是本地那份音频，"曲目时长"只是接口元数据，
                     // 拿它判本地文件会把好好的歌判成坏源 → 换源 → 跳歌（录屏里被自动切走的一类）。
                     let isLocalSource = source.backendName == "本地文件" || source.backendName == "心动缓存"
-                    if !isLocalSource,
+                    // 走缓存层的：时长已经由"文件自己的索引"在起播前校验过，这里不再拿播放器的估算值二次判
+                    if !isLocalSource, self.cacheSession == nil,
                        PlaybackRules.durationMismatch(actual: actual, expected: song.duration) {
                         self.rejectSource(source, reason: "拿到的音频时长 \(Int(actual))s 与曲目 \(Int(song.duration))s 不符（±\(Int(PlaybackRules.durationToleranceSec))s），已换源")
                     }
                     self.updateNowPlaying()
                 case .failed:
-                    self.rejectSource(source, reason: "播放失败（源可能已失效），已换源")
+                    // 走缓存层时"读不到"意味着连"同一份文件"都找不到了 → 停，不换源、不跳歌
+                    if self.cacheSession != nil {
+                        self.stopBecauseFileUnavailable(reason: "音频读取失败")
+                    } else {
+                        self.rejectSource(source, reason: "播放失败（源可能已失效），已换源")
+                    }
                 default:
                     break
                 }
@@ -1279,7 +1376,13 @@ final class PlayerEngine {
             object: item, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.rejectSource(source, reason: "播放中断（源失效），已换源")
+                guard let self else { return }
+                if self.cacheSession != nil {
+                    // 缓存层已经把"换同一份文件"这件事做完了；到这儿就是真拿不到 → 停
+                    self.stopBecauseFileUnavailable(reason: "播放中断")
+                } else {
+                    self.rejectSource(source, reason: "播放中断（源失效），已换源")
+                }
             }
         }
     }
@@ -1506,6 +1609,20 @@ final class PlayerEngine {
         advanceAfterFailure()
     }
 
+    /// 走缓存层时"这份文件真的取不全了"：**不换源、不跳下一首**，停在原地给一句人话。
+    ///
+    /// 老板 2026-11-25 定：「不允许播错的，继续重新找相同文件；所有的源全都找不到相同文件，那就停即可」。
+    private func stopBecauseFileUnavailable(reason: String) {
+        PlaybackTrace.shared.log("缓存停止",
+                                 "\(currentSong?.name ?? "—")：\(reason)")
+        isPlaying = false
+        isResolving = false
+        errorText = "《\(currentSong?.name ?? "这首")》的文件取不全了（找不到同一份），已停止。点播放可重试。"
+        cacheSession?.cancel()
+        endResolveBackgroundTask()
+        updateNowPlaying()
+    }
+
     /// 同曲换源：先记住播放位置，再重新解析这一首。
     /// `rejectedSourceURLs` 已经收下刚失败的那条 URL，取流链会跳过它、挑同曲的下一条候选；
     /// 新源 ready 之后 `pendingRestoreSeconds` 把进度 seek 回原位（见 `wire(item:)`）。
@@ -1574,9 +1691,10 @@ final class PlayerEngine {
                     // 总长只在这里锁一次（= 文件头写的长度），之后谁都不许改
                     self.adoptDuration(item.duration.seconds)
                     // 已经放到文件头写的长度了 → 这一首就是播完了。
-                    // 这不是"砍尾巴"：文件里本来就只有这么多音频（这个文件本地解码实测 252.133s，
-                    // 和 STREAMINFO 完全一致，VLC 也是播到 4:12 就结束）。真文件永远不会触发这条。
-                    if self.durationLocked, self.isPlaying, !self.endGuardFired,
+                    // 2026-11-25：**只有 `durationVerified` 才允许这一手**。
+                    // 在线流那个总长是系统估算（不是文件索引），拿它判播完就是老板报的
+                    // "歌没唱完自己切下一首"；没有证据就只等播放器自己的结束通知。
+                    if self.durationVerified, self.durationLocked, self.isPlaying, !self.endGuardFired,
                        TrackEndRules.isReached(currentTime: self.currentTime, duration: self.duration) {
                         self.endGuardFired = true
                         PlaybackTrace.shared.log("到点收尾",

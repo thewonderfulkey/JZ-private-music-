@@ -29,6 +29,8 @@ struct SettingsView: View {
     @EnvironmentObject private var downloads: DownloadManager
 
     @State private var lyricsCacheCount = 0
+    @State private var playbackCacheCount = 0
+    @State private var playbackCacheMB = 0
     @State private var showClearLyricsConfirm = false
 
     var body: some View {
@@ -161,6 +163,22 @@ struct SettingsView: View {
                 }
             }
 
+            Section("播放缓存") {
+                Stepper("可缓存歌曲数量：\(settings.playbackCacheLimit) 首",
+                        value: $settings.playbackCacheLimit,
+                        in: PlaybackCacheRules.minLimit...PlaybackCacheRules.maxLimit,
+                        step: 5)
+                Text("听过的歌整首留在本地（约 \(PlaybackCacheRules.estimatedMB(limit: settings.playbackCacheLimit)) MB），"
+                     + "再听时直接本地播放，断网也能听；超出后先丢最久没听的。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("已缓存", value: "\(playbackCacheCount) 首 · \(playbackCacheMB) MB")
+                Button("清空播放缓存", role: .destructive) {
+                    PlaybackCache.shared.clear()
+                    refreshPlaybackCacheUsage()
+                }
+            }
+
             Section("识曲") {
                 Picker("聆听时长", selection: $settings.recognizeSeconds) {
                     Text("12 秒").tag(12)
@@ -226,6 +244,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.large)
         .task {
             lyricsCacheCount = await LyricsService.shared.cachedCount()
+            refreshPlaybackCacheUsage()
         }
         .confirmationDialog("清空 \(lyricsCacheCount) 首歌词缓存？",
                             isPresented: $showClearLyricsConfirm, titleVisibility: .visible) {
@@ -243,6 +262,13 @@ struct SettingsView: View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         return "\(version) (\(build))"
+    }
+
+    /// 播放缓存用了多少（首数 / MB）
+    private func refreshPlaybackCacheUsage() {
+        let usage = PlaybackCache.shared.usage()
+        playbackCacheCount = usage.count
+        playbackCacheMB = Int(usage.bytes / 1_000_000)
     }
 
     /// 把 0~0.6 的旧歌占比翻译成"三首里一首旧"——百分比没人算得过来

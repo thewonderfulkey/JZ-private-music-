@@ -5865,7 +5865,112 @@ do {
           ShuffleStart.index(ids: [], currentID: nil, randomIn: { _ in 0 }) == nil)
 }
 
+// MARK: - 播放缓存 + 文件索引闸门（2026-11-25）
+
+func r251CacheAssertions() {
+    section("文件自己的索引：mp3 Xing / m4a mvhd / flac STREAMINFO")
+
+    func flacHead(sampleRate: Int, totalSamples: UInt64) -> Data {
+        var b = [UInt8](repeating: 0, count: 42)
+        b[0] = 0x66; b[1] = 0x4C; b[2] = 0x61; b[3] = 0x43
+        b[4] = 0x80
+        b[7] = 34
+        var acc: UInt64 = UInt64(sampleRate & 0xFFFFF) << 44
+        acc |= (2 << 41)
+        acc |= (24 << 36)
+        acc |= (totalSamples & 0x0000_000F_FFFF_FFFF)
+        for i in 0..<8 { b[18 + i] = UInt8((acc >> (8 * (7 - i))) & 0xFF) }
+        return Data(b)
+    }
+
+    func mp3Head(frames: Int) -> Data {
+        var b = [UInt8](repeating: 0, count: 64)
+        b[0] = 0xFF; b[1] = 0xFB; b[2] = 0x90; b[3] = 0xC0
+        b[21] = 0x58; b[22] = 0x69; b[23] = 0x6E; b[24] = 0x67
+        b[28] = 1
+        b[29] = UInt8((frames >> 24) & 0xFF)
+        b[30] = UInt8((frames >> 16) & 0xFF)
+        b[31] = UInt8((frames >> 8) & 0xFF)
+        b[32] = UInt8(frames & 0xFF)
+        return Data(b)
+    }
+
+    func m4aHead(timescale: Int, duration: Int) -> Data {
+        func be32(_ v: Int) -> [UInt8] {
+            [UInt8((v >> 24) & 0xFF), UInt8((v >> 16) & 0xFF),
+             UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+        }
+        var b: [UInt8] = []
+        b += be32(32); b += Array("ftyp".utf8); b += [UInt8](repeating: 0, count: 24)
+        b += be32(36); b += Array("moov".utf8)
+        b += be32(28); b += Array("mvhd".utf8)
+        b += [0, 0, 0, 0]
+        b += be32(0); b += be32(0)
+        b += be32(timescale); b += be32(duration)
+        return Data(b)
+    }
+
+    let flac = MediaIndexRules.duration(head: flacHead(sampleRate: 48_000, totalSamples: 12_102_400),
+                                        container: "flac", totalBytes: 0)
+    check("flac STREAMINFO → 252.13s", abs((flac ?? 0) - 252.133) < 0.01, "\(flac ?? -1)")
+    let mp3 = MediaIndexRules.duration(head: mp3Head(frames: 10_000), container: "mp3", totalBytes: 0)
+    check("mp3 Xing 帧数 → 261.22s",
+          abs((mp3 ?? 0) - 10_000 * 1152 / 44100.0) < 0.01, "\(mp3 ?? -1)")
+    let m4a = MediaIndexRules.duration(head: m4aHead(timescale: 44_100, duration: 11_900_000),
+                                       container: "m4a", totalBytes: 0)
+    check("m4a mvhd → 269.84s", abs((m4a ?? 0) - 11_900_000 / 44_100.0) < 0.01, "\(m4a ?? -1)")
+    check("认不出的字节 → nil（不是 0 秒）",
+          MediaIndexRules.duration(head: Data(repeating: 0x11, count: 64),
+                                   container: "mp3", totalBytes: 1_000) == nil)
+
+    section("时长闸门：±5 秒（原 ±25 秒）")
+    check("差 0 秒 → match", PlaybackCacheRules.gate(candidate: 200, expected: 200) == .match(200))
+    var g49 = false
+    if case .match = PlaybackCacheRules.gate(candidate: 204.9, expected: 200) { g49 = true }
+    check("差 4.9 秒 → match", g49)
+    var g51 = false
+    if case .mismatch = PlaybackCacheRules.gate(candidate: 205.1, expected: 200) { g51 = true }
+    check("差 5.1 秒 → mismatch", g51)
+    check("解不出索引 → unverified（不是 mismatch）",
+          PlaybackCacheRules.gate(candidate: nil, expected: 200) == .unverified)
+    check("曲目时长未知 → unverified",
+          PlaybackCacheRules.gate(candidate: 200, expected: 0) == .unverified)
+
+    section("断流续拉：是不是同一份文件")
+    check("总长+指纹一样 → 同一份",
+          PlaybackCacheRules.sameFile(oldBytes: 100, newBytes: 100, oldHash: "aa", newHash: "aa"))
+    check("总长不同 → 不是",
+          !PlaybackCacheRules.sameFile(oldBytes: 100, newBytes: 101, oldHash: "aa", newHash: "aa"))
+    check("总长相同但指纹不同 → 不是",
+          !PlaybackCacheRules.sameFile(oldBytes: 100, newBytes: 100, oldHash: "aa", newHash: "bb"))
+    check("两样都没有 → 不算同一份",
+          !PlaybackCacheRules.sameFile(oldBytes: 0, newBytes: 0, oldHash: nil, newHash: nil))
+
+    section("播放缓存 LRU（跳过正在播的）")
+    let now = Date()
+    let ordered: [(id: String, lastPlayed: Date)] = [
+        ("a", now.addingTimeInterval(-300)),
+        ("b", now.addingTimeInterval(-200)),
+        ("c", now.addingTimeInterval(-100)),
+    ]
+    check("上限 2 首 → 只淘汰最久没听的 a",
+          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 2, keeping: "c") == ["a"])
+    check("正在播的是最旧的也不淘汰它",
+          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 1, keeping: "a") == ["b", "c"])
+    check("没超上限 → 不淘汰",
+          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 3, keeping: "a").isEmpty)
+    check("文件名稳定且不含路径分隔符",
+          PlaybackCacheRules.fileName(songID: "netease:1/2")
+          == PlaybackCacheRules.fileName(songID: "netease:1/2")
+          && !PlaybackCacheRules.fileName(songID: "netease:1/2").contains("/"))
+    check("50 首 ≈ 480MB", PlaybackCacheRules.estimatedMB(limit: 50) == 480)
+    check("mp3 的 UTI 正确",
+          PlaybackCacheRules.contentType(container: "mp3", format: "mp3") == "public.mp3")
+}
+
 // MARK: - 汇总
+
+r251CacheAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")
