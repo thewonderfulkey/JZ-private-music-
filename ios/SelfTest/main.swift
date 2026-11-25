@@ -5946,19 +5946,27 @@ func r251CacheAssertions() {
     check("两样都没有 → 不算同一份",
           !PlaybackCacheRules.sameFile(oldBytes: 0, newBytes: 0, oldHash: nil, newHash: nil))
 
-    section("播放缓存 LRU（跳过正在播的）")
+    section("播放缓存：头进尾出（最早缓存的先走，跳过正在播的）")
     let now = Date()
-    let ordered: [(id: String, lastPlayed: Date)] = [
+    let ordered: [(id: String, cachedAt: Date)] = [
         ("a", now.addingTimeInterval(-300)),
         ("b", now.addingTimeInterval(-200)),
         ("c", now.addingTimeInterval(-100)),
     ]
-    check("上限 2 首 → 只淘汰最久没听的 a",
-          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 2, keeping: "c") == ["a"])
-    check("正在播的是最旧的也不淘汰它",
-          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 1, keeping: "a") == ["b", "c"])
+    check("上限 2 首 → 挤掉最早缓存的 a",
+          PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 2, keeping: "c") == ["a"])
+    check("正在播的是最早缓存的那首也不淘汰它",
+          PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 1, keeping: "a") == ["b", "c"])
     check("没超上限 → 不淘汰",
-          PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 3, keeping: "a").isEmpty)
+          PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 3, keeping: "a").isEmpty)
+    let fifoFull: [(id: String, cachedAt: Date)] = [
+        ("a", now.addingTimeInterval(-30)), ("b", now.addingTimeInterval(-20)),
+        ("c", now.addingTimeInterval(-10)),
+    ]
+    check("缓存总量恒定：满了只挤一首",
+          PlaybackCacheRules.victims(orderedByCachedAt: fifoFull, limit: 3, keeping: "").isEmpty
+          && PlaybackCacheRules.victims(orderedByCachedAt: fifoFull, limit: 2,
+                                        keeping: "").count == 1)
     check("文件名稳定且不含路径分隔符",
           PlaybackCacheRules.fileName(songID: "netease:1/2")
           == PlaybackCacheRules.fileName(songID: "netease:1/2")

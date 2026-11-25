@@ -169,7 +169,7 @@ struct SettingsView: View {
                         in: PlaybackCacheRules.minLimit...PlaybackCacheRules.maxLimit,
                         step: 5)
                 Text("听过的歌整首留在本地（约 \(PlaybackCacheRules.estimatedMB(limit: settings.playbackCacheLimit)) MB），"
-                     + "再听时直接本地播放，断网也能听；超出后先丢最久没听的。")
+                     + "再听时直接本地播放，断网也能听；满了就挤掉最早缓存的那首（总量不变）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 LabeledContent("已缓存", value: "\(playbackCacheCount) 首 · \(playbackCacheMB) MB")

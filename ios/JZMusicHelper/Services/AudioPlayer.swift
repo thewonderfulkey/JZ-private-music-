@@ -1078,7 +1078,7 @@ final class PlayerEngine {
         var candidate = src
         var rejected: [String] = []
         for _ in 0..<4 {
-            let gate = await PlaybackCache.indexGate(song: song, source: candidate)
+            let gate = await PlaybackCache.shared.indexGate(song: song, source: candidate)
             if case .mismatch(let diff) = gate {
                 rejected.append(candidate.url)
                 rejectedSourceURLs.insert(candidate.url)

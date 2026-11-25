@@ -131,7 +131,8 @@ final class SettingsStore {
     /// 播放缓存最多留多少首（2026-11-25）。
     ///
     /// 一首 320k / 4 分钟约 9.6MB，和歌词（几百 KB）不是一个量级，所以**单独一项**、不共用。
-    /// 超出按"最久没听"淘汰，正在播的那首永不淘汰（见 `PlaybackCacheRules.victims`）。
+    /// 满了就**头进尾出**（最早缓存的那首先走、总量恒定），正在播的那首永不淘汰
+    /// （见 `PlaybackCacheRules.victims`）。
     /// - Note: 最小 5 首；想要"完全不留缓存"就把 App 的存储清掉（不提供 0，避免误关后以为坏了）。
     var playbackCacheLimit: Int {
         didSet {

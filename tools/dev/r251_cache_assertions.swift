@@ -111,19 +111,27 @@ check("两样都没有 → 不算同一份",
 
 // MARK: - LRU
 
-print("— 淘汰（按最近播放，跳过正在播的）")
+print("— 淘汰（头进尾出：最早缓存的先走，跳过正在播的）")
 let now = Date()
-let ordered: [(id: String, lastPlayed: Date)] = [
+let ordered: [(id: String, cachedAt: Date)] = [
     ("a", now.addingTimeInterval(-300)),
     ("b", now.addingTimeInterval(-200)),
     ("c", now.addingTimeInterval(-100)),
 ]
-check("上限 2 首 → 只淘汰最久没听的 a",
-      PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 2, keeping: "c") == ["a"])
-check("正在播的是 a（最旧）也不淘汰它，淘汰 b、c",
-      PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 1, keeping: "a") == ["b", "c"])
+check("上限 2 首 → 挤掉最早缓存的 a",
+      PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 2, keeping: "c") == ["a"])
+check("正在播的是 a（最早缓存）也不淘汰它，挤掉 b、c",
+      PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 1, keeping: "a") == ["b", "c"])
 check("没超上限 → 不淘汰",
-      PlaybackCacheRules.victims(orderedByLastPlayed: ordered, limit: 3, keeping: "a").isEmpty)
+      PlaybackCacheRules.victims(orderedByCachedAt: ordered, limit: 3, keeping: "a").isEmpty)
+let fifoFull: [(id: String, cachedAt: Date)] = [
+    ("a", now.addingTimeInterval(-30)), ("b", now.addingTimeInterval(-20)),
+    ("c", now.addingTimeInterval(-10)),
+]
+check("缓存总量恒定：3 首上限 3 不挤，上限 2 只挤 1 首",
+      PlaybackCacheRules.victims(orderedByCachedAt: fifoFull, limit: 3, keeping: "").isEmpty
+      && PlaybackCacheRules.victims(orderedByCachedAt: fifoFull, limit: 2,
+                                    keeping: "").count == 1)
 
 // MARK: - 其它
 

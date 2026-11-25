@@ -10,7 +10,8 @@ import Foundation
 //     它只会感觉"读得慢一点"，永远收不到网络错误，所以听感上不中断、不重载；
 //   · 新 token 拿到的如果不是同一份文件（总长/首段指纹不一致）→ 换下一条；
 //     全都对不上就停（不播错的、也不从 0 重播）；
-//   · 再播这一首优先用本地缓存；上限按"首数"配置（设置页），超出按最近播放淘汰。
+//   · 再播这一首优先用本地缓存；上限按"首数"配置（设置页），满了就**头进尾出**：
+//     新歌从头上进来、最早进缓存的那首从尾巴挤出去，总量恒定。
 //
 // 为什么用 `AVAssetResourceLoader`（而不是 Android 那套"先播流 + 后台下 + 落完切本地"）：
 // 那套在"落盘完成前"的那几秒仍然是播放器自己连 CDN，断了就停，事后切本地救不回来。
@@ -18,6 +19,12 @@ import Foundation
 //
 // 线程模型：每个 `CacheSession` 一条串行队列，所有状态都在那条队列上改；
 // 播放器的回调（`AVAssetResourceLoaderDelegate`）也投到同一条队列，不用再锁。
+
+/// 播放打点：`PlaybackTrace` 是 `@MainActor` 的，缓存层在后台队列 → 统一从这里跳回主线程。
+private func trace(_ stage: String, _ note: String) {
+    Task { @MainActor in PlaybackTrace.shared.log(stage, note) }
+}
+
 final class PlaybackCache: @unchecked Sendable {
 
     static let shared = PlaybackCache()
@@ -29,6 +36,9 @@ final class PlaybackCache: @unchecked Sendable {
         let container: String
         let contentType: String
         var completed: Bool
+        /// 什么时候进缓存的（**淘汰就看它**：头进尾出，先进来的先走）
+        let savedAt: Date
+        /// 最近一次播放（只用于显示/排查，不参与淘汰）
         var lastPlayedAt: Date
     }
 
@@ -103,9 +113,9 @@ final class PlaybackCache: @unchecked Sendable {
         let sec = MediaIndexRules.duration(head: data, container: container,
                                            totalBytes: source.totalBytes)
         let gate = PlaybackCacheRules.gate(candidate: sec, expected: song.duration)
-        PlaybackTrace.shared.log("索引闸门",
-                                 "\(song.name) \(container) 文件 \(sec.map { "\(Int($0))s" } ?? "解不出")"
-                                 + " / 曲目 \(Int(song.duration))s → \(gate)")
+        trace("索引闸门",
+              "\(song.name) \(container) 文件 \(sec.map { "\(Int($0))s" } ?? "解不出")"
+              + " / 曲目 \(Int(song.duration))s → \(gate)")
         return gate
     }
 
@@ -203,7 +213,7 @@ final class PlaybackCache: @unchecked Sendable {
                               container: container,
                               contentType: PlaybackCacheRules.contentType(container: container,
                                                                           format: source.format),
-                              completed: true, lastPlayedAt: Date())
+                              completed: true, savedAt: Date(), lastPlayedAt: Date())
             self.entries[song.id] = entry
             self.sessions[song.id]?.finished = true
             self.save()
@@ -214,11 +224,12 @@ final class PlaybackCache: @unchecked Sendable {
     private func enforceLimit(keeping: String) {
         let limit = PlaybackCacheRules.clampLimit(SettingsStore.shared.playbackCacheLimit)
         guard limit > 0 else { return }
+        // 头进尾出：按"进缓存的时间"排队，最先进来的先淘汰（老板 2026-11-25 定）
         let ordered = entries.values
             .filter { $0.completed }
-            .sorted { $0.lastPlayedAt < $1.lastPlayedAt }
-            .map { (id: $0.songID, lastPlayed: $0.lastPlayedAt) }
-        let victims = PlaybackCacheRules.victims(orderedByLastPlayed: ordered,
+            .sorted { $0.savedAt < $1.savedAt }
+            .map { (id: $0.songID, cachedAt: $0.savedAt) }
+        let victims = PlaybackCacheRules.victims(orderedByCachedAt: ordered,
                                                  limit: limit, keeping: keeping)
         for id in victims {
             guard let e = entries.removeValue(forKey: id) else { continue }
@@ -423,7 +434,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
         defer { try? handle.close() }
         let head = (try? handle.read(upToCount: 4096)) ?? Data()
         guard !head.isEmpty else { return nil }
-        return SHA256.hash(data: head).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: head).map { String(format: "%02x", Int($0)) }.joined()
     }
 
     private func finishFile() {
@@ -442,7 +453,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
     }
 
     private func retryOrFail(_ reason: String) {
-        PlaybackTrace.shared.log("缓存断流", "\(song.name)：\(reason)（已下 \(frontier)/\(totalBytes)）")
+        trace("缓存断流", "\(song.name)：\(reason)（已下 \(frontier)/\(totalBytes)）")
         guard attempts < 3 else {
             fail()
             return
@@ -458,11 +469,11 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
             let same = await self.sameFile(as: next)
             self.queue.async {
                 if same {
-                    PlaybackTrace.shared.log("缓存续拉", "\(self.song.name) ← \(next.backendName)")
+                    trace("缓存续拉", "\(self.song.name) ← \(next.backendName)")
                     self.source = next
                     self.request(path: next.url)
                 } else {
-                    PlaybackTrace.shared.log("缓存换版本", "\(self.song.name)：不是同一份，换下一条")
+                    trace("缓存换版本", "\(self.song.name)：不是同一份，换下一条")
                     self.retryOrFail("不是同一份文件")
                 }
             }
@@ -482,8 +493,8 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
             req.setValue(APIClient.mobileUA, forHTTPHeaderField: "User-Agent")
             req.setValue(StreamVerifier.referer(forHost: url.host), forHTTPHeaderField: "Referer")
             if let (data, resp) = try? await URLSession.shared.data(for: req),
-               (resp as? HTTPURLResponse)?.statusCode ?? 0 < 400, !data.isEmpty {
-                newHash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+               ((resp as? HTTPURLResponse)?.statusCode ?? 0) < 400, !data.isEmpty {
+                newHash = SHA256.hash(data: data).map { String(format: "%02x", Int($0)) }.joined()
                 if newBytes <= 0, let range = (resp as? HTTPURLResponse)?
                     .value(forHTTPHeaderField: "Content-Range"),
                    let slash = range.lastIndex(of: "/"),
@@ -540,7 +551,7 @@ final class CacheSession: NSObject, AVAssetResourceLoaderDelegate, URLSessionDat
             return
         }
         let toEnd = data.requestsAllDataToEndOfResource
-        var length = data.requestedLength
+        var length = Int64(data.requestedLength)
         if toEnd, totalBytes > 0 { length = max(0, totalBytes - data.requestedOffset) }
         pending.append(Pending(request: request, offset: data.requestedOffset, sent: 0,
                                length: length, toEndOfResource: toEnd))

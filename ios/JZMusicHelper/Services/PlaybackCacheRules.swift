@@ -70,15 +70,17 @@ enum PlaybackCacheRules {
         return true
     }
 
-    /// 缓存条数超了要删哪几个：按"最久没听"优先，**永远不删正在播的那首**
+    /// 缓存条数超了要删哪几个：**最早缓存的那首先走**（老板 2026-11-25 定：
+    /// "缓存满了就用最新的替换掉最旧的，保持缓存不涨，头进尾出"）。
     ///
-    /// 口径：总数要压到 `limit` 以内，且 `keeping` 必须留下 —— 所以其余条目里
-    /// 只保留**最新的** (limit - 1) 个，剩下的（最旧的那些）全部淘汰。
-    static func victims(orderedByLastPlayed: [(id: String, lastPlayed: Date)],
+    /// 注意这**不是**"最久没听"的 LRU：按入缓存时间排队，新歌从头上进来、最旧的从尾巴挤出去，
+    /// 所以总量恒定、行为可预期（一首歌只要还在队列里，不会因为你反复听就一直赖着不走）。
+    /// 唯一的例外：`keeping`（正在播的那首）永不淘汰——文件被删它就读不出来了。
+    static func victims(orderedByCachedAt: [(id: String, cachedAt: Date)],
                         limit: Int, keeping: String) -> [String] {
-        let keepingPresent = orderedByLastPlayed.contains { $0.id == keeping }
+        let keepingPresent = orderedByCachedAt.contains { $0.id == keeping }
         let allowedOthers = max(0, limit - (keepingPresent ? 1 : 0))
-        let others = orderedByLastPlayed.filter { $0.id != keeping }
+        let others = orderedByCachedAt.filter { $0.id != keeping }
         guard others.count > allowedOthers else { return [] }
         return others.prefix(others.count - allowedOthers).map { $0.id }
     }
