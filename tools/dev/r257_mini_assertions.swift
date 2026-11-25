@@ -64,6 +64,16 @@ check("错歌 320k < 对歌 98kbps（本期核心）", sRight > sWrong,
       "right=\(sRight.short) wrong=\(sWrong.short)")
 check("错歌的身份位是 9", sWrong.identity == 9, "\(sWrong.identity)")
 
+// 老板 2026-11-25 的音质梯子：同一首歌内部才比音质（320k 优先，取不到往下）
+var hiRight = StreamSource(url: "https://x/z.mp3", backendName: "落月 QQ", platform: .qq,
+                           quality: .high, format: "mp3", note: "")
+hiRight.kbps = 320
+hiRight.totalBytes = 8_700_000
+let sSelf98 = DownloadResolver.score(of: loRight, song: zhong, ref: zhong, ms: 900)
+let sCross320 = DownloadResolver.score(of: hiRight, song: zhongQQ, ref: zhong, ms: 1200)
+check("同曲：320k 压过 98kbps（梯度优先）", sCross320 > sSelf98,
+      "320k=\(sCross320.short) 98k=\(sSelf98.short)")
+
 print("— ③ 缓存条目身份复核")
 check("身份齐全 + 长度对得上 → 放行",
       NameMatch.cacheIdentityOK(displayed: zhong, matchedName: "众", matchedSinger: "黄霄雲",

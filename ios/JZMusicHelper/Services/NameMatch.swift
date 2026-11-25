@@ -206,11 +206,16 @@ enum NameMatch {
         return .albumDuration
     }
 
-    /// 身份等级（越小越可信）：0 = 就是这首歌（同平台同 id）/ 1 歌名相等 / 2 歌名相近 / 3 专辑兜底
+    /// 身份等级（越小越可信）：1 = 就是这首歌（同 id 或歌名相等）/ 2 歌名相近 / 3 专辑兜底
+    ///
+    /// **为什么"本歌自己的 id"和"歌名相等"并到同一档**：两者都证明是同一首歌，
+    /// 既然如此就该让音质说话（老板 2026-11-25：优先 320k，取不到再往下音质找）。
+    /// 如果让"本歌 id"单独压一档，就会出现"对歌只有 98kbps、同曲另一平台有 320k 却不用"。
+    /// 证据更弱的（相近 / 专辑兜底）才排在"完全确认"后面。
     ///
     /// 9 = 没有任何证据（调用方必须当"不是这首歌"处理）
     static func identityRank(src: Song, cand: Song) -> Int {
-        if src.platform == cand.platform && src.platformID == cand.platformID { return 0 }
+        if src.platform == cand.platform && src.platformID == cand.platformID { return 1 }
         guard let e = titleEvidence(src: src, cand: cand) else { return 9 }
         switch e {
         case .exact: return 1
