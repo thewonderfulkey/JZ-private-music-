@@ -331,8 +331,10 @@ do {
             uploaderLike: false))
 
     // 不误伤译名案（2026-11-19 老板口径）：名字不同但同歌手，池子里只有这一首（括号已被剥掉）。
-    let krSrc = song(.qq, "恋爱的条件", "BESTie (베스티)", dur: 194, id: "kr_src")
-    let krCand = song(.netease, "연애의 조건 (Love Options)", "BESTie", dur: 194, id: "kr_ne")
+    let krSrc = song(.qq, "恋爱的条件", "BESTie (베스티)", album: "Love Options", dur: 194,
+                     id: "kr_src")
+    let krCand = song(.netease, "연애의 조건 (Love Options)", "BESTie",
+                      album: "연애의 조건 (Love Options)", dur: 194, id: "kr_ne")
     let krPool = [krCand, song(.kuwo, "연애의 조건 (Inst.)", "BESTie", dur: 192, id: "kr_inst")]
     check("译名案：去重后只有 1 个歌名 → 不算频道号",
           !NameMatch.looksLikeUploader(krSrc, among: krPool))
@@ -4232,8 +4234,9 @@ do {
 section("身份闸：副标题/译名放行，版本类拦截（A7 不变）")
 
 do {
-    let baseline = song(.netease, "恋爱的条件", "BESTie", dur: 200, id: "n1")
-    let translated = song(.qq, "연애의 조건 (LOVE OPTIONS)", "BESTie", dur: 201, id: "q1")
+    let baseline = song(.netease, "恋爱的条件", "BESTie", album: "Love Options", dur: 200, id: "n1")
+    let translated = song(.qq, "연애의 조건 (LOVE OPTIONS)", "BESTie",
+                          album: "연애의 조건 (Love Options)", dur: 201, id: "q1")
     let live = song(.qq, "恋爱的条件 (Live)", "BESTie", dur: 210, id: "q2")
     let inst = song(.qq, "恋爱的条件 (Inst.)", "BESTie", dur: 200, id: "q3")
     let cover = song(.qq, "恋爱的条件 (翻唱)", "别人", dur: 200, id: "q4")
