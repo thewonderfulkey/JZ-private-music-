@@ -256,7 +256,10 @@ final class SleepAudioEngine {
     /// 完全没有。于是退出助眠页、回去听歌时，助眠还在占着会话，
     /// `NowPlayingCenter.update()` 又因为 `isSleeping == true` 直接 return，
     /// 锁屏就一直停在「助眠模式 · 雨打帐篷 + 篝火」上。
-    func yieldToMusic() {
+    /// - Parameter releaseSession:
+    ///   由「音乐开始播」触发时必须传 `false` —— 那一刻音乐刚把音频会话激活，
+    ///   我们再 `setActive(false)` 等于刚点火就拔油管，歌会卡住不动。
+    func yieldToMusic(releaseSession: Bool = true) {
         timerTask?.cancel(); timerTask = nil
         fadeTask?.cancel(); fadeTask = nil
         timerEndsAt = nil; timerSelection = nil; timerMinutes = nil
@@ -270,7 +273,12 @@ final class SleepAudioEngine {
         master = 1
         stoppedByTimer = false
         stopEngine()
-        deactivateSession()
+        if releaseSession {
+            deactivateSession()
+        } else {
+            // 只把"助眠还占着会话"这个标记让出去，真实的 AVAudioSession 留给音乐
+            sessionActive = false
+        }
         clearNowPlaying()
     }
 

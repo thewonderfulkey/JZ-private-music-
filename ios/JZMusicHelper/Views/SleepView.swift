@@ -9,6 +9,7 @@ import SwiftUI
 // 页面是 **push 进导航栈** 的（不是全屏 cover），所以底部五格栏还在、左上角有系统返回。
 struct SleepView: View {
 
+    @Environment(AppRouter.self) private var router
     private var engine: SleepAudioEngine { .shared }
     private var library: SleepLibrary { .shared }
     private var store: SleepPresetStore { .shared }
@@ -96,6 +97,8 @@ struct SleepView: View {
             SleepVolumeSheet(sound: sound).presentationDetents([.height(220)])
         }
         .onReceive(clock) { now = $0 }
+        .onAppear { router.sleepPageVisible = true }
+        .onDisappear { router.sleepPageVisible = false }
         .overlay(alignment: .top) {
             if let err = engine.lastError {
                 Text(err)

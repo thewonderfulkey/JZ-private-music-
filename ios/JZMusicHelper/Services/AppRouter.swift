@@ -74,6 +74,8 @@ final class AppRouter {
     var showSidebar = false
     /// 待消费的「进助眠页」请求：侧边栏点完置 true，发现页 push 完置回 false
     var pendingSleep = false
+    /// 助眠页当前是否在屏幕上（迷你条据此隐藏，避免两个播放条打架）
+    var sleepPageVisible = false
 }
 
 // MARK: - 点歌条的延迟执行（第三十九轮）

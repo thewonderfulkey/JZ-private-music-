@@ -72,8 +72,8 @@ struct DiscoverView: View {
         .onChange(of: router.pendingSleep) { _, want in
             guard want else { return }
             router.pendingSleep = false
-            // 两套声音不混着放
-            if player.isPlaying { player.toggle() }
+            // 注意：这里**不暂停歌**。以前一进页面就把歌停了，但"打开页面"不等于"要放白噪音"。
+            // 真正的互斥放在助眠开口那一刻（SleepAudioEngine.onWillStart → RootTabView）。
             showSleep = true
         }
         .navigationDestination(isPresented: $showSearch) {

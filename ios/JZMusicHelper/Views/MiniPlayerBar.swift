@@ -158,11 +158,13 @@ extension View {
 struct MiniPlayerOverlay: ViewModifier {
 
     @Environment(PlayerEngine.self) private var player
+    @Environment(AppRouter.self) private var router
     let onTap: () -> Void
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
-            if player.hasCurrentSong {
+            // 助眠页有它自己的播放条，这里让位，别两个条子叠在一起
+            if player.hasCurrentSong && !router.sleepPageVisible {
                 ZStack(alignment: .bottom) {
                     // r78（老板 r77："歌词悬浮栏和底层栏还没有严丝合缝，中间透出下面的歌曲"）：
                     // 条子是**浮层**，它和 Tab 栏之间那圈留白原来没有任何底色——列表从底下滚过，

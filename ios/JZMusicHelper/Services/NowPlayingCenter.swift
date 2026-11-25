@@ -179,7 +179,7 @@ final class NowPlayingCenter {
         // 那就让助眠立刻让位（放引擎、放会话、清卡），否则锁屏永远停在「助眠模式」。
         if SleepAudioEngine.shared.isSleeping {
             guard isPlaying else { return }
-            SleepAudioEngine.shared.yieldToMusic()
+            SleepAudioEngine.shared.yieldToMusic(releaseSession: false)
         }
         guard let song else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
