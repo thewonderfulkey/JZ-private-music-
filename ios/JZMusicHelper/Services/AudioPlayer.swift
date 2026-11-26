@@ -111,6 +111,9 @@ final class PlayerEngine {
     private var itemReplacementSongID: String?
     private var itemReplacementCount = 0
     private var lastTickSeconds: Double?
+    /// 上一拍属于哪个 item。换歌时 item 会变，第一拍只记基线、**不判回退**——
+    /// 2026-11-26 诊断里那两条 "9s→0s / 77s→0s" 就是换歌造成的误报。
+    private var lastTickItemToken: ObjectIdentifier?
 
     private(set) var isPlaying = false
     private(set) var isResolving = false
@@ -1343,11 +1346,15 @@ final class PlayerEngine {
         // ① 起播挑选（2026-11-22）：窗口内挑**最高档**的一条起播，起播之后不再换 item。
         //    旧路径是"谁先回来用谁 + 后台升档"，那一步 `replaceCurrentItem` 会让缓冲从 0 重来，
         //    听感就是老板说的"开头 10 秒左右卡一下"（见 `DownloadResolver.startPick`）。
+        var stageBegan = Date()
         if let quick = await DownloadResolver.startPick(song: song, want: PlayerEngine.playbackQuality),
            usable(quick.source) {
             // 2026-11-26（老板 ⑥）：拿到的是低档时留一条诊断，别让"96k 静默降级"再无声发生。
             // 补档这一步在 `startPick` 内部已经做过（只拿低档会多等 `startLowTierGrace`），
             // 这里只负责把结论摊在「播放诊断」里。
+            PlaybackTrace.shared.log("起播阶段", String(
+                format: "① 窗口 %.1fs 命中 ← %@ %dkbps",
+                Date().timeIntervalSince(stageBegan), quick.source.backendName, quick.source.kbps))
             if !PlaybackQualityRules.isTopTier(quick.source) {
                 PlaybackTrace.shared.log("起播低档",
                     "\(song.name) ← \(quick.source.backendName) \(quick.source.kbps)kbps"
@@ -1355,22 +1362,36 @@ final class PlayerEngine {
             }
             return quick.source
         }
+        PlaybackTrace.shared.log("起播阶段", String(
+            format: "① 窗口 %.1fs 空", Date().timeIntervalSince(stageBegan)))
 
         // ② 先到先用（老路径，6s 预算）：启动窗口没等到任何候选时**必须**留着这一档。
         //    为什么不能直接跳去 plan()：plan 要等"跨源候选"（搜索 + 逐个解析，最长 15s），
         //    而妖狐/ikun 这类慢后端 2–5s 才回——直接进 plan 会把"3s 能起播"拖成 15s，
         //    正是 2026-11-20 老板投诉的"切歌卡 10 秒"。这里先抢一条出来响，
         //    音质不好也没关系：起播之后**不再换 item**（宁可这一首 128k，也不中途卡一下）。
+        stageBegan = Date()
         if let quick = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
            usable(quick.source) {
+            PlaybackTrace.shared.log("起播阶段", String(
+                format: "② 先到先用 %.1fs 命中 ← %@ %dkbps",
+                Date().timeIntervalSince(stageBegan), quick.source.backendName, quick.source.kbps))
             return quick.source
         }
+        PlaybackTrace.shared.log("起播阶段", String(
+            format: "② 先到先用 %.1fs 空", Date().timeIntervalSince(stageBegan)))
 
         // ③ 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
+        stageBegan = Date()
         let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
         if let picked = plan.ranked.first(where: { usable($0.source) }) {
+            PlaybackTrace.shared.log("起播阶段", String(
+                format: "③ 完整排名 %.1fs 命中 ← %@ %dkbps",
+                Date().timeIntervalSince(stageBegan), picked.source.backendName, picked.source.kbps))
             return picked.source
         }
+        PlaybackTrace.shared.log("起播阶段", String(
+            format: "③ 完整排名 %.1fs 空", Date().timeIntervalSince(stageBegan)))
 
         // ④ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
         if let cross = await SameSongCrossResolver.resolve(
@@ -1907,14 +1928,17 @@ final class PlayerEngine {
                 guard let self else { return }
                 let seconds = time.seconds
                 if seconds.isFinite {
-                    // R1 打点：正在播的时候进度往回跳 >1s = 用户听见"重头播/跳回去"。
-                    // 这里只记录，不纠正——纠正要改播放行为，得单独立项。
-                    if let previous = self.lastTickSeconds,
+                    // R1 打点：同一 item 内、正在播的时候进度往回跳 >1s = 用户听见"重头播/跳回去"。
+                    // 换歌会让 item 变，换了就不算（第一拍只重新记基线）。
+                    let token = self.player.currentItem.map(ObjectIdentifier.init)
+                    if token != nil, token == self.lastTickItemToken,
+                       let previous = self.lastTickSeconds,
                        PlaybackTraceRules.isBackwardJump(from: previous, to: seconds,
                                                          isPlaying: self.isPlaying) {
                         PlaybackTrace.shared.log("进度回退",
                             "\(self.currentSong?.name ?? "—") \(Int(previous))s → \(Int(seconds))s")
                     }
+                    self.lastTickItemToken = token
                     self.lastTickSeconds = seconds
                     self.currentTime = seconds
                     self.updateLyricIndex()

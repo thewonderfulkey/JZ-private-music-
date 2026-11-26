@@ -48,8 +48,11 @@ BACK_RE = re.compile(r"(\d+)s\s*→\s*(-?\d+)s")
 
 # 事件名里带空格的不少（`item 替换` / `resolve 开始` / `seek 重跳`…），
 # 先按已知前缀切，再退回"第一个词"。只列我们真正要算的，其余按首词归类。
-KNOWN_STAGES = ("item 替换", "进度回退", "饥饿", "didPlayToEnd", "play",
-                "goTo", "源失败", "起播低档", "缓存补档", "预取", "预取命中", "预取失败")
+KNOWN_STAGES = ("item 替换", "item ready", "进度回退", "饥饿", "didPlayToEnd", "play",
+                "goTo", "resolve 开始", "resolve 结束", "resolve 丢弃", "起播阶段",
+                "起播低档", "索引闸门", "缓存完成", "缓存补档", "时长头偏长",
+                "下一首", "到点收尾", "后台任务", "预取", "预取命中", "预取失败")
+RESOLVE_RE = re.compile(r"^(\d+)ms\s*")
 
 # 这些事件说明「前一步刚失败过」——它之后的同曲重装是恢复，不是违规。
 FAILURE_STAGES = ("源失败", "缓存文件坏", "缓存层回退", "同曲换源", "缓存续拉解析")
@@ -83,6 +86,11 @@ class Report:
     advances: list = field(default_factory=list)           # (state, gap, song_prev, song_next)
     stuck_without_next: int = 0
     ends: int = 0
+
+    # 手动选歌 / 解析耗时（2026-11-26 诊断新增）
+    manual_skips: list = field(default_factory=list)        # {gotoAt, latency, next}
+    resolves: list = field(default_factory=list)            # {ms, backend, at}
+    stages: list = field(default_factory=list)              # 起播阶段原始行
 
 
 def parse(path: str) -> list[Entry]:
@@ -120,6 +128,7 @@ def parse(path: str) -> list[Entry]:
 def analyze(entries: list[Entry]) -> Report:
     rep = Report(lines=len(entries))
     pending_end: Entry | None = None
+    pending_goto: Entry | None = None
     last_failure: Entry | None = None
 
     for e in entries:
@@ -158,17 +167,34 @@ def analyze(entries: list[Entry]) -> Report:
             rep.starvations.append({"state": e.state, "at": e.t.strftime("%H:%M:%S"),
                                     "ms": ms, "note": e.note})
 
+        elif e.stage == "resolve 结束":
+            m = RESOLVE_RE.match(e.note)
+            if m:
+                backend = e.note[m.end():].strip()
+                rep.resolves.append({"ms": int(m.group(1)), "backend": backend,
+                                     "at": e.t.strftime("%H:%M:%S")})
+
+        elif e.stage == "goTo":
+            if "pauseFirst=true" in e.note:
+                pending_goto = e
+
         elif e.stage == "didPlayToEnd":
             rep.ends += 1
             pending_end = e
 
-        elif e.stage == "play" and pending_end is not None:
-            gap = (e.t - pending_end.t).total_seconds()
-            song = e.note.split(" ← ")[0] if " ← " in e.note else e.note
-            rep.advances.append({"state": e.state, "gap": round(gap, 3),
-                                 "endAt": pending_end.t.strftime("%H:%M:%S"),
-                                 "next": song[:40]})
-            pending_end = None
+        elif e.stage == "item ready":
+            if pending_end is not None:
+                gap = (e.t - pending_end.t).total_seconds()
+                rep.advances.append({"state": e.state, "gap": round(gap, 3),
+                                     "endAt": pending_end.t.strftime("%H:%M:%S"),
+                                     "next": e.note.rsplit(" ", 1)[0][:40]})
+                pending_end = None
+            if pending_goto is not None:
+                latency = (e.t - pending_goto.t).total_seconds()
+                rep.manual_skips.append({"at": pending_goto.t.strftime("%H:%M:%S"),
+                                         "latency": round(latency, 3),
+                                         "next": e.note.rsplit(" ", 1)[0][:40]})
+                pending_goto = None
 
     if pending_end is not None:
         rep.stuck_without_next += 1
@@ -198,6 +224,8 @@ def render(rep: Report) -> tuple[str, dict]:
     for g in gaps:
         kinds[advance_kind(g)] += 1
     starv = [s["ms"] for s in rep.starvations]
+    skips = [m["latency"] for m in rep.manual_skips]
+    rms = [r["ms"] for r in rep.resolves]
 
     summary = {
         "lines": rep.lines,
@@ -225,6 +253,19 @@ def render(rep: Report) -> tuple[str, dict]:
             "kinds": kinds,
             "noNextTrack": rep.stuck_without_next,
             "pass": rep.stuck_without_next == 0 and kinds["卡住"] == 0,
+        },
+        "manualSkip": {
+            "n": len(skips),
+            "p50": round(pct(skips, 0.5), 3),
+            "p90": round(pct(skips, 0.9), 3),
+            "max": round(max(skips), 3) if skips else 0,
+            "pass": (not skips) or pct(skips, 0.5) <= SLOW_ADVANCE_SEC,
+        },
+        "resolve": {
+            "n": len(rms),
+            "p50": round(pct(rms, 0.5) / 1000, 2),
+            "p90": round(pct(rms, 0.9) / 1000, 2),
+            "max": round(max(rms) / 1000, 2) if rms else 0,
         },
     }
 
@@ -254,6 +295,11 @@ def render(rep: Report) -> tuple[str, dict]:
         f"| R3 不许久等 | 正常 {kinds['正常']} / 慢 {kinds['慢']} / 卡住 {kinds['卡住']} | "
         f"没有下一首 {rep.stuck_without_next} 次 | "
         f"{mark(kinds['卡住'] == 0 and rep.stuck_without_next == 0)} |",
+        f"| 手动选歌 | {len(skips)} 次点击到出声 | P50 {pct(skips,0.5):.2f}s / "
+        f"P90 {pct(skips,0.9):.2f}s / 最长 {(max(skips) if skips else 0):.2f}s | "
+        f"{mark((pct(skips,0.5) <= SLOW_ADVANCE_SEC) if skips else True)} |",
+        f"| 解析耗时 | {len(rms)} 次 resolve | P50 {pct(rms,0.5)/1000:.1f}s / "
+        f"P90 {pct(rms,0.9)/1000:.1f}s / 最长 {(max(rms)/1000 if rms else 0):.1f}s | — |",
     ]
 
     if multi:
@@ -275,22 +321,36 @@ def render(rep: Report) -> tuple[str, dict]:
         lines += ["", "**R3 最慢的 5 次切歌**"]
         lines += [f"- {a['endAt']} 结束 → 下一首 `{a['next']}`：{a['gap']}s（{advance_kind(a['gap'])}）"
                   for a in worst]
+    if skips:
+        lines += ["", "**手动选歌最慢的 5 次（点击 → 出声）**"]
+        for m in sorted(rep.manual_skips, key=lambda x: -x["latency"])[:5]:
+            lines.append(f"- {m['at']} `{m['next']}`：{m['latency']}s")
+    if rms:
+        lines += ["", "**解析最慢的 5 次**"]
+        for r in sorted(rep.resolves, key=lambda x: -x["ms"])[:5]:
+            lines.append(f"- {r['at']} {r['ms'] / 1000:.1f}s ← {r['backend'][:40]}")
     return "\n".join(lines), summary
 
 
 SELF_TEST_LOG = """\
 10:00:00.000  前台  play  晴天 ← 落月 QQ MP3 320kbps
 10:00:00.010  前台  item 替换  晴天 ← 落月 QQ MP3 320kbps 本曲第1次
+10:00:00.120  前台  item ready  晴天 269s
 10:00:03.000  前台  饥饿  晴天 等了 350ms @524288B
 10:04:29.000  前台  didPlayToEnd  index=0/20 mode=列表循环
 10:04:29.400  前台  item 替换  七里香 ← cyapi QQ M4A 97kbps 本曲第1次
 10:04:29.500  前台  play  七里香 ← cyapi QQ M4A 97kbps
+10:04:29.600  前台  item ready  七里香 299s
 10:05:10.000  前台  进度回退  七里香 100s → 12s
 10:05:12.000  前台  饥饿  七里香 等了 1200ms @900000B
 10:09:00.000  前台  didPlayToEnd  index=1/20 mode=列表循环
 10:09:14.000  前台  item 替换  稻香 ← 星海酷狗 MP3 320kbps 本曲第1次
 10:09:14.100  前台  play  稻香 ← 星海酷狗 MP3 320kbps
+10:09:14.200  前台  item ready  稻香 223s
 10:09:20.000  前台  item 替换  稻香 ← 星海酷狗 MP3 320kbps 本曲第2次（同曲重装）
+10:10:00.000  前台  goTo  →5/20 pauseFirst=true
+10:10:02.900  前台  resolve 结束  2900ms gdstudio 网易 320kbps
+10:10:03.000  前台  item ready  某歌 200s
 10:13:00.000  前台  didPlayToEnd  index=2/20 mode=列表循环
 """
 
@@ -306,8 +366,12 @@ def self_test() -> int:
         and summary["R2"]["starvations"] == 2
         and summary["R2"]["maxMs"] == 1200
         and summary["R3"]["advancesMeasured"] == 2
-        and summary["R3"]["kinds"]["卡住"] == 1
+        and summary["R3"]["kinds"]["卡住"] == 1        # 14.0s 那次
         and summary["R3"]["noNextTrack"] == 1
+        and summary["manualSkip"]["n"] == 1
+        and abs(summary["manualSkip"]["max"] - 3.0) < 0.01
+        and summary["resolve"]["n"] == 1
+        and abs(summary["resolve"]["max"] - 2.9) < 0.01
     )
     print(text)
     print("\n自检：", "通过" if ok else "失败", json.dumps(summary["R3"], ensure_ascii=False))
