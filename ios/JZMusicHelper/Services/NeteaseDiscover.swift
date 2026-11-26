@@ -20,7 +20,9 @@ struct NeteaseChartBrief: Sendable, Equatable {
     let trackCount: Int
 }
 
-struct NeteaseBannerItem: Sendable, Equatable {
+/// BANNER 一条：图片 + 文案 + 站内落点（歌单 id）。
+/// `Codable` 是为了按天缓存——首页块响应不小，当天不该反复拉。
+struct NeteaseBannerItem: Sendable, Equatable, Codable {
     let image: String
     let title: String
     /// 只保留能站内跳转的（歌单 id）；外链 banner 直接过滤掉

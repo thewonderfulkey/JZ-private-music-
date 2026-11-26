@@ -6695,6 +6695,35 @@ func r287TitleKeyIdentityAssertions() {
 }
 
 
+// MARK: 2026-11-27 BANNER 轮播规则（发现页 2.0 Task 5）
+func r288BannerRulesAssertions() {
+    section("BANNER：只跳站内 / 循环 / 可关当天")
+
+    check("0 条不渲染", !BannerRules.shouldShow(count: 0))
+    check("1 条要渲染但不自动轮播",
+          BannerRules.shouldShow(count: 1) && !BannerRules.shouldAutoAdvance(count: 1))
+    check("多条才自动轮播", BannerRules.shouldAutoAdvance(count: 2))
+
+    check("自动轮播：最后一张之后回到 0", BannerRules.advanced(from: 2, count: 3) == 0)
+    check("自动轮播：中间正常 +1", BannerRules.advanced(from: 0, count: 3) == 1)
+    check("下标回绕：负数不越界", BannerRules.nextIndex(current: -1, count: 3) == 2)
+    check("count 为 0 时给 0，不崩", BannerRules.nextIndex(current: 5, count: 0) == 0)
+
+    let internalBanner = NeteaseBannerItem(image: "http://img/1.jpg", title: "歌单推荐",
+                                           playlistID: "18428485896")
+    let external = NeteaseBannerItem(image: "http://img/2.jpg", title: "演唱会门票",
+                                     playlistID: nil)
+    let noImage = NeteaseBannerItem(image: "", title: "空图", playlistID: "123")
+    check("外链 banner 被过滤（点不出去）",
+          BannerRules.usable([internalBanner, external]).map(\.title) == ["歌单推荐"])
+    check("空图的也不要", BannerRules.usable([noImage]).isEmpty)
+
+    check("今天关过 → 今天不显示", BannerRules.isHidden(closedDay: 100, today: 100))
+    check("昨天关过 → 今天照常显示", !BannerRules.isHidden(closedDay: 99, today: 100))
+    check("从没关过 → 显示", !BannerRules.isHidden(closedDay: nil, today: 100))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6709,6 +6738,7 @@ r281NeteaseDiscoverAssertions()
 r283SectionRulesAssertions()
 r286NeteaseTrackPageAssertions()
 r287TitleKeyIdentityAssertions()
+r288BannerRulesAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

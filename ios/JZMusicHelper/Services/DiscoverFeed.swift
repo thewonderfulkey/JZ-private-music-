@@ -53,6 +53,35 @@ final class DiscoverFeed {
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
 
+    // MARK: 发现页 2.0：BANNER（网易首页轮播，只留站内可跳的）
+    //
+    // 为什么落到网易：酷我没有匿名 banner 接口。实测（2026-11-26）网易首页 8 条里
+    // 4 条是歌单（targetType 1000，站内可跳）、4 条是演出/外链（3000），
+    // 外链在 `BannerRules.usable` 里被过滤掉——**点哪儿都还在 App 里**。
+    /// 只存"能用"的那几条（已过滤外链、已过滤空图）
+    private(set) var banners: [NeteaseBannerItem] = []
+    private(set) var bannerState: LoadState = .idle
+    /// 这批 banner 属于哪一天（本地日；跨天要重取，因为运营会换图）
+    private var bannerDay: Int = -1
+    private static let bannerCacheKey = "discover_banner_cache_v1"
+
+    /// banner 当天关闭记下的本地日（UI 读它决定要不要渲染；关掉只关当天）
+    private(set) var bannerClosedDay: Int = -1
+    private static let bannerClosedKey = "discover_banner_closed_day_v1"
+
+    /// 今天该不该显示 BANNER（有内容 + 今天没关过）
+    var showsBanner: Bool {
+        BannerRules.shouldShow(count: banners.count)
+            && !BannerRules.isHidden(closedDay: bannerClosedDay == -1 ? nil : bannerClosedDay,
+                                     today: day)
+    }
+
+    /// 关掉 BANNER（只关当天）
+    func closeBanner() {
+        bannerClosedDay = day
+        defaults.set(day, forKey: Self.bannerClosedKey)
+    }
+
 
     private let defaults = UserDefaults.standard
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
@@ -117,6 +146,12 @@ final class DiscoverFeed {
             newDay = day
             newState = .loaded
         }
+        // BANNER：缓存与"今天关过了"都同步读进来，第一帧就能定下"显示 / 不显示"
+        bannerClosedDay = defaults.object(forKey: Self.bannerClosedKey) as? Int ?? -1
+        if let cached = cachedBanners() {
+            banners = BannerRules.usable(cached.items)
+            if !banners.isEmpty { bannerState = .loaded }
+        }
     }
 
     // MARK: 每日一趟（热门 + 最新单曲）
@@ -130,15 +165,56 @@ final class DiscoverFeed {
     func loadDaily() async {
         async let hot: Void = loadHotIfNeeded()
         async let fresh: Void = loadNewSongsIfNeeded()
-        _ = await (hot, fresh)
+        async let banner: Void = loadBannersIfNeeded()
+        _ = await (hot, fresh, banner)
     }
 
-    /// 下拉刷新：热门 / 最新单曲 / 猜你喜欢 三块一起重取（都强制，不吃缓存）
+    /// 下拉刷新：热门 / 最新单曲 / BANNER / 猜你喜欢 一起重取（都强制，不吃缓存）
     func refreshAll(recent: [Song]) async {
         async let hot: Void = refreshHot()
         async let fresh: Void = refreshNewSongs()
+        async let banner: Void = refreshBanners()
         async let guess: Void = refreshGuess(recent: recent)
-        _ = await (hot, fresh, guess)
+        _ = await (hot, fresh, banner, guess)
+    }
+
+    // MARK: BANNER
+
+    private struct BannerCache: Codable {
+        let day: Int
+        let items: [NeteaseBannerItem]
+    }
+
+    func loadBannersIfNeeded() async {
+        if bannerState == .loading { return }
+        if bannerDay == day, !banners.isEmpty { return }
+        if let cached = cachedBanners() {
+            let usable = BannerRules.usable(cached.items)
+            if !usable.isEmpty {
+                // 有缓存就先铺（哪怕是昨天的）：第一帧就有图，不闪骨架
+                banners = usable
+                bannerState = .loaded
+                if cached.day == day {
+                    bannerDay = day
+                    return
+                }
+            }
+        }
+        await refreshBanners()
+    }
+
+    func refreshBanners() async {
+        if banners.isEmpty { bannerState = .loading }
+        let items = BannerRules.usable(await NeteaseDiscover.banners())
+        guard !items.isEmpty else {
+            // 拉空不清空已有内容（网易挂了不该让今天的 banner 突然消失）
+            bannerState = banners.isEmpty ? .failed : .loaded
+            return
+        }
+        banners = items
+        bannerDay = day
+        bannerState = .loaded
+        saveBanners(items)
     }
 
     // MARK: 最新单曲
@@ -360,5 +436,16 @@ final class DiscoverFeed {
         let cache = GuessCache(day: day, signature: signature, songs: songs)
         guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.guessCacheKey)
+    }
+
+    private func cachedBanners() -> BannerCache? {
+        guard let data = defaults.data(forKey: Self.bannerCacheKey) else { return nil }
+        return try? JSONDecoder().decode(BannerCache.self, from: data)
+    }
+
+    private func saveBanners(_ items: [NeteaseBannerItem]) {
+        let cache = BannerCache(day: day, items: items)
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        defaults.set(data, forKey: Self.bannerCacheKey)
     }
 }

@@ -40,6 +40,12 @@ struct DiscoverView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Tokens.Spacing.l) {
                 searchEntry
+                // 发现页 2.0：BANNER 轮播（网易首页取图，只跳站内歌单；可关，关掉只关当天）
+                if feed.showsBanner {
+                    DiscoverBannerCarousel(banners: feed.banners) {
+                        feed.closeBanner()
+                    }
+                }
                 artistSection
                 recentSection
                 myPlaylistsSection
