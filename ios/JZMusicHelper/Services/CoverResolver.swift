@@ -197,16 +197,24 @@ actor CoverResolver {
     }
 
     /// 严格匹配规则（纯函数，CI 里有断言）：
-    /// 歌名去首尾空白后**完全相等**（忽略大小写），且歌手至少有一个片段相等（忽略大小写）。
-    /// 注意这是"严格"——带 (Live)/(纯音乐) 后缀的候选不算同一条，宁可没封面也不张冠李戴。
+    ///   歌名**归一化后完全相等**（去版本括号/标点/大小写），
+    ///   歌手用 `NameMatch.singerMatches`（按 / & 、 ， 空格 拆 token 取交集），
+    ///   候选多出来的「版本类」（Live/伴奏/翻唱…）一律不要。
+    ///
+    /// 2026-11-26 真机：录屏里《恋爱脑中》等歌始终没有封面，但实测 QQ/酷狗/网易**三级都有真封面**。
+    /// 根因是旧口径只按 `/` 拆歌手——「阿肆&TizzyT」vs「阿肆/TizzyT」交集为空，
+    /// 三级全被判"不是同一首"，最后只能落占位图。改成与播放链同一个身份口径。
     static func isStrictMatch(name: String, singer: String,
                               candidateName: String, candidateSinger: String) -> Bool {
-        let targetName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let candName = candidateName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !targetName.isEmpty, targetName == candName else { return false }
-        let targetSingers = Set(singerParts(singer))
-        guard !targetSingers.isEmpty else { return true }
-        return !singerParts(candidateSinger).filter { targetSingers.contains($0) }.isEmpty
+        let a = NameMatch.normTitle(name)
+        let b = NameMatch.normTitle(candidateName)
+        guard !a.isEmpty, !b.isEmpty, a == b else { return false }
+        if !NameMatch.versionClass(candidateName).isSubset(of: NameMatch.versionClass(name)) {
+            return false
+        }
+        let hint = SearchQueryVariants.artistHint(from: name)
+        return NameMatch.singerMatches(singer, candidateSinger)
+            || (hint.map { NameMatch.singerMatches($0, candidateSinger) } ?? false)
     }
 
     /// 歌手串拆片段（按 / 分），与 Android `song.singer.split('/')` 一致

@@ -1539,6 +1539,15 @@ do {
                                        candidateName: "  ", candidateSinger: "周杰伦"))
     check("歌手片段拆分（斜杠）", CoverResolver.singerParts("A / B") == ["a", "b"],
           "\(CoverResolver.singerParts("A / B"))")
+    // 2026-11-26 真机：录屏里《恋爱脑中》等歌一直没封面，但三级腿其实都有真封面——
+    // 旧口径只按「/」拆歌手，「阿肆&TizzyT」vs「阿肆/TizzyT」交集为空，三级全拒。
+    check("歌手分隔符不同也算同一首（& vs /）",
+          CoverResolver.isStrictMatch(name: "恋爱脑中", singer: "阿肆&TizzyT",
+                                      candidateName: "恋爱脑中", candidateSinger: "阿肆/TizzyT"))
+    check("歌手对不上、但对上歌名括号里的歌手也算",
+          CoverResolver.isStrictMatch(
+              name: "茶花开了，该回家了(说唱版-王睿卓&加木)", singer: "小酒",
+              candidateName: "茶花开了，该回家了", candidateSinger: "王睿卓/加木"))
 }
 
 do {
