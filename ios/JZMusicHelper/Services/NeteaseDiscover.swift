@@ -130,7 +130,7 @@ enum NeteaseDiscover {
                         ?? (mainTitle.isEmpty ? title : mainTitle)
                     guard !name.isEmpty else { continue }
                     let artists = artistNames(res["resourceExtInfo"])
-                    let pic = uiImage.isEmpty ? cover : uiImage
+                    let pic = uiImage.isEmpty ? (cover ?? "") : uiImage
                     out.append(Song.make(platform: .netease, platformID: id, name: name,
                                          singer: artists.isEmpty ? title : artists,
                                          album: "", duration: 0,
