@@ -6481,7 +6481,7 @@ func r280MergeRulesAssertions() {
     section("发现页合并：跨源去重与交替顺序")
     func s(_ p: MusicPlatform, _ name: String, _ singer: String, id: String = UUID().uuidString) -> Song {
         Song(platform: p, platformID: id, name: name, singer: singer,
-             album: "", duration: 269)
+             album: "", duration: 269, picURL: nil)
     }
     let kuwo1 = s(.kuwo, "晴天", "周杰伦", id: "kw1")
     let netease1 = s(.netease, "晴天", "周杰伦", id: "wy1")
@@ -6508,6 +6508,67 @@ func r280MergeRulesAssertions() {
 }
 
 
+// MARK: 2026-11-26 网易发现源解析（榜单/取歌/首页新歌新碟/banner/歌单）
+func r281NeteaseDiscoverAssertions() {
+    section("网易发现源：解析形状")
+    let charts: [String: Any] = ["list": [[
+        "id": 19723756, "name": "飙升榜", "updateFrequency": "刚刚更新",
+        "coverImgUrl": "http://c/1.jpg", "trackCount": 100
+    ]]]
+    let briefs = NeteaseDiscover.parseChartList(charts)
+    check("榜单 1 条且字段对", briefs.count == 1 && briefs[0].id == "19723756"
+          && briefs[0].trackCount == 100)
+
+    let detail: [String: Any] = ["playlist": ["tracks": [[
+        "id": 186016, "name": "晴天",
+        "artists": [["name": "周杰伦"]],
+        "album": ["name": "叶惠美", "picUrl": "http://p/1.jpg"],
+        "duration": 269000
+    ]]]]
+    let songs = NeteaseDiscover.parseChartSongs(detail)
+    check("取歌 1 首、平台是网易、时长 269s",
+          songs.count == 1 && songs[0].platform == .netease
+          && Int(songs[0].durationSec) == 269)
+    check("歌手/专辑/封面都带出来",
+          songs[0].singer == "周杰伦" && songs[0].album == "叶惠美"
+          && (songs[0].picURL ?? "").contains("p/1.jpg"))
+
+    let home: [String: Any] = ["data": ["blocks": [
+        ["blockCode": "HOMEPAGE_BANNER", "extInfo": ["banners": [
+            ["pic": "http://b/1.jpg", "targetType": 1000, "targetId": 123, "typeTitle": "歌单"],
+            ["pic": "http://b/2.jpg", "targetType": 3000, "targetId": 0, "typeTitle": "演出"],
+        ]]],
+        ["blockCode": "HOMEPAGE_BLOCK_NEW_ALBUM_NEW_SONG", "creatives": [[
+            "uiElement": ["mainTitle": ["title": "晚风"], "image": ["imageUrl": "http://c/1.jpg"]],
+            "resources": [
+                ["resourceType": "song", "resourceId": 456, "name": "晚风",
+                 "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
+                ["resourceType": "album", "resourceId": 789,
+                 "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
+            ]
+        ]]],
+    ]]]
+    let banners = NeteaseDiscover.parseBanners(home)
+    check("banner 两条都保留（外链那条 playlistID 为空）",
+          banners.count == 2 && banners[0].playlistID == "123" && banners[1].playlistID == nil)
+    let newSongs = NeteaseDiscover.parseHomeSongs(home)
+    check("首页新歌 1 首、id/歌手对", newSongs.count == 1
+          && newSongs[0].platformID == "456" && newSongs[0].singer == "鹿晗")
+    let albums = NeteaseDiscover.parseHomeAlbums(home)
+    check("新碟 1 张、id 与名字对", albums.count == 1
+          && albums[0].id == "789" && albums[0].name == "晚风"
+          && albums[0].artist == "鹿晗")
+
+    let pl: [String: Any] = ["playlists": [[
+        "id": 18428485896, "name": "日语歌单", "coverImgUrl": "http://c/2.jpg", "trackCount": 68
+    ]]]
+    let ps = NeteaseDiscover.parsePlaylists(pl)
+    check("歌单 1 条、曲目数对", ps.count == 1 && ps[0].trackCount == 68)
+    check("空响应不崩", NeteaseDiscover.parseChartList([:]).isEmpty
+          && NeteaseDiscover.parseBanners([:]).isEmpty)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6518,6 +6579,7 @@ r270SearchVariantAssertions()
 r271CoverLegsAssertions()
 r272YrcAssertions()
 r280MergeRulesAssertions()
+r281NeteaseDiscoverAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")
