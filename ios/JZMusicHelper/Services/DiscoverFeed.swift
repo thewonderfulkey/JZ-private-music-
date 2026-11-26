@@ -53,6 +53,11 @@ final class DiscoverFeed {
     private(set) var guessSongs: [Song] = []
     private(set) var guessState: LoadState = .idle
 
+    /// 新碟（网易首页块）：一天一趟，与热门/新歌同进度
+    private(set) var newAlbums: [NeteaseAlbumBrief] = []
+    private(set) var newAlbumsState: LoadState = .idle
+    private var newAlbumsDay: Int = -1
+
     private let defaults = UserDefaults.standard
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
     private static let hotCacheKey = "discover_hot_cache_v2"
@@ -129,7 +134,8 @@ final class DiscoverFeed {
     func loadDaily() async {
         async let hot: Void = loadHotIfNeeded()
         async let fresh: Void = loadNewSongsIfNeeded()
-        _ = await (hot, fresh)
+        async let albums: Void = loadNewAlbumsIfNeeded()
+        _ = await (hot, fresh, albums)
     }
 
     /// 下拉刷新：热门 / 最新单曲 / 猜你喜欢 三块一起重取（都强制，不吃缓存）
@@ -137,7 +143,31 @@ final class DiscoverFeed {
         async let hot: Void = refreshHot()
         async let fresh: Void = refreshNewSongs()
         async let guess: Void = refreshGuess(recent: recent)
-        _ = await (hot, fresh, guess)
+        async let albums: Void = refreshNewAlbums()
+        _ = await (hot, fresh, guess, albums)
+    }
+
+    // MARK: 新碟（网易首页块）
+
+    func loadNewAlbumsIfNeeded() async {
+        if newAlbumsState == .loading { return }
+        if newAlbumsDay == day, !newAlbums.isEmpty { return }
+        await refreshNewAlbums()
+    }
+
+    /// 失败**不清空已有内容**（与热门/新歌同口径）
+    func refreshNewAlbums() async {
+        guard newAlbumsState != .loading else { return }
+        let hadContent = !newAlbums.isEmpty
+        if !hadContent { newAlbumsState = .loading }
+        let albums = await NeteaseDiscover.newAlbums()
+        if albums.isEmpty {
+            if !hadContent { newAlbumsState = .failed }
+            return
+        }
+        newAlbums = albums
+        newAlbumsDay = day
+        newAlbumsState = .loaded
     }
 
     // MARK: 最新单曲

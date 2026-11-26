@@ -27,7 +27,7 @@ struct NeteaseBannerItem: Sendable, Equatable {
     let playlistID: String?
 }
 
-struct NeteaseAlbumBrief: Sendable, Equatable {
+struct NeteaseAlbumBrief: Sendable, Hashable {
     let id: String
     let name: String
     let artist: String

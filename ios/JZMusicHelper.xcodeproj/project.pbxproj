@@ -126,6 +126,11 @@
 		B00000000000000000000083 /* SleepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000083 /* SleepView.swift */; };
 		B00000000000000000000084 /* DiscoverSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000084 /* DiscoverSidebar.swift */; };
 		B00000000000000000000085 /* SleepPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000085 /* SleepPresetStore.swift */; };
+		B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009B /* DiscoverMergeRules.swift */; };
+		B0000000000000000000009D /* NeteaseDiscover.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009C /* NeteaseDiscover.swift */; };
+		B0000000000000000000009E /* AlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009D /* AlbumService.swift */; };
+		B0000000000000000000009F /* DiscoverSectionRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009E /* DiscoverSectionRules.swift */; };
+		B000000000000000000000A0 /* AlbumDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009F /* AlbumDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -247,6 +252,11 @@
 		F00000000000000000000083 /* SleepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepView.swift; sourceTree = "<group>"; };
 		F00000000000000000000084 /* DiscoverSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverSidebar.swift; sourceTree = "<group>"; };
 		F00000000000000000000085 /* SleepPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepPresetStore.swift; sourceTree = "<group>"; };
+		F0000000000000000000009B /* DiscoverMergeRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverMergeRules.swift; sourceTree = "<group>"; };
+		F0000000000000000000009C /* NeteaseDiscover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseDiscover.swift; sourceTree = "<group>"; };
+		F0000000000000000000009D /* AlbumService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumService.swift; sourceTree = "<group>"; };
+		F0000000000000000000009E /* DiscoverSectionRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverSectionRules.swift; sourceTree = "<group>"; };
+		F0000000000000000000009F /* AlbumDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -374,6 +384,10 @@
 				F00000000000000000000081 /* SleepAudioEngine.swift */,
 				F00000000000000000000082 /* SleepLibrary.swift */,
 				F00000000000000000000085 /* SleepPresetStore.swift */,
+				F0000000000000000000009B /* DiscoverMergeRules.swift */,
+				F0000000000000000000009C /* NeteaseDiscover.swift */,
+				F0000000000000000000009D /* AlbumService.swift */,
+				F0000000000000000000009E /* DiscoverSectionRules.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -415,6 +429,7 @@
 				F00000000000000000000095 /* StorageAuditSheet.swift */,
 				F00000000000000000000083 /* SleepView.swift */,
 				F00000000000000000000084 /* DiscoverSidebar.swift */,
+				F0000000000000000000009F /* AlbumDetailView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -692,6 +707,11 @@
 				B00000000000000000000083 /* SleepView.swift in Sources */,
 				B00000000000000000000084 /* DiscoverSidebar.swift in Sources */,
 				B00000000000000000000085 /* SleepPresetStore.swift in Sources */,
+				B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */,
+				B0000000000000000000009D /* NeteaseDiscover.swift in Sources */,
+				B0000000000000000000009E /* AlbumService.swift in Sources */,
+				B0000000000000000000009F /* DiscoverSectionRules.swift in Sources */,
+				B000000000000000000000A0 /* AlbumDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
