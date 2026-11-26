@@ -1239,10 +1239,8 @@ enum SearchQueryVariants {
         guard !content.isEmpty, content.count <= 40 else { return nil }
         let low = content.lowercased()
         if versionWords.contains(low) { return nil }
-        // 至少得有一个像名字的字符
-        let hasNameChar = content.unicodeScalars.contains {
-            CharacterSet.alphanumerics.contains() || (0x4E00...0x9FFF).contains(.value)
-        }
+        // 至少得有一个像名字的字符（字母/数字；汉字属于 letter）
+        let hasNameChar = content.contains { $0.isLetter || $0.isNumber }
         return hasNameChar ? content : nil
     }
 
