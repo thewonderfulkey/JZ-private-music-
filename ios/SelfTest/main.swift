@@ -6543,6 +6543,41 @@ func r281NeteaseDiscoverAssertions() {
 }
 
 
+// MARK: 2026-11-26 板块状态：一家挂只少一部分
+func r283SectionRulesAssertions() {
+    section("板块状态：合并且单源失败不拖垮整块")
+    func s(_ p: MusicPlatform, _ name: String) -> Song {
+        Song.make(platform: p, platformID: UUID().uuidString, name: name,
+                  singer: "周杰伦", album: "", duration: 200, picURL: nil)
+    }
+    let both = DiscoverSectionRules.combine([
+        .ok(.kuwo, [s(.kuwo, "晴天")]),
+        .ok(.netease, [s(.netease, "七里香")]),
+    ])
+    check("两家都成功：2 条、可见", both.items.count == 2 && both.isVisible)
+    check("没有失败源", both.failedSources.isEmpty)
+
+    let oneFailed = DiscoverSectionRules.combine([
+        .ok(.kuwo, [s(.kuwo, "晴天")]),
+        .failed(.netease),
+    ])
+    check("一家失败：仍有 1 条、可见", oneFailed.items.count == 1 && oneFailed.isVisible)
+    check("失败源被记下来（UI 用小字提示）", oneFailed.failedSources == [.netease])
+    check("失败源计数为 0",
+          oneFailed.sources.first(where: { $0.source == .netease })?.count == 0)
+
+    let allFailed = DiscoverSectionRules.combine([.failed(.kuwo), .failed(.netease)])
+    check("两家都失败：不可见（整块隐藏）", !allFailed.isVisible)
+    check("两家都标失败", allFailed.failedSources.count == 2)
+
+    let dup = DiscoverSectionRules.combine([
+        .ok(.kuwo, [s(.kuwo, "晴天")]),
+        .ok(.netease, [s(.netease, "晴天")]),
+    ])
+    check("跨源同一首只留一条", dup.items.count == 1)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
