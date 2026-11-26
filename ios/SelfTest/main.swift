@@ -6476,6 +6476,38 @@ func r272YrcAssertions() {
 }
 
 
+// MARK: 2026-11-26 发现页多源合并（并列不互斥、跨源去重、版本不合并）
+func r280MergeRulesAssertions() {
+    section("发现页合并：跨源去重与交替顺序")
+    func s(_ p: MusicPlatform, _ name: String, _ singer: String, id: String = UUID().uuidString) -> Song {
+        Song(platform: p, platformID: id, name: name, singer: singer,
+             album: "", duration: 269)
+    }
+    let kuwo1 = s(.kuwo, "晴天", "周杰伦", id: "kw1")
+    let netease1 = s(.netease, "晴天", "周杰伦", id: "wy1")
+    let kuwo2 = s(.kuwo, "七里香", "周杰伦", id: "kw2")
+    let netease2 = s(.netease, "七里香", "周杰伦", id: "wy2")
+
+    check("同一首跨源只留一条",
+          DiscoverMergeRules.merge([(.kuwo, [kuwo1]), (.netease, [netease1])]).count == 1)
+    check("保留先出现的那条（酷我）",
+          DiscoverMergeRules.merge([(.kuwo, [kuwo1]), (.netease, [netease1])]).first?.platform == .kuwo)
+
+    let live = s(.netease, "晴天 (Live)", "周杰伦", id: "wy-live")
+    check("原唱与 Live 不能合并",
+          DiscoverMergeRules.merge([(.kuwo, [kuwo1]), (.netease, [live])]).count == 2)
+
+    let mixed = DiscoverMergeRules.merge([(.kuwo, [kuwo1, kuwo2]), (.netease, [netease1, netease2])])
+    check("交替顺序：A1,B1,A2,B2（去重后剩 A1,A2）",
+          mixed.map(\.platformID) == ["kw1", "kw2"], "\(mixed.map(\.platformID))")
+
+    check("一家空不影响另一家",
+          DiscoverMergeRules.merge([(.kuwo, []), (.netease, [netease1])]).count == 1)
+    check("两家都空 → 不可见", !DiscoverMergeRules.isVisible([]))
+    check("有内容 → 可见", DiscoverMergeRules.isVisible([kuwo1]))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6485,6 +6517,7 @@ r269AdmissionAssertions()
 r270SearchVariantAssertions()
 r271CoverLegsAssertions()
 r272YrcAssertions()
+r280MergeRulesAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

@@ -83,6 +83,7 @@ jobs:
             ios/JZMusicHelper/Services/DownloadGuard.swift \
             ios/JZMusicHelper/Services/DownloadIntegrityRules.swift \
             ios/JZMusicHelper/Services/DiscoverRules.swift \
+            ios/JZMusicHelper/Services/DiscoverMergeRules.swift \
             ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
