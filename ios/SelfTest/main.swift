@@ -6404,6 +6404,39 @@ func r270SearchVariantAssertions() {
 }
 
 
+// MARK: 2026-11-26 封面四腿：酷狗 / 网易两条新腿的采用条件
+func r271CoverLegsAssertions() {
+    section("封面四腿：酷狗/网易的采用条件")
+    let target = Song.make(platform: .kuwo, platformID: "kw1", name: "晴天", singer: "周杰伦",
+                           album: "", duration: 269, picURL: nil)
+    func cand(_ platform: MusicPlatform, _ name: String, _ singer: String, _ pic: String?) -> Song {
+        Song.make(platform: platform, platformID: UUID().uuidString, name: name, singer: singer,
+                  album: "", duration: 269, picURL: pic)
+    }
+
+    let singerArt = cand(.kugou, "晴天", "周杰伦",
+                         "https://imge.kugou.com/singerimg/softhead/x.jpg")
+    let albumArt = cand(.kugou, "晴天", "周杰伦", "https://imge.kugou.com/stdmusic/500/x.jpg")
+    check("酷狗歌手头像跳过、取下一张",
+          CoverResolver.pickStrict([singerArt, albumArt], for: target, rejectSingerArt: true)
+          == "https://imge.kugou.com/stdmusic/500/x.jpg")
+    check("歌手对不上一律不采用",
+          CoverResolver.pickStrict([cand(.kugou, "晴天", "别人", "https://x/1.jpg")],
+                                   for: target, rejectSingerArt: true) == nil)
+    check("版本变体（Live）不采用",
+          CoverResolver.pickStrict([cand(.netease, "晴天 (Live)", "周杰伦", "https://x/2.jpg")],
+                                   for: target, rejectSingerArt: false) == nil)
+    check("网易正规专辑图采用",
+          CoverResolver.pickStrict([cand(.netease, "晴天", "周杰伦",
+                                         "https://p2.music.126.net/x.jpg")],
+                                   for: target, rejectSingerArt: false)
+          == "https://p2.music.126.net/x.jpg")
+    check("没图的候选直接跳过",
+          CoverResolver.pickStrict([cand(.netease, "晴天", "周杰伦", nil)],
+                                   for: target, rejectSingerArt: false) == nil)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6411,6 +6444,7 @@ r267TraceAssertions()
 r268GateAssertions()
 r269AdmissionAssertions()
 r270SearchVariantAssertions()
+r271CoverLegsAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

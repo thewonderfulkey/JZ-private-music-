@@ -2,10 +2,15 @@ import Foundation
 
 // MARK: - 封面兜底
 //
-// 兜底顺序（2026-11-26 起：**酷我封面整条路废掉**）：
+// 兜底顺序（2026-11-26 第二版：酷我封面整条路废掉，补酷狗 + 网易两条腿）：
 //   ① 用「同歌名 + 同歌手」去 QQ 搜一次，严格匹配才取
-//   ② 都取不到：iTunes（华语必须带店，见 `ITunesCover`）
-//   ③ 仍取不到：返回 nil，让 UI 落占位图
+//   ② 取不到：酷狗搜一次（`union_cover`），同一把身份闸；歌手头像/旧 imgessl 一律不要
+//   ③ 取不到：网易搜一次（`album.picUrl`，适配器会自己 song/detail 补图）
+//   ④ 都取不到：iTunes（华语必须带店，见 `ITunesCover`）
+//   ⑤ 仍取不到：返回 nil，让 UI 落占位图
+//
+// 为什么要四条腿：酷我来源的歌（`ksong.s` 榜单、`playListInfo` 歌单）**自带图恒为 nil**，
+// 废掉酷我之后只剩 QQ + iTunes 两条，太薄。酷狗/网易都是"搜一次就有图"的独立链路。
 //
 // 为什么废酷我（老板 2026-11-26 拍板，只废封面、音频照用）：
 //   本机 225 张普查（`tools/probes/cover_census.py`）——酷我搜索的 MVPIC 是**曲图**
@@ -77,11 +82,24 @@ actor CoverResolver {
         let task = Task<String?, Never> { [weak self] in
             guard let self else { return nil }
             await self.acquire()
-            // 依次尝试：① QQ 严格匹配 → ② iTunes（公共兜底）。
+            // 依次尝试：① QQ 严格匹配 → ② 酷狗严格匹配 → ③ 网易严格匹配 → ④ iTunes（公共兜底）。
+            // 每一级都是"先过身份闸再采用"：歌名归一化全等 + 歌手片段有交集；
+            // 一级里所有候选都不过闸 = 这一级没命中，继续下一级，**绝不将就**。
             // 每一级都跳过"已知加载不出来的地址"（见 `markDead`）。
-            // 2026-11-26：酷我 `rid_pic` 这一级已删（老板拍板废酷我封面 API）。
+            // 2026-11-26：酷我 `rid_pic`/`wmvpic` 已废（横图/剧照），补酷狗与网易两条独立腿——
+            // 酷我来源的歌（榜单/新歌/广场/歌单）自带图恒为 nil，只剩两条腿太薄。
             var url: String?
             if let cand = await Self.lookupQQCover(song: song, limit: limit, timeout: timeout),
+               await !self.isDead(cand, key: key) {
+                url = cand
+            }
+            if url == nil,
+               let cand = await Self.lookupKugouCover(song: song, limit: limit, timeout: timeout),
+               await !self.isDead(cand, key: key) {
+                url = cand
+            }
+            if url == nil,
+               let cand = await Self.lookupNeteaseCover(song: song, limit: limit, timeout: timeout),
                await !self.isDead(cand, key: key) {
                 url = cand
             }
@@ -111,6 +129,54 @@ actor CoverResolver {
     // 让兜底直接落到 QQ 严格匹配 → iTunes。
     //
     // 保留这段注释是为了下一个读到这里的人知道：**不是忘了写，是故意没有**。
+
+    /// 酷狗搜「歌名 歌手」→ 严格匹配（同一把身份闸），取 `union_cover`
+    ///
+    /// 2026-11-26：酷我封面 API 整条废掉之后，酷我来源的歌只剩「QQ → iTunes」两条腿。
+    /// 酷狗搜索本身带 `trans_param.union_cover`（方形专辑图），是现成的第三条独立腿。
+    /// 酷狗的"歌手头像/歌手上传图"（singerimg、softhead、旧 imgessl）一律不要。
+    static func lookupKugouCover(song: Song, limit: Int = 10,
+                                 timeout: TimeInterval = 5) async -> String? {
+        let keyword = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return nil }
+        let candidates = await withTimeoutOrNil(timeout) {
+            try await KugouSearchAdapter().search(keyword: keyword, limit: limit)
+        } ?? []
+        return pickStrict(candidates, for: song, rejectSingerArt: true)
+    }
+
+    /// 网易搜「歌名 歌手」→ 严格匹配，取 `album.picUrl`（p1/p2.music.126.net）
+    ///
+    /// 网易搜索适配器会自己用 `song/detail` 批量补 picUrl（一次最多 20 首），
+    /// 所以这里只要搜一次就有图；华语老歌、国内专辑图命中率高。
+    static func lookupNeteaseCover(song: Song, limit: Int = 10,
+                                   timeout: TimeInterval = 5) async -> String? {
+        let keyword = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return nil }
+        let candidates = await withTimeoutOrNil(timeout) {
+            try await NeteaseSearchAdapter().search(keyword: keyword, limit: limit)
+        } ?? []
+        return pickStrict(candidates, for: song, rejectSingerArt: false)
+    }
+
+    /// 从一批候选里挑第一张「过闸」的封面（歌名全等 + 歌手片段交集 + 图不是已知坏图）
+    static func pickStrict(_ candidates: [Song], for song: Song,
+                                   rejectSingerArt: Bool) -> String? {
+        for candidate in candidates {
+            guard let pic = candidate.picURL, !pic.isEmpty else { continue }
+            if rejectSingerArt {
+                let low = pic.lowercased()
+                if low.contains("singerimg") || low.contains("softhead") || low.contains("imgessl") {
+                    continue
+                }
+            }
+            if isStrictMatch(name: song.name, singer: song.singer,
+                             candidateName: candidate.name, candidateSinger: candidate.singer) {
+                return pic
+            }
+        }
+        return nil
+    }
 
     /// QQ 搜「歌名 歌手」→ 严格匹配（歌名完全相等 + 歌手任一片段相等 + 有封面）
     static func lookupQQCover(song: Song, limit: Int = 10,
