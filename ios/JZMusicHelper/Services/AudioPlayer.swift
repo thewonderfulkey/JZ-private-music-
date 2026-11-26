@@ -1405,10 +1405,14 @@ final class PlayerEngine {
             format: "主腿全被拒/超时 %.1fs", Date().timeIntervalSince(stageBegan)))
 
         // ② 跨平台补位：只有主腿全空才走，且同样过闸
+        //
+        // 2026-11-27：这一段以前失败时**一行日志都不留**，诊断里只看到"主腿全被拒"然后"无源"，
+        // 分不清是"搜索没搜到候选"还是"候选全被身份闸丢了"（《蓄势 ~GEAR UP~》那次就是后者）。
+        // 现在无论如何都留一行，下一轮同类问题可以直接定位。
         stageBegan = Date()
-        if let cross = await SameSongCrossResolver.resolve(
-            song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys()),
-           usable(cross) {
+        let crossHit = await SameSongCrossResolver.resolve(
+            song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys())
+        if let cross = crossHit, usable(cross) {
             let gate = await validator(cross)
             if gate.reason == nil {
                 PlaybackTrace.shared.log("起播阶段", String(
@@ -1417,6 +1421,10 @@ final class PlayerEngine {
                 return DownloadResolver.Resolved(source: cross, gate: gate)
             }
             log("跨平台被拒：\(gate.reason ?? "")")
+        } else {
+            PlaybackTrace.shared.log("跨平台", crossHit == nil
+                ? "无可用候选（搜索为空 / 身份闸全丢）"
+                : "候选被本地闸拒（体积·容器·档位）")
         }
 
         // ③ 无损兜底：只在前两步全空时放开 FLAC（"否则整首没声"才用）

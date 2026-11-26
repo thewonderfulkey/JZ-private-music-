@@ -434,7 +434,12 @@ enum SameSongCrossResolver {
     static func sameSong(src: Song, cand: Song, uploaderLike: Bool) -> Bool {
         guard sameSong(src: src, cand: cand) else { return false }
         guard uploaderLike else { return true }
-        return NameMatch.normTitle(src.name) == NameMatch.normTitle(cand.name)
+        // 2026-11-27：《蓄势 ~GEAR UP~》被跳过。这条"严格相等"原来比的是 `normTitle`，
+        // 不认繁简/全角——池子里采风乐坊挂着 6 首不同的歌（被误判成频道号），
+        // 唯一能播的 QQ/酷狗两条《蓄勢 ～GEAR UP～》就在这句被丢掉，整首无源。
+        // 收紧的**意图**是"只认同一个歌名"，所以比的是身份键（繁简/全角/标点已折平），
+        // 而不是"字节相同"。
+        return NameMatch.identityKey(src.name) == NameMatch.identityKey(cand.name)
     }
 }
 

@@ -6633,6 +6633,68 @@ func r286NeteaseTrackPageAssertions() {
 }
 
 
+// MARK: 2026-11-27 繁简/全角歌名被跨平台闸误杀（真机《蓄势 ~GEAR UP~》被跳过）
+//
+// 真机事实（诊断包 trace.log + 逐通道实测）：网易对这首回 code=404/url=null（版权不可播），
+// 5 条本平台/酷我腿全灭；QQ 与酷狗都有《蓄勢 ～ GEAR UP ～ / 采风乐坊 / 142s》，
+// 但身份层用 normTitle 比较，不认繁简与全角 `～`，两条候选被"上传者收紧"丢掉 → 整首无源 → 跳过。
+func r287TitleKeyIdentityAssertions() {
+    section("繁简/全角歌名：同一首歌不能判成两首")
+
+    func s(_ name: String, _ singer: String, _ dur: Double, _ plat: MusicPlatform, _ id: String,
+           album: String = "太鼓の達人 オリジナルサウンドトラック「ドンダフル!」") -> Song {
+        Song.make(platform: plat, platformID: id, name: name, singer: singer,
+                  album: album, duration: dur, picURL: nil)
+    }
+
+    let src = s("蓄势 ~GEAR UP~", "采风乐坊", 142.813, .netease, "4920985")
+    let qq = s("蓄勢 ～ GEAR UP ～", "采风乐坊", 142, .qq, "002OlB7d1uMgtF")
+    let kg = s("蓄勢 ～ GEAR UP ～", "采风乐坊", 142, .kugou, "A3B29A67BADBAF0A30AD7915AC8CDF46")
+
+    check("全角 ～ 与半角 ~ 折平（NFKC）",
+          NameMatch.normTitle("A ～B～") == NameMatch.normTitle("A ~B~"),
+          NameMatch.normTitle("A ～B～"))
+    check("身份键把繁体折成简体",
+          NameMatch.identityKey("蓄勢") == NameMatch.identityKey("蓄势"),
+          NameMatch.identityKey("蓄勢") + " vs " + NameMatch.identityKey("蓄势"))
+    check("titleMatches 认得出是同一首", NameMatch.titleMatches(src.name, qq.name))
+    check("歌名证据是 exact（不是靠专辑兜底）",
+          NameMatch.titleEvidence(src.name, qq.name) == .exact)
+    check("同曲闸放行 QQ 候选", NameMatch.sameRecording(src: src, cand: qq))
+    check("同曲闸放行酷狗候选", NameMatch.sameRecording(src: src, cand: kg))
+    check("身份等级回到 1（音质才排得进候选序）", NameMatch.identityRank(src: src, cand: qq) == 1)
+
+    // 上传者收紧这条**必须仍在**，只是改成比身份键
+    let pool: [Song] = [qq, kg,
+                        s("蛻変~transformation~", "采风乐坊", 132, .qq, "m1"),
+                        s("綻放~blooming", "采风乐坊", 133, .qq, "m2"),
+                        s("春遊 ～happy excursion～", "采风乐坊", 132, .qq, "m3")]
+    check("池子里真没有这首时才算频道号（有这首就不能判成上传者）",
+          !NameMatch.looksLikeUploader(src, among: pool))
+    check("上传者收紧下：同一首（繁简不同）仍放行",
+          SameSongCrossResolver.sameSong(src: src, cand: qq, uploaderLike: true))
+    check("上传者收紧下：别的歌仍被拒",
+          !SameSongCrossResolver.sameSong(
+            src: src, cand: s("蛻変~transformation~", "采风乐坊", 132, .qq, "m1"),
+            uploaderLike: true))
+
+    // —— 防回归：《众》播成《侧脸》那次的四条硬口径，一条都不许松 ——
+    let zhong = s("众", "黄霄雲", 215.5, .netease, "z1", album: "")
+    let celian = s("侧脸", "黄霄雲", 217.8, .kuwo, "z2", album: "")
+    check("防回归：众 ≠ 侧脸", !NameMatch.sameRecording(src: zhong, cand: celian))
+    let qing = s("晴天", "周杰伦", 269, .kuwo, "q1", album: "叶惠美")
+    let qingLive = s("晴天 (Live)", "周杰伦", 269, .netease, "q2", album: "叶惠美")
+    check("防回归：晴天 ≠ 晴天(Live)", !NameMatch.sameRecording(src: qing, cand: qingLive))
+    let yue = s("发如雪", "周杰伦", 299, .kuwo, "y1", album: "十一月的萧邦")
+    let yueCantonese = s("发如雪 (粤语版)", "常颖杰", 299, .netease, "y2", album: "十一月的萧邦")
+    check("防回归：发如雪 ≠ 粤语版", !NameMatch.sameRecording(src: yue, cand: yueCantonese))
+    let zhuanji = s("众", "黄霄雲", 215.5, .netease, "z3", album: "众")
+    let yiMing = s("Side Face", "黄霄雲", 216.0, .kuwo, "z4", album: "众")
+    check("译名仍走专辑+≤1s 通道（不能因为收紧把合法换源弄没）",
+          NameMatch.sameRecording(src: zhuanji, cand: yiMing))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6646,6 +6708,7 @@ r280MergeRulesAssertions()
 r281NeteaseDiscoverAssertions()
 r283SectionRulesAssertions()
 r286NeteaseTrackPageAssertions()
+r287TitleKeyIdentityAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

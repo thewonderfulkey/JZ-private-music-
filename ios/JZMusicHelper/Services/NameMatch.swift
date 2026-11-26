@@ -19,20 +19,42 @@ enum NameMatch {
     static func normTitle(_ raw: String) -> String {
         // r125：统一 Unicode 规范化再比。韩文/日文歌名在两端可能一边 NFC 一边 NFD
         // （"연애의 조건" 的 NFD 是 ᄋᆢᆫ애…），字节不同但人看着一样——不归一化就会把同曲判成不同曲。
+        //
+        // 2026-11-27：改用**兼容规范化 NFKC**。真机事故《蓄势 ~GEAR UP~》（网易）跨平台只有
+        // QQ/酷狗的《蓄勢 ～GEAR UP～》，全角的 `～`（U+FF5E）与半角 `~` 字节不同，
+        // 旧口径把它当成"另一个歌名"，于是跨平台源全被丢掉 → 播放器直接跳过这首歌。
+        // NFKC 会把全角字母/数字/标点折成半角，繁简由 `identityKey` 那一层再折。
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .precomposedStringWithCanonicalMapping
+            .precomposedStringWithCompatibilityMapping
             .lowercased()
         s = bracket.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
         s = punct.stringByReplacingMatches(in: s, range: full(s), withTemplate: "")
         return s
     }
 
+    /// 身份比较用的歌名键：**繁转简 + NFKC + 去括号说明 + 只留字母数字**。
+    ///
+    /// 为什么身份判定必须走它（2026-11-27《蓄势 ~GEAR UP~》被跳过）：
+    /// `normTitle` 不做繁简转换，「蓄勢」与「蓄势」在它眼里是两个字；而平台之间同一首歌
+    /// 常常一边繁体一边简体（日文/港台曲目、游戏配乐尤其多）。身份闸一旦在这个差异上判"不是这首"，
+    /// 结果不是"降档"，而是**整首歌没有源、被播放器跳过**——一类问题，不是一首歌的问题。
+    ///
+    /// 与收藏去重同一个键（`FavoriteRules.titleKey`），保证"同一条录音"只有一个口径。
+    static func identityKey(_ raw: String) -> String { FavoriteRules.titleKey(raw) }
+
     static func titleMatches(_ a: String, _ b: String) -> Bool {
-        let x = normTitle(a)
-        let y = normTitle(b)
-        if x.isEmpty || y.isEmpty { return false }
-        if x == y { return true }
-        return abs(x.count - y.count) <= 6 && (x.contains(y) || y.contains(x))
+        let x = identityKey(a)
+        let y = identityKey(b)
+        if !x.isEmpty, !y.isEmpty {
+            if x == y { return true }
+            return abs(x.count - y.count) <= 6 && (x.contains(y) || y.contains(x))
+        }
+        // 键为空（纯标点/纯符号歌名）时才退回 normTitle
+        let nx = normTitle(a)
+        let ny = normTitle(b)
+        if nx.isEmpty || ny.isEmpty { return false }
+        if nx == ny { return true }
+        return abs(nx.count - ny.count) <= 6 && (nx.contains(ny) || ny.contains(nx))
     }
 
     /// 歌手拆分为单人 token（去括号说明，按 / & 、 ， 空格 拆）
@@ -194,16 +216,20 @@ enum NameMatch {
     /// 《空も飛べるはず-《白线流》日剧主题曲》这种"歌名 + 破折号 + 剧名"的写法，
     /// 归一化后是"长名包含短名"，用"完全相等"就会把所有候选全拒掉，最后只能落占位图。
     static func titleEvidence(_ a: String, _ b: String) -> TitleEvidence? {
-        let x = normTitle(a)
-        let y = normTitle(b)
-        if !x.isEmpty, !y.isEmpty {
-            if x == y { return .exact }
-            let shorter = x.count <= y.count ? x : y
-            let longer = x.count <= y.count ? y : x
+        // 身份层一律比"键"（繁简/全角已折平）：否则《蓄势 ~GEAR UP~》与《蓄勢 ～GEAR UP～》
+        // 相似度只有 0.64，达不到 0.75 的门槛，同一首歌会被判成没证据。
+        let x = identityKey(a)
+        let y = identityKey(b)
+        let nx = x.isEmpty ? normTitle(a) : x
+        let ny = y.isEmpty ? normTitle(b) : y
+        if !nx.isEmpty, !ny.isEmpty {
+            if nx == ny { return .exact }
+            let shorter = nx.count <= ny.count ? nx : ny
+            let longer = nx.count <= ny.count ? ny : nx
             if shorter.count >= 4, longer.contains(shorter) { return .contained }
         }
         if !x.isEmpty, !y.isEmpty,
-           FavoriteRules.titleSimilarity(a, b) >= FavoriteRules.titleSimilarityFloor {
+           FavoriteRules.titleSimilarity(x, y) >= FavoriteRules.titleSimilarityFloor {
             return .similar
         }
         return nil
