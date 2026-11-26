@@ -671,45 +671,74 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
     let platform: MusicPlatform = .kuwo
 
     func resolve(song: Song, quality: QualityLevel) async throws -> StreamSource {
-        // 2026-11-19 实测：把「歌名+歌手」原样拼（含 (恋爱的条件)(LOVE OPTIONS)）会先命中 (INST) 伴奏版；
-        // 只留「核心歌名 + 主歌手」时同一通道返回的是**原唱无损**（26,251,814 B / 1082kbps）。
-        let searchKey = NameMatch.yaohuSearchKey(name: song.name, singer: song.singer)
-        guard !searchKey.isEmpty else { throw APIError.parse("妖狐酷我：无歌名") }
-        let url = "https://api.yaohud.cn/api/music/kuwo"
-            + "?key=nvgKtvzw7CFSNFrDhA6&action=search&msg=\(APIClient.encode(searchKey))&n=1"
-        let json = try await APIClient.shared.getJSON(
-            url, headers: ["X-Client-Software": "lx"], timeout: 12)
-        let apiCode = (json["code"] as? Int) ?? -1
-        let apiMsg = (json["msg"] as? String) ?? (json["message"] as? String) ?? ""
-        if apiCode != 200 {
-            // 2026-11-20 实测：连续请求几十次后回 403「由于你多次频繁请求，系统已暂时屏蔽」，
-            // 冷却 25 分钟仍未解封。冷却期内别再叫它（否则每播一首都在续封）。
-            if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
-                                                              httpStatus: nil) {
-                BackendHealth.shared.block(name, seconds: cool)
+        // 2026-11-26：搜索词要能降级。妖狐是"按歌名搜"的通道，平台把歌手写成上传者时
+        // （《茶花开了，该回家了(说唱版-王睿卓&加木)》→「小酒」）第一次一定搜不到，
+        // 这时换「去括号歌名 + 括号里的歌手」再试一次。
+        var keys: [String] = []
+        let primary = NameMatch.yaohuSearchKey(name: song.name, singer: song.singer)
+        if !primary.isEmpty { keys.append(primary) }
+        let stripped = SearchQueryVariants.strippedTitle(song.name)
+        let hint = SearchQueryVariants.artistHint(from: song.name)
+        if let hint, !stripped.isEmpty {
+            let alt = "\(stripped) \(hint)"
+            if !keys.contains(alt) { keys.append(alt) }
+        }
+        if !stripped.isEmpty, stripped != song.name, !keys.contains(stripped) {
+            keys.append(stripped)
+        }
+        guard !keys.isEmpty else { throw APIError.parse("妖狐酷我：无歌名") }
+
+        func fetch(_ key: String) async throws -> [String: Any] {
+            let url = "https://api.yaohud.cn/api/music/kuwo"
+                + "?key=nvgKtvzw7CFSNFrDhA6&action=search&msg=\(APIClient.encode(key))&n=1"
+            return try await APIClient.shared.getJSON(
+                url, headers: ["X-Client-Software": "lx"], timeout: 12)
+        }
+
+        var picked: [String: Any]?
+        var lastReason = "妖狐酷我：没搜到"
+        for key in keys.prefix(2) {
+            let json = try await fetch(key)
+            let apiCode = (json["code"] as? Int) ?? -1
+            let apiMsg = (json["msg"] as? String) ?? (json["message"] as? String) ?? ""
+            if apiCode != 200 {
+                // 2026-11-20 实测：连续请求几十次后回 403「由于你多次频繁请求，系统已暂时屏蔽」，
+                // 冷却 25 分钟仍未解封。冷却期内别再叫它（否则每播一首都在续封）。
+                if let cool = BackendHealthRules.cooldownSeconds(apiCode: apiCode, message: apiMsg,
+                                                                  httpStatus: nil) {
+                    BackendHealth.shared.block(name, seconds: cool)
+                }
+                throw APIError.parse("妖狐酷我 code=\(apiCode) \(apiMsg)")
             }
-            throw APIError.parse("妖狐酷我 code=\(apiCode) \(apiMsg)")
+            BackendHealth.shared.clear(name)
+            guard let d = json["data"] as? [String: Any] else {
+                lastReason = "妖狐酷我无 data"
+                continue
+            }
+            // 身份校验：歌名/歌手必须与请求匹配（多歌手串与版本后缀用 NameMatch 统一口径）
+            let respSong = (d["songtitle"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (d["name"] as? String ?? "")
+            let respSinger = d["songname"] as? String ?? ""
+            let titlePart = NameMatch.yaohuTitle(respSong)
+            let singerOK = NameMatch.singerMatches(song.singer, respSinger)
+                || (hint.map { NameMatch.singerMatches($0, respSinger) } ?? false)
+            guard NameMatch.titleMatches(song.name, titlePart)
+                    || NameMatch.titleMatches(stripped, titlePart),
+                  singerOK else {
+                lastReason = "妖狐酷我结果不匹配：\(respSong)/\(respSinger)"
+                continue
+            }
+            // 版本防线（2026-11-19 修正口径）：只拦**版本类**（live/伴奏/inst/remix/翻唱/纯音乐…），
+            // 不拦官方副标题/译名。
+            let candVer = NameMatch.versionClass(titlePart)
+            if !candVer.isSubset(of: NameMatch.versionClass(song.name)) {
+                lastReason = "妖狐酷我返回版本变体：\(titlePart)"
+                continue
+            }
+            picked = d
+            break
         }
-        BackendHealth.shared.clear(name)
-        guard let data = json["data"] as? [String: Any] else {
-            throw APIError.parse("妖狐酷我无 data")
-        }
-        // 身份校验：歌名/歌手必须与请求匹配（多歌手串与版本后缀用 NameMatch 统一口径）
-        let respSong = (data["songtitle"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            ?? (data["name"] as? String ?? "")
-        let respSinger = data["songname"] as? String ?? ""
-        let titlePart = NameMatch.yaohuTitle(respSong)
-        guard NameMatch.titleMatches(song.name, titlePart),
-              NameMatch.singerMatches(song.singer, respSinger) else {
-            throw APIError.parse("妖狐酷我结果不匹配：\(respSong)/\(respSinger)")
-        }
-        // 版本防线（2026-11-19 修正口径）：只拦**版本类**（live/伴奏/inst/remix/翻唱/纯音乐…），
-        // 不拦官方副标题/译名。旧实现用 `isCleanTitle` 要求"裸名"，把
-        // 「연애의 조건 (LOVE OPTIONS)」这种带官方英文副标题的原唱也判成变体丢掉了。
-        let candVer = NameMatch.versionClass(titlePart)
-        if !candVer.isSubset(of: NameMatch.versionClass(song.name)) {
-            throw APIError.parse("妖狐酷我返回版本变体：\(titlePart)")
-        }
+        guard let data = picked else { throw APIError.parse(lastReason) }
         guard let vm = data["vipmusic"] as? [String: Any],
               let rawStream = vm["url"] as? String, !rawStream.isEmpty else {
             throw APIError.parse("妖狐酷我未返回 URL")

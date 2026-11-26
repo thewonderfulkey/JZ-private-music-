@@ -265,10 +265,18 @@ enum SameSongCrossResolver {
 
     static func candidateList(song: Song, quality: QualityLevel,
                               triedKeys: TriedKeys, forDownload: Bool) async -> CandidateSet {
-        let kw = "\(song.name) \(song.singer)".trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !kw.isEmpty else { return CandidateSet() }
-        let results = await SearchService.shared.searchAll(keyword: kw, limit: 30)
-        var cands = results.flatMap { $0.songs }
+        // 2026-11-26：搜索词要能降级。平台把歌手写成上传者时（「小酒」），
+        // 用原名搜得到的只有无关结果或零条；这时才换「去括号歌名 + 括号里的歌手」再搜一次。
+        let queries = SearchQueryVariants.queries(name: song.name, singer: song.singer)
+        guard let kw = queries.first else { return CandidateSet() }
+        var cands: [Song] = []
+        for q in queries.prefix(2) {
+            let results = await SearchService.shared.searchAll(keyword: q, limit: 30)
+            let flat = results.flatMap { $0.songs }
+            cands = flat
+            // 这一轮已经有"像这首歌"的候选，就不用再降级
+            if flat.contains(where: { sameSong(src: song, cand: $0) }) { break }
+        }
         var out = CandidateSet()
 
         // r124：下载换源额外跑一遍「网易 id 专用检索」。

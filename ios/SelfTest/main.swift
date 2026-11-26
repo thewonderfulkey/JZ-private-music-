@@ -6301,7 +6301,8 @@ func r268GateAssertions() {
 // 数字全部取自 2026-11-26 的 T3 实测（`tools/probes/lines/probe_duration.py`）：
 // 平台自报时长会错到 85 秒（酷我《如愿》报 350s、文件 265s），
 // 所以"时长基准"必须优先用文件自报，平台值只在文件解不出时兜底。
-func r269AdmissionAssertions() {
+func r269AdmissionAssertions()
+r270SearchVariantAssertions() {
     func stream(_ fmt: String, _ kbps: Int64, _ bytes: Int64,
                 _ url: String = "https://x/y.mp3",
                 _ q: QualityLevel = .high) -> StreamSource {
@@ -6369,6 +6370,38 @@ func r269AdmissionAssertions() {
     check("显式允许时无损能过",
           PlaybackAdmissionRules.admit(flac, headerSec: 269, declaredSec: 269,
                                        allowLossless: true) == .ok(verified: true))
+}
+
+
+// MARK: 2026-11-26 搜索词变体（平台把歌手写成上传者时，得靠括号里的歌手才搜得到）
+func r270SearchVariantAssertions() {
+    section("搜索词变体：去括号 + 括号里的歌手")
+    let name = "茶花开了，该回家了(说唱版-王睿卓&加木)"
+    check("去版本括号后只剩歌名",
+          SearchQueryVariants.strippedTitle(name) == "茶花开了，该回家了")
+    check("括号里取出歌手提示",
+          SearchQueryVariants.artistHint(from: name) == "王睿卓&加木")
+
+    let qs = SearchQueryVariants.queries(name: name, singer: "小酒")
+    check("第一选择仍是原名+原歌手", qs.first == "\(name) 小酒")
+    check("降级里有「去括号歌名 + 括号歌手」",
+          qs.contains("茶花开了，该回家了 王睿卓&加木"))
+    check("最多 4 条", qs.count <= 4)
+
+    check("原唱标记也能取出来",
+          SearchQueryVariants.artistHint(from: "晴天 (原唱: 周杰伦)") == "周杰伦")
+    check("纯版本括号不产生歌手提示",
+          SearchQueryVariants.artistHint(from: "晴天 (Live)") == nil
+          && SearchQueryVariants.artistHint(from: "晴天（伴奏）") == nil)
+    check("裸名不产生变体", SearchQueryVariants.queries(name: "晴天", singer: "周杰伦")
+          == ["晴天 周杰伦"])
+
+    section("身份闸：括号歌手也能算同一条录音")
+    let src = song(.netease, name, "小酒", dur: 221)
+    let cand = song(.qq, "茶花开了，该回家了", "王睿卓/加木", dur: 221)
+    check("歌手对不上原名、但对上括号提示 → 认", NameMatch.sameRecording(src: src, cand: cand))
+    let wrong = song(.qq, "茶花开了，该回家了", "别的歌手", dur: 221)
+    check("两边都对不上 → 不认", !NameMatch.sameRecording(src: src, cand: wrong))
 }
 
 

@@ -114,6 +114,10 @@ final class PlayerEngine {
     /// 上一拍属于哪个 item。换歌时 item 会变，第一拍只记基线、**不判回退**——
     /// 2026-11-26 诊断里那两条 "9s→0s / 77s→0s" 就是换歌造成的误报。
     private var lastTickItemToken: ObjectIdentifier?
+    /// 回退要连续两拍都成立才记账（换歌瞬间会有一条迟到的旧进度，单拍会误报）。
+    private var backwardCandidate: Double?
+    /// 这一首的总长是否已经被"播放器位置"纠正过（只记一条诊断，别每拍刷屏）
+    private var durationSelfHealed = false
 
     private(set) var isPlaying = false
     private(set) var isResolving = false
@@ -1311,6 +1315,8 @@ final class PlayerEngine {
             itemReplacementCount = 1
         }
         lastTickSeconds = nil
+        backwardCandidate = nil
+        durationSelfHealed = false
         PlaybackTrace.shared.log("item 替换",
             "\(song.name) ← \(source.backendName) \(source.format.uppercased()) "
             + "\(source.kbps)kbps 本曲第\(itemReplacementCount)次"
@@ -1955,18 +1961,41 @@ final class PlayerEngine {
                 let seconds = time.seconds
                 if seconds.isFinite {
                     // R1 打点：同一 item 内、正在播的时候进度往回跳 >1s = 用户听见"重头播/跳回去"。
-                    // 换歌会让 item 变，换了就不算（第一拍只重新记基线）。
+                    // 换歌会让 item 变，换了就不算；而且**连续两拍**都低于前值才算，
+                    // 免得把换歌瞬间那条迟到的旧进度记成违规（2026-11-26 诊断里的 "Kiss 4s→0s"）。
                     let token = self.player.currentItem.map(ObjectIdentifier.init)
                     if token != nil, token == self.lastTickItemToken,
                        let previous = self.lastTickSeconds,
                        PlaybackTraceRules.isBackwardJump(from: previous, to: seconds,
                                                          isPlaying: self.isPlaying) {
-                        PlaybackTrace.shared.log("进度回退",
-                            "\(self.currentSong?.name ?? "—") \(Int(previous))s → \(Int(seconds))s")
+                        if let cand = self.backwardCandidate,
+                           seconds < cand - PlaybackTraceRules.backwardJumpSec {
+                            PlaybackTrace.shared.log("进度回退",
+                                "\(self.currentSong?.name ?? "—") \(Int(previous))s → \(Int(seconds))s")
+                            self.backwardCandidate = nil
+                        } else {
+                            self.backwardCandidate = previous
+                        }
+                    } else {
+                        self.backwardCandidate = nil
                     }
                     self.lastTickItemToken = token
                     self.lastTickSeconds = seconds
                     self.currentTime = seconds
+                    // 2026-11-26 真机（"条都走完了还在唱，剩 0:00"）：
+                    // 在线流没有可信总长时，播放器第一次报的时长可能偏短（VBR mp3 没 Xing 尤其如此），
+                    // 而 `adoptDuration` 会把它锁死。这里用"正在播的位置"反过来纠正总长：
+                    // 音频还在往前走，真长至少是当前位置。只动显示/收尾依据，不碰播放器。
+                    if self.isPlaying, self.trustedDurationSec == nil, !self.durationVerified,
+                       seconds > self.duration + 0.5, seconds > 1 {
+                        if !self.durationSelfHealed, abs(seconds - self.duration) > 1 {
+                            PlaybackTrace.shared.log("时长自愈",
+                                "\(self.currentSong?.name ?? "—") \(Int(self.duration))s → \(Int(seconds))s")
+                            self.durationSelfHealed = true
+                        }
+                        self.duration = seconds
+                        self.durationLocked = true
+                    }
                     self.updateLyricIndex()
                     // B1：剩余 20~30 秒时把下一首的源解析好（"播完不换歌"的正解）
                     self.maybePrefetchNext()

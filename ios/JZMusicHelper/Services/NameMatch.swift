@@ -129,10 +129,16 @@ enum NameMatch {
         if !candVer.isSubset(of: srcVer) { return false }
 
         // ② 歌手：候选有歌手信息就必须有交集（"发如雪(粤语版)/常颖杰"在这里被拒）
+        //
+        // 2026-11-26：平台常把歌手写成上传者（《茶花开了，该回家了(说唱版-王睿卓&加木)》→「小酒」）。
+        // 这种情况下括号里的那段才是真歌手，所以多认一条「括号歌手提示」。
+        // 放宽只发生在歌手这一维：版本闸门（①）与歌名证据（③）一个字都没松。
         let srcSingers = singerTokens(src.singer)
         let candSingers = singerTokens(cand.singer)
         if !candSingers.isEmpty {
-            guard singerMatches(src.singer, cand.singer) else { return false }
+            let hint = SearchQueryVariants.artistHint(from: src.name)
+            let viaHint = hint.map { singerMatches($0, cand.singer) } ?? false
+            guard singerMatches(src.singer, cand.singer) || viaHint else { return false }
         } else if srcSingers.isEmpty {
             // 两边都没有歌手信息：只能靠歌名
             return titleEvidence(src: src, cand: cand, requireDuration: false) != nil
@@ -1190,3 +1196,77 @@ enum DownloadArtistFilter {
         items.contains { $0.status == .completed && artistKey($0.song.singer) == artist }
     }
 }
+
+// MARK: - 搜索词变体（2026-11-26）
+
+/// 平台给的「歌名 + 歌手」不一定能搜到歌：
+/// 《茶花开了，该回家了(说唱版-王睿卓&加木)》的歌手被写成上传者「小酒」，
+/// 用「原名 + 小酒」搜，六条腿全空；改成「去括号歌名 + 括号里的歌手」就能拿到。
+/// 这里只负责**生成有序的搜索词**，什么时候降级由调用方决定（先精确、后放宽）。
+enum SearchQueryVariants {
+
+    private static let bracketRE = try! NSRegularExpression(
+        pattern: "（[^）]*）|\\([^)]*\\)|\\[[^\\]]*\\]|【[^】]*】")
+
+    /// 版本/褒义类词：括号里只有这些，就不当歌手提示
+    private static let versionWords: Set<String> = [
+        "live", "remix", "inst", "instrumental", "伴奏", "纯音乐", "翻自", "cover",
+        "demo", "现场", "演唱会", "片段", "铃声", "ktv", "dj", "女声版", "男声版",
+    ]
+
+    static func strippedTitle(_ name: String) -> String {
+        let s = name
+        let range = NSRange(s.startIndex..., in: s)
+        let out = bracketRE.stringByReplacingMatches(in: s, range: range, withTemplate: " ")
+        return out.replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 括号里的歌手提示：说唱版-王睿卓&加木 → 王睿卓&加木；原唱: 周杰伦 → 周杰伦
+    static func artistHint(from name: String) -> String? {
+        let range = NSRange(name.startIndex..., in: name)
+        let matches = bracketRE.matches(in: name, range: range)
+        guard let last = matches.last, let r = Range(last.range, in: name) else { return nil }
+        var content = String(name[r])
+        content = content.trimmingCharacters(in: CharacterSet(charactersIn: "（）()[]【】 "))
+        guard !content.isEmpty else { return nil }
+        // 取最后一个分隔段：说唱版-王睿卓&加木 → 王睿卓&加木
+        let seps = CharacterSet(charactersIn: "-—–：:")
+        if let cut = content.rangeOfCharacter(from: seps, options: .backwards) {
+            content = String(content[cut.upperBound...])
+        }
+        content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, content.count <= 40 else { return nil }
+        let low = content.lowercased()
+        if versionWords.contains(low) { return nil }
+        // 至少得有一个像名字的字符
+        let hasNameChar = content.unicodeScalars.contains {
+            CharacterSet.alphanumerics.contains() || (0x4E00...0x9FFF).contains(.value)
+        }
+        return hasNameChar ? content : nil
+    }
+
+    /// 有序搜索词：先精确（原名+歌手），再降级（去括号 / 用括号里的歌手 / 只留歌名）
+    static func queries(name: String, singer: String) -> [String] {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let s = singer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return [] }
+        let t = strippedTitle(n)
+        let h = artistHint(from: n)
+        var out: [String] = []
+        func add(_ q: String) {
+            let v = q.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !v.isEmpty, !out.contains(v) { out.append(v) }
+        }
+        add(s.isEmpty ? n : "\(n) \(s)")
+        if t != n {
+            add(s.isEmpty ? t : "\(t) \(s)")
+            if let h { add("\(t) \(h)") }
+            add(t)
+        } else if let h {
+            add("\(n) \(h)")
+        }
+        return Array(out.prefix(4))
+    }
+}
+
