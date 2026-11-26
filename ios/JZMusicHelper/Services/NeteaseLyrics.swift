@@ -96,6 +96,23 @@ enum NeteaseLyrics {
         return []
     }
 
+    /// 网易**逐字**歌词（YRC）：同一个接口多带一个 `yv=-1`。
+    ///
+    /// 2026-11-26：AMLL 的 `ncm-lyrics/*.yrc` 反证了网易本身有逐字数据。
+    /// 实测 40 首命中 16 首（《众》《演员》《孤勇者》都有；《晴天》这类老歌没有）。
+    /// 返回 nil 就退回 `officialLines`（行级 LRC）——多一条腿，不替换。
+    static func officialWordLines(platformID: String) async -> [LyricLine]? {
+        guard let id = Int(platformID), id > 0 else { return nil }
+        let url = "https://music.163.com/api/song/lyric?id=\(id)&lv=-1&kv=-1&tv=-1&yv=-1"
+        guard let json = try? await APIClient.shared.getJSON(
+            url, headers: headers, timeout: timeout),
+              let yrc = (json["yrc"] as? [String: Any])?["lyric"] as? String,
+              !yrc.isEmpty else { return nil }
+        let lines = LyricsCleaning.parseYrc(yrc)
+        // 太短的（只剩两句元信息）当没有
+        return lines.count >= 5 ? lines : nil
+    }
+
     /// `/api/song/lyric` 返回 `lrc.lyric`（标准 LRC 文本），解析成行级歌词
     ///
     /// r79（2026-11-19）：公开给 `LyricsService` 的「①b 平台官方词」用——

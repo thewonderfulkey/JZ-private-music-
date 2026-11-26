@@ -1258,7 +1258,6 @@ do {
 // MARK: - 10 歌词：清洗、LRC、逐字解密
 
 section("歌词清洗与 LRC 解析")
-
 do {
     check("多艺人取第一个（/）", LyricsCleaning.cleanArtist("A20 LITE/A20") == "A20 LITE",
           LyricsCleaning.cleanArtist("A20 LITE/A20"))
@@ -6446,6 +6445,26 @@ func r271CoverLegsAssertions() {
 }
 
 
+// MARK: 2026-11-26 网易 YRC 逐字解析
+func r272YrcAssertions() {
+    section("网易 YRC（逐字）解析")
+    let yrc = """
+    [0,0](0,0,0) 作词 : 某人
+    [11400,2820](11400,290,0)我(11690,460,0)们(12150,170,0)
+    [14310,2640](14310,230,0)渺(14540,380,0)小
+    """
+    let lines = LyricsCleaning.parseYrc(yrc)
+    check("行数 = 3", lines.count == 3, "\(lines.count)")
+    check("首行时间取第一个字", lines.first?.timeMs == 0)
+    check("逐字时间是绝对毫秒", lines[1].words.first?.startMs == 11400)
+    check("行文本由字拼成", lines[1].text == "我们")
+    check("有逐字标记", lines[1].hasWordTiming)
+    check("每行字时间递增", zip(lines[1].words, lines[1].words.dropFirst())
+          .allSatisfy { $0.startMs <= $1.startMs })
+    check("空文本不产生行", LyricsCleaning.parseYrc("").isEmpty)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6454,6 +6473,7 @@ r268GateAssertions()
 r269AdmissionAssertions()
 r270SearchVariantAssertions()
 r271CoverLegsAssertions()
+r272YrcAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

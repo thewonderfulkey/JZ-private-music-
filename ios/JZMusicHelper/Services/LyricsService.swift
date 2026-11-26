@@ -203,6 +203,12 @@ extension LyricsService {
         // QQ 同理：按 songmid 直接问 QQ 官方歌词（`fcg_query_lyric_new`，公开、匿名可用）。
         switch song.platform {
         case .netease:
+            // 2026-11-26：先试**逐字**（同一个接口多带 yv=-1，实测 16/40 命中），
+            // 没有再退回行级 LRC。逐字从两条腿（酷狗 KRC / QQ QRC）变成三条。
+            if let word = await NeteaseLyrics.officialWordLines(platformID: song.platformID),
+               !word.isEmpty {
+                return LyricsResult(lines: word, source: "网易云 · 逐字")
+            }
             if let official = await neteaseOfficial(song) { return official }
             notes.add("①b 网易官方 \(elapsed())ms 无词")
         case .qq:

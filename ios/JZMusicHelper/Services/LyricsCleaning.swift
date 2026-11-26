@@ -229,6 +229,39 @@ enum LyricsCleaning {
     /// 解析 LRC 文本为时间戳行。
     /// 注意 `[mm:ss.xxx]` 的 `xxx` 是**毫秒**（三位小数秒），不能乘 10 当"十进制小数"用——
     /// Android 那边曾经踩过，这里直接按毫秒处理。
+    /// 网易云 YRC（逐字）→ [LyricLine]
+    ///
+    /// 格式（2026-11-26 实测《众》）：`[行起点ms,行时长ms](字起点ms,字时长ms,0)字(…`
+    /// 时间是**整首绝对毫秒**，正好和 `LyricWord` 同构。
+    /// 我们原来只取 `lrc`（逐行），`yv=-1` 才会多给一个 `yrc` 字段——40 首实测命中 16 首。
+    static func parseYrc(_ text: String) -> [LyricLine] {
+        var out: [LyricLine] = []
+        for rawSub in text.split(separator: "\n") {
+            let raw = rawSub.trimmingCharacters(in: .whitespaces)
+            guard raw.hasPrefix("["), let close = raw.firstIndex(of: "]") else { continue }
+            var body = raw[raw.index(after: close)...]
+            var words: [LyricWord] = []
+            while let open = body.firstIndex(of: "(") {
+                guard let closeParen = body[open...].firstIndex(of: ")") else { break }
+                let nums = body[body.index(after: open)..<closeParen]
+                    .split(separator: ",").compactMap { Int($0) }
+                let nextStart = body.index(after: closeParen)
+                let nextOpen = body[nextStart...].firstIndex(of: "(") ?? body.endIndex
+                let wordText = String(body[nextStart..<nextOpen])
+                if nums.count >= 2, !wordText.isEmpty {
+                    words.append(LyricWord(text: wordText, startMs: nums[0], durMs: nums[1]))
+                }
+                body = body[nextOpen...]
+            }
+            guard !words.isEmpty else { continue }
+            let lineText = words.map(\.text).joined()
+                .trimmingCharacters(in: .whitespaces)
+            guard !lineText.isEmpty else { continue }
+            out.append(LyricLine(timeMs: words[0].startMs, text: lineText, words: words))
+        }
+        return out
+    }
+
     static func parseLrc(_ lrc: String) -> [LyricLine] {
         guard !lrc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         let offset = lrcOffsetMs(lrc)
