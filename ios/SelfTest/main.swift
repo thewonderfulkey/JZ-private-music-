@@ -6569,6 +6569,60 @@ func r281NeteaseDiscoverAssertions() {
 }
 
 
+// MARK: 2026-11-26 专辑曲目服务（网易 v1 / 酷我 / QQ / 搜索兜底）
+func r282AlbumServiceAssertions() {
+    section("专辑曲目：三条腿 + 兜底标记")
+    let netease: [String: Any] = [
+        "album": ["name": "叶惠美", "picUrl": "http://p/1.jpg",
+                  "artist": ["name": "周杰伦"],
+                  "publishTime": 1057075200000],
+        "songs": [
+            ["id": 1, "name": "以父之名", "ar": [["name": "周杰伦"]],
+             "al": ["name": "叶惠美", "picUrl": "http://p/1.jpg"], "dt": 326000],
+            ["id": 2, "name": "懦夫", "ar": [["name": "周杰伦"]],
+             "al": ["name": "叶惠美", "picUrl": "http://p/1.jpg"], "dt": 216000],
+        ],
+    ]
+    let wy = AlbumService.parseNeteaseV1(netease, albumID: "18905")
+    check("网易 v1：2 首、不是兜底", wy?.songs.count == 2 && wy?.partial == false)
+    check("网易 v1：专辑名/歌手/首发日",
+          wy?.name == "叶惠美" && wy?.artist == "周杰伦" && (wy?.publishDate ?? "").hasPrefix("2003"))
+
+    let kuwo: [String: Any] = ["data": [
+        "name": "U87", "artist": "陈奕迅", "img": "http://k/1.jpg",
+        "musicList": [["rid": "6264", "name": "烂", "artist": "陈奕迅",
+                       "album": "U87", "duration": "260"]],
+    ]]
+    let kw = AlbumService.parseKuwo(kuwo, albumID: "6264")
+    check("酷我：1 首、平台是酷我、时长 260s",
+          kw?.songs.count == 1 && kw?.songs.first?.platform == .kuwo
+          && Int(kw?.songs.first?.durationSec ?? 0) == 260)
+
+    let qq: [String: Any] = ["req_1": ["data": ["songList": [[
+        "songInfo": ["mid": "003J6fvc0bVJon", "name": "烂",
+                     "singer": [["name": "陈奕迅"]],
+                     "album": ["name": "U87", "mid": "002"], "interval": 260]
+    ]]]]]
+    let q = AlbumService.parseQQ(qq, albumID: "003J6fvc0bVJon")
+    check("QQ：1 首、封面由 albumMid 拼出",
+          q?.songs.count == 1 && (q?.songs.first?.picURL ?? "").contains("002"))
+
+    func mk(_ name: String, album: String) -> Song {
+        Song.make(platform: .netease, platformID: UUID().uuidString, name: name,
+                  singer: "周杰伦", album: album, duration: 200, picURL: nil)
+    }
+    let partial = AlbumService.partialFromSearch(
+        [mk("以父之名", album: "叶惠美"), mk("晴天", album: "叶惠美"),
+         mk("别的", album: "别的碟")],
+        albumID: "18905", name: "叶惠美", artist: "周杰伦")
+    check("搜索兜底：只留本碟的歌、且标 partial",
+          partial?.songs.count == 2 && partial?.partial == true)
+
+    check("空响应 → nil", AlbumService.parseNeteaseV1([:], albumID: "x") == nil
+          && AlbumService.parseKuwo([:], albumID: "x") == nil)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6580,6 +6634,7 @@ r271CoverLegsAssertions()
 r272YrcAssertions()
 r280MergeRulesAssertions()
 r281NeteaseDiscoverAssertions()
+r282AlbumServiceAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")
