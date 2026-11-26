@@ -620,6 +620,65 @@ enum SeekTargetRules {
     }
 }
 
+// MARK: - 整首性闸门（2026-11-26：把 T3「尺子」落到一个判定入口）
+//
+// 背景：判断"这条流是不是整首歌"原来散在三处（加密包 / 占位音频 / 时长闸门），
+// 每处各写一份理由，诊断里只看到"不可用"，看不出是被哪一条拒的。
+// 这里收成一个纯函数，返回**明确的拒绝理由**，给解析准入和诊断共用。
+//
+// 依据（2026-11-26 实测）：
+//   · 文件头自证时长可用率：FLAC 100% / M4A 100% / MP3 94%（`probe_duration.py`）；
+//   · 平台自报时长不可信：酷我榜单《如愿》报 350s、文件 265s（差 85s），
+//     所以**时长基准优先取文件自报**，平台值只在文件解不出时兜底，且必须 ≥60s 才算数；
+//   · oiapi 的"试听片段"按声明时长折算只有 11–16kbps（已被 `isPlaceholder` 的 32kbps 线拦住）。
+enum PlaybackAdmissionRules {
+
+    enum Admission: Equatable {
+        /// 可以播；verified = 时长是文件自己写的（可信总长）
+        case ok(verified: Bool)
+        /// 拒掉，带一句能进诊断的理由
+        case reject(String)
+    }
+
+    /// 片段阈值：文件自报不到 1 分钟、而平台说这是首 2 分钟以上的歌 → 当成片段
+    static let clipHeaderSec: Double = 60
+    /// 片段体积上限：真整首（≥48kbps、≥2 分钟）不可能小于 1.2MB
+    static let clipMaxBytes: Int64 = 1_200_000
+
+    /// 这条流能不能进播放链。
+    /// - Parameters:
+    ///   - headerSec: 文件头自证时长（nil = 解不出，例如 m4a 的 moov 在文件尾）
+    ///   - declaredSec: 平台自报时长（可能错，见文件头注释）
+    static func admit(_ src: StreamSource, headerSec: Double?, declaredSec: Int,
+                      allowLossless: Bool = false) -> Admission {
+        // ① 加密包 / 占位提示音 / 档位（无损是否放行由调用方决定）
+        guard PlaybackQualityRules.isUsable(src, songDurationSec: declaredSec,
+                                            allowLossless: allowLossless) else {
+            if StreamEncryptionRules.isEncrypted(src.url) { return .reject("加密包（.mgg/O8M）") }
+            if PlaybackQualityRules.isPlaceholder(src, songDurationSec: declaredSec) {
+                return .reject("占位提示音 / 试听片段（\(src.totalBytes) B）")
+            }
+            return .reject("档位不可播（\(src.format) \(src.kbps)kbps）")
+        }
+        // ② 片段：文件说自己不到 1 分钟、体积又小，而平台说这是首正常长度的歌
+        if let h = headerSec, h.isFinite, h > 1,
+           h < clipHeaderSec, src.totalBytes > 0, src.totalBytes < clipMaxBytes,
+           declaredSec >= 120 {
+            return .reject("只有 \(Int(h))s 的片段（平台说 \(declaredSec)s）")
+        }
+        // ③ 时长对账：以文件自证为准；平台值 <60s 当垃圾值，不拿来比
+        switch PlaybackCacheRules.gate(candidate: headerSec, expected: Double(declaredSec)) {
+        case .match:
+            return .ok(verified: true)
+        case .mismatch(let diff):
+            return .reject("时长差 \(Int(diff))s（不是同一份文件）")
+        case .unverified:
+            return .ok(verified: false)
+        }
+    }
+}
+
+
 // MARK: - 播放体验的三个红线（纯判定，2026-11-26）
 //
 // 老板 2026-11-26 拍板的三条，凌驾于音质之上：

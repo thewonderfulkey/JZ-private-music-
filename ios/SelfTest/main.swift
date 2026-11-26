@@ -6296,11 +6296,88 @@ func r268GateAssertions() {
 }
 
 
+// MARK: 2026-11-26 整首性闸门（T3 尺子的判定入口）
+//
+// 数字全部取自 2026-11-26 的 T3 实测（`tools/probes/lines/probe_duration.py`）：
+// 平台自报时长会错到 85 秒（酷我《如愿》报 350s、文件 265s），
+// 所以"时长基准"必须优先用文件自报，平台值只在文件解不出时兜底。
+func r269AdmissionAssertions() {
+    func stream(_ fmt: String, _ kbps: Int64, _ bytes: Int64,
+                _ url: String = "https://x/y.mp3",
+                _ q: QualityLevel = .high) -> StreamSource {
+        StreamSource(url: url, backendName: "测试", platform: .qq, quality: q,
+                     format: fmt, note: "", kbps: kbps, totalBytes: bytes)
+    }
+
+    section("整首性闸门：整首 / 片段 / 占位 / 加密 / 时长不符")
+    // 正常整首：文件头 269.8s、平台 269s
+    let normal = stream("mp3", 320, 10_792_943)
+    check("正常整首 → 通过且时长可信",
+          PlaybackAdmissionRules.admit(normal, headerSec: 269.8, declaredSec: 269)
+          == .ok(verified: true))
+
+    // 酷我《如愿》：平台 350s、文件 265.4s（差 85s）→ 拒
+    let wrongLen = stream("flac", 900, 26_000_000, "https://x/y.flac", .lossless)
+    if case .reject(let why) = PlaybackAdmissionRules.admit(wrongLen, headerSec: 265.4,
+                                                            declaredSec: 350,
+                                                            allowLossless: true) {
+        check("时长差 85s → 拒，理由带秒数", why.contains("84") || why.contains("85"))
+    } else {
+        check("时长差 85s → 拒", false)
+    }
+
+    // 平台时长是垃圾值（酷我榜单写过 12s）：文件解不出 → 允许播，但标"未验证"
+    let garbageLen = stream("mp3", 320, 10_000_000)
+    check("平台时长 <60s 当垃圾值 → 允许但不标可信",
+          PlaybackAdmissionRules.admit(garbageLen, headerSec: nil, declaredSec: 12)
+          == .ok(verified: false))
+
+    // 30 秒片段：码率看着很正（320k），但文件自报 30s、体积 1.2MB → 拒
+    let clip = stream("mp3", 320, 1_200_000)
+    if case .reject(let why) = PlaybackAdmissionRules.admit(clip, headerSec: 30,
+                                                            declaredSec: 269) {
+        check("30s 片段 → 拒，理由说明只有 30s", why.contains("30s"))
+    } else {
+        check("30s 片段 → 拒", false)
+    }
+
+    // 酷我 anti.s 的 181,521 B 提示音
+    let prompt = stream("mp3", 4, 181_521)
+    if case .reject(let why) = PlaybackAdmissionRules.admit(prompt, headerSec: 11,
+                                                            declaredSec: 344) {
+        check("181,521 B 提示音 → 拒", why.contains("占位") || why.contains("试听"))
+    } else {
+        check("181,521 B 提示音 → 拒", false)
+    }
+
+    // 加密包
+    let mgg = stream("mgg", 320, 10_000_000, "https://x/y.mgg")
+    if case .reject(let why) = PlaybackAdmissionRules.admit(mgg, headerSec: 269,
+                                                            declaredSec: 269) {
+        check("加密包 → 拒", why.contains("加密"))
+    } else {
+        check("加密包 → 拒", false)
+    }
+
+    // 无损：默认不放行；显式允许才过
+    let flac = stream("flac", 900, 26_000_000, "https://x/y.flac", .lossless)
+    if case .reject = PlaybackAdmissionRules.admit(flac, headerSec: 269, declaredSec: 269) {
+        check("无损默认不进播放链", true)
+    } else {
+        check("无损默认不进播放链", false)
+    }
+    check("显式允许时无损能过",
+          PlaybackAdmissionRules.admit(flac, headerSec: 269, declaredSec: 269,
+                                       allowLossless: true) == .ok(verified: true))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
 r267TraceAssertions()
 r268GateAssertions()
+r269AdmissionAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")
