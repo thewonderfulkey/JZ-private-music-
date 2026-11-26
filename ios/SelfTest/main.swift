@@ -6301,8 +6301,7 @@ func r268GateAssertions() {
 // 数字全部取自 2026-11-26 的 T3 实测（`tools/probes/lines/probe_duration.py`）：
 // 平台自报时长会错到 85 秒（酷我《如愿》报 350s、文件 265s），
 // 所以"时长基准"必须优先用文件自报，平台值只在文件解不出时兜底。
-func r269AdmissionAssertions()
-r270SearchVariantAssertions() {
+func r269AdmissionAssertions() {
     func stream(_ fmt: String, _ kbps: Int64, _ bytes: Int64,
                 _ url: String = "https://x/y.mp3",
                 _ q: QualityLevel = .high) -> StreamSource {
@@ -6411,6 +6410,7 @@ r251CacheAssertions()
 r267TraceAssertions()
 r268GateAssertions()
 r269AdmissionAssertions()
+r270SearchVariantAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

@@ -662,7 +662,7 @@ enum PlaybackAdmissionRules {
         }
         // ② 片段：文件说自己不到 1 分钟、体积又小，而平台说这是首正常长度的歌
         if let h = headerSec, h.isFinite, h > 1,
-           h < clipHeaderSec, src.totalBytes > 0, src.totalBytes < clipMaxBytes,
+           h < clipHeaderSec, src.totalBytes > 0, src.totalBytes <= clipMaxBytes,
            declaredSec >= 120 {
             return .reject("只有 \(Int(h))s 的片段（平台说 \(declaredSec)s）")
         }
