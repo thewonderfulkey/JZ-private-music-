@@ -6578,6 +6578,61 @@ func r283SectionRulesAssertions() {
 }
 
 
+// MARK: 2026-11-27 网易取歌端点：v1 空、v3 才有曲目（字段 dt/ar/al）
+func r286NeteaseTrackPageAssertions() {
+    section("网易取歌：v3 形状（dt/ar/al）与歌单页")
+
+    // v3 实测形状：曲目字段是短名
+    let v3: [String: Any] = ["playlist": [
+        "name": "热歌榜",
+        "coverImgUrl": "http://c/hot.jpg",
+        "tracks": [[
+            "id": 3453304463,
+            "name": "降温",
+            "ar": [["name": "Zzh"]],
+            "al": ["name": "降温", "picUrl": "http://p/v3.jpg"],
+            "dt": 199229
+        ]]
+    ]]
+    let songs = NeteaseDiscover.parseChartSongs(v3)
+    check("v3 曲目解析出 1 首", songs.count == 1)
+    check("v3 时长取 dt（199229ms → 199s）", songs.first?.durationSec == 199,
+          "\(songs.first?.durationSec ?? -1)")
+    check("v3 歌手取 ar", songs.first?.singer == "Zzh")
+    check("v3 专辑/封面取 al", songs.first?.album == "降温"
+          && (songs.first?.picURL ?? "").contains("v3.jpg"))
+
+    // v1 老形状必须继续能解（端点兜底时才用得上，不能因为改口径就把老路径弄坏）
+    let v1: [String: Any] = ["playlist": ["tracks": [[
+        "id": 186016, "name": "晴天",
+        "artists": [["name": "周杰伦"]],
+        "album": ["name": "叶惠美", "picUrl": "http://p/1.jpg"],
+        "duration": 269000
+    ]]]]
+    let v1Songs = NeteaseDiscover.parseChartSongs(v1)
+    check("v1 曲目仍能解析（duration/artists/album）",
+          v1Songs.count == 1 && v1Songs[0].durationSec == 269 && v1Songs[0].singer == "周杰伦")
+
+    // 歌单页：名字 + 封面 + 曲目
+    let page = NeteaseDiscover.parseTrackPage(v3)
+    check("歌单页拿到榜单名", page?.name == "热歌榜")
+    check("歌单页拿到封面", (page?.cover ?? "").contains("hot.jpg"))
+    check("歌单页有曲目且可见", (page?.songs.count ?? 0) == 1
+          && DiscoverMergeRules.isVisible(page?.songs ?? []))
+
+    // 大 id / 字符串 id 不能因为类型不同被丢掉（真实榜单 id 已到 1.8e10）
+    let bigID: [String: Any] = ["playlist": ["tracks": [[
+        "id": "18478568150", "name": "小天才", "ar": [], "al": [:], "dt": 100000
+    ]]]]
+    check("字符串 id 也能解析", NeteaseDiscover.parseChartSongs(bigID).first?.platformID == "18478568150")
+
+    // 空响应：v1 现在回的就是这个形状（playlist 为空），必须给 nil 而不是空歌单页
+    check("空 playlist → 没有歌单页", NeteaseDiscover.parseTrackPage([:]) == nil)
+    check("空 tracks → 0 首", NeteaseDiscover.parseChartSongs(["playlist": [:]]).isEmpty)
+    check("limit 生效", (NeteaseDiscover.parseTrackPage(v3, limit: 0)?.songs.count ?? -1) == 0)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6590,6 +6645,7 @@ r272YrcAssertions()
 r280MergeRulesAssertions()
 r281NeteaseDiscoverAssertions()
 r283SectionRulesAssertions()
+r286NeteaseTrackPageAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

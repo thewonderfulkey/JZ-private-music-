@@ -34,6 +34,13 @@ struct NeteasePlaylistBrief: Sendable, Equatable {
     let trackCount: Int
 }
 
+/// 一页曲目（榜单或歌单）：歌单页要显示的名字/封面 + 可播放的歌曲
+struct NeteaseTrackPage: Sendable, Equatable {
+    let name: String
+    let cover: String?
+    let songs: [Song]
+}
+
 enum NeteaseDiscover {
 
     private static let headers = ["Referer": "https://music.163.com/"]
@@ -47,11 +54,32 @@ enum NeteaseDiscover {
         return parseChartList(json)
     }
 
+    // 2026-11-27 实测更正：`api/playlist/detail?id=`（v1）对榜单/歌单**都回 0 首**
+    // （`playlist` 为空、`tracks` 缺失）。能用的是 `api/v3/playlist/detail?id=&n=`：
+    // 返回 `playlist.name` / `coverImgUrl` / `tracks[]`，但曲目字段是短名——
+    // `dt`（毫秒）/ `ar`（歌手）/ `al`（专辑），和 v1 的 `duration`/`artists`/`album` 不同。
+    // 所以解析要两种形状都吃（`song(fromTrack:)` 做了回退），端点按 v3 → v1 兜底。
+    static func trackPage(id: String, limit: Int = 100) async -> NeteaseTrackPage? {
+        let v3 = "https://music.163.com/api/v3/playlist/detail?id=\(id)&n=\(limit)"
+        if let json = try? await APIClient.shared.getJSON(v3, headers: headers, timeout: timeout),
+           let page = parseTrackPage(json), !page.songs.isEmpty {
+            return page
+        }
+        let v1 = "https://music.163.com/api/playlist/detail?id=\(id)"
+        if let json = try? await APIClient.shared.getJSON(v1, headers: headers, timeout: timeout),
+           let page = parseTrackPage(json), !page.songs.isEmpty {
+            return page
+        }
+        return nil
+    }
+
     static func chartSongs(id: String, limit: Int = 100) async -> [Song] {
-        guard let json = try? await APIClient.shared.getJSON(
-            "https://music.163.com/api/playlist/detail?id=\(id)",
-            headers: headers, timeout: timeout) else { return [] }
-        return Array(parseChartSongs(json).prefix(limit))
+        await trackPage(id: id, limit: limit)?.songs ?? []
+    }
+
+    /// 通用歌单页（BANNER 点击的落点、广场卡片、榜单页共用同一条路径）
+    static func playlistDetail(id: String, limit: Int = 100) async -> NeteaseTrackPage? {
+        await trackPage(id: id, limit: limit)
     }
 
     static func banners() async -> [NeteaseBannerItem] {
@@ -77,14 +105,14 @@ enum NeteaseDiscover {
     static func parseChartList(_ json: [String: Any]) -> [NeteaseChartBrief] {
         let list = json["list"] as? [[String: Any]] ?? []
         return list.compactMap { item in
-            guard let id = item["id"] as? Int, id > 0,
+            guard let id = intValue(item["id"]), id > 0,
                   let name = item["name"] as? String, !name.isEmpty else { return nil }
             let cover = (item["coverImgUrl"] as? String) ?? ""
             return NeteaseChartBrief(
                 id: String(id), name: name,
                 updateFrequency: (item["updateFrequency"] as? String) ?? "",
                 cover: cover.isEmpty ? nil : cover,
-                trackCount: (item["trackCount"] as? Int) ?? (item["trackCount"] as? NSNumber)?.intValue ?? 0)
+                trackCount: intValue(item["trackCount"]) ?? 0)
         }
     }
 
@@ -95,6 +123,19 @@ enum NeteaseDiscover {
         return tracks.compactMap(song(fromTrack:))
     }
 
+    /// 歌单/榜单详情页：名字 + 封面 + 曲目（v3 与 v1 同路径 `playlist.{name,coverImgUrl,tracks}`）
+    static func parseTrackPage(_ json: [String: Any], limit: Int = 100) -> NeteaseTrackPage? {
+        let playlist = (json["playlist"] as? [String: Any])
+            ?? (json["result"] as? [String: Any]) ?? [:]
+        guard !playlist.isEmpty else { return nil }
+        let songs = Array(parseChartSongs(json).prefix(limit))
+        let name = (playlist["name"] as? String) ?? ""
+        let cover = (playlist["coverImgUrl"] as? String) ?? ""
+        return NeteaseTrackPage(name: name,
+                                cover: cover.isEmpty ? nil : cover,
+                                songs: songs)
+    }
+
     /// banner：只留 targetType == 1000（歌单，站内可跳）；3000（演出/外链）过滤掉
     static func parseBanners(_ json: [String: Any]) -> [NeteaseBannerItem] {
         var out: [NeteaseBannerItem] = []
@@ -102,12 +143,12 @@ enum NeteaseDiscover {
             let ext = block["extInfo"] as? [String: Any] ?? [:]
             for banner in (ext["banners"] as? [[String: Any]]) ?? [] {
                 guard let pic = banner["pic"] as? String, !pic.isEmpty else { continue }
-                let targetType = (banner["targetType"] as? Int) ?? -1
-                let targetID = String(describing: banner["targetId"] ?? "")
+                let targetType = intValue(banner["targetType"]) ?? -1
+                let targetID = intValue(banner["targetId"]).map(String.init)
+                    ?? (banner["targetId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? ""
                 let title = (banner["typeTitle"] as? String)
                     ?? (banner["mainTitle"] as? String) ?? ""
-                let playlistID = (targetType == 1000 && targetID != "nil" && !targetID.isEmpty)
-                    ? targetID : nil
+                let playlistID = (targetType == 1000 && !targetID.isEmpty) ? targetID : nil
                 out.append(NeteaseBannerItem(image: pic, title: title, playlistID: playlistID))
             }
         }
@@ -117,12 +158,12 @@ enum NeteaseDiscover {
     static func parsePlaylists(_ json: [String: Any]) -> [NeteasePlaylistBrief] {
         let list = json["playlists"] as? [[String: Any]] ?? []
         return list.compactMap { item in
-            guard let id = item["id"] as? Int, id > 0,
+            guard let id = intValue(item["id"]), id > 0,
                   let name = item["name"] as? String, !name.isEmpty else { return nil }
             let cover = (item["coverImgUrl"] as? String) ?? ""
             return NeteasePlaylistBrief(id: String(id), name: name,
                                         cover: cover.isEmpty ? nil : cover,
-                                        trackCount: (item["trackCount"] as? Int) ?? 0)
+                                        trackCount: intValue(item["trackCount"]) ?? 0)
         }
     }
 
@@ -132,18 +173,30 @@ enum NeteaseDiscover {
         ((json["data"] as? [String: Any])?["blocks"] as? [[String: Any]]) ?? []
     }
 
+    /// 曲目 → Song。**两种形状都吃**：
+    /// v1 `duration`/`artists`/`album`，v3 `dt`/`ar`/`al`（2026-11-27 实测，v3 是现在唯一有曲目的端点）。
     private static func song(fromTrack item: [String: Any]) -> Song? {
-        guard let id = item["id"] as? Int, id > 0,
+        guard let id = intValue(item["id"]), id > 0,
               let name = item["name"] as? String, !name.isEmpty else { return nil }
-        let artists = ((item["artists"] as? [[String: Any]]) ?? [])
-            .compactMap { $0["name"] as? String }.joined(separator: "/")
-        let albumDict = item["album"] as? [String: Any] ?? [:]
+        let artistList = (item["artists"] as? [[String: Any]])
+            ?? (item["ar"] as? [[String: Any]]) ?? []
+        let artists = artistList.compactMap { $0["name"] as? String }.joined(separator: "/")
+        let albumDict = (item["album"] as? [String: Any])
+            ?? (item["al"] as? [String: Any]) ?? [:]
         let album = (albumDict["name"] as? String) ?? ""
         let pic = (albumDict["picUrl"] as? String) ?? ""
-        let ms = (item["duration"] as? Int) ?? 0
+        let ms = intValue(item["duration"]) ?? intValue(item["dt"]) ?? 0
         return Song.make(platform: .netease, platformID: String(id), name: name,
                          singer: artists, album: album,
                          duration: Double(ms / 1000),
                          picURL: pic.isEmpty ? nil : pic)
+    }
+
+    /// 同一字段在不同接口里可能是 Int / NSNumber / String，统一收口
+    private static func intValue(_ any: Any?) -> Int? {
+        if let n = any as? Int { return n }
+        if let n = any as? NSNumber { return n.intValue }
+        if let s = any as? String { return Int(s) }
+        return nil
     }
 }
