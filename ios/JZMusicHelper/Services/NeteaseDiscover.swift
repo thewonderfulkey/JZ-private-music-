@@ -123,12 +123,18 @@ enum NeteaseDiscover {
                     guard (res["resourceType"] as? String) == "song" else { continue }
                     let id = String(describing: res["resourceId"] ?? "")
                     guard !id.isEmpty, id != "nil" else { continue }
-                    let name = (res["name"] as? String) ?? title
+                    let ui = res["uiElement"] as? [String: Any] ?? [:]
+                    let mainTitle = ((ui["mainTitle"] as? [String: Any])?["title"] as? String) ?? ""
+                    let uiImage = ((ui["image"] as? [String: Any])?["imageUrl"] as? String) ?? ""
+                    let name = (res["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? (mainTitle.isEmpty ? title : mainTitle)
                     guard !name.isEmpty else { continue }
                     let artists = artistNames(res["resourceExtInfo"])
+                    let pic = uiImage.isEmpty ? cover : uiImage
                     out.append(Song.make(platform: .netease, platformID: id, name: name,
                                          singer: artists.isEmpty ? title : artists,
-                                         album: "", duration: 0, picURL: cover))
+                                         album: "", duration: 0,
+                                         picURL: pic.isEmpty ? nil : pic))
                 }
             }
         }
@@ -136,23 +142,31 @@ enum NeteaseDiscover {
     }
 
     /// 首页块里的新碟（album / digitalAlbum 资源）
+    ///
+    /// 2026-11-26 真机（r281 录屏）：卡片全是"新碟/新歌"这种**板块标题**、封面全空。
+    /// 根因是字段读错了——专辑名与封面在 `resource.uiElement` 里，
+    /// `resource.name` 是 null，`creative.uiElement` 是整块的标题（"新碟"/"新歌"）。
     static func parseHomeAlbums(_ json: [String: Any]) -> [NeteaseAlbumBrief] {
         var out: [NeteaseAlbumBrief] = []
         var seen = Set<String>()
         for block in blocks(json) where block["blockCode"] as? String == "HOMEPAGE_BLOCK_NEW_ALBUM_NEW_SONG" {
             for creative in (block["creatives"] as? [[String: Any]]) ?? [] {
-                let title = cardTitle(creative) ?? ""
-                let cover = cardImage(creative)
                 for res in (creative["resources"] as? [[String: Any]]) ?? [] {
                     let type = res["resourceType"] as? String ?? ""
                     guard type == "album" || type == "digitalAlbum" else { continue }
                     let id = String(describing: res["resourceId"] ?? "")
                     guard !id.isEmpty, id != "nil", seen.insert(id).inserted else { continue }
-                    let name = (res["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? title
+                    let ui = res["uiElement"] as? [String: Any] ?? [:]
+                    let main = ui["mainTitle"] as? [String: Any] ?? [:]
+                    let image = ui["image"] as? [String: Any] ?? [:]
+                    let name = ((main["title"] as? String) ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !name.isEmpty else { continue }
-                    out.append(NeteaseAlbumBrief(id: id, name: name,
-                                                 artist: artistNames(res["resourceExtInfo"]),
-                                                 cover: cover))
+                    let cover = (image["imageUrl"] as? String) ?? ""
+                    out.append(NeteaseAlbumBrief(
+                        id: id, name: name,
+                        artist: artistNames(res["resourceExtInfo"]),
+                        cover: cover.isEmpty ? nil : cover))
                 }
             }
         }

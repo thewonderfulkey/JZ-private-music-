@@ -6544,6 +6544,8 @@ func r281NeteaseDiscoverAssertions() {
                 ["resourceType": "song", "resourceId": 456, "name": "晚风",
                  "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
                 ["resourceType": "album", "resourceId": 789,
+                 "uiElement": ["mainTitle": ["title": "测试专辑"],
+                                "image": ["imageUrl": "http://a/1.jpg"]],
                  "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
             ]
         ]]],
@@ -6555,9 +6557,9 @@ func r281NeteaseDiscoverAssertions() {
     check("首页新歌 1 首、id/歌手对", newSongs.count == 1
           && newSongs[0].platformID == "456" && newSongs[0].singer == "鹿晗")
     let albums = NeteaseDiscover.parseHomeAlbums(home)
-    check("新碟 1 张、id 与名字对", albums.count == 1
-          && albums[0].id == "789" && albums[0].name == "晚风"
-          && albums[0].artist == "鹿晗")
+    check("新碟 1 张：名字/封面取自 resource.uiElement", albums.count == 1
+          && albums[0].id == "789" && albums[0].name == "测试专辑"
+          && albums[0].artist == "鹿晗" && (albums[0].cover ?? "").contains("a/1.jpg"))
 
     let pl: [String: Any] = ["playlists": [[
         "id": 18428485896, "name": "日语歌单", "coverImgUrl": "http://c/2.jpg", "trackCount": 68
