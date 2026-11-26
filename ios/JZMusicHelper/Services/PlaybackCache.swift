@@ -153,10 +153,15 @@ final class PlaybackCache: @unchecked Sendable {
         let gate: PlaybackCacheRules.DurationGate
         let headHash: String?
         let totalBytes: Int64
+        /// 文件自己写的时长（STREAMINFO / Xing / mvhd）。解不出 = nil。
+        /// 2026-11-26：这个值要一路送到播放器当「可信总长」——进度条从一开始就是对的，
+        /// 不再靠"播着播着发现超了就改数"。
+        let durationSec: Double?
     }
 
     func probe(song: Song, source: StreamSource) async -> Probe {
-        let empty = Probe(gate: .unverified, headHash: nil, totalBytes: source.totalBytes)
+        let empty = Probe(gate: .unverified, headHash: nil, totalBytes: source.totalBytes,
+                          durationSec: nil)
         guard PlaybackCacheRules.enabled, let url = URL(string: source.url) else { return empty }
         var req = URLRequest(url: url)
         req.timeoutInterval = 8
@@ -181,7 +186,7 @@ final class PlaybackCache: @unchecked Sendable {
         trace("索引闸门",
               "\(song.name) \(container) 文件 \(sec.map { "\(Int($0))s" } ?? "解不出")"
               + " / 曲目 \(Int(song.duration))s → \(gate)")
-        return Probe(gate: gate, headHash: headHash, totalBytes: total)
+        return Probe(gate: gate, headHash: headHash, totalBytes: total, durationSec: sec)
     }
 
     func touch(_ songID: String) {

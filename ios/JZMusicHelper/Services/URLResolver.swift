@@ -744,13 +744,18 @@ enum DownloadResolver {
         let totalBytes: Int64
         /// 时长是文件自己写的（可信总长）
         let verified: Bool
+        /// 文件自证时长（秒）。**起播前就交给播放器**，进度条不用再靠"播过头再改"。
+        let durationSec: Double?
 
-        static func pass(headHash: String?, totalBytes: Int64, verified: Bool) -> GateResult {
-            GateResult(reason: nil, headHash: headHash, totalBytes: totalBytes, verified: verified)
+        static func pass(headHash: String?, totalBytes: Int64, verified: Bool,
+                         durationSec: Double? = nil) -> GateResult {
+            GateResult(reason: nil, headHash: headHash, totalBytes: totalBytes,
+                       verified: verified, durationSec: durationSec)
         }
 
         static func reject(_ reason: String) -> GateResult {
-            GateResult(reason: reason, headHash: nil, totalBytes: 0, verified: false)
+            GateResult(reason: reason, headHash: nil, totalBytes: 0,
+                       verified: false, durationSec: nil)
         }
     }
 

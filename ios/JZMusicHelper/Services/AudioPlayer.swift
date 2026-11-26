@@ -116,8 +116,9 @@ final class PlayerEngine {
     private var lastTickItemToken: ObjectIdentifier?
     /// 回退要连续两拍都成立才记账（换歌瞬间会有一条迟到的旧进度，单拍会误报）。
     private var backwardCandidate: Double?
-    /// 这一首的总长是否已经被"播放器位置"纠正过（只记一条诊断，别每拍刷屏）
-    private var durationSelfHealed = false
+
+    /// 总长是否有证据（文件头/索引解出来的）。视图据此决定"剩余时间"要不要显示数字。
+    var hasVerifiedDuration: Bool { durationVerified || trustedDurationSec != nil }
 
     private(set) var isPlaying = false
     private(set) var isResolving = false
@@ -1221,7 +1222,8 @@ final class PlayerEngine {
         var verified = false
         if case .match = probe.gate { verified = true }
         let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
-        return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
+        return .pass(headHash: probe.headHash, totalBytes: total, verified: verified,
+                     durationSec: probe.durationSec)
     }
 
     private func startRemote(song: Song, src: StreamSource,
@@ -1241,13 +1243,13 @@ final class PlayerEngine {
             cacheSession?.cancel()
             cacheSession = built.session
             start(item: built.item, song: song, source: ready,
-                  durationVerified: gate.verified)
+                  durationVerified: gate.verified, trustedDuration: gate.durationSec)
             return
         }
         // 缓存层不可用（拿不到总字节）→ 退回直连
         guard let url = URL(string: ready.url) else { return }
         start(item: Self.makeItem(url: url), song: song, source: ready,
-              durationVerified: gate.verified)
+              durationVerified: gate.verified, trustedDuration: gate.durationSec)
     }
 
     /// 缓存层要求"换一条同一首歌的源"时走这里：把试过的 URL 记进坏源名单，再解析一次。
@@ -1316,7 +1318,6 @@ final class PlayerEngine {
         }
         lastTickSeconds = nil
         backwardCandidate = nil
-        durationSelfHealed = false
         PlaybackTrace.shared.log("item 替换",
             "\(song.name) ← \(source.backendName) \(source.format.uppercased()) "
             + "\(source.kbps)kbps 本曲第\(itemReplacementCount)次"
@@ -1378,7 +1379,8 @@ final class PlayerEngine {
             var verified = false
             if case .match = probe.gate { verified = true }
             let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
-            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
+            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified,
+                         durationSec: probe.durationSec)
         }
 
         // ①（2026-11-26 老板口径）**一次解析：谁先回来并且过完所有闸，谁先播。**
@@ -1452,7 +1454,8 @@ final class PlayerEngine {
             var verified = false
             if case .match = probe.gate { verified = true }
             let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
-            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
+            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified,
+                         durationSec: probe.durationSec)
         }
         let hit = await DownloadResolver.bestValidated(
             song: song, want: PlayerEngine.playbackQuality, budget: 8,
@@ -1982,20 +1985,6 @@ final class PlayerEngine {
                     self.lastTickItemToken = token
                     self.lastTickSeconds = seconds
                     self.currentTime = seconds
-                    // 2026-11-26 真机（"条都走完了还在唱，剩 0:00"）：
-                    // 在线流没有可信总长时，播放器第一次报的时长可能偏短（VBR mp3 没 Xing 尤其如此），
-                    // 而 `adoptDuration` 会把它锁死。这里用"正在播的位置"反过来纠正总长：
-                    // 音频还在往前走，真长至少是当前位置。只动显示/收尾依据，不碰播放器。
-                    if self.isPlaying, self.trustedDurationSec == nil, !self.durationVerified,
-                       seconds > self.duration + 0.5, seconds > 1 {
-                        if !self.durationSelfHealed, abs(seconds - self.duration) > 1 {
-                            PlaybackTrace.shared.log("时长自愈",
-                                "\(self.currentSong?.name ?? "—") \(Int(self.duration))s → \(Int(seconds))s")
-                            self.durationSelfHealed = true
-                        }
-                        self.duration = seconds
-                        self.durationLocked = true
-                    }
                     self.updateLyricIndex()
                     // B1：剩余 20~30 秒时把下一首的源解析好（"播完不换歌"的正解）
                     self.maybePrefetchNext()

@@ -651,7 +651,9 @@ struct NowPlayingView: View {
             HStack(spacing: 0) {
                 Text(Self.timeText(currentShownTime))
                 Spacer(minLength: 0)
-                Text("-" + Self.timeText(remainingShownTime))
+                Text(player.hasVerifiedDuration
+                     ? "-" + Self.timeText(remainingShownTime)
+                     : "--:--")
             }
             .font(.caption)
             .monospacedDigit()
@@ -676,7 +678,9 @@ struct NowPlayingView: View {
     }
 
     private var remainingShownTime: Double {
-        max(0, player.duration - currentShownTime)
+        // 没有可信总长就别报一个可能是错的"还剩多少"（2026-11-26 老板：条走完了还在唱）
+        guard player.hasVerifiedDuration else { return 0 }
+        return max(0, player.duration - currentShownTime)
     }
 
     private func progressBar(width: CGFloat) -> some View {
