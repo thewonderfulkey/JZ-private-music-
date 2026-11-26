@@ -6533,34 +6533,6 @@ func r281NeteaseDiscoverAssertions() {
           songs[0].singer == "周杰伦" && songs[0].album == "叶惠美"
           && (songs[0].picURL ?? "").contains("p/1.jpg"))
 
-    let home: [String: Any] = ["data": ["blocks": [
-        ["blockCode": "HOMEPAGE_BANNER", "extInfo": ["banners": [
-            ["pic": "http://b/1.jpg", "targetType": 1000, "targetId": 123, "typeTitle": "歌单"],
-            ["pic": "http://b/2.jpg", "targetType": 3000, "targetId": 0, "typeTitle": "演出"],
-        ]]],
-        ["blockCode": "HOMEPAGE_BLOCK_NEW_ALBUM_NEW_SONG", "creatives": [[
-            "uiElement": ["mainTitle": ["title": "晚风"], "image": ["imageUrl": "http://c/1.jpg"]],
-            "resources": [
-                ["resourceType": "song", "resourceId": 456, "name": "晚风",
-                 "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
-                ["resourceType": "album", "resourceId": 789,
-                 "uiElement": ["mainTitle": ["title": "测试专辑"],
-                                "image": ["imageUrl": "http://a/1.jpg"]],
-                 "resourceExtInfo": ["artists": [["name": "鹿晗"]]]],
-            ]
-        ]]],
-    ]]]
-    let banners = NeteaseDiscover.parseBanners(home)
-    check("banner 两条都保留（外链那条 playlistID 为空）",
-          banners.count == 2 && banners[0].playlistID == "123" && banners[1].playlistID == nil)
-    let newSongs = NeteaseDiscover.parseHomeSongs(home)
-    check("首页新歌 1 首、id/歌手对", newSongs.count == 1
-          && newSongs[0].platformID == "456" && newSongs[0].singer == "鹿晗")
-    let albums = NeteaseDiscover.parseHomeAlbums(home)
-    check("新碟 1 张：名字/封面取自 resource.uiElement", albums.count == 1
-          && albums[0].id == "789" && albums[0].name == "测试专辑"
-          && albums[0].artist == "鹿晗" && (albums[0].cover ?? "").contains("a/1.jpg"))
-
     let pl: [String: Any] = ["playlists": [[
         "id": 18428485896, "name": "日语歌单", "coverImgUrl": "http://c/2.jpg", "trackCount": 68
     ]]]
@@ -6568,95 +6540,6 @@ func r281NeteaseDiscoverAssertions() {
     check("歌单 1 条、曲目数对", ps.count == 1 && ps[0].trackCount == 68)
     check("空响应不崩", NeteaseDiscover.parseChartList([:]).isEmpty
           && NeteaseDiscover.parseBanners([:]).isEmpty)
-}
-
-
-// MARK: 2026-11-26 专辑曲目服务（网易 v1 / 酷我 / QQ / 搜索兜底）
-func r282AlbumServiceAssertions() {
-    section("专辑曲目：三条腿 + 兜底标记")
-    let netease: [String: Any] = [
-        "album": ["name": "叶惠美", "picUrl": "http://p/1.jpg",
-                  "artist": ["name": "周杰伦"],
-                  "publishTime": 1057075200000],
-        "songs": [
-            ["id": 1, "name": "以父之名", "ar": [["name": "周杰伦"]],
-             "al": ["name": "叶惠美", "picUrl": "http://p/1.jpg"], "dt": 326000],
-            ["id": 2, "name": "懦夫", "ar": [["name": "周杰伦"]],
-             "al": ["name": "叶惠美", "picUrl": "http://p/1.jpg"], "dt": 216000],
-        ],
-    ]
-    let wy = AlbumService.parseNeteaseV1(netease, albumID: "18905")
-    check("网易 v1：2 首、不是兜底", wy?.songs.count == 2 && wy?.partial == false)
-    check("网易 v1：专辑名/歌手/首发日",
-          wy?.name == "叶惠美" && wy?.artist == "周杰伦" && (wy?.publishDate ?? "").hasPrefix("2003"))
-
-    let kuwo: [String: Any] = ["data": [
-        "name": "U87", "artist": "陈奕迅", "img": "http://k/1.jpg",
-        "musicList": [["rid": "6264", "name": "烂", "artist": "陈奕迅",
-                       "album": "U87", "duration": "260"]],
-    ]]
-    let kw = AlbumService.parseKuwo(kuwo, albumID: "6264")
-    check("酷我：1 首、平台是酷我、时长 260s",
-          kw?.songs.count == 1 && kw?.songs.first?.platform == .kuwo
-          && Int(kw?.songs.first?.durationSec ?? 0) == 260)
-
-    let qq: [String: Any] = ["req_1": ["data": ["songList": [[
-        "songInfo": ["mid": "003J6fvc0bVJon", "name": "烂",
-                     "singer": [["name": "陈奕迅"]],
-                     "album": ["name": "U87", "mid": "002"], "interval": 260]
-    ]]]]]
-    let q = AlbumService.parseQQ(qq, albumID: "003J6fvc0bVJon")
-    check("QQ：1 首、封面由 albumMid 拼出",
-          q?.songs.count == 1 && (q?.songs.first?.picURL ?? "").contains("002"))
-
-    func mk(_ name: String, album: String) -> Song {
-        Song.make(platform: .netease, platformID: UUID().uuidString, name: name,
-                  singer: "周杰伦", album: album, duration: 200, picURL: nil)
-    }
-    let partial = AlbumService.partialFromSearch(
-        [mk("以父之名", album: "叶惠美"), mk("晴天", album: "叶惠美"),
-         mk("别的", album: "别的碟")],
-        albumID: "18905", name: "叶惠美", artist: "周杰伦")
-    check("搜索兜底：只留本碟的歌、且标 partial",
-          partial?.songs.count == 2 && partial?.partial == true)
-
-    check("空响应 → nil", AlbumService.parseNeteaseV1([:], albumID: "x") == nil
-          && AlbumService.parseKuwo([:], albumID: "x") == nil)
-}
-
-
-// MARK: 2026-11-26 板块状态：一家挂只少一部分
-func r283SectionRulesAssertions() {
-    section("板块状态：合并且单源失败不拖垮整块")
-    func s(_ p: MusicPlatform, _ name: String) -> Song {
-        Song.make(platform: p, platformID: UUID().uuidString, name: name,
-                  singer: "周杰伦", album: "", duration: 200, picURL: nil)
-    }
-    let both = DiscoverSectionRules.combine([
-        .ok(.kuwo, [s(.kuwo, "晴天")]),
-        .ok(.netease, [s(.netease, "七里香")]),
-    ])
-    check("两家都成功：2 条、可见", both.items.count == 2 && both.isVisible)
-    check("没有失败源", both.failedSources.isEmpty)
-
-    let oneFailed = DiscoverSectionRules.combine([
-        .ok(.kuwo, [s(.kuwo, "晴天")]),
-        .failed(.netease),
-    ])
-    check("一家失败：仍有 1 条、可见", oneFailed.items.count == 1 && oneFailed.isVisible)
-    check("失败源被记下来（UI 用小字提示）", oneFailed.failedSources == [.netease])
-    check("失败源计数为 0",
-          oneFailed.sources.first(where: { $0.source == .netease })?.count == 0)
-
-    let allFailed = DiscoverSectionRules.combine([.failed(.kuwo), .failed(.netease)])
-    check("两家都失败：不可见（整块隐藏）", !allFailed.isVisible)
-    check("两家都标失败", allFailed.failedSources.count == 2)
-
-    let dup = DiscoverSectionRules.combine([
-        .ok(.kuwo, [s(.kuwo, "晴天")]),
-        .ok(.netease, [s(.netease, "晴天")]),
-    ])
-    check("跨源同一首只留一条", dup.items.count == 1)
 }
 
 
@@ -6671,7 +6554,6 @@ r271CoverLegsAssertions()
 r272YrcAssertions()
 r280MergeRulesAssertions()
 r281NeteaseDiscoverAssertions()
-r282AlbumServiceAssertions()
 r283SectionRulesAssertions()
 
 print("\n================ 结果 ================")

@@ -32,8 +32,6 @@ struct DiscoverView: View {
     @State private var showSearch = false
     /// 助眠页（push 进导航栈，不是全屏 cover）
     @State private var showSleep = false
-    /// 新碟点开的专辑（push 进导航栈）
-    @State private var selectedAlbum: NeteaseAlbumBrief?
     /// 轻提示（换一批之后的确认）
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -46,7 +44,6 @@ struct DiscoverView: View {
                 recentSection
                 myPlaylistsSection
                 newSongsSection
-                newAlbumsSection
                 guessSection
                 hotSection
                 // 第三十五轮（老板）：歌单广场放到最下面
@@ -72,9 +69,6 @@ struct DiscoverView: View {
         }
         // 助眠页：进新页面而不是盖全屏，底部五格栏保持可见
         .navigationDestination(isPresented: $showSleep) { SleepView() }
-        .navigationDestination(item: $selectedAlbum) { album in
-            AlbumDetailView(album: album)
-        }
         .onChange(of: router.pendingSleep) { _, want in
             guard want else { return }
             router.pendingSleep = false
@@ -426,49 +420,6 @@ struct DiscoverView: View {
     /// 模块里这一排：接口一页 100 首，只露前 12 张卡
     private var newSongs: [KuwoPlaylist.Release] {
         Array(feed.newReleases.prefix(KuwoPlaylist.moduleCards))
-    }
-
-    // MARK: 新碟（2026-11-26：网易首页块，横滑卡片）
-
-    @ViewBuilder
-    private var newAlbumsSection: some View {
-        if feed.newAlbumsState == .loaded, !feed.newAlbums.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                HStack(spacing: Tokens.Spacing.xs) {
-                    Text("新碟")
-                        .font(FontRole.sectionTitle)
-                    Spacer(minLength: Tokens.Spacing.xxs)
-                }
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: Tokens.Spacing.s) {
-                        ForEach(Array(feed.newAlbums.prefix(12)), id: \.id) { album in
-                            Button { selectedAlbum = album } label: {
-                                albumCard(album)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-    }
-
-    private func albumCard(_ album: NeteaseAlbumBrief) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            RemoteArtwork(url: album.cover ?? "", size: 132, radius: Tokens.Radius.card)
-            Text(album.name)
-                .font(.footnote)
-                .lineLimit(1)
-            Text(album.artist)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .frame(width: 132, alignment: .leading)
     }
 
     // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
