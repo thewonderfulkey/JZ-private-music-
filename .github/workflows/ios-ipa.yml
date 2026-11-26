@@ -86,6 +86,7 @@ jobs:
             ios/JZMusicHelper/Services/DiscoverMergeRules.swift \
             ios/JZMusicHelper/Services/NeteaseDiscover.swift \
             ios/JZMusicHelper/Services/AlbumService.swift \
+            ios/JZMusicHelper/Services/DiscoverSectionRules.swift \
             ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
