@@ -6721,6 +6721,12 @@ func r288BannerRulesAssertions() {
     check("今天关过 → 今天不显示", BannerRules.isHidden(closedDay: 100, today: 100))
     check("昨天关过 → 今天照常显示", !BannerRules.isHidden(closedDay: 99, today: 100))
     check("从没关过 → 显示", !BannerRules.isHidden(closedDay: nil, today: 100))
+
+    // 2026-11-27 实测：网易 banner 的 typeTitle 只有「歌单」「演出」这种类别词，不是这条的名字
+    check("类别词不压在图上（歌单）", BannerRules.caption("歌单") == nil)
+    check("类别词不压在图上（演出）", BannerRules.caption("演出") == nil)
+    check("空标题不出文案", BannerRules.caption("   ") == nil)
+    check("真标题照常显示", BannerRules.caption("一周欧美上新") == "一周欧美上新")
 }
 
 

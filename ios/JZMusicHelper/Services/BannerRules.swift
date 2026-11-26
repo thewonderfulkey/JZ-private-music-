@@ -43,4 +43,19 @@ enum BannerRules {
         guard let closedDay else { return false }
         return closedDay == today
     }
+
+    /// 图上要不要压一行文案。
+    ///
+    /// 实测（2026-11-27）网易 banner 的 `typeTitle` 只有「歌单」「演出」「独家策划」这种**类别词**，
+    /// 不是这条 banner 的名字；直接压在图下面，八张图里四张写着"歌单"，看着像没做完。
+    /// 图自己带文案，所以类别词一律不显示；只有真给了像样标题时才压。
+    static func caption(_ raw: String) -> String? {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let generic: Set<String> = ["歌单", "演出", "独家策划", "新歌", "数字专辑", "专题", "活动"]
+        if generic.contains(title) { return nil }
+        // 太短又不像人名的也当类别词（"MV"/"Live" 这类）
+        if title.count <= 2 { return nil }
+        return title
+    }
 }

@@ -88,12 +88,11 @@ struct DiscoverBannerCarousel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            // 底部压一层暗角：图可能很亮，白字压不住
-            LinearGradient(colors: [.black.opacity(0.0), .black.opacity(0.55)],
-                           startPoint: .center, endPoint: .bottom)
-
-            if let title = banner.title.isEmpty ? nil : banner.title {
-                Text(title)
+            // 底部压一层暗角：图可能很亮，白字压不住（只在真有文案时才需要）
+            if let caption = BannerRules.caption(banner.title) {
+                LinearGradient(colors: [.black.opacity(0.0), .black.opacity(0.55)],
+                               startPoint: .center, endPoint: .bottom)
+                Text(caption)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.white)
                     .lineLimit(2)
@@ -103,7 +102,7 @@ struct DiscoverBannerCarousel: View {
             }
         }
         .contentShape(Rectangle())
-        .accessibilityLabel(banner.title.isEmpty ? "推荐歌单" : banner.title)
+        .accessibilityLabel(BannerRules.caption(banner.title) ?? "推荐歌单")
         .accessibilityHint("点一下打开这个歌单")
     }
 

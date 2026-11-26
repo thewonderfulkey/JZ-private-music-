@@ -35,6 +35,12 @@ check("今天关过 → 今天不显示", BannerRules.isHidden(closedDay: 100, t
 check("昨天关过 → 今天照常显示", !BannerRules.isHidden(closedDay: 99, today: 100))
 check("从没关过 → 显示", !BannerRules.isHidden(closedDay: nil, today: 100))
 
+print("— 图上文案：类别词不压图")
+check("类别词不压图（歌单）", BannerRules.caption("歌单") == nil)
+check("类别词不压图（演出）", BannerRules.caption("演出") == nil)
+check("空标题不出文案", BannerRules.caption("   ") == nil)
+check("真标题照常显示", BannerRules.caption("一周欧美上新") == "一周欧美上新")
+
 print("\n结果：通过 \(pass) / 失败 \(fail.count)")
 if !fail.isEmpty {
     for f in fail { print("  失败：\(f)") }
