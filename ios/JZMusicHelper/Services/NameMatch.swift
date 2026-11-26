@@ -188,22 +188,33 @@ enum NameMatch {
         static func < (a: TitleEvidence, b: TitleEvidence) -> Bool { a.rawValue < b.rawValue }
     }
 
+    /// 只比歌名的证据等级（**不含专辑通道**）。封面、搜索联想这类没有时长/专辑的场景用它。
+    ///
+    /// 为什么单独抽出来（2026-11-26）：平台标题噪音不止括号一种——
+    /// 《空も飛べるはず-《白线流》日剧主题曲》这种"歌名 + 破折号 + 剧名"的写法，
+    /// 归一化后是"长名包含短名"，用"完全相等"就会把所有候选全拒掉，最后只能落占位图。
+    static func titleEvidence(_ a: String, _ b: String) -> TitleEvidence? {
+        let x = normTitle(a)
+        let y = normTitle(b)
+        if !x.isEmpty, !y.isEmpty {
+            if x == y { return .exact }
+            let shorter = x.count <= y.count ? x : y
+            let longer = x.count <= y.count ? y : x
+            if shorter.count >= 4, longer.contains(shorter) { return .contained }
+        }
+        if !x.isEmpty, !y.isEmpty,
+           FavoriteRules.titleSimilarity(a, b) >= FavoriteRules.titleSimilarityFloor {
+            return .similar
+        }
+        return nil
+    }
+
     /// 这两个歌名之间有没有"是同一首"的证据？nil = 没有（2026-11-25 起一律拒）
     ///
     /// - Parameter requireDuration: false 用在"两边都没歌手"的兜底分支（那里只能看歌名）
     static func titleEvidence(src: Song, cand: Song,
                               requireDuration: Bool = true) -> TitleEvidence? {
-        let a = normTitle(src.name)
-        let b = normTitle(cand.name)
-        if !a.isEmpty, !b.isEmpty {
-            if a == b { return .exact }
-            let shorter = a.count <= b.count ? a : b
-            let longer = a.count <= b.count ? b : a
-            if shorter.count >= 4, longer.contains(shorter) { return .contained }
-        }
-        if !a.isEmpty, !b.isEmpty, FavoriteRules.titleSimilarity(src.name, cand.name) >= FavoriteRules.titleSimilarityFloor {
-            return .similar
-        }
+        if let e = titleEvidence(src.name, cand.name) { return e }
         // 译名通道：歌名完全不同，只能靠"同一张专辑 + 时长几乎一致"
         guard requireDuration else { return nil }
         guard src.durationSec > 0, cand.durationSec > 0,

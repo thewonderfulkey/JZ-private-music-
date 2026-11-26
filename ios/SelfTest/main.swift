@@ -1547,6 +1547,17 @@ do {
           CoverResolver.isStrictMatch(
               name: "茶花开了，该回家了(说唱版-王睿卓&加木)", singer: "小酒",
               candidateName: "茶花开了，该回家了", candidateSinger: "王睿卓/加木"))
+    // 2026-11-26 真机第二轮：标题带"歌名-《剧名》主题曲"、歌手一中一洋（Spitz / スピッツ）
+    check("标题带后缀时按『短名被长名包含』认",
+          CoverResolver.isStrictMatch(name: "空も飛べるはず-《白线流》日剧主题曲",
+                                      singer: "Spitz (スピッツ)",
+                                      candidateName: "空も飛べるはず", candidateSinger: "スピッツ"))
+    check("歌手一中一洋时按包含认",
+          CoverResolver.isStrictMatch(name: "ちっちゃな無敵", singer: "Spitz (スピッツ)",
+                                      candidateName: "ちっちゃな無敵", candidateSinger: "スピッツ"))
+    check("包含也不能乱认（完全不同的歌）",
+          !CoverResolver.isStrictMatch(name: "晴天", singer: "周杰伦",
+                                       candidateName: "晴天娃娃", candidateSinger: "周杰伦"))
 }
 
 do {

@@ -42,7 +42,12 @@ actor CoverResolver {
     /// 已知**加载不出来**的地址：key（歌名|歌手）→ url。
     /// 用来避免"同一首歌每次都先试同一个坏地址"（酷我 rid_pic 有些地址就是 404）。
     private var deadURLs: [String: String] = [:]
+    /// 什么时候拉黑的（2026-11-26）：拉黑**必须会过期**，否则一次网络抖动就把这首歌的封面永久钉死。
+    private var deadAt: [String: Double] = [:]
     private static let deadCacheKey = "cover_dead_urls_v1"
+    private static let deadAtKey = "cover_dead_at_v1"
+    /// 拉黑有效期：一天。过了就当没拉黑过，重新试一次
+    private static let deadTTL: TimeInterval = 24 * 3600
     private var permits: Int
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var loaded = false
@@ -197,24 +202,42 @@ actor CoverResolver {
     }
 
     /// 严格匹配规则（纯函数，CI 里有断言）：
-    ///   歌名**归一化后完全相等**（去版本括号/标点/大小写），
-    ///   歌手用 `NameMatch.singerMatches`（按 / & 、 ， 空格 拆 token 取交集），
+    ///   歌名走**证据阶梯**（与播放链同一个口径）：归一化后完全相等 → 短名被长名包含；只看这两种，
+    ///   "相似"太松，封面贴错比没有更糟；
+    ///   歌手用 `NameMatch.singerMatches`（按 / & 、 ， 空格 拆 token 取交集）；
     ///   候选多出来的「版本类」（Live/伴奏/翻唱…）一律不要。
     ///
-    /// 2026-11-26 真机：录屏里《恋爱脑中》等歌始终没有封面，但实测 QQ/酷狗/网易**三级都有真封面**。
-    /// 根因是旧口径只按 `/` 拆歌手——「阿肆&TizzyT」vs「阿肆/TizzyT」交集为空，
-    /// 三级全被判"不是同一首"，最后只能落占位图。改成与播放链同一个身份口径。
+    /// 2026-11-26 两轮真机教训：
+    ///   ① 只按 `/` 拆歌手 →「阿肆&TizzyT」对「阿肆/TizzyT」全拒；
+    ///   ② 只认"完全相等" →《空も飛べるはず-《白线流》日剧主题曲》这种"歌名+后缀"也全拒。
+    ///   两次都是**采用条件太窄**，不是接口没图。
     static func isStrictMatch(name: String, singer: String,
                               candidateName: String, candidateSinger: String) -> Bool {
-        let a = NameMatch.normTitle(name)
-        let b = NameMatch.normTitle(candidateName)
-        guard !a.isEmpty, !b.isEmpty, a == b else { return false }
+        guard let evidence = NameMatch.titleEvidence(name, candidateName),
+              evidence == .exact || evidence == .contained else { return false }
         if !NameMatch.versionClass(candidateName).isSubset(of: NameMatch.versionClass(name)) {
             return false
         }
         let hint = SearchQueryVariants.artistHint(from: name)
         return NameMatch.singerMatches(singer, candidateSinger)
+            || singerLooseContains(singer, candidateSinger)
             || (hint.map { NameMatch.singerMatches($0, candidateSinger) } ?? false)
+    }
+
+    /// 歌手串的"包含"兜底（只给封面用，播放链的身份闸不放松）。
+    ///
+    /// 真机例子：《ちっちゃな無敵》这行显示的是「Spitz (スピッツ)」，
+    /// 而 QQ 候选的歌手是「スピッツ」——token 交集为空（一个英文一个片假名），
+    /// 但「spitz(スピッツ)」里**包含**「スピッツ」。歌名已经过了证据阶梯，这里再放一档包含。
+    private static func singerLooseContains(_ a: String, _ b: String) -> Bool {
+        func norm(_ s: String) -> String {
+            s.lowercased()
+                .replacingOccurrences(of: " ", with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "()（）[]【】/&、,，-—"))
+        }
+        let x = norm(a), y = norm(b)
+        guard !x.isEmpty, !y.isEmpty, min(x.count, y.count) >= 2 else { return false }
+        return x.contains(y) || y.contains(x)
     }
 
     /// 歌手串拆片段（按 / 分），与 Android `song.singer.split('/')` 一致
@@ -242,7 +265,15 @@ actor CoverResolver {
 
     /// 这个地址对这首歌是不是已知加载不出来
     func isDead(_ url: String, key: String) -> Bool {
-        deadURLs[key] == url
+        guard deadURLs[key] == url else { return false }
+        let at = deadAt[key] ?? 0
+        if at > 0, Date().timeIntervalSince1970 - at > Self.deadTTL {
+            deadURLs[key] = nil
+            deadAt[key] = nil
+            persistDead()
+            return false
+        }
+        return true
     }
 
     /// 调用方确认这张图**加载失败**时调用：拉黑地址并清掉缓存里的同名记录，
@@ -251,6 +282,7 @@ actor CoverResolver {
         let key = Self.cacheKeyFor(song)
         if deadURLs[key] != url {
             deadURLs[key] = url
+            deadAt[key] = Date().timeIntervalSince1970
             persistDead()
         }
         if memory[key] == url {
@@ -261,6 +293,7 @@ actor CoverResolver {
 
     private func persistDead() {
         UserDefaults.standard.set(deadURLs, forKey: Self.deadCacheKey)
+        UserDefaults.standard.set(deadAt, forKey: Self.deadAtKey)
     }
 
     private func loadDeadIfNeeded() {
@@ -268,6 +301,9 @@ actor CoverResolver {
             return
         }
         deadURLs = saved
+        if let stamps = UserDefaults.standard.dictionary(forKey: Self.deadAtKey) as? [String: Double] {
+            deadAt = stamps
+        }
     }
 
     // MARK: 状态
