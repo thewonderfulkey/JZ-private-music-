@@ -718,7 +718,190 @@ enum DownloadResolver {
         }
     }
 
-    // MARK: 起播挑选（2026-11-22：够档立刻起播，不够档才等窗口）
+    // MARK: 一次解析、先过闸先播（2026-11-26 老板口径）
+    //
+    // 老板原话：「任务可以是同一个，谁先回来**并且通过校验**的谁先播放」。
+    // 所以这里不设"档位窗口"——第一个过完所有闸的候选立刻起播；档位只在**预取**里比
+    // （预取有的是时间，见 `bestValidated`）。
+    //
+    // 与旧的三段接力（startPick → firstPlayable → plan）的区别：旧路径每段都从零重发，
+    // 一段拿不到就把已经在飞的请求全扔掉——真机诊断里手动选歌 4.6–20s 就是这么来的。
+
+    /// 解析阶段的闸门结果（纯数据，便于断言）
+    struct GateResult: Sendable {
+        /// nil = 通过；非 nil = 拒掉的原因（会写进诊断）
+        let reason: String?
+        /// 首段指纹（缓存层认"同一份文件"用）
+        let headHash: String?
+        let totalBytes: Int64
+        /// 时长是文件自己写的（可信总长）
+        let verified: Bool
+
+        static func pass(headHash: String?, totalBytes: Int64, verified: Bool) -> GateResult {
+            GateResult(reason: nil, headHash: headHash, totalBytes: totalBytes, verified: verified)
+        }
+
+        static func reject(_ reason: String) -> GateResult {
+            GateResult(reason: reason, headHash: nil, totalBytes: 0, verified: false)
+        }
+    }
+
+    /// 通过闸门的源 + 这次闸门拿到的证据
+    struct Resolved: Sendable {
+        let source: StreamSource
+        let gate: GateResult
+    }
+
+    /// 一条回来的源要过哪些闸（由调用方注入，因为深度校验要用缓存层的 Range 探测）
+    typealias Validator = (StreamSource) async -> GateResult
+
+    /// **一次解析，先过闸的先出**。
+    ///
+    /// - 所有主腿同时开跑；
+    /// - 每条回来的先过身份 + 可用性 + 调用方注入的深度闸；
+    /// - 第一个全过的立刻返回，其余取消；
+    /// - 被拒的只记一行，**不重启解析**。
+    static func firstValidated(song: Song, want: QualityLevel,
+                               allowLossless: Bool = false,
+                               budget: TimeInterval = 8,
+                               validate: @escaping Validator,
+                               log: ((String) -> Void)? = nil) async -> Resolved? {
+        let jobs = primaryJobs(for: song).filter {
+            !BackendHealth.shared.isCoolingDown($0.adapter.name)
+        }
+        guard !jobs.isEmpty else { return nil }
+
+        enum Step: Sendable {
+            case hit(Resolved)
+            case miss(String)
+            case wake
+        }
+
+        return await withTaskGroup(of: Step.self) { group in
+            for job in jobs {
+                group.addTask {
+                    let t0 = Date()
+                    guard let src = await withTimeoutOrNil(budget, {
+                        try await job.adapter.resolve(song: job.song, quality: want)
+                    }) else {
+                        return .miss("\(job.adapter.name) 超时/失败 "
+                                     + "\(Int(Date().timeIntervalSince(t0) * 1000))ms")
+                    }
+                    if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
+                        return .miss("\(job.adapter.name) 身份不符")
+                    }
+                    guard PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec,
+                                                        allowLossless: allowLossless) else {
+                        return .miss("\(job.adapter.name) 不可用（档位/加密/占位）")
+                    }
+                    let matched = src.matched(job.song)
+                    let gate = await validate(matched)
+                    if let reason = gate.reason {
+                        return .miss("\(job.adapter.name) \(reason)")
+                    }
+                    return .hit(Resolved(source: matched, gate: gate))
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0.2, budget) * 1_000_000_000))
+                return .wake
+            }
+
+            var misses: [String] = []
+            var outstanding = jobs.count
+            for await step in group {
+                switch step {
+                case .hit(let hit):
+                    group.cancelAll()
+                    return hit
+                case .miss(let why):
+                    outstanding -= 1
+                    misses.append(why)
+                    log?(why)
+                    // 所有腿都明确失败：立刻收工，别等满预算（否则会白等 8 秒）
+                    if outstanding == 0 {
+                        group.cancelAll()
+                        return nil
+                    }
+                case .wake:
+                    group.cancelAll()
+                    if !misses.isEmpty { log?("预算到点，已被拒：" + misses.prefix(3).joined(separator: "｜")) }
+                    return nil
+                }
+            }
+            return nil
+        }
+    }
+
+    /// **预取用**：给足预算，在通过闸门的候选里挑档位最高的（音质优先只应该花在这里）。
+    static func bestValidated(song: Song, want: QualityLevel,
+                              allowLossless: Bool = false,
+                              budget: TimeInterval = 8,
+                              validate: @escaping Validator,
+                              log: ((String) -> Void)? = nil) async -> Resolved? {
+        let jobs = primaryJobs(for: song).filter {
+            !BackendHealth.shared.isCoolingDown($0.adapter.name)
+        }
+        guard !jobs.isEmpty else { return nil }
+
+        enum Step: Sendable {
+            case hit(Resolved)
+            case miss(String)
+            case wake
+        }
+
+        return await withTaskGroup(of: Step.self) { group in
+            for job in jobs {
+                group.addTask {
+                    guard let src = await withTimeoutOrNil(budget, {
+                        try await job.adapter.resolve(song: job.song, quality: want)
+                    }) else { return .miss("\(job.adapter.name) 超时/失败") }
+                    if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
+                        return .miss("\(job.adapter.name) 身份不符")
+                    }
+                    guard PlaybackQualityRules.isUsable(src, songDurationSec: song.durationSec,
+                                                        allowLossless: allowLossless) else {
+                        return .miss("\(job.adapter.name) 不可用")
+                    }
+                    let matched = src.matched(job.song)
+                    let gate = await validate(matched)
+                    if let reason = gate.reason {
+                        return .miss("\(job.adapter.name) \(reason)")
+                    }
+                    return .hit(Resolved(source: matched, gate: gate))
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0.2, budget) * 1_000_000_000))
+                return .wake
+            }
+
+            var best: Resolved?
+            var outstanding = jobs.count
+            for await step in group {
+                switch step {
+                case .hit(let hit):
+                    outstanding -= 1
+                    if best == nil || isBetter(hit.source, than: best?.source) {
+                        best = hit
+                    }
+                case .miss(let why):
+                    outstanding -= 1
+                    log?(why)
+                case .wake:
+                    group.cancelAll()
+                    return best
+                }
+                if outstanding == 0 {
+                    group.cancelAll()
+                    return best
+                }
+            }
+            return best
+        }
+    }
+
+
 
     /// 起播窗口。320k 的后端实测多在 0.9–1.1s，但**慢后端（妖狐酷我/官方无损）2–3s 才回**——
     /// 2026-11-26 老板报"说好 320k 优先，实际一直在放 96–98k"，根因就是这个窗口太短：

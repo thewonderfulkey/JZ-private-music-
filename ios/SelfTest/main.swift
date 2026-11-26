@@ -6282,10 +6282,25 @@ func r267TraceAssertions() {
 }
 
 
+// MARK: 2026-11-26 起播闸门（老板口径：先过闸的先播，不是先回来的先播）
+func r268GateAssertions() {
+    section("起播闸门：通过/拒绝的语义")
+    let pass = DownloadResolver.GateResult.pass(headHash: "abc", totalBytes: 1234, verified: true)
+    check("通过：没有 reason", pass.reason == nil)
+    check("通过：带指纹/总长/可信标记",
+          pass.headHash == "abc" && pass.totalBytes == 1234 && pass.verified)
+    let reject = DownloadResolver.GateResult.reject("时长差 12s（不是同一份文件）")
+    check("拒绝：有原因", reject.reason == "时长差 12s（不是同一份文件）")
+    check("拒绝：不携带任何证据（不会被当成可播）",
+          reject.headHash == nil && reject.totalBytes == 0 && !reject.verified)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
 r267TraceAssertions()
+r268GateAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

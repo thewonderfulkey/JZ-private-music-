@@ -945,7 +945,7 @@ final class PlayerEngine {
         // 已整首落盘过的也不用再解析
         if PlaybackCache.shared.hasComplete(song) { return }
         if pendingStream?.songID == song.id || pendingLocal?.songID == song.id { return }
-        let src = await resolveStream(for: song)
+        let src = await resolveForPrefetch(song: song)
         guard !Task.isCancelled, prefetchSongID == song.id else { return }
         guard let src else {
             PlaybackTrace.shared.log("预取失败", song.name)
@@ -1146,7 +1146,7 @@ final class PlayerEngine {
         PlaybackTrace.shared.log("resolve 开始", song.name)
         let startedAt = Date()
 
-        let resolved = await resolveStream(for: song)
+        let resolved: DownloadResolver.Resolved? = await resolveStream(for: song)
         // 迟到的取流结果：期间用户已经点了别的歌（或这一轮已被下一轮取流取代）
         // → 整个丢掉：不改状态行、不动 isResolving、更不起播。
         guard PlaybackRules.isCurrentLoad(token: token, currentToken: loadToken),
@@ -1158,26 +1158,26 @@ final class PlayerEngine {
         isResolving = false
         let outcome: String
         if let resolved {
-            outcome = "\(resolved.backendName) \(resolved.kbps)kbps"
+            outcome = "\(resolved.source.backendName) \(resolved.source.kbps)kbps"
         } else {
             outcome = "无源"
         }
         PlaybackTrace.shared.log("resolve 结束",
                                  "\(Int(Date().timeIntervalSince(startedAt) * 1000))ms \(outcome)")
 
-        guard let src = resolved else {
+        guard let hit = resolved else {
             handleNoSource()
             return
         }
 
         // A7：播放链的诚实标注（无损只用于下载）
-        statusText = "音源 \(src.backendName) · \(src.format.uppercased()) · \(src.kbps) kbps"
-            + " · \(PlaybackQualityRules.label)"
-        await startRemote(song: song, src: src)
+        statusText = "音源 \(hit.source.backendName) · \(hit.source.format.uppercased())"
+            + " · \(hit.source.kbps) kbps · \(PlaybackQualityRules.label)"
+        await startRemote(song: song, resolved: hit)
         // 2026-11-22 **不再做"起播后升档"**：`swapToBetterSource` 会 `replaceCurrentItem` + seek，
         // 缓冲从 0 重来，就是老板说的"开头 10 秒左右卡一下"。
-        // 档位已经在 `resolveStream` 第①步（`DownloadResolver.startPick`）挑好了：
-        // 320k 一到就用 320k 起播，拿不到才等满窗口用手上最高的一档。
+        // 档位在 `resolveStream` 里已经定了：**首个过闸的源直接起播**（2026-11-26 老板口径），
+        // 在线不等更高档；音质只在预取（`resolveForPrefetch`）里比。
         // 函数与 `upgradedSongID` 留着是为了回滚（把下面这行注释放开即可）。
         // schedulePlaybackUpgrade(for: song)
     }
@@ -1187,50 +1187,63 @@ final class PlayerEngine {
     ///
     /// 走缓存层之后：播放器不再直连 CDN，断流/403 时我们换 token 续写同一个文件，
     /// 播放器只感觉"读得慢"，不会报错、不会换 item、也不会出现"按旧总长提前切歌"。
-    private func startRemote(song: Song, src: StreamSource) async {
-        // 时长闸门：±5 秒。对不上就换下一条候选（最多 4 条），
-        // 全都对不上就**停**——不播错的、不跳下一首、也不从 0 重播（老板 2026-11-25 定）。
-        var candidate = src
-        var rejected: [String] = []
-        for _ in 0..<4 {
-            let probe = await PlaybackCache.shared.probe(song: song, source: candidate)
-            if case .mismatch(let diff) = probe.gate {
-                rejected.append(candidate.url)
-                rejectedSourceURLs.insert(candidate.url)
-                PlaybackTrace.shared.log("时长不符",
-                                         "\(song.name)：\(Int(diff))s 差，换下一条")
-                guard let next = await resolveStream(for: song) else { break }
-                candidate = next
-                continue
-            }
-            var verified = false
-            if case .match = probe.gate { verified = true }
-            // 服务端没给总字节时，用探测拿到的那个（缓存层要它才能报 contentLength）
-            var ready = candidate
-            if ready.totalBytes <= 0, probe.totalBytes > 0 { ready.totalBytes = probe.totalBytes }
+    /// 起播一条**已过闸**的在线源（2026-11-26：闸门已经在上游过完，这里只管装进播放器）。
+    private func startRemote(song: Song, resolved: DownloadResolver.Resolved) async {
+        await startRemote(song: song, src: resolved.source, gate: resolved.gate)
+    }
 
-            if !cacheFallbackUsed,
-               let built = PlaybackCache.shared.playbackItem(
-                song: song, source: ready, container: ready.format,
-                headHash: probe.headHash,
-                resolver: { [weak self] tried in
-                    guard let self else { return nil }
-                    return await self.refreshSource(for: song, tried: tried)
-                }) {
-                cacheSession?.cancel()
-                cacheSession = built.session
-                start(item: built.item, song: song, source: ready,
-                      durationVerified: verified)
-                return
+    /// 只拿到 URL、没有闸门证据的路径（预取命中）——在这里补一次探测，**不重解析**。
+    private func startRemote(song: Song, src: StreamSource) async {
+        let gate = await playbackGate(song: song, src: src)
+        if let reason = gate.reason {
+            PlaybackTrace.shared.log("时长不符", "\(song.name)：\(reason)（预取源）")
+            rejectedSourceURLs.insert(src.url)
+            if let again = await resolveStream(for: song) {
+                await startRemote(song: song, resolved: again)
+            } else {
+                handleNoSource()
             }
-            // 缓存层不可用（拿不到总字节）→ 退回直连
-            guard let url = URL(string: ready.url) else { break }
-            start(item: Self.makeItem(url: url), song: song, source: ready,
-                  durationVerified: verified)
             return
         }
-        PlaybackTrace.shared.log("无同一份文件", "\(song.name)：试过 \(rejected.count) 条")
-        stopBecauseFileUnavailable(reason: "所有候选的时长都不是同一份")
+        await startRemote(song: song, src: src, gate: gate)
+    }
+
+    /// 深度闸：**文件自己的索引**（时长 ±5 秒）+ 首段指纹 + 总长。返回 nil 以外的 reason 就拒。
+    private func playbackGate(song: Song, src: StreamSource) async -> DownloadResolver.GateResult {
+        let probe = await PlaybackCache.shared.probe(song: song, source: src)
+        if case .mismatch(let diff) = probe.gate {
+            return .reject("时长差 \(Int(diff))s（不是同一份文件）")
+        }
+        var verified = false
+        if case .match = probe.gate { verified = true }
+        let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
+        return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
+    }
+
+    private func startRemote(song: Song, src: StreamSource,
+                             gate: DownloadResolver.GateResult) async {
+        var ready = src
+        // 服务端没给总字节时，用探测拿到的那个（缓存层要它才能报 contentLength）
+        if ready.totalBytes <= 0, gate.totalBytes > 0 { ready.totalBytes = gate.totalBytes }
+
+        if !cacheFallbackUsed,
+           let built = PlaybackCache.shared.playbackItem(
+            song: song, source: ready, container: ready.format,
+            headHash: gate.headHash,
+            resolver: { [weak self] tried in
+                guard let self else { return nil }
+                return await self.refreshSource(for: song, tried: tried)
+            }) {
+            cacheSession?.cancel()
+            cacheSession = built.session
+            start(item: built.item, song: song, source: ready,
+                  durationVerified: gate.verified)
+            return
+        }
+        // 缓存层不可用（拿不到总字节）→ 退回直连
+        guard let url = URL(string: ready.url) else { return }
+        start(item: Self.makeItem(url: url), song: song, source: ready,
+              durationVerified: gate.verified)
     }
 
     /// 缓存层要求"换一条同一首歌的源"时走这里：把试过的 URL 记进坏源名单，再解析一次。
@@ -1241,7 +1254,7 @@ final class PlayerEngine {
         rejectedSourceURLs.formUnion(tried)
         guard currentSong?.id == song.id else { return nil }
         PlaybackTrace.shared.log("缓存续拉解析", "\(song.name)（已排除 \(tried.count) 条）")
-        return await resolveStream(for: song)
+        return await resolveStream(for: song)?.source
     }
 
     /// 造播放项：**本地文件必须带 `AVURLAssetPreferPreciseDurationAndTimingKey`**。
@@ -1329,7 +1342,7 @@ final class PlayerEngine {
     ///
     /// 这里**不写状态行、也不起后台升档**：预取也会走它，而预取不该改界面。
     /// 升档由 `loadCurrent` 在真正起播之后决定（那时才知道"当前这条是多少码率"）。
-    private func resolveStream(for song: Song) async -> StreamSource? {
+    private func resolveStream(for song: Song) async -> DownloadResolver.Resolved? {
         // 被拒的 URL / 指纹只属于"当前这首"：预取别的歌时不能拿这份名单去筛
         let rejectedURLs = (song.id == currentSong?.id) ? rejectedSourceURLs : []
         let rejectedFP = (song.id == currentSong?.id) ? rejectedFingerprints : []
@@ -1343,89 +1356,102 @@ final class PlayerEngine {
                                                  allowLossless: allowLossless)
         }
 
-        // ① 起播挑选（2026-11-22）：窗口内挑**最高档**的一条起播，起播之后不再换 item。
-        //    旧路径是"谁先回来用谁 + 后台升档"，那一步 `replaceCurrentItem` 会让缓冲从 0 重来，
-        //    听感就是老板说的"开头 10 秒左右卡一下"（见 `DownloadResolver.startPick`）。
-        var stageBegan = Date()
-        if let quick = await DownloadResolver.startPick(song: song, want: PlayerEngine.playbackQuality),
-           usable(quick.source) {
-            // 2026-11-26（老板 ⑥）：拿到的是低档时留一条诊断，别让"96k 静默降级"再无声发生。
-            // 补档这一步在 `startPick` 内部已经做过（只拿低档会多等 `startLowTierGrace`），
-            // 这里只负责把结论摊在「播放诊断」里。
-            PlaybackTrace.shared.log("起播阶段", String(
-                format: "① 窗口 %.1fs 命中 ← %@ %dkbps",
-                Date().timeIntervalSince(stageBegan), quick.source.backendName, quick.source.kbps))
-            if !PlaybackQualityRules.isTopTier(quick.source) {
-                PlaybackTrace.shared.log("起播低档",
-                    "\(song.name) ← \(quick.source.backendName) \(quick.source.kbps)kbps"
-                    + "（目标 320k，窗口内没有更高档）")
+        let log: (String) -> Void = { msg in
+            Task { @MainActor in PlaybackTrace.shared.log("候选", msg) }
+        }
+        // 深度闸：时长 / 同一份文件。闸不过就换下一条，**不重启解析**。
+        let validator: DownloadResolver.Validator = { src in
+            if rejectedURLs.contains(src.url) { return .reject("这条以前失败过") }
+            let fp = PlaybackQualityRules.fingerprint(totalBytes: src.totalBytes,
+                                                      durationSec: song.durationSec)
+            if rejectedFP.contains(fp) { return .reject("同一指纹的源失败过") }
+            let probe = await PlaybackCache.shared.probe(song: song, source: src)
+            if case .mismatch(let diff) = probe.gate {
+                return .reject("时长差 \(Int(diff))s（不是同一份文件）")
             }
-            return quick.source
+            var verified = false
+            if case .match = probe.gate { verified = true }
+            let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
+            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
         }
-        PlaybackTrace.shared.log("起播阶段", String(
-            format: "① 窗口 %.1fs 空", Date().timeIntervalSince(stageBegan)))
 
-        // ② 先到先用（老路径，6s 预算）：启动窗口没等到任何候选时**必须**留着这一档。
-        //    为什么不能直接跳去 plan()：plan 要等"跨源候选"（搜索 + 逐个解析，最长 15s），
-        //    而妖狐/ikun 这类慢后端 2–5s 才回——直接进 plan 会把"3s 能起播"拖成 15s，
-        //    正是 2026-11-20 老板投诉的"切歌卡 10 秒"。这里先抢一条出来响，
-        //    音质不好也没关系：起播之后**不再换 item**（宁可这一首 128k，也不中途卡一下）。
-        stageBegan = Date()
-        if let quick = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
-           usable(quick.source) {
+        // ①（2026-11-26 老板口径）**一次解析：谁先回来并且过完所有闸，谁先播。**
+        //
+        // 不再等"档位窗口"：先到的是 97k 就播 97k，不为了 320k 多等 1~2 秒。
+        // 音质只在**预取**里比（`DownloadResolver.bestValidated`），因为那边有时间。
+        // 被拒的候选只记一行，不重启解析——旧路径"①→②→③ 每段重发"就是手动选歌 4~20 秒的根。
+        var stageBegan = Date()
+        if let hit = await DownloadResolver.firstValidated(
+            song: song, want: PlayerEngine.playbackQuality, budget: 8,
+            validate: validator, log: log) {
             PlaybackTrace.shared.log("起播阶段", String(
-                format: "② 先到先用 %.1fs 命中 ← %@ %dkbps",
-                Date().timeIntervalSince(stageBegan), quick.source.backendName, quick.source.kbps))
-            return quick.source
+                format: "首个过闸 %.1fs ← %@ %dkbps",
+                Date().timeIntervalSince(stageBegan), hit.source.backendName, hit.source.kbps))
+            if !PlaybackQualityRules.isTopTier(hit.source) {
+                PlaybackTrace.shared.log("起播低档",
+                    "\(song.name) ← \(hit.source.backendName) \(hit.source.kbps)kbps（先到先用）")
+            }
+            return hit
         }
         PlaybackTrace.shared.log("起播阶段", String(
-            format: "② 先到先用 %.1fs 空", Date().timeIntervalSince(stageBegan)))
+            format: "主腿全被拒/超时 %.1fs", Date().timeIntervalSince(stageBegan)))
 
-        // ③ 完整排名（同曲换源就靠这一步往前走：已被拒的 URL 会被跳过）
+        // ② 跨平台补位：只有主腿全空才走，且同样过闸
         stageBegan = Date()
-        let plan = await DownloadResolver.plan(song: song, want: PlayerEngine.playbackQuality)
-        if let picked = plan.ranked.first(where: { usable($0.source) }) {
-            PlaybackTrace.shared.log("起播阶段", String(
-                format: "③ 完整排名 %.1fs 命中 ← %@ %dkbps",
-                Date().timeIntervalSince(stageBegan), picked.source.backendName, picked.source.kbps))
-            return picked.source
-        }
-        PlaybackTrace.shared.log("起播阶段", String(
-            format: "③ 完整排名 %.1fs 空", Date().timeIntervalSince(stageBegan)))
-
-        // ④ 同一首在别家的条目（网易 ↔ QQ ↔ 酷我 ↔ 酷狗）
         if let cross = await SameSongCrossResolver.resolve(
             song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys()),
            usable(cross) {
-            return cross
+            let gate = await validator(cross)
+            if gate.reason == nil {
+                PlaybackTrace.shared.log("起播阶段", String(
+                    format: "跨平台 %.1fs ← %@", Date().timeIntervalSince(stageBegan),
+                    cross.backendName))
+                return DownloadResolver.Resolved(source: cross, gate: gate)
+            }
+            log("跨平台被拒：\(gate.reason ?? "")")
         }
 
-        // ⑤ 无损兜底：**只在前四条全空时**才放开 FLAC（周杰伦这类"酷我只有 FLAC"的歌）。
-        //
-        // 为什么必须放在最后、且只跑一次：无损要现拉 26~55MB 的远端流，首字节 1.5~2s，
-        // 放在关键路径上就会重现"播完卡住"（2026-11-19 心动模式的结论：无损必须现拉，
-        // 那就是卡顿来源）。这里只作为"否则整首没声"的兜底，且走的是同一个
-        // `beginBackgroundTask` 保护区（`loadCurrent` 外层已开）。
+        // ③ 无损兜底：只在前两步全空时放开 FLAC（"否则整首没声"才用）
         if let lossless = await DownloadResolver.firstPlayable(
             song: song, want: .lossless, allowLossless: true),
            usable(lossless.source, allowLossless: true) {
-            PlaybackTrace.shared.log("无损兜底", "\(lossless.source.backendName) "
-                + "\(lossless.source.kbps)kbps")
-            return lossless.source
-        }
-
-        // ⑥ 弱网/接口抖动的最后一下：隔 2 秒再问一次（只这一次，别把空档拖长）
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        if let retry = await DownloadResolver.firstPlayable(song: song, want: PlayerEngine.playbackQuality),
-           usable(retry.source) {
-            return retry.source
-        }
-        if let retryLossless = await DownloadResolver.firstPlayable(
-            song: song, want: .lossless, allowLossless: true),
-           usable(retryLossless.source, allowLossless: true) {
-            return retryLossless.source
+            let gate = await validator(lossless.source)
+            if gate.reason == nil {
+                PlaybackTrace.shared.log("无损兜底", "\(lossless.source.backendName) "
+                    + "\(lossless.source.kbps)kbps")
+                return DownloadResolver.Resolved(source: lossless.source, gate: gate)
+            }
+            log("无损被拒：\(gate.reason ?? "")")
         }
         return nil
+    }
+
+    /// 预取专用：**有时间**，所以在通过闸门的候选里挑档位最高的那条。
+    /// 音质优先只应该花在这里（2026-11-26 老板口径：在线起播先到先用，不等）。
+    private func resolveForPrefetch(song: Song) async -> StreamSource? {
+        let rejectedURLs = (song.id == currentSong?.id) ? rejectedSourceURLs : []
+        let rejectedFP = (song.id == currentSong?.id) ? rejectedFingerprints : []
+        let log: (String) -> Void = { msg in
+            Task { @MainActor in PlaybackTrace.shared.log("候选", "预取·" + msg) }
+        }
+        let validator: DownloadResolver.Validator = { src in
+            if rejectedURLs.contains(src.url) { return .reject("这条以前失败过") }
+            let fp = PlaybackQualityRules.fingerprint(totalBytes: src.totalBytes,
+                                                      durationSec: song.durationSec)
+            if rejectedFP.contains(fp) { return .reject("同一指纹的源失败过") }
+            let probe = await PlaybackCache.shared.probe(song: song, source: src)
+            if case .mismatch(let diff) = probe.gate {
+                return .reject("时长差 \(Int(diff))s（不是同一份文件）")
+            }
+            var verified = false
+            if case .match = probe.gate { verified = true }
+            let total = src.totalBytes > 0 ? src.totalBytes : probe.totalBytes
+            return .pass(headHash: probe.headHash, totalBytes: total, verified: verified)
+        }
+        let hit = await DownloadResolver.bestValidated(
+            song: song, want: PlayerEngine.playbackQuality, budget: 8,
+            validate: validator, log: log)
+        return hit?.source
     }
 
     // MARK: 后台再判一次"有没有更高码率"（只在 ≤320k 以内）—— **2026-11-22 停用**
