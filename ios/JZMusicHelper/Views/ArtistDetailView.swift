@@ -15,6 +15,14 @@ struct ArtistDetailView: View {
     @State private var releases: [KuwoPlaylist.Release] = []
     @State private var loading = false
     @State private var failed = false
+    /// 这位歌手一共有多少首（接口 `data.total`；缺失时 0 = 只显示"已显示 N 首"）
+    @State private var totalSongs = 0
+    /// 已经翻到第几页（首页 = 1）
+    @State private var loadedPage = 1
+    /// 正在加载下一页
+    @State private var loadingMore = false
+    /// 下一页失败了（按钮变"重试"，不打断已有列表）
+    @State private var moreFailed = false
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
 
@@ -65,6 +73,8 @@ struct ArtistDetailView: View {
                             .locatedFlash(active: locator.isHighlighted(release.song))
                             .accessibilityHint("点一下以这位歌手的歌为队列播放")
                         }
+                        // 2026-11-27（老板）：底部给「显示更多」，接着往下翻、不与上面重复
+                        moreFooter
                     }
                     MiniPlayerSpacer()
                 }
@@ -158,6 +168,53 @@ struct ArtistDetailView: View {
         }
     }
 
+    // MARK: 显示更多（2026-11-27）
+
+    /// 列表底部那一块：进度文案 + 按钮（加载中转圈 / 失败可重试 / 到底了写"已全部加载"）
+    @ViewBuilder
+    private var moreFooter: some View {
+        let shown = releases.count
+        if ArtistPaging.hasMore(shown: shown, total: totalSongs) {
+            VStack(spacing: Tokens.Spacing.xs) {
+                Button {
+                    Haptics.trackChange()
+                    Task { await loadMore() }
+                } label: {
+                    HStack(spacing: Tokens.Spacing.xs) {
+                        if loadingMore {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: moreFailed ? "arrow.clockwise" : "chevron.down")
+                                .font(.footnote.weight(.semibold))
+                        }
+                        Text(moreFailed ? "重试" : "显示更多")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: Tokens.Spacing.minTapTarget)
+                    .foregroundStyle(Tokens.Palette.vermilion)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(loadingMore)
+
+                Text(moreFailed
+                     ? "\(ArtistPaging.progressText(shown: shown, total: totalSongs)) · 刚才没取到，点重试"
+                     : ArtistPaging.progressText(shown: shown, total: totalSongs))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+            .padding(.top, Tokens.Spacing.s)
+            .padding(.bottom, Tokens.Spacing.m)
+        } else {
+            Text("已全部加载 · \(shown) 首")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Tokens.Spacing.m)
+        }
+    }
+
     // MARK: 取数
 
     private func load() async {
@@ -165,10 +222,37 @@ struct ArtistDetailView: View {
         loading = true
         failed = false
         do {
-            releases = try await KuwoArtist.fetchSongs(artistID: artist.id)
+            let page = try await KuwoArtist.fetchSongsPage(artistID: artist.id, page: 1)
+            releases = page.items
+            totalSongs = page.total
+            loadedPage = 1
         } catch {
             failed = releases.isEmpty
         }
         loading = false
+    }
+
+    /// 翻下一页：追加到列表底部，**不跳回顶部**（老板明确要求），重复的丢掉
+    private func loadMore() async {
+        guard !loadingMore, !releases.isEmpty else { return }
+        loadingMore = true
+        moreFailed = false
+        let next = loadedPage + 1
+        do {
+            let page = try await KuwoArtist.fetchSongsPage(artistID: artist.id, page: next)
+            let merged = ArtistPaging.appendUnique(releases, adding: page.items)
+            // 接口还在给数据但全是旧的 = 已经到底（total 可能偏大，或多个版本指向同一首）
+            if ArtistPaging.addedNothing(releases, adding: page.items) {
+                moreFailed = false
+                totalSongs = merged.count
+            } else {
+                releases = merged
+                if page.total > 0 { totalSongs = page.total }
+            }
+            loadedPage = next
+        } catch {
+            moreFailed = true
+        }
+        loadingMore = false
     }
 }

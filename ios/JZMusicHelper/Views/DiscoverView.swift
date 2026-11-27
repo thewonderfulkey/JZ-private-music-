@@ -40,11 +40,9 @@ struct DiscoverView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Tokens.Spacing.l) {
                 searchEntry
-                // 发现页 2.0：BANNER 轮播（网易首页取图，只跳站内歌单；可关，关掉只关当天）
+                // 发现页 2.0：BANNER 轮播（网易首页取图，只跳站内歌单；老板 2026-11-27：不提供关闭，当作常驻模块）
                 if feed.showsBanner {
-                    DiscoverBannerCarousel(banners: feed.banners) {
-                        feed.closeBanner()
-                    }
+                    DiscoverBannerCarousel(banners: feed.banners)
                 }
                 artistSection
                 recentSection
@@ -94,6 +92,14 @@ struct DiscoverView: View {
             //
             // 第三十轮：歌单广场 / 歌手大全也并进这一趟——老板要的"同进度、当天只拉一次"，
             // 就是这一层：一个入口进去，四块酷我数据一起加载 / 一起判缓存。
+            //
+            // 2026-11-27（开屏又开始"时不时顿一下"）：**等开屏退场再发请求**。
+            // 首页是在开屏底下照常挂载的，动画那 1.5 秒里同时拉网络/解图，主线程一被抢就顿；
+            // 缓存已经在 init 里同步读过，所以动画一退场照样有内容，不会闪骨架。
+            // 手上什么都没有（刚装好第一次开）就不等——等完也是骨架，不如让数据先跑。
+            if feed.hasPrimedContent {
+                await LaunchGate.shared.waitForSplash()
+            }
             await loadEverything()
             if !library.recentSongs.isEmpty {
                 await feed.refreshGuessIfStale(recent: library.recentSongs)
@@ -268,7 +274,8 @@ struct DiscoverView: View {
                 case .loaded:
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: Tokens.Spacing.xs) {
-                            ForEach(artistFeed.items.prefix(5)) { artist in
+                            // 2026-11-27（老板）：一行只放 5 个太少 → 露 12 个，横滑看，再点「查看全部」
+                            ForEach(artistFeed.items.prefix(12)) { artist in
                                 NavigationLink {
                                     ArtistDetailView(artist: artist)
                                 } label: {

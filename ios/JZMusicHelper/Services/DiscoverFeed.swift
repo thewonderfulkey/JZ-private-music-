@@ -65,21 +65,15 @@ final class DiscoverFeed {
     private var bannerDay: Int = -1
     private static let bannerCacheKey = "discover_banner_cache_v1"
 
-    /// banner 当天关闭记下的本地日（UI 读它决定要不要渲染；关掉只关当天）
-    private(set) var bannerClosedDay: Int = -1
-    private static let bannerClosedKey = "discover_banner_closed_day_v1"
+    /// 今天该不该显示 BANNER：有内容就显示（老板 2026-11-27："不希望能关，当作一个新模块"）
+    var showsBanner: Bool { BannerRules.shouldShow(count: banners.count) }
 
-    /// 今天该不该显示 BANNER（有内容 + 今天没关过）
-    var showsBanner: Bool {
-        BannerRules.shouldShow(count: banners.count)
-            && !BannerRules.isHidden(closedDay: bannerClosedDay == -1 ? nil : bannerClosedDay,
-                                     today: day)
-    }
-
-    /// 关掉 BANNER（只关当天）
-    func closeBanner() {
-        bannerClosedDay = day
-        defaults.set(day, forKey: Self.bannerClosedKey)
+    /// 手上有没有"开屏退场就能立刻显示"的内容（缓存已同步读进来）
+    ///
+    /// 2026-11-27 开屏闸门用：有缓存才值得等开屏（等的时候屏幕上有东西可看）；
+    /// 什么都没有（刚装好第一次开）就别等了——等完还是一片骨架，不如让数据先跑。
+    var hasPrimedContent: Bool {
+        !hotSongs.isEmpty || !newReleases.isEmpty || !banners.isEmpty || !guessSongs.isEmpty
     }
 
 
@@ -147,7 +141,6 @@ final class DiscoverFeed {
             newState = .loaded
         }
         // BANNER：缓存与"今天关过了"都同步读进来，第一帧就能定下"显示 / 不显示"
-        bannerClosedDay = defaults.object(forKey: Self.bannerClosedKey) as? Int ?? -1
         if let cached = cachedBanners() {
             banners = BannerRules.usable(cached.items)
             if !banners.isEmpty { bannerState = .loaded }

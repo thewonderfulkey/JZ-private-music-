@@ -2,12 +2,13 @@ import SwiftUI
 
 // MARK: - 发现页 BANNER 轮播（2026-11-27，发现页 2.0 Task 5）
 //
-// 老板口径：能滑、能关、**只跳站内**。
+// 老板口径：能滑、**不能关**、只跳站内。
+//   · 2026-11-27 晚：老板明确「我不希望能关，这当作一个新的模块」——所以右上角没有 X，
+//     BANNER 和"最新单曲」「歌单广场」一样是常驻模块；
 //   · 图与落点全部来自网易首页 banner（`NeteaseDiscover.banners`），
 //     外链（演出/广告）在 `BannerRules.usable` 里就被过滤掉，点不出去；
 //   · 落点是**通用歌单页**（`NeteasePlaylistView`）——实测那 4 条站内 banner 全是歌单
-//     （targetType 1000），没有一条是单曲，所以歌单页是唯一能真听歌的落点；
-//   · 关闭只关当天（`BannerRules.isHidden`），第二天自然回来。
+//     （targetType 1000），没有一条是单曲，所以歌单页是唯一能真听歌的落点。
 //
 // 组件自己不管取数：`DiscoverFeed.banners` 已经是过滤过、按天缓存过的那一份。
 
@@ -15,8 +16,6 @@ struct DiscoverBannerCarousel: View {
 
     /// 已经过滤好的 banner（站内可跳）
     let banners: [NeteaseBannerItem]
-    /// 关掉（父视图负责记"今天关过"）
-    let onClose: () -> Void
 
     @State private var index: Int = 0
 
@@ -25,16 +24,13 @@ struct DiscoverBannerCarousel: View {
 
     var body: some View {
         if BannerRules.shouldShow(count: banners.count) {
-            ZStack(alignment: .topTrailing) {
-                carousel
-                closeButton
-            }
-            .overlay(alignment: .bottom) {
-                if BannerRules.shouldAutoAdvance(count: banners.count) {
-                    pageDots
+            carousel
+                .overlay(alignment: .bottom) {
+                    if BannerRules.shouldAutoAdvance(count: banners.count) {
+                        pageDots
+                    }
                 }
-            }
-            .accessibilityElement(children: .contain)
+                .accessibilityElement(children: .contain)
         }
     }
 
@@ -104,21 +100,6 @@ struct DiscoverBannerCarousel: View {
         .contentShape(Rectangle())
         .accessibilityLabel(BannerRules.caption(banner.title) ?? "推荐歌单")
         .accessibilityHint("点一下打开这个歌单")
-    }
-
-    private var closeButton: some View {
-        Button {
-            Haptics.trackChange()
-            withAnimation(Tokens.Motion.stateChange) { onClose() }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(.black.opacity(0.35), in: Circle())
-        }
-        .padding(Tokens.Spacing.s)
-        .accessibilityLabel("关闭推荐横幅")
     }
 
     private var pageDots: some View {

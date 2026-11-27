@@ -1,5 +1,4 @@
-// r288 迷你自测（2026-11-27）：发现页 BANNER 轮播规则
-// 老板口径：能滑、能关、只跳站内；0 条不渲染，1 条不自动切。
+// r288 迷你自测（2026-11-27）：发现页 BANNER 规则（老板当晚改口径：不能关，常驻模块）
 import Foundation
 
 var pass = 0
@@ -30,10 +29,9 @@ let noImage = NeteaseBannerItem(image: "", title: "空图", playlistID: "123")
 check("外链 banner 被过滤", BannerRules.usable([internalBanner, external]).map(\.title) == ["歌单推荐"])
 check("空图的也不要", BannerRules.usable([noImage]).isEmpty)
 
-print("— 关闭只关当天")
-check("今天关过 → 今天不显示", BannerRules.isHidden(closedDay: 100, today: 100))
-check("昨天关过 → 今天照常显示", !BannerRules.isHidden(closedDay: 99, today: 100))
-check("从没关过 → 显示", !BannerRules.isHidden(closedDay: nil, today: 100))
+print("— 常驻（老板：不希望能关）")
+check("有内容就显示，没有“今天关过”这条路",
+      !BannerRules.shouldShow(count: 0) && BannerRules.shouldShow(count: 1))
 
 print("— 图上文案：类别词不压图")
 check("类别词不压图（歌单）", BannerRules.caption("歌单") == nil)

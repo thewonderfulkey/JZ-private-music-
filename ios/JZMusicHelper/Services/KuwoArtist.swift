@@ -105,16 +105,34 @@ enum KuwoArtist {
 
     /// 歌手的热门歌曲（接口按热度排，不做二次排序）
     static func fetchSongs(artistID: String, page: Int = 1, rn: Int = 50) async throws -> [KuwoPlaylist.Release] {
+        let page = try await fetchSongsPage(artistID: artistID, page: page, rn: rn)
+        return page.items
+    }
+
+    /// 一页歌曲 + 这位歌手的**总曲目数**（2026-11-27 老板："周杰伦 1706 首，但只显示几十首"）
+    ///
+    /// 实测（本机，artistid=336）：`data.total = 1706`，`pn=1` 与 `pn=2` 返回不同的歌，
+    /// 说明接口本来就支持翻页——以前只取第一页 50 首，才看起来"只有几十首"。
+    struct SongsPage: Sendable, Equatable {
+        let total: Int
+        let items: [KuwoPlaylist.Release]
+    }
+
+    static func fetchSongsPage(artistID: String, page: Int = 1,
+                               rn: Int = songsPerPage) async throws -> SongsPage {
         let json = try await APIClient.shared.getJSON(
             songsURL(artistID: artistID, page: page, rn: rn),
             headers: headers,
             timeout: 20
         )
-        guard let songs = parseSongs(json), !songs.isEmpty else {
+        guard let parsed = parseSongsPage(json), !parsed.items.isEmpty else {
             throw APIError.parse("歌手歌曲解析失败")
         }
-        return songs
+        return parsed
     }
+
+    /// 每页 50 首：接口一次最多给这么多，翻页靠 `page` 递增
+    static let songsPerPage = 50
 
     // MARK: 解析（纯函数，CI 断言直接喂字典进来）
 
@@ -143,11 +161,17 @@ enum KuwoArtist {
     }
 
     static func parseSongs(_ json: [String: Any]) -> [KuwoPlaylist.Release]? {
+        parseSongsPage(json)?.items
+    }
+
+    /// 解析一页歌 + 总数。`total` 缺失时退回"本页条数"（页面就不显示总数，只显示已显示多少）
+    static func parseSongsPage(_ json: [String: Any]) -> SongsPage? {
         if let code = number(json["code"]), code != 200 { return nil }
         guard let data = json["data"] as? [String: Any] else { return nil }
         let list = data["list"] as? [[String: Any]] ?? []
         let releases = list.compactMap(release(from:))
-        return releases.isEmpty ? nil : releases
+        guard !releases.isEmpty else { return nil }
+        return SongsPage(total: number(data["total"]) ?? releases.count, items: releases)
     }
 
     /// 歌手歌曲 → 复用 `KuwoPlaylist.Release`（播放层要的就是 Song）

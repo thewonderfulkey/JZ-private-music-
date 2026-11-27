@@ -35,15 +35,6 @@ enum BannerRules {
         items.filter { !$0.image.isEmpty && $0.playlistID != nil }
     }
 
-    /// 今天是不是已经关过了（关闭只关当天，第二天自然回来）
-    ///
-    /// 用"本地日"而不是时间戳：老板要的是"今天别烦我"，不是"24 小时内别出现"——
-    /// 第二天早上打开应该又能看到。
-    static func isHidden(closedDay: Int?, today: Int) -> Bool {
-        guard let closedDay else { return false }
-        return closedDay == today
-    }
-
     /// 图上要不要压一行文案。
     ///
     /// 实测（2026-11-27）网易 banner 的 `typeTitle` 只有「歌单」「演出」「独家策划」这种**类别词**，

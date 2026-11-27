@@ -6718,15 +6718,47 @@ func r288BannerRulesAssertions() {
           BannerRules.usable([internalBanner, external]).map(\.title) == ["歌单推荐"])
     check("空图的也不要", BannerRules.usable([noImage]).isEmpty)
 
-    check("今天关过 → 今天不显示", BannerRules.isHidden(closedDay: 100, today: 100))
-    check("昨天关过 → 今天照常显示", !BannerRules.isHidden(closedDay: 99, today: 100))
-    check("从没关过 → 显示", !BannerRules.isHidden(closedDay: nil, today: 100))
+    // 2026-11-27 晚（老板："我不希望能关，这当作一个新的模块"）：不再有"今天关过"的逻辑
+    check("原来那条关闭口径已下线（0 条才不显示）",
+          !BannerRules.shouldShow(count: 0) && BannerRules.shouldShow(count: 1))
 
     // 2026-11-27 实测：网易 banner 的 typeTitle 只有「歌单」「演出」这种类别词，不是这条的名字
     check("类别词不压在图上（歌单）", BannerRules.caption("歌单") == nil)
     check("类别词不压在图上（演出）", BannerRules.caption("演出") == nil)
     check("空标题不出文案", BannerRules.caption("   ") == nil)
     check("真标题照常显示", BannerRules.caption("一周欧美上新") == "一周欧美上新")
+}
+
+
+// MARK: 2026-11-27 歌手页「显示更多」（老板：周杰伦 1706 首只显示几十首）
+func r290ArtistPagingAssertions() {
+    section("歌手页分页：还有没有更多 / 进度文案 / 追加去重")
+
+    check("50 / 1706 还有更多", ArtistPaging.hasMore(shown: 50, total: 1706))
+    check("1706 / 1706 没有更多", !ArtistPaging.hasMore(shown: 1706, total: 1706))
+    check("接口没给总数也给按钮（不能被缺字段锁死）",
+          ArtistPaging.hasMore(shown: 50, total: 0))
+    check("空列表不显示按钮", !ArtistPaging.hasMore(shown: 0, total: 1706))
+
+    check("进度文案带总数", ArtistPaging.progressText(shown: 50, total: 1706) == "已显示 50 / 1706",
+          ArtistPaging.progressText(shown: 50, total: 1706))
+    check("没有总数时退回「已显示 N 首」",
+          ArtistPaging.progressText(shown: 300, total: 0) == "已显示 300 首",
+          ArtistPaging.progressText(shown: 300, total: 0))
+
+    func rel(_ rid: String) -> KuwoPlaylist.Release {
+        KuwoPlaylist.Release(
+            song: Song.make(platform: .kuwo, platformID: rid, name: "歌\(rid)", singer: "周杰伦",
+                            album: "", duration: 200, picURL: nil),
+            releaseDate: "")
+    }
+    let first = [rel("1"), rel("2"), rel("3")]
+    let next = [rel("3"), rel("4")]
+    let merged = ArtistPaging.appendUnique(first, adding: next)
+    check("追加去重：重复的只留一条", merged.map(\.song.platformID) == ["1", "2", "3", "4"],
+          "\(merged.map(\.song.platformID))")
+    check("判断「这一页全是旧的」", ArtistPaging.addedNothing(first, adding: [rel("1")]))
+    check("判断「这一页有新的」", !ArtistPaging.addedNothing(first, adding: [rel("4")]))
 }
 
 
@@ -6745,6 +6777,7 @@ r283SectionRulesAssertions()
 r286NeteaseTrackPageAssertions()
 r287TitleKeyIdentityAssertions()
 r288BannerRulesAssertions()
+r290ArtistPagingAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

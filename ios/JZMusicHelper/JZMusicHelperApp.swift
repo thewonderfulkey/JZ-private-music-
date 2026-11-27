@@ -77,6 +77,8 @@ struct JZMusicHelperApp: App {
                     SplashView {
                         // 自然播完时纸底已经淡到 0，这层 animation 只是给"点击跳过"一个收尾
                         withAnimation(.easeOut(duration: 0.22)) { showSplash = false }
+                        // 2026-11-27：放行发现页的网络加载（原来它和开屏动画抢主线程 → 时不时顿一下）
+                        LaunchGate.shared.markSplashFinished()
                     }
                     .transition(.opacity)
                     .zIndex(1)
