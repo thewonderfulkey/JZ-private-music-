@@ -113,44 +113,6 @@ struct PlaylistCoverCard: View {
     }
 }
 
-/// 猜你喜欢的"小胶囊"（2026-11-27 老板选定的 C 版）
-///
-/// 为什么是它（老板："我更喜欢小一点这个模块"）：整个模块高 ≈118，一屏看四首，
-/// 是页面上**唯一**的"双列小胶囊"形态——榜单是三行列表行、最新单曲是横滑宽卡、
-/// 最近播放/歌手是横滑方卡/圆头像、广场是横滑竖卡，一眼就能分出"这是推荐"。
-struct GuessChip: View {
-
-    let song: Song
-    let reason: String
-
-    var body: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
-            SongArtwork(song: song, size: 34, radius: 6)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(song.name)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(reason)
-                    .font(.caption2)
-                    .foregroundStyle(Tokens.Palette.vermilion)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Tokens.Spacing.xs)
-        .padding(.vertical, 7)
-        .background(Tokens.Palette.paperElevated,
-                    in: RoundedRectangle(cornerRadius: Tokens.Radius.artworkSmall,
-                                         style: .continuous))
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(song.name)，\(song.singer)，\(reason)")
-        .accessibilityHint("点一下播放")
-    }
-}
-
-///
 /// 与 `PlaylistCoverCard` 同一套版式（封面 + 两行名 + 张数），只是数据来自网易
 /// （`NeteasePlaylistBrief`），点进去落到通用歌单页 `NeteasePlaylistView`。
 struct NeteasePlaylistCard: View {

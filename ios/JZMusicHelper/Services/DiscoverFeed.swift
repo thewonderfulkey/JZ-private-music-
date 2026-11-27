@@ -50,8 +50,6 @@ final class DiscoverFeed {
     private(set) var newState: LoadState = .idle
     private var newDay: Int = -1
 
-    private(set) var guessSongs: [Song] = []
-    private(set) var guessState: LoadState = .idle
 
     // MARK: 发现页 2.0：BANNER（网易首页轮播，只留站内可跳的）
     //
@@ -73,7 +71,7 @@ final class DiscoverFeed {
     /// 2026-11-27 开屏闸门用：有缓存才值得等开屏（等的时候屏幕上有东西可看）；
     /// 什么都没有（刚装好第一次开）就别等了——等完还是一片骨架，不如让数据先跑。
     var hasPrimedContent: Bool {
-        !hotSongs.isEmpty || !newReleases.isEmpty || !banners.isEmpty || !guessSongs.isEmpty
+        !hotSongs.isEmpty || !newReleases.isEmpty || !banners.isEmpty
     }
 
     // MARK: 发现页 2.0：网易的两条榜（热门第二行 / 最新单曲的第二条腿）
@@ -96,8 +94,6 @@ final class DiscoverFeed {
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
     private static let hotCacheKey = "discover_hot_cache_v2"
     /// 猜你喜欢的当天缓存（同一天 + 同一批"最近播放"才复用）
-    private static let guessCacheKey = "discover_guess_cache_v1"    /// 猜你喜欢的「换一批」轮次（每点一次换一组歌手关键词）
-    private(set) var guessRound = 0
 
     /// 当天序号（本地日历天，见 `DiscoverRules.today`）
     var day: Int { DiscoverRules.today }
@@ -110,11 +106,6 @@ final class DiscoverFeed {
         let chartDate: String?
     }
 
-    private struct GuessCache: Codable {
-        let day: Int
-        let signature: String
-        let songs: [Song]
-    }
 
     /// 编辑精选的「上次展示日」：key = 类别|歌名|歌手 → 天序号（没有 = 从没展示过）
 
@@ -136,13 +127,6 @@ final class DiscoverFeed {
             hotDay = cached.day
             hotChartDate = cached.chartDate
             hotState = .loaded
-        }
-        if let cached = cachedGuess(),
-           cached.day == day,
-           cached.signature == DiscoverRules.guessSignature(LibraryStore.shared.recentSongs),
-           !cached.songs.isEmpty {
-            guessSongs = cached.songs
-            guessState = .loaded
         }
         // 最新单曲：缓存里只要过了"本地日"就**先铺上去**（哪怕不是今天的），
         // 以免跨天冷启动先闪一屏骨架；`loadNewSongsIfNeeded` 会按 `newDay` 决定要不要重取。
@@ -188,8 +172,7 @@ final class DiscoverFeed {
         async let nHot: Void = refreshNeteaseHot()
         async let nNew: Void = refreshNeteaseNew()
         async let nPl: Void = refreshNeteasePlaylists()
-        async let guess: Void = refreshGuess(recent: recent)
-        _ = await (hot, fresh, banner, nHot, nNew, nPl, guess)
+        _ = await (hot, fresh, banner, nHot, nNew, nPl)
     }
 
     // MARK: 网易榜（热门第二行 / 最新单曲第二条腿）
@@ -479,74 +462,6 @@ final class DiscoverFeed {
         saveHot(picked, fromChart: false, chartDate: nil)
     }
 
-    // MARK: 猜你喜欢
-
-    func refreshGuess(recent: [Song]) async {
-        guard !recent.isEmpty else {
-            guessSongs = []
-            guessState = .loaded
-            return
-        }
-        guessState = .loading
-
-        // 换一批：每点一次整体跳过一组歌手
-        let base = DiscoverRules.guessKeywords(from: recent, limit: 12)
-        let singers: [String]
-        if base.isEmpty {
-            singers = []
-        } else {
-            let count = DiscoverRules.guessSingerCount
-            let shift = (guessRound * count) % base.count
-            singers = Array(base.dropFirst(shift)).prefix(count).map { $0 }
-        }
-
-        var pool: [Song] = []
-        await withTaskGroup(of: [Song].self) { group in
-            for singer in singers {
-                group.addTask {
-                    let result = await SearchService.shared.searchRanked(keyword: singer, limit: 15)
-                    return result.songs
-                }
-            }
-            for await songs in group {
-                pool.append(contentsOf: songs)
-            }
-        }
-
-        let played = Set(recent.map { DiscoverRules.coreName($0.name) })
-        var picked = DiscoverRules.pick(pool, limit: DiscoverRules.guessLimit, excluding: played)
-        // 搜索失败的兜底：拿今天的热门里没听过的补位（仍然是真数据，不编造）
-        if picked.count < DiscoverRules.guessLimit {
-            let fromHot = DiscoverRules.pick(hotSongs, limit: DiscoverRules.guessLimit, excluding: played)
-            for song in fromHot where picked.count < DiscoverRules.guessLimit {
-                if !picked.contains(where: { $0.id == song.id }) { picked.append(song) }
-            }
-        }
-        guessSongs = picked
-        guessState = picked.isEmpty ? .failed : .loaded
-        if !picked.isEmpty {
-            saveGuess(picked, signature: DiscoverRules.guessSignature(recent))
-        }
-    }
-
-    /// 打开发现页时调用：缓存已经有内容就**一个请求都不发**；
-    /// 只有"最近播放"变了（指纹不同）才在后台悄悄换一批，界面先照旧显示旧的。
-    func refreshGuessIfStale(recent: [Song]) async {
-        guard !recent.isEmpty else { return }
-        // 同一批输入 + **同一天**才算新鲜；跨天必须重算（老板："除非第二天或者点换一批"）
-        if guessState == .loaded, !guessSongs.isEmpty,
-           let cached = cachedGuess(), cached.day == day,
-           cached.signature == DiscoverRules.guessSignature(recent) {
-            return
-        }
-        await refreshGuess(recent: recent)
-    }
-
-    func nextGuessRound(recent: [Song]) async {
-        guessRound += 1
-        await refreshGuess(recent: recent)
-    }
-
     // MARK: 缓存
 
     private func cachedHot() -> HotCache? {
@@ -558,17 +473,6 @@ final class DiscoverFeed {
         let cache = HotCache(day: day, songs: songs, fromChart: fromChart, chartDate: chartDate)
         guard let data = try? JSONEncoder().encode(cache) else { return }
         defaults.set(data, forKey: Self.hotCacheKey)
-    }
-
-    private func cachedGuess() -> GuessCache? {
-        guard let data = defaults.data(forKey: Self.guessCacheKey) else { return nil }
-        return try? JSONDecoder().decode(GuessCache.self, from: data)
-    }
-
-    private func saveGuess(_ songs: [Song], signature: String) {
-        let cache = GuessCache(day: day, signature: signature, songs: songs)
-        guard let data = try? JSONEncoder().encode(cache) else { return }
-        defaults.set(data, forKey: Self.guessCacheKey)
     }
 
     private func cachedBanners() -> BannerCache? {

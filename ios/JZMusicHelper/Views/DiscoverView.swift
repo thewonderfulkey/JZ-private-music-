@@ -3,19 +3,18 @@ import UIKit
 
 // MARK: - 发现（老板反馈 ①②⑥ 的全部改在这里）
 //
-// 结构（自上而下，第三十轮口径）：
+// 结构（2026-11-27 口径，自上而下）：
 //   ① 搜索框：**搜索入口搬到发现页最上方**（不再占一个 Tab）
-//   ② 歌单广场：横滑封面卡（热门歌单，132×132 + 播放量角标）
-//   ③ 歌手大全：横滑圆头像（5 个 64，名字 + 粉丝）
+//   ② BANNER：网易首页轮播（只跳站内歌单，常驻不可关）
+//   ③ 歌手大全：横滑圆头像（12 个，名字 + 粉丝）
 //   ④ 最近播放：小封面横排（有播放记录才出现）
-//   ⑤ 我的歌单：**导入过歌单才出现**（设置 → 导入歌单），横滑宽卡；无导入时这里什么都没有
-//   ⑥ 最新单曲：酷我官方歌单（每日新歌），横滑宽卡（版式对齐网易云「你关注的艺人新动向」）
-//   ⑦ 猜你喜欢：三行一页、左右翻页的列表卡（对齐 Android 的 HorizontalPager 口径）；
-//      **没有播放记录时整块隐藏**（和「我的歌单」同一套显示逻辑），听了歌再自动出现
-//   ⑧ 热门音乐：同一套分页，行内带名次
+//   ⑤ 我的歌单：**导入过歌单才出现**（设置 → 导入歌单），横滑宽卡
+//   ⑥ 最新单曲：酷我「每日最新」+ 网易「新歌榜」交替合并，横滑宽卡
+//   ⑦ 酷我热歌榜 / ⑧ 网易热歌榜：两块并列的官方榜（三行一页，行内带名次）
+//   ⑨ 歌单广场：酷我广场 + 网易歌单两条腿
 //
-// 第二十九轮起所有数据链都是真数据；第三十轮把「编辑精选」（本地池 + 逐首解析）下线，
-// 换成歌单广场 / 歌手大全——点开即播，不再有"占位行 → 正式行"的等待。
+// 2026-11-27（老板）：「猜你喜欢」整块下线，推荐只保留播放页「心动模式」那一条线。
+// 第二十九轮起所有数据链都是真数据；第三十轮把「编辑精选」（本地池 + 逐首解析）下线。
 struct DiscoverView: View {
 
     @Environment(LibraryStore.self) private var library
@@ -48,7 +47,6 @@ struct DiscoverView: View {
                 recentSection
                 myPlaylistsSection
                 newSongsSection
-                guessSection
                 hotSection
                 // 发现页 2.0：热门音乐的第二行（网易官方热歌榜，与酷我榜并列）
                 neteaseHotSection
@@ -103,9 +101,6 @@ struct DiscoverView: View {
                 await LaunchGate.shared.waitForSplash()
             }
             await loadEverything()
-            if !library.recentSongs.isEmpty {
-                await feed.refreshGuessIfStale(recent: library.recentSongs)
-            }
             openSearchIfIntentAsked()
             // "当天新上架的歌单立刻能看到"：1KB 探测最新歌单首条 id，变了才重取第一页
             Task { await squareFeed.probeNewestIfNeeded() }
@@ -121,12 +116,6 @@ struct DiscoverView: View {
             }
         }
         .onChange(of: router.pendingSearch) { _, _ in openSearchIfIntentAsked() }
-        // 新用户第一次听完一首歌：猜你喜欢从"整块隐藏"变成"该出现了"——立刻算第一轮，
-        // 否则要等下次进发现页才长出来（`root` 的 Tab 是保活的，`.task` 不会重跑）。
-        .onChange(of: library.recentSongs.isEmpty) { _, isEmpty in
-            guard !isEmpty else { return }
-            Task { await feed.refreshGuessIfStale(recent: library.recentSongs) }
-        }
     }
 
     /// 首屏这一趟：热门 + 最新单曲（`feed`）+ 歌单广场 + 歌手大全，四块并发
@@ -475,82 +464,7 @@ struct DiscoverView: View {
         Array(feed.latestReleases.prefix(KuwoPlaylist.moduleCards))
     }
 
-    // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
-    //
-    // 第四十三轮（老板 2026-11-19）：显示逻辑对齐「我的歌单」——**新用户没有历史数据时整块隐藏**，
-    // 不占位、不留标题、也不再给"多听几首会长出来"的空态条；有了播放记录再自动出现。
-    // 判断依据就是 `recentSongs`：猜你喜欢的输入（歌手关键词）只从最近播放里抽，
-    // 没有最近播放就注定一条也长不出来。
-    @ViewBuilder
-    private var guessSection: some View {
-        if !library.recentSongs.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                DiscoverSectionHeader(
-                    title: "猜你喜欢",
-                    meta: "根据你的播放",
-                    actionTitle: feed.guessState == .loading ? nil : "换一批",
-                    action: {
-                        Haptics.refresh()
-                        Task {
-                            await feed.nextGuessRound(recent: library.recentSongs)
-                            flash("猜你喜欢已换一批")
-                        }
-                    })
-
-                Group {
-                    if feed.guessState == .loading {
-                        SkeletonRows(count: 3)
-                    } else if feed.guessState == .failed {
-                        retryBlock("推荐暂时取不到，稍后再试") {
-                            Task { await feed.refreshGuess(recent: library.recentSongs) }
-                        }
-                    } else if feed.guessSongs.isEmpty {
-                        // 有历史但这一轮没挑出歌（搜索全失败）：给一句实话，不显示空态引导
-                        StatusLine(kind: .info("暂时没有合适的推荐"))
-                            .padding(.horizontal, Tokens.Spacing.pageMargin)
-                    } else {
-                        // 2026-11-27（老板选定的 C 版）：双列小胶囊，两行四首，模块高 ≈118。
-                        // 这是页面上唯一的"小胶囊"形态，与榜单行 / 最新单曲横卡 / 广场竖卡都不同。
-                        LazyVGrid(columns: guessColumns,
-                                  alignment: .leading,
-                                  spacing: Tokens.Spacing.xs) {
-                            ForEach(Array(feed.guessSongs.prefix(guessChipCount).enumerated()),
-                                    id: \.element.id) { index, song in
-                                Button {
-                                    play(feed.guessSongs, at: index)
-                                } label: {
-                                    GuessChip(song: song, reason: guessReason(for: song))
-                                }
-                                .buttonStyle(.press)
-                            }
-                        }
-                        .padding(.horizontal, Tokens.Spacing.pageMargin)
-                    }
-                }
-            }
-        }
-    }
-
-    /// 猜你喜欢 = 双列小胶囊（2026-11-27 老板选定的 C 版）
-    private var guessColumns: [GridItem] {
-        [GridItem(.flexible(), spacing: Tokens.Spacing.xs, alignment: .topLeading),
-         GridItem(.flexible(), spacing: Tokens.Spacing.xs, alignment: .topLeading)]
-    }
-
-    /// 一屏 4 首（两行），再多就点「换一批」——老板要的是"小一点这个模块"
-    private var guessChipCount: Int { 4 }
-
-    /// 推荐理由：能对上最近播放的歌手就写「因为你在听 X」，否则退一句实话
-    private func guessReason(for song: Song) -> String {
-        if let hit = library.recentSongs.first(where: {
-            !$0.singer.isEmpty && NameMatch.singerMatches($0.singer, song.singer)
-        }) {
-            return "因为你在听 \(hit.singer)"
-        }
-        return "根据你的播放记录"
-    }
-
-    // MARK: 热门音乐（榜单优先，种子词兜底；与猜你喜欢同一套分页）
+    // MARK: 酷我热歌榜（榜单优先，种子词兜底；三行一页的分页卡片）
 
     /// 第二十轮（老板）：数据源改成「酷我热歌榜优先」，原种子词逻辑做兜底；
     /// **样式和页数一律不动**（3 行一页、共 7 页、行样式 `DiscoverSongRow`），
@@ -872,14 +786,14 @@ struct NewReleaseCardSkeleton: View {
     }
 }
 
-// MARK: - 列表行（猜你喜欢 / 热门音乐共用）
+// MARK: - 列表行（酷我热歌榜 / 网易热歌榜共用）
 
 struct DiscoverSongRow: View {
     let song: Song
     var reason: String
-    /// 猜你喜欢：副行显示推荐理由；热门：副行只显示歌手
+    /// 榜单行：副行只显示歌手（推荐理由那套随「猜你喜欢」一起下线了）
     var showReason: Bool
-    /// 热门音乐的名次（从 1 开始）；猜你喜欢传 nil
+    /// 榜单名次（从 1 开始）；不需要名次时传 nil
     var rank: Int?
 
     init(song: Song, reason: String, showReason: Bool, rank: Int? = nil) {
@@ -944,7 +858,7 @@ struct DiscoverSongRow: View {
 
 // MARK: - 三行一页的横向分页列表
 
-/// 与 Android「猜你喜欢 / 热门音乐」同一套翻页口径：一页 3 行、左右滑、翻页指示做成一排小胶囊。
+/// 与 Android 榜单同一套翻页口径：一页 3 行、左右滑、翻页指示做成一排小胶囊。
 /// 高度必须给死（TabView 的分页容器没有固有高度），所以行高走 `@ScaledMetric` 跟随 Dynamic Type。
 struct PagedRows<Content: View>: View {
 
