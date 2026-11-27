@@ -57,42 +57,50 @@ enum SplashTimeline {
     /// 以前第一帧就是硬边墨迹 + 已经画了一截的弧，加上系统启动转场的推近，读起来就是"啪一下出现"。
     /// 现在整个图标先柔化登场，墨的落笔再从这一层里长出来。
     ///
-    /// **2026-11-27（老板："刚开始耳机出现的太突兀了，不够丝滑"）**：
-    /// 逐条曲线量下来，问题不在"落笔"（那条 0.10s 只画 5%，本来就慢），而在这层**开场淡入**：
-    /// 旧曲线 `easeOut` 0.24s 前 64ms 就把不透明度推到 **61%**，而那时笔才画 2%——
-    /// 观感是"一整枚耳机幽灵先糊上屏幕"，不是"一笔一笔长出来"。
-    /// 现在换 `smootherstep` 0.34s：前 64ms 只到 5%，前 160ms 到 45%，起手有"起势"。
-    static let entrance = Beat(start: 0.00, duration: 0.34)
+    /// **2026-11-27（老板："现在还是一下子全量，肉眼看不出来是浮起来的样子，太快了"）**：
+    /// 上一版把淡入从 easeOut 0.24s 改成 smootherstep 0.34s，曲线对了但**时间还是太短**——
+    /// 0.34s 里要完成"从无到有"，眼睛只来得及看到"出现了"，看不到"浮起来"。
+    /// 这次把这一拍拉到 **0.62s**（前 160ms 只到 13%、前 300ms 45%、前 460ms 75%），
+    /// 慢到能看清它从纸里长出来。
+    /// 另外加了 `startDelay`：先让画面空一拍再起笔，否则启动那 100~200ms 期间的帧
+    /// 已经在计时了，用户看到的第一帧可能是 t=0.15s 的"半成品"，观感就是"一下全量"。
+    static let entrance = Beat(start: 0.00, duration: 0.62)
     /// 左耳罩弹入（**2026-11-27 改软**：spring 0.40/0.72 → 0.52/0.86，去掉那下过冲）
     ///
     /// 旧参数弹簧一起手就是最大速度，耳罩是"啪一下贴上来"；新参数落位约 0.39s、几乎不过冲，
-    /// 读起来是"长出来"。起手也跟着后挪 0.04s：先让整枚图标浮出来，再长耳罩。
-    static let cupLeft = Beat(start: 0.34, duration: 0.62)
+    /// 读起来是"长出来"。起手也跟着后挪：先让整枚图标浮出来，再长耳罩。
+    static let cupLeft = Beat(start: 0.46, duration: 0.66)
     /// 右耳罩比左边晚 0.06s：两只同时落会像"啪"一下，错开才像"戴"
-    static let cupRight = Beat(start: 0.40, duration: 0.62)
-    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.58 → 1.18
+    static let cupRight = Beat(start: 0.52, duration: 0.66)
+    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.72 → 1.38
     ///
     /// **2026-11-27（老板："那 130ms 也一起修了"）**：这里原来是 0.60，而头梁 0.58 就画完了、
     /// 耳罩也刚好落位——两拍之间出现一段 58ms 完全不动（旧曲线量出来是 130ms）。
-    /// 现在让声波**落笔一结束就起**（0.58），正好接掉那一段。
-    static let sound = Beat(start: 0.58, duration: 0.60)
-    /// 第二道（更外圈）晚 0.14s 起：两拍错开，画面一直动到退场（1.04）接上
-    static let soundSecond = Beat(start: 0.80, duration: 0.38)
-    /// 图标轻顶（scale 1 → 1.045 → 1），拉到 0.98s
-    /// 2026-11-27：0.66 → **0.62**，与声波一起把"耳罩落位"之后的空档填满
-    static let thump = Beat(start: 0.62, duration: 0.36)
+    /// 现在让声波**落笔一结束就起**，正好接掉那一段。
+    static let sound = Beat(start: 0.70, duration: 0.66)
+    /// 第二道（更外圈）晚 0.14s 起：两拍错开，画面一直动到退场接上
+    static let soundSecond = Beat(start: 0.98, duration: 0.38)
+    /// 图标轻顶（scale 1 → 1.045 → 1）
+    static let thump = Beat(start: 0.74, duration: 0.36)
     /// 退场：纸底淡出、首页从 0.985 涨到 1。
-    /// 2026-11-22 三改：1.10 → **1.04**（声波还在 20% 透明度的时就起淡出，接掉"退场前那 2 帧"）
-    static let exit = Beat(start: 1.04, duration: 0.42)
+    static let exit = Beat(start: 1.22, duration: 0.42)
     /// 图标比纸底先走一步：不留一枚淡影压在新出现的封面上
-    static let markFade = Beat(start: 1.04, duration: 0.28)
+    static let markFade = Beat(start: 1.22, duration: 0.28)
     /// 首页内容淡入（与退场交叉，不是等黑屏再出来）
-    static let contentIn = Beat(start: 1.10, duration: 0.36)
+    static let contentIn = Beat(start: 1.28, duration: 0.36)
 
     // MARK: 总长
 
     /// 全片时长（= 退场结束）。超过它就该把自己从层级里摘掉。
     static let total: Double = exit.end
+
+    /// 起笔前先空一拍（秒）。
+    ///
+    /// 2026-11-27（老板："现在还是一下子全量，肉眼看不出是浮起来的样子"）：
+    /// 计时是从 `SplashView.task` 起跑的，而启动那一下的第一帧可能要 100~200ms 才真正呈现在屏幕上——
+    /// 用户看到的第一帧其实已经是 t≈0.1~0.2s 的"半成品"，自然像"一下全量"。
+    /// 现在先等这一拍再开始计时：这一小段画面是干净的白纸，等于把启动抖动藏进"还没起笔"里。
+    static let startDelay: Double = 0.12
 
     /// 减弱动效：不做落笔/弹入/声波，图标**直接就是完整的**，停一下再淡出。
     static let reduceMotionHold: Double = 0.35

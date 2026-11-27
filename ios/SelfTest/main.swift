@@ -3473,7 +3473,7 @@ check("每一拍都落在 0…total 之间",
 check("开场先柔化：第一帧图标几乎不可见（不是硬着出现）",
       SplashTimeline.snapshot(at: 0).entrance < 0.05,
       "entrance(0)=\(SplashTimeline.snapshot(at: 0).entrance)")
-check("柔化在 0.3s 内完成（不许拖到动画中段）",
+check("柔化在入场这一拍结束时到满（不许拖到动画中段）",
       SplashTimeline.snapshot(at: SplashTimeline.entrance.end + 0.06).entrance > 0.99,
       "entrance=\(SplashTimeline.snapshot(at: SplashTimeline.entrance.end + 0.06).entrance)")
 check("落笔前段不抢戏：头 100ms 画不到 1/10",
@@ -3510,6 +3510,9 @@ check("起手丝滑：前 64ms 整体不透明度 ≤ 15%（旧口径 61%）",
 check("起手有起势：前 160ms 还不到一半",
       SplashTimeline.snapshot(at: 0.16).entrance < 0.5,
       "entrance(0.16)=\(SplashTimeline.snapshot(at: 0.16).entrance)")
+check("起笔前先空一拍（把启动那 100~200ms 的呈现延迟藏起来）",
+      SplashTimeline.startDelay > 0.05 && SplashTimeline.startDelay < 0.3,
+      "startDelay=\(SplashTimeline.startDelay)")
 check("起手曲线两端速度都收住（smootherstep：f'(0)=f'(1)=0）",
       SplashTimeline.smootherstep(0) == 0
         && abs(SplashTimeline.smootherstep(1) - 1) < 1e-9

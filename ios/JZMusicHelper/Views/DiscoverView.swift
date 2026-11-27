@@ -509,20 +509,17 @@ struct DiscoverView: View {
                         StatusLine(kind: .info("暂时没有合适的推荐"))
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                     } else {
-                        // 2026-11-27（老板）：换一套与现有版式区别开的样子——两列卡片网格 + 理由小标。
-                        // 不再是"三行一页的榜单行"（那是酷我/网易热歌榜的样子），也不再分页：
-                        // 一屏 6 张，够了；要更多就点「换一批」。
+                        // 2026-11-27（老板选定的 C 版）：双列小胶囊，两行四首，模块高 ≈118。
+                        // 这是页面上唯一的"小胶囊"形态，与榜单行 / 最新单曲横卡 / 广场竖卡都不同。
                         LazyVGrid(columns: guessColumns,
                                   alignment: .leading,
-                                  spacing: Tokens.Spacing.m) {
-                            ForEach(Array(feed.guessSongs.prefix(guessCardCount).enumerated()),
+                                  spacing: Tokens.Spacing.xs) {
+                            ForEach(Array(feed.guessSongs.prefix(guessChipCount).enumerated()),
                                     id: \.element.id) { index, song in
                                 Button {
                                     play(feed.guessSongs, at: index)
                                 } label: {
-                                    GuessCard(song: song,
-                                              reason: guessReason(for: song),
-                                              side: guessCardSide)
+                                    GuessChip(song: song, reason: guessReason(for: song))
                                 }
                                 .buttonStyle(.press)
                             }
@@ -534,17 +531,14 @@ struct DiscoverView: View {
         }
     }
 
-    /// 猜你喜欢的新版式：两列网格（2026-11-27）
+    /// 猜你喜欢 = 双列小胶囊（2026-11-27 老板选定的 C 版）
     private var guessColumns: [GridItem] {
-        [GridItem(.flexible(), spacing: Tokens.Spacing.s, alignment: .topLeading),
-         GridItem(.flexible(), spacing: Tokens.Spacing.s, alignment: .topLeading)]
+        [GridItem(.flexible(), spacing: Tokens.Spacing.xs, alignment: .topLeading),
+         GridItem(.flexible(), spacing: Tokens.Spacing.xs, alignment: .topLeading)]
     }
 
-    /// 一屏露 6 张（3 行），再多就点「换一批」
-    private var guessCardCount: Int { 6 }
-
-    /// 封面边长：跟随 Dynamic Type，同时保证两列在 iPhone 常见宽度下几乎铺满
-    @ScaledMetric(relativeTo: .body) private var guessCardSide: CGFloat = 164
+    /// 一屏 4 首（两行），再多就点「换一批」——老板要的是"小一点这个模块"
+    private var guessChipCount: Int { 4 }
 
     /// 推荐理由：能对上最近播放的歌手就写「因为你在听 X」，否则退一句实话
     private func guessReason(for song: Song) -> String {

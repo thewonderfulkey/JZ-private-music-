@@ -75,6 +75,10 @@ struct SplashView: View {
         .accessibilityHint("轻点跳过开屏动画")
         .accessibilityAddTraits(.isButton)
         .task {
+            // 2026-11-27：先空一拍再起笔。启动那一下的第一帧常常要 100~200ms 才真正呈现，
+            // 若这时计时已经开始，用户看到的第一帧就是"半成品"→ 观感"一下全量"。
+            // 这段空拍画面是干净的白纸，等于把启动抖动藏进"还没起笔"里。
+            if start == nil { try? await Task.sleep(nanoseconds: UInt64(SplashTimeline.startDelay * 1_000_000_000)) }
             // 首帧已经画出来了，从这一帧起拍
             if start == nil { start = Date() }
             await runTimeline()
