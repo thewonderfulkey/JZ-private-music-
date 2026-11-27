@@ -20,13 +20,27 @@ def main() -> int:
         return 1
     lines = src[src.index("swiftc -Onone"):].splitlines()
     files = []
+    problems = []
     for line in lines:
         m = re.search(r"(ios/\S+\.swift)", line)
         if m:
             files.append(m.group(1))
-        # 续行符没了就是命令结束
+        # 续行符自检：除了最后一行，每个命令行都必须以**恰好一个**反斜杠结尾。
+        # 2026-11-27 事故：手工插一行时写成 `swift \\`（两个反斜杠），bash 把它当成
+        # 转义后的字面量 `\` 传给 swiftc，CI 报的却是 `clang: no such file or directory: '\'`
+        # —— 从报错完全看不出是清单写坏了。这条自检就是为它加的。
         if not line.rstrip().endswith("\\"):
             break
+        stripped = line.rstrip()
+        trailing = len(stripped) - len(stripped.rstrip("\\"))
+        if trailing != 1:
+            problems.append(f"续行符写了 {trailing} 个（应为 1）：{line.strip()}")
+        elif not stripped.endswith(" \\") and not stripped == "\\":
+            problems.append(f"续行符前缺少空格：{line.strip()}")
+    if problems:
+        for p in problems:
+            print(p, file=sys.stderr)
+        return 1
     for f in files:
         print(f)
     if len(files) < 10:
