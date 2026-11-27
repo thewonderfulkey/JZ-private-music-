@@ -26,12 +26,13 @@ struct ArtistDetailView: View {
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
     /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整位歌手的列表
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
     /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索过滤后的行（空查询 = 全部）
     private var visibleReleases: [KuwoPlaylist.Release] {
-        SongListFilter.filterItems(releases, query: query) { $0.song }
+        SongListFilter.filterItems(releases, query: search.committed) { $0.song }
     }
 
     private var songs: [Song] { releases.map(\.song) }
@@ -64,8 +65,8 @@ struct ArtistDetailView: View {
                             .padding(.bottom, Tokens.Spacing.xs)
                         if SongListRules.noMatch(totalCount: releases.count,
                                                  shownCount: visibleReleases.count,
-                                                 query: query) {
-                            ListNoMatchRow(query: query) { query = "" }
+                                                 query: search.committed) {
+                            ListNoMatchRow(query: search.committed) { query = "" }
                         }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
@@ -98,7 +99,7 @@ struct ArtistDetailView: View {
                         if !releases.isEmpty {
                             VStack(spacing: Tokens.Spacing.xs) {
                                 header
-                                ListSearchField(text: $query)
+                                ListSearchField(state: $search)
                                     .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
                             .padding(.bottom, Tokens.Spacing.xs)
@@ -122,6 +123,7 @@ struct ArtistDetailView: View {
             }
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle(artist.name)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

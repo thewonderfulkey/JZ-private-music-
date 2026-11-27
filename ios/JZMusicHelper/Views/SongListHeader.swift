@@ -1,21 +1,30 @@
 import SwiftUI
 
-// MARK: - 歌曲集合页的头部三件套（2026-11-27 老板）
+// MARK: - 本页搜索的两段式状态（2026-11-27 老板纠正后重做）
 //
-// 老板原话：「凡是歌单列表的地方，头部统一三件套：播放全部 / 随机播放 / 搜索框；
-// 缺哪个补哪个，已有的不要重复加；行为和现有实现完全一致（复用现有组件，不要另造一套）；
-// 搜索结果出现后，滑动列表时搜索框必须实时可见（吸顶/常驻）。」
+// 老板口径（原话大意）：**「zh」还没敲完、回车还没按，列表就被清空了**——不对。
+// 正确行为是：输入过程中**只改文字、不过滤**；按键盘上的「搜索/回车」才把关键词应用到列表。
 //
-// 所以这里**只做两件新东西**，其余全部复用：
-//   · `ListSearchField`：本页搜索框（胶囊、放大镜、清除），和全 App 搜索入口同一套视觉；
-//   · `SongListHeader`：把「页面自己的标题块 + PlayAllButtons + ListSearchField」按固定顺序摞起来，
-//     页面只要把它塞进 `Section` 的 header，就能靠 `pinnedViews: [.sectionHeaders]` 吸顶。
-// 「播放全部 / 随机」直接用现成的 `PlayAllButtons`（各列表页已经在用同一套）。
+// 所以搜索词有两份：
+//   · `typed`     —— 输入框里正在打的字（每敲一下就变，但**不影响列表**）
+//   · `committed` —— 已经按过回车的关键词（列表只认这一份）
+// 列表过滤、计数行、"没匹配"提示、播放范围，全部只看 `committed`。
+//
+// 「空结果不是死路」也靠这里保证：`clear()` 会同时清掉两份，
+// 输入框（常驻在头部）里那行字也一并清空，列表立刻回到全量。
 
-/// 列表内搜索框：胶囊 + 放大镜 + 清除，视觉与发现页/搜索页的入口一致
+// MARK: - 歌曲集合页的头部（2026-11-27 老板：歌单/收藏/下载头部统一三件套）
+//
+// 老板原话：「凡是歌单列表的地方，头部统一三件套：播放全部 / 随机 / 搜索框；
+// 缺哪个补哪个，已有的不要重复加；行为和现有实现完全一致（另造一套不行）。」
+//
+// 「播放全部 / 随机」用现成的 `PlayAllButtons`；搜索框是这一层新增，
+// 吸顶靠页面的 `LazyVStack(pinnedViews: [.sectionHeaders])` + 这里的不透明纸底。
+
+/// 列表内搜索框：胶囊 + 放大镜 + 清除 + 键盘「搜索」键
 struct ListSearchField: View {
 
-    @Binding var text: String
+    @Binding var state: ListSearchState
     var placeholder: String = "搜索本页歌曲、歌手、专辑"
 
     var body: some View {
@@ -23,15 +32,20 @@ struct ListSearchField: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField(placeholder, text: $text)
+            TextField(placeholder, text: $state.typed)
                 .font(.subheadline)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .submitLabel(.done)
+                // 老板：键盘上要有「搜索」键，点了就执行搜索并收键盘
+                .submitLabel(.search)
+                .onSubmit {
+                    state.submit()
+                    KeyboardDismiss.dismiss()
+                }
                 .accessibilityLabel(placeholder)
-            if !text.isEmpty {
+            if !state.typed.isEmpty || state.isFiltering {
                 Button {
-                    text = ""
+                    state.clear()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -51,22 +65,15 @@ struct ListSearchField: View {
     }
 }
 
-/// 歌曲集合页的统一头部：页面标题块 → 播放全部/随机 → 搜索框
-///
-/// - Parameters:
-///   - songs: 本页**全量**歌曲（不是过滤后的）——播放全部/随机永远作用于整页
-///   - query: 搜索框绑定（页面自己拿它过滤列表）
-///   - onPlayAll / onShuffle: 与各页现有实现保持一致（复用现有调用）
+/// 歌曲集合页的统一头部：标题块 → 播放全部/随机 → 搜索框 →（仅筛选时）计数行
 struct SongListHeader<Title: View>: View {
 
     let songCount: Int
-    @Binding var query: String
+    @Binding var search: ListSearchState
     var showsPlayAll: Bool = true
-    var showsSearch: Bool = true
     var searchPlaceholder: String = "搜索本页歌曲、歌手、专辑"
-    /// 过滤后还剩几首（0 且查询非空时给一句"本页没有匹配"的提示位，由页面决定要不要用）
+    /// 过滤后还剩几首（只在已提交关键词时显示计数行）
     var shownCount: Int? = nil
-    /// 2026-11-27：给默认值——`showsPlayAll: false` 的页面（按钮已在自己标题块里）不用再传。
     var onPlayAll: () -> Void = {}
     var onShuffle: () -> Void = {}
     @ViewBuilder var title: () -> Title
@@ -85,18 +92,16 @@ struct SongListHeader<Title: View>: View {
                 }
             }
 
-            if showsSearch {
-                ListSearchField(text: $query, placeholder: searchPlaceholder)
-                // 2026-11-27（老板）：没搜索词时不显示计数行——页面标题块里已经有「N 首」，
-                // 再来一行「共 N 首」就是重复；只有筛选时才出现，并写明是筛选后的。
-                if let shownCount,
-                   let text = SongListFilter.filteredMetaText(shown: shownCount,
-                                                               total: songCount,
-                                                               query: query) {
-                    Text(text)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+            ListSearchField(state: $search, placeholder: searchPlaceholder)
+
+            // 没搜索词时不显示计数行（页面标题块里已有「N 首」），只有筛选时才出现
+            if let shownCount,
+               let text = SongListFilter.filteredMetaText(shown: shownCount,
+                                                           total: songCount,
+                                                           query: search.committed) {
+                Text(text)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
@@ -115,9 +120,7 @@ extension View {
 
 /// 列表区里的"搜了但没命中"行（2026-11-27 真机 bug 的修法）
 ///
-/// 关键点：**它只占列表区域，不动头部**——头部（含搜索框）常驻，
-/// 所以用户随时能点「清除搜索」或直接改搜索词；不再出现"整页变空态、搜索词留在里面、
-/// 没有任何入口清除"的死局。
+/// 只占列表区域，**不动头部**——搜索框常驻，用户可以改词，也可以点「清除搜索」回到全量。
 struct ListNoMatchRow: View {
 
     let query: String

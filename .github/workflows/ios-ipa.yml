@@ -101,6 +101,7 @@ jobs:
             ios/JZMusicHelper/Services/ScrollPanGuard.swift \
             ios/JZMusicHelper/Services/SongListFilter.swift \
             ios/JZMusicHelper/Services/SongListRules.swift \
+            ios/JZMusicHelper/Services/ListSearchState.swift \
             ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \

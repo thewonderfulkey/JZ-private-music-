@@ -25,13 +25,14 @@ struct FavoritesView: View {
     /// 「整理重复」入口（灰区才出现，不主动弹）
     @State private var showDuplicates = false
     /// 收藏页本地搜索（在去重后的列表上过滤）
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
 
     /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索后的收藏（空查询 = 全部；有查询按命中强度排序，同分保持原顺序）
     private var filteredFavorites: [Song] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = search.committed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return library.favorites }
         return library.favorites.enumerated()
             .compactMap { index, song -> (Int, Song, Int)? in
@@ -57,9 +58,9 @@ struct FavoritesView: View {
                             Section {
                                 if SongListRules.noMatch(totalCount: library.favorites.count,
                                                          shownCount: filteredFavorites.count,
-                                                         query: query) {
+                                                         query: search.committed) {
                                     // 头部（含搜索框）仍然常驻，这里只替换列表区
-                                    ListNoMatchRow(query: query) { query = "" }
+                                    ListNoMatchRow(query: search.committed) { query = "" }
                                 } else {
                                 ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
                                 Button {
@@ -131,6 +132,7 @@ struct FavoritesView: View {
                 }
             }
         }
+        .onDisappear { search.clear() }
         .navigationTitle("我的收藏")
         .onAppear { library.refreshDuplicateGroups() }
         .sheet(isPresented: $showDuplicates) { DuplicateReviewSheet() }
@@ -144,7 +146,7 @@ struct FavoritesView: View {
     /// 「收藏即得」，属于本页特殊结构，由本页提供（`showsPlayAll: false`，按钮已在标题块里）。
     private var stickyListHeader: some View {
         SongListHeader(songCount: library.favorites.count,
-                       query: $query,
+                       search: $search,
                        showsPlayAll: false,
                        searchPlaceholder: "搜歌名 / 歌手 / 专辑",
                        shownCount: filteredFavorites.count) {

@@ -23,9 +23,10 @@ struct NeteaseChartSongsView: View {
     /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整榜
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
     private var visibleSongs: [Song] {
-        SongListFilter.filter(songs, query: query)
+        SongListFilter.filter(songs, query: search.committed)
     }
 
     var body: some View {
@@ -37,8 +38,8 @@ struct NeteaseChartSongsView: View {
                 if let page, !page.songs.isEmpty {
                     if SongListRules.noMatch(totalCount: page.songs.count,
                                              shownCount: visibleSongs.count,
-                                             query: query) {
-                        ListNoMatchRow(query: query) { query = "" }
+                                             query: search.committed) {
+                        ListNoMatchRow(query: search.committed) { query = "" }
                     }
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
@@ -76,7 +77,7 @@ struct NeteaseChartSongsView: View {
                 } header: {
                     if let page, !page.songs.isEmpty {
                         SongListHeader(songCount: page.songs.count,
-                                       query: $query,
+                                       search: $search,
                                        showsPlayAll: false,
                                        shownCount: visibleSongs.count) {
                             header(page)
@@ -89,6 +90,7 @@ struct NeteaseChartSongsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load(force: false) }

@@ -180,6 +180,7 @@ struct MyPlaylistsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle("我的歌单")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -236,7 +237,8 @@ struct MyPlaylistDetailView: View {
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
     /// 2026-11-27（老板）：本页搜索——只筛这份歌单，不打网络
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
 
     private var playlist: ImportedPlaylist? { store.playlist(id: playlistID) }
 
@@ -244,7 +246,7 @@ struct MyPlaylistDetailView: View {
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索过滤后的行（队列仍是整份歌单）
     private var visibleSongs: [Song] {
-        SongListFilter.filter(playlist?.songs ?? [], query: query)
+        SongListFilter.filter(playlist?.songs ?? [], query: search.committed)
     }
 
     var body: some View {
@@ -257,8 +259,8 @@ struct MyPlaylistDetailView: View {
                     if let playlist {
                         if SongListRules.noMatch(totalCount: playlist.songs.count,
                                                  shownCount: visibleSongs.count,
-                                                 query: query) {
-                            ListNoMatchRow(query: query) { query = "" }
+                                                 query: search.committed) {
+                            ListNoMatchRow(query: search.committed) { query = "" }
                         }
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             importedRow(song, index: index)
@@ -274,7 +276,7 @@ struct MyPlaylistDetailView: View {
                     } header: {
                         if let playlist {
                             SongListHeader(songCount: playlist.songs.count,
-                                           query: $query,
+                                           search: $search,
                                            showsPlayAll: false,
                                            shownCount: visibleSongs.count) {
                                 header(playlist)

@@ -22,7 +22,8 @@ struct PlaylistDetailView: View {
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
     /// 2026-11-27（老板）：本页搜索——只筛"这一页的歌"，不打网络
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
 
     private var songs: [Song] {
         detail?.releases.map(\.song) ?? []
@@ -32,7 +33,7 @@ struct PlaylistDetailView: View {
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索过滤后的行（空查询 = 全部；队列仍是整张歌单，搜索只改显示）
     private var visibleReleases: [KuwoPlaylist.Release] {
-        SongListFilter.filterItems(detail?.releases ?? [], query: query) { $0.song }
+        SongListFilter.filterItems(detail?.releases ?? [], query: search.committed) { $0.song }
     }
 
     var body: some View {
@@ -45,8 +46,8 @@ struct PlaylistDetailView: View {
                     if let detail {
                         if SongListRules.noMatch(totalCount: detail.releases.count,
                                                  shownCount: visibleReleases.count,
-                                                 query: query) {
-                            ListNoMatchRow(query: query) { query = "" }
+                                                 query: search.committed) {
+                            ListNoMatchRow(query: search.committed) { query = "" }
                         }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             playlistRow(release, index: index)
@@ -66,7 +67,7 @@ struct PlaylistDetailView: View {
                     MiniPlayerSpacer()
                     } header: {
                         SongListHeader(songCount: detail?.releases.count ?? 0,
-                                       query: $query,
+                                       search: $search,
                                        showsPlayAll: false,
                                        shownCount: visibleReleases.count) {
                             header
@@ -89,6 +90,7 @@ struct PlaylistDetailView: View {
             }
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle("歌单")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

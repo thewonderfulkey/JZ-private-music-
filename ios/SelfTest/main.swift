@@ -7084,6 +7084,49 @@ func r298SongListChromeAssertions() {
 }
 
 
+// MARK: 2026-11-27 老板纠正：搜索必须是"提交式"，且空结果不是死路
+func r299ListSearchStateAssertions() {
+    section("输入不触发过滤 / 回车才过滤 / 清除回全量")
+
+    let pool = [Song.make(platform: .kuwo, platformID: "1", name: "晴天", singer: "周杰伦",
+                          album: "叶惠美", duration: 200, picURL: nil),
+                Song.make(platform: .kuwo, platformID: "2", name: "稻香", singer: "周杰伦",
+                          album: "魔杰座", duration: 200, picURL: nil)]
+
+    var st = ListSearchState()
+    check("初始：没有筛选", !st.isFiltering && st.committed.isEmpty)
+
+    // ① 输入但未提交 → 列表不变
+    st.typed = "zh"
+    check("刚敲了「zh」还没回车 → 不进入筛选", !st.isFiltering)
+    check("刚敲了「zh」还没回车 → 列表仍是全量",
+          SongListFilter.filter(pool, query: st.committed).count == pool.count)
+
+    // ② 回车后才过滤
+    st.submit()
+    check("回车之后 → 进入筛选", st.isFiltering && st.committed == "zh")
+    check("回车之后 → 列表按关键词过滤（zh 无命中 = 空）",
+          SongListFilter.filter(pool, query: st.committed).isEmpty)
+
+    // ③ 空结果时搜索框仍在（由 SongListRules 保证头部常驻）
+    check("空结果 → 头部/搜索框仍要存在（可清除）",
+          SongListRules.showsChrome(totalCount: pool.count)
+            && SongListRules.noMatch(totalCount: pool.count,
+                                     shownCount: 0, query: st.committed))
+
+    // ④ 清除后恢复全量
+    st.clear()
+    check("清除后 → 输入框和关键词都空", st.typed.isEmpty && st.committed.isEmpty)
+    check("清除后 → 列表恢复全量",
+          SongListFilter.filter(pool, query: st.committed).count == pool.count)
+
+    // 再验一个真实命中的关键词（回车后应只剩 1 首）
+    st.typed = "稻香"
+    st.submit()
+    check("回车「稻香」→ 只剩 1 首", SongListFilter.filter(pool, query: st.committed).count == 1)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -7107,6 +7150,7 @@ r295SearchSuggestAssertions()
 r296PressFeedbackAssertions()
 r297SongListFilterAssertions()
 r298SongListChromeAssertions()
+r299ListSearchStateAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

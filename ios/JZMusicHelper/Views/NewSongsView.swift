@@ -19,11 +19,12 @@ struct NewSongsView: View {
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
     /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整页
-    @State private var query = ""
+    /// 2026-11-27（老板纠正）：搜索改成**提交式**——输入只改文字，回车/键盘「搜索」才过滤
+    @State private var search = ListSearchState()
     /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
     /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     private var visibleReleases: [KuwoPlaylist.Release] {
-        SongListFilter.filterItems(releases, query: query) { $0.song }
+        SongListFilter.filterItems(releases, query: search.committed) { $0.song }
     }
 
     var body: some View {
@@ -49,8 +50,8 @@ struct NewSongsView: View {
                     } else {
                         if SongListRules.noMatch(totalCount: releases.count,
                                                  shownCount: visibleReleases.count,
-                                                 query: query) {
-                            ListNoMatchRow(query: query) { query = "" }
+                                                 query: search.committed) {
+                            ListNoMatchRow(query: search.committed) { query = "" }
                         }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             newSongRow(release, index: index)
@@ -61,7 +62,7 @@ struct NewSongsView: View {
                     } header: {
                         if !releases.isEmpty {
                             SongListHeader(songCount: releases.count,
-                                           query: $query,
+                                           search: $search,
                                            showsPlayAll: false,
                                            shownCount: visibleReleases.count) {
                                 header
@@ -85,6 +86,7 @@ struct NewSongsView: View {
             }
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle("最新单曲")
         .navigationBarTitleDisplayMode(.inline)
         .task {
