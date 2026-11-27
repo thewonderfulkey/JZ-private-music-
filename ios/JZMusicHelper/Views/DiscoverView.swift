@@ -118,18 +118,24 @@ struct DiscoverView: View {
     }
 
     /// 首屏这一趟：热门 + 最新单曲（`feed`）+ 歌单广场 + 歌手大全，四块并发
-    /// 2026-11-27（老板）：**分批请求**，不要一次并发 9 路。
-    /// 顺序是"用户先看到的先来"：热榜/最新单曲 → 歌单广场 → 歌手大全 → 网易三块。
-    /// 每一段都 await 完再走下一段，冷启动时网络/解码的峰值只有原来的 1/3 左右。
+    /// 2026-11-27（老板）：**分批请求，且按发现页从上到下的视觉顺序**逐个来。
+    /// 顺序 = 用户眼睛会先看到的先后：BANNER → 歌手大全 → 最新单曲（酷我→网易）→
+    /// 酷我热歌榜 → 网易热歌榜 → 歌单广场（酷我→网易）。
+    /// 最近播放 / 我的歌单是本地数据，不占这一趟。
     private func loadEverythingStaged() async {
-        LaunchBreadcrumbs.mark("discover-load-1")
-        await feed.loadKuwoDaily()
-        LaunchBreadcrumbs.mark("discover-load-2")
-        await squareFeed.loadIfNeeded()
-        LaunchBreadcrumbs.mark("discover-load-3")
+        LaunchBreadcrumbs.mark("discover-load-banner")
+        await feed.loadBannersIfNeeded()
+        LaunchBreadcrumbs.mark("discover-load-artists")
         await artistFeed.loadIfNeeded()
-        LaunchBreadcrumbs.mark("discover-load-4")
-        await feed.loadNeteaseDaily()
+        LaunchBreadcrumbs.mark("discover-load-newsongs")
+        await feed.loadNewSongsIfNeeded()
+        await feed.loadNeteaseNewIfNeeded()
+        LaunchBreadcrumbs.mark("discover-load-hot")
+        await feed.loadHotIfNeeded()
+        await feed.loadNeteaseHotIfNeeded()
+        LaunchBreadcrumbs.mark("discover-load-square")
+        await squareFeed.loadIfNeeded()
+        await feed.loadNeteasePlaylistsIfNeeded()
         LaunchBreadcrumbs.mark("discover-load-done")
     }
 

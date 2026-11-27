@@ -146,42 +146,7 @@ final class DiscoverFeed {
         }
     }
 
-    // MARK: 每日一趟（热门 + 最新单曲）
-
-    /// 发现页首屏的"当天数据"：热门音乐 + 最新单曲 **同一趟并发拉**。
-    ///
-    /// 老板 r96："最新单曲……同样保持加载一次当天不再加载除非第二天刷新，
-    /// **和酷我的接口保持同进度**"——两个模块都是酷我接口、都是一天定死的数据，
-    /// 所以合成一个入口：一起进加载态、一起靠本地日判缓存、下拉刷新一起重取。
-    /// 顺序不保证（谁先回来谁先铺），但状态机是各自的，互不阻塞。
-    /// 2026-11-27（老板）：分批用——酷我这一组（热榜/最新单曲/BANNER）单独一段，
-    /// 网易三块留到后面再拉，避免开屏刚退场就 9 路并发。
-    func loadKuwoDaily() async {
-        async let hot: Void = loadHotIfNeeded()
-        async let fresh: Void = loadNewSongsIfNeeded()
-        async let banner: Void = loadBannersIfNeeded()
-        _ = await (hot, fresh, banner)
-    }
-
-    /// 网易那一组（热歌榜/新歌/歌单），在酷我之后单独一段
-    func loadNeteaseDaily() async {
-        async let nHot: Void = loadNeteaseHotIfNeeded()
-        async let nNew: Void = loadNeteaseNewIfNeeded()
-        async let nPl: Void = loadNeteasePlaylistsIfNeeded()
-        _ = await (nHot, nNew, nPl)
-    }
-
-    func loadDaily() async {
-        async let hot: Void = loadHotIfNeeded()
-        async let fresh: Void = loadNewSongsIfNeeded()
-        async let banner: Void = loadBannersIfNeeded()
-        async let nHot: Void = loadNeteaseHotIfNeeded()
-        async let nNew: Void = loadNeteaseNewIfNeeded()
-        async let nPl: Void = loadNeteasePlaylistsIfNeeded()
-        _ = await (hot, fresh, banner, nHot, nNew, nPl)
-    }
-
-    /// 下拉刷新：热门 / 最新单曲 / BANNER / 网易两条榜 / 猜你喜欢 一起重取（都强制，不吃缓存）
+    // MARK: 每日一趟（热门 + 最新单曲）    /// 下拉刷新：热门 / 最新单曲 / BANNER / 网易两条榜 / 猜你喜欢 一起重取（都强制，不吃缓存）
     func refreshAll(recent: [Song]) async {
         async let hot: Void = refreshHot()
         async let fresh: Void = refreshNewSongs()
