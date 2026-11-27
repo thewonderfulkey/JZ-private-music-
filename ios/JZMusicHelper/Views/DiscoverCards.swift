@@ -162,6 +162,8 @@ struct NeteasePlaylistCardSkeleton: View {
     }
 }
 
+/// 广场页双列卡：封面 + 角标 + 两行歌名 + 「104 首 · 创建者」
+struct PlaylistGridCard: View {
 
     let summary: KuwoPlaylist.Summary
 
