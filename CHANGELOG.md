@@ -1,3 +1,37 @@
+### 出包记录（v2.4.130 / 308）· 歌单列表三件套 + 键盘全局收 + 播放范围统一
+
+| 项 | 值 |
+|---|---|
+| 提交 | `870244d`（版本号）+ `5960113`（修编译） |
+| CI | #303 ❌（Xcode 编译 7 处，全部修完）→ **#304 ✅** |
+| 产物 | `JZ-Music-v2.4.130-5960113-r304-ios-unsigned.ipa` · 4,089,429 B · sha256 `c857482bcfd3cb5b…` |
+| 主二进制 | 15,513,608 B · sha256 `1cb6c92826f231af…`（与所有历史包不同） |
+| 包内版本 | 2.4.130 / 308 |
+| 包内证据 | `搜索本页歌曲、歌手、专辑` / `共 ` / `筛选后` 都在二进制里 |
+
+#### 内容（老板段一/段二）
+
+- 全局键盘：根视图 `simultaneousGesture(TapGesture)` 收键盘（不吞点击）+ 窗口内所有
+  `UIScrollView.keyboardDismissMode = .onDrag`（键盘弹出时重扫）+ Sheet 用 `.dismissKeyboardOnTap()`
+- 歌单列表头部三件套：`PlayAllButtons`（原有）+ `ListSearchField`（新）+ 吸顶
+  （`LazyVStack(pinnedViews: [.sectionHeaders])`），7 页接入；下载页三件套本就齐，只把
+  `.searchable` 改常驻（`navigationBarDrawer(displayMode: .always)`）
+- 收藏页删掉导航栏重复搜索框；「共 N 首」只在筛选时显示（「共 N 首（筛选后 · 全部 M 首）」）
+- 播放范围统一：**筛选生效时 = 筛选后的列表**（证据：下载页 `scopeSongs` 既有口径），
+  7 页的 播放全部/随机/行点击 全部对齐；空查询时行为与改动前逐字一致
+- 随机语义核对：`replaceQueue(shuffle:)` 内部走 `ShuffleStart.index` 真随机挑一首（排除在播）→
+  8 页一致，换 `PlayAllButtons` 零差异
+
+#### CI #303 的 7 处编译错误（已修，教训记录）
+
+| 错误 | 根因 | 修法 |
+|---|---|---|
+| `argument 'placement' must precede 'prompt'` | `.searchable` 参数顺序写错 | 改成 `text:placement:prompt:` |
+| `missing arguments for 'onShuffle','title'` | `SongListHeader` 的闭包参数没有默认值，`showsPlayAll:false` 的页面跳不过去 | 给 `onPlayAll/onShuffle` 加默认 `{}` |
+| 5 页 `unable to type-check this expression in reasonable time` | `Section { 大块 ForEach(Button(SongRow…)) } header:{…}` 在 `pinnedViews` 里是超大单个表达式 | 把**行体**抽成 `chartRow/newSongRow/playlistRow/importedRow` 小函数（结构/样式/逻辑不动）；网易歌单页另把 Section 拆成 `sectionContent/stickyHeader` |
+
+教训：**SwiftUI 视图层没有本地编译闸门**时，超长表达式与参数顺序这两类错误只能等 CI 打包暴露。
+
 ### 出包记录（v2.4.129 / 307）· 全局「点/滑收键盘」+ 歌单列表头部三件套（播放全部 / 随机 / 本页搜索，吸顶）
 
 | 项 | 值 |
