@@ -255,6 +255,11 @@ struct MyPlaylistDetailView: View {
                     // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
                     Section {
                     if let playlist {
+                        if SongListRules.noMatch(totalCount: playlist.songs.count,
+                                                 shownCount: visibleSongs.count,
+                                                 query: query) {
+                            ListNoMatchRow(query: query) { query = "" }
+                        }
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             importedRow(song, index: index)
                         }

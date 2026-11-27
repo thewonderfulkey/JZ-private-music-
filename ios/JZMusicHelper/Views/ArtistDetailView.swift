@@ -62,6 +62,11 @@ struct ArtistDetailView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
                             .padding(.bottom, Tokens.Spacing.xs)
+                        if SongListRules.noMatch(totalCount: releases.count,
+                                                 shownCount: visibleReleases.count,
+                                                 query: query) {
+                            ListNoMatchRow(query: query) { query = "" }
+                        }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
                                 // 队列仍是这位歌手的全部歌（搜索只筛显示）

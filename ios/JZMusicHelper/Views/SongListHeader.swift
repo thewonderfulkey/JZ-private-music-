@@ -112,3 +112,43 @@ extension View {
         background(Tokens.Palette.paper)
     }
 }
+
+/// 列表区里的"搜了但没命中"行（2026-11-27 真机 bug 的修法）
+///
+/// 关键点：**它只占列表区域，不动头部**——头部（含搜索框）常驻，
+/// 所以用户随时能点「清除搜索」或直接改搜索词；不再出现"整页变空态、搜索词留在里面、
+/// 没有任何入口清除"的死局。
+struct ListNoMatchRow: View {
+
+    let query: String
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: Tokens.Spacing.s) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("没有匹配「\(query.trimmingCharacters(in: .whitespacesAndNewlines))」的歌")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                Haptics.trackChange()
+                onClear()
+            } label: {
+                Text("清除搜索")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, Tokens.Spacing.m)
+                    .frame(minHeight: 34)
+                    .background(Capsule().fill(Tokens.Palette.vermilion.opacity(0.12)))
+                    .foregroundStyle(Tokens.Palette.vermilion)
+            }
+            .buttonStyle(.press)
+            .accessibilityHint("清空搜索词，恢复整页列表")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.vertical, Tokens.Spacing.xl)
+        .accessibilityElement(children: .contain)
+    }
+}

@@ -56,6 +56,11 @@ struct NeteasePlaylistView: View {
     @ViewBuilder
     private var sectionContent: some View {
         if let page, !page.songs.isEmpty {
+            if SongListRules.noMatch(totalCount: page.songs.count,
+                                     shownCount: visibleSongs.count,
+                                     query: query) {
+                ListNoMatchRow(query: query) { query = "" }
+            }
             ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                 Button {
                     // 队列 = 当前可见（筛选后）列表；空查询时就是整页

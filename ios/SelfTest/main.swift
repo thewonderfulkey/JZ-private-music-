@@ -7060,6 +7060,30 @@ func r297SongListFilterAssertions() {
 }
 
 
+// MARK: 2026-11-27 真机 bug：搜不到时头部（含搜索框）不许消失
+func r298SongListChromeAssertions() {
+    section("列表页头部常驻：搜不到也不许把搜索框顶掉")
+
+    // ① 本页有数据 → 头部（标题/播放/搜索框）必须渲染（哪怕筛选结果为 0）
+    check("有数据 + 搜不到 → 头部仍要显示",
+          SongListRules.showsChrome(totalCount: 162))
+    check("有数据 + 有结果 → 头部显示",
+          SongListRules.showsChrome(totalCount: 162))
+    check("真的一首都没有 → 才允许整页空态",
+          SongListRules.trulyEmpty(totalCount: 0) && !SongListRules.showsChrome(totalCount: 0))
+
+    // ② "搜了但没命中"的判定：有数据 + 有搜索词 + 结果 0
+    check("搜「zh」没命中 → 列表区给提示（不是整页空态）",
+          SongListRules.noMatch(totalCount: 162, shownCount: 0, query: "zh"))
+    check("搜索词为空且结果 0（异常态）→ 不算没命中",
+          !SongListRules.noMatch(totalCount: 162, shownCount: 0, query: "  "))
+    check("有结果时不算没命中",
+          !SongListRules.noMatch(totalCount: 162, shownCount: 3, query: "晴"))
+    check("本页真的没数据时不算没命中（走整页空态）",
+          !SongListRules.noMatch(totalCount: 0, shownCount: 0, query: "zh"))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -7082,6 +7106,7 @@ r294JunkAudioAssertions()
 r295SearchSuggestAssertions()
 r296PressFeedbackAssertions()
 r297SongListFilterAssertions()
+r298SongListChromeAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

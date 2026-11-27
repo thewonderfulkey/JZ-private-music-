@@ -143,6 +143,7 @@
 		B000000000000000000000AA /* ScrollPanGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A9 /* ScrollPanGuard.swift */; };
 		B000000000000000000000AB /* SongListFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AA /* SongListFilter.swift */; };
 		B000000000000000000000AC /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AB /* KeyboardDismiss.swift */; };
+		B000000000000000000000AE /* SongListRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AD /* SongListRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -281,6 +282,7 @@
 		F000000000000000000000A9 /* ScrollPanGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollPanGuard.swift; sourceTree = "<group>"; };
 		F000000000000000000000AA /* SongListFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongListFilter.swift; sourceTree = "<group>"; };
 		F000000000000000000000AB /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
+		F000000000000000000000AD /* SongListRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongListRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -421,6 +423,7 @@
 				F000000000000000000000A9 /* ScrollPanGuard.swift */,
 				F000000000000000000000AA /* SongListFilter.swift */,
 				F000000000000000000000AB /* KeyboardDismiss.swift */,
+				F000000000000000000000AD /* SongListRules.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -760,6 +763,7 @@
 				B000000000000000000000AA /* ScrollPanGuard.swift in Sources */,
 				B000000000000000000000AB /* SongListFilter.swift in Sources */,
 				B000000000000000000000AC /* KeyboardDismiss.swift in Sources */,
+				B000000000000000000000AE /* SongListRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -898,7 +902,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 308;
+				CURRENT_PROJECT_VERSION = 309;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -907,7 +911,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.130;
+				MARKETING_VERSION = 2.4.131;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -922,7 +926,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 308;
+				CURRENT_PROJECT_VERSION = 309;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -931,7 +935,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.130;
+				MARKETING_VERSION = 2.4.131;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -945,7 +949,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 308;
+				CURRENT_PROJECT_VERSION = 309;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -954,7 +958,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.130;
+				MARKETING_VERSION = 2.4.131;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -969,7 +973,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 308;
+				CURRENT_PROJECT_VERSION = 309;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -978,7 +982,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.130;
+				MARKETING_VERSION = 2.4.131;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

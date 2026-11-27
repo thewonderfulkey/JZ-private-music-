@@ -47,6 +47,11 @@ struct NewSongsView: View {
                             .padding(.top, Tokens.Spacing.xl)
                         }
                     } else {
+                        if SongListRules.noMatch(totalCount: releases.count,
+                                                 shownCount: visibleReleases.count,
+                                                 query: query) {
+                            ListNoMatchRow(query: query) { query = "" }
+                        }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             newSongRow(release, index: index)
                         }

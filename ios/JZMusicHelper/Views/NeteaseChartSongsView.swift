@@ -35,6 +35,11 @@ struct NeteaseChartSongsView: View {
                 // 2026-11-27（老板）：头部三件套吸顶（播放全部/随机原有 + 本页搜索新加）
                 Section {
                 if let page, !page.songs.isEmpty {
+                    if SongListRules.noMatch(totalCount: page.songs.count,
+                                             shownCount: visibleSongs.count,
+                                             query: query) {
+                        ListNoMatchRow(query: query) { query = "" }
+                    }
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
                             // 队列 = 当前可见（筛选后）列表；空查询时就是整榜

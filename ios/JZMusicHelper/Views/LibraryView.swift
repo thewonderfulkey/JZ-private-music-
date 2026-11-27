@@ -44,7 +44,10 @@ struct FavoritesView: View {
 
     var body: some View {
         Group {
-            if filteredFavorites.isEmpty {
+            // 2026-11-27 真机 bug 修复：只有"真的一首都没收藏"才整页空态。
+            // 以前这里判的是 `filteredFavorites.isEmpty`——搜索没命中就把整个头部（含搜索框）顶掉，
+            // 搜索词还留着、又没有入口清除，用户卡在空状态出不来。
+            if SongListRules.trulyEmpty(totalCount: library.favorites.count) {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
@@ -52,6 +55,12 @@ struct FavoritesView: View {
                         LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                             // 2026-11-27（老板）：搜索框出现后滑动列表必须一直可见 → 整块头部吸顶
                             Section {
+                                if SongListRules.noMatch(totalCount: library.favorites.count,
+                                                         shownCount: filteredFavorites.count,
+                                                         query: query) {
+                                    // 头部（含搜索框）仍然常驻，这里只替换列表区
+                                    ListNoMatchRow(query: query) { query = "" }
+                                } else {
                                 ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
                                 Button {
                                     // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
@@ -88,6 +97,7 @@ struct FavoritesView: View {
                                         Label("取消收藏", systemImage: "heart.slash")
                                     }
                                 }
+                            }
                             }
                             // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
                             MiniPlayerSpacer()
@@ -213,9 +223,7 @@ struct FavoritesView: View {
                 .foregroundStyle(Tokens.Palette.vermilion.opacity(0.7))
             Text("还没有收藏的歌")
                 .font(.headline)
-            Text(query.isEmpty
-                 ? "在播放页点 ❤，或在搜索结果里左滑收藏"
-                 : "这个收藏里没有匹配「\(query)」的歌")
+            Text("在播放页点 ❤，或在搜索结果里左滑收藏")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
