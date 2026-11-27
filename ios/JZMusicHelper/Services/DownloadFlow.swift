@@ -105,6 +105,8 @@ final class DownloadFlow {
     enum DuplicateChoice { case keepBoth, replace, cancel }
 
     func start(song: Song, want: QualityLevel) {
+        // 2026-11-27：下载完成提醒的权限在这里问（第一次下载才问一次），不再放在 App 启动
+        DownloadNotifications.requestIfNeeded()
         // 同一条录音已有本地文件 → 先问，不要默默下第二份、也不要默默跳过
         if let local = DownloadManager.shared.localDuplicate(of: song) {
             duplicatePrompt = local

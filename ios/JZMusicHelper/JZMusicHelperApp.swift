@@ -22,10 +22,13 @@ struct JZMusicHelperApp: App {
     /// 开屏动画：只在**这次进程的第一次**显示（App 的 @State 一个进程只初始化一次，
     /// 所以从后台回来不会重播）。时长/曲线见 `Services/SplashTimeline.swift`。
     @State private var showSplash = true
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // 下载完成提示（可选权限，拒绝也不影响下载）
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // 2026-11-27（老板）：**开屏就是开屏**——启动阶段只记面包屑，不请求任何权限/网络。
+        // 通知权限挪到「第一次真的开始下载」时再问（下载完成提醒是它唯一的用途），
+        // 以前在 init 第一行就弹，首次装包正好弹在开屏动画上。
+        LaunchBreadcrumbs.mark("app-init")
         // 收藏的文件级去重：收藏那一刻只做元数据级，指纹由后台补（延迟几秒，不和首屏抢网络）
         // 2026-11-22：再往后推一点 —— 它要读文件指针，开屏动画期间不该跟主线程抢 I/O。
         let excludeFromBackup = !SettingsStore.shared.iCloudBackup
@@ -76,6 +79,7 @@ struct JZMusicHelperApp: App {
                 if showSplash {
                     SplashView {
                         // 自然播完时纸底已经淡到 0，这层 animation 只是给"点击跳过"一个收尾
+                        LaunchBreadcrumbs.mark("splash-done")
                         withAnimation(.easeOut(duration: 0.22)) { showSplash = false }
                         // 2026-11-27：放行发现页的网络加载（原来它和开屏动画抢主线程 → 时不时顿一下）
                         LaunchGate.shared.markSplashFinished()
@@ -105,6 +109,14 @@ struct JZMusicHelperApp: App {
             // 2026-11-27（老板）：点键盘以外任何地方都收键盘。同样只旁听，不吞业务点击。
             .simultaneousGesture(TapGesture().onEnded { KeyboardDismiss.dismiss() })
             .onAppear { KeyboardDismiss.install() }
+            // 2026-11-27：闪退定位用的"这次是不是正常退到后台"
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background: LaunchBreadcrumbs.markCleanExit()
+                case .active: LaunchBreadcrumbs.markForeground()
+                default: break
+                }
+            }
             // 下载前发现本地已有同一首：问一句（并存 / 覆盖 / 取消）
             .confirmationDialog(
                 downloadFlow.duplicatePrompt.map { "本地已有《\($0.song.name)》" } ?? "",

@@ -34,8 +34,8 @@ final class PlaybackTrace: @unchecked Sendable {
 
     private let lock = NSLock()
     private var buffer: [PlaybackTraceEntry] = []
-    /// 只留最近 200 条：一次连播 3 首大约 40 条，够倒查好几轮
-    private static let limit = 200
+    /// 2026-11-27（老板）：上限从 200 放开到 2000——要看启动阶段/网易取数失败时，200 条不够倒查
+    private static let limit = 2000
 
     private static let stamp: DateFormatter = {
         let f = DateFormatter()

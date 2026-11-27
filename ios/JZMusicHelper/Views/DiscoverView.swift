@@ -93,14 +93,11 @@ struct DiscoverView: View {
             // 第三十轮：歌单广场 / 歌手大全也并进这一趟——老板要的"同进度、当天只拉一次"，
             // 就是这一层：一个入口进去，四块酷我数据一起加载 / 一起判缓存。
             //
-            // 2026-11-27（开屏又开始"时不时顿一下"）：**等开屏退场再发请求**。
-            // 首页是在开屏底下照常挂载的，动画那 1.5 秒里同时拉网络/解图，主线程一被抢就顿；
-            // 缓存已经在 init 里同步读过，所以动画一退场照样有内容，不会闪骨架。
-            // 手上什么都没有（刚装好第一次开）就不等——等完也是骨架，不如让数据先跑。
-            if feed.hasPrimedContent {
-                await LaunchGate.shared.waitForSplash()
-            }
-            await loadEverything()
+            // 2026-11-27（老板拍板）：**开屏就是开屏**——动画那 1.7 秒里不发任何请求。
+            // 以前首次装包（没有缓存）会跳过这道门，于是开屏期间同时拉 9 路网络 + 解图，
+            // 既是"第一次开更卡"的来源，也是最容易把冷启动拖进看门狗/闪退的时刻。
+            await LaunchGate.shared.waitForSplash()
+            await loadEverythingStaged()
             openSearchIfIntentAsked()
             // "当天新上架的歌单立刻能看到"：1KB 探测最新歌单首条 id，变了才重取第一页
             Task { await squareFeed.probeNewestIfNeeded() }
@@ -119,11 +116,19 @@ struct DiscoverView: View {
     }
 
     /// 首屏这一趟：热门 + 最新单曲（`feed`）+ 歌单广场 + 歌手大全，四块并发
-    private func loadEverything() async {
-        async let daily: Void = feed.loadDaily()
-        async let square: Void = squareFeed.loadIfNeeded()
-        async let artists: Void = artistFeed.loadIfNeeded()
-        _ = await (daily, square, artists)
+    /// 2026-11-27（老板）：**分批请求**，不要一次并发 9 路。
+    /// 顺序是"用户先看到的先来"：热榜/最新单曲 → 歌单广场 → 歌手大全 → 网易三块。
+    /// 每一段都 await 完再走下一段，冷启动时网络/解码的峰值只有原来的 1/3 左右。
+    private func loadEverythingStaged() async {
+        LaunchBreadcrumbs.mark("discover-load-1")
+        await feed.loadKuwoDaily()
+        LaunchBreadcrumbs.mark("discover-load-2")
+        await squareFeed.loadIfNeeded()
+        LaunchBreadcrumbs.mark("discover-load-3")
+        await artistFeed.loadIfNeeded()
+        LaunchBreadcrumbs.mark("discover-load-4")
+        await feed.loadNeteaseDaily()
+        LaunchBreadcrumbs.mark("discover-load-done")
     }
 
     /// 下拉刷新：四块一起重取（都强制，不吃缓存）
@@ -235,11 +240,49 @@ struct DiscoverView: View {
 
             // 2026-11-27（发现页 2.0 Task 7）：歌单广场的第二条腿——网易歌单。
             // 老板口径是"两家内容都要出现"，所以并列一行；点进去落到通用歌单页。
-            neteasePlaylistRow
+            if !hideNeteaseRow {
+                neteasePlaylistRow
+            }
         }
     }
 
-    /// 网易歌单那一行（有内容才渲染；失败就不出现，不给广场添噪音）
+    /// 网易歌单取不到时的那一行：一句实话 + 重试 + 关闭（老板 2026-11-27）
+    private var neteaseFailedRow: some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(Tokens.Palette.vermilion)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("网易歌单暂时取不到")
+                    .font(.footnote.weight(.medium))
+                Text(feed.neteasePlaylistFailure ?? "稍后重试，或先看上面的酷我歌单")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Button("重试") { Task { await feed.retryNeteasePlaylists() } }
+                .font(.footnote.weight(.semibold))
+                .buttonStyle(.press)
+            Button {
+                hideNeteaseRow = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.press)
+            .accessibilityLabel("关闭这一行")
+        }
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.vertical, Tokens.Spacing.xs)
+        .background(Tokens.Palette.paperElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+    }
+
+    /// 网易歌单那一行（加载中给骨架；失败给「取不到 + 重试 + 关闭」，不许静默消失）
     @ViewBuilder
     private var neteasePlaylistRow: some View {
         switch feed.neteasePlaylistState {
@@ -251,7 +294,8 @@ struct DiscoverView: View {
                 .padding(.horizontal, Tokens.Spacing.pageMargin)
             }
         case .failed:
-            EmptyView()
+            // 2026-11-27（老板）：失败不许静默消失——给一句实话 + 重试 + 关闭（✕）
+            neteaseFailedRow
         case .loaded:
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: Tokens.Spacing.s) {

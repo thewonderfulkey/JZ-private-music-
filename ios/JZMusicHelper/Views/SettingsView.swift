@@ -293,15 +293,25 @@ struct SettingsView: View {
 struct PlaybackDiagnosticsView: View {
 
     @State private var entries: [PlaybackTraceEntry] = []
+    /// 上一次运行最后写下的启动阶段（闪退时这就是"崩在哪"的线索）
+    private var lastLaunchStage: String {
+        let stage = UserDefaults.standard.string(forKey: "launch.lastStage") ?? "—"
+        let clean = UserDefaults.standard.bool(forKey: "launch.lastExitClean")
+        return clean ? "\(stage)（正常切后台）" : "\(stage)（未正常退出，可能是闪退）"
+    }
+
     @State private var copied = false
 
     var body: some View {
         List {
             Section {
-                Text("记录最近 200 条：播完 → 换曲 → 取源起止 → 起播，每条带时间戳与当时的 App 状态（前台 / 后台）。")
+                Text("记录最近 2000 条：播完 → 换曲 → 取源起止 → 起播，以及启动阶段与网易取数失败原因；每条带时间戳与当时的 App 状态（前台 / 后台）。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 LabeledContent("记录条数", value: "\(entries.count) 条")
+                // 2026-11-27（老板）：闪退定位——上次运行停在哪个启动阶段
+                LabeledContent("上次启动停在", value: lastLaunchStage)
+
                 // 第二批的验收口径：缓存命中时这个数不涨
                 LabeledContent("歌单详情接口", value: "\(KuwoPlaylist.detailNetworkCalls) 次请求")
                 Button(copied ? "已复制" : "复制全部") {

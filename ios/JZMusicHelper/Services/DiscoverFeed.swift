@@ -154,6 +154,23 @@ final class DiscoverFeed {
     /// **和酷我的接口保持同进度**"——两个模块都是酷我接口、都是一天定死的数据，
     /// 所以合成一个入口：一起进加载态、一起靠本地日判缓存、下拉刷新一起重取。
     /// 顺序不保证（谁先回来谁先铺），但状态机是各自的，互不阻塞。
+    /// 2026-11-27（老板）：分批用——酷我这一组（热榜/最新单曲/BANNER）单独一段，
+    /// 网易三块留到后面再拉，避免开屏刚退场就 9 路并发。
+    func loadKuwoDaily() async {
+        async let hot: Void = loadHotIfNeeded()
+        async let fresh: Void = loadNewSongsIfNeeded()
+        async let banner: Void = loadBannersIfNeeded()
+        _ = await (hot, fresh, banner)
+    }
+
+    /// 网易那一组（热歌榜/新歌/歌单），在酷我之后单独一段
+    func loadNeteaseDaily() async {
+        async let nHot: Void = loadNeteaseHotIfNeeded()
+        async let nNew: Void = loadNeteaseNewIfNeeded()
+        async let nPl: Void = loadNeteasePlaylistsIfNeeded()
+        _ = await (nHot, nNew, nPl)
+    }
+
     func loadDaily() async {
         async let hot: Void = loadHotIfNeeded()
         async let fresh: Void = loadNewSongsIfNeeded()
@@ -268,15 +285,30 @@ final class DiscoverFeed {
         if neteasePlaylists.isEmpty { neteasePlaylistState = .loading }
         let items = await NeteaseDiscover.playlists(limit: 30)
         guard !items.isEmpty else {
+            // 2026-11-27（老板）：失败要留证据——以前只把状态改成 .failed，
+            // 界面上那行直接消失，看起来像"我们没接网易"。现在把原因记进播放诊断。
+            neteasePlaylistFailure = "接口返回空（/api/playlist/list 200 但解析出 0 条，或超时）"
             neteasePlaylistState = neteasePlaylists.isEmpty ? .failed : .loaded
+            PlaybackTrace.shared.log("网易歌单", "取数失败：" + (neteasePlaylistFailure ?? "—"))
             return
         }
         neteasePlaylists = items
+        neteasePlaylistFailure = nil
         neteasePlaylistDay = day
         neteasePlaylistState = .loaded
         if let data = try? JSONEncoder().encode(PlaylistCache(day: day, items: items)) {
             defaults.set(data, forKey: Self.neteasePlaylistCacheKey)
         }
+    }
+
+    /// 最近一次「网易歌单」取数失败的原因（成功时清空）；供界面提示与播放诊断使用
+    private(set) var neteasePlaylistFailure: String?
+
+    /// 用户点「重试」：强制再拉一次（不等当天缓存）
+    func retryNeteasePlaylists() async {
+        neteasePlaylistFailure = nil
+        neteasePlaylistDay = -1
+        await refreshNeteasePlaylists()
     }
 
     private func cachedPlaylists() -> PlaylistCache? {
