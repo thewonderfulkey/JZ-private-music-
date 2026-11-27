@@ -37,6 +37,13 @@ struct ArtistDetailView: View {
 
     private var songs: [Song] { releases.map(\.song) }
 
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: releases.count,
+                                 shownCount: visibleReleases.count,
+                                 query: search.committed)
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -63,10 +70,8 @@ struct ArtistDetailView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
                             .padding(.bottom, Tokens.Spacing.xs)
-                        if SongListRules.noMatch(totalCount: releases.count,
-                                                 shownCount: visibleReleases.count,
-                                                 query: search.committed) {
-                            ListNoMatchRow(query: search.committed) { query = "" }
+                        if isNoMatch {
+                            ListNoMatchRow(query: search.committed) { search.clear() }
                         }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {

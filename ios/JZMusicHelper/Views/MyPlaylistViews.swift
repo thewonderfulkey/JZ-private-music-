@@ -27,6 +27,13 @@ struct MyPlaylistCard: View {
     private var cardWidth: CGFloat { max(cardHeight * 3, 1) }
     private var panelWidth: CGFloat { max(cardWidth - cardHeight, 1) }
 
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: playlist?.songs.count ?? 0,
+                                 shownCount: visibleSongs.count,
+                                 query: search.committed)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             artwork
@@ -257,10 +264,8 @@ struct MyPlaylistDetailView: View {
                     // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
                     Section {
                     if let playlist {
-                        if SongListRules.noMatch(totalCount: playlist.songs.count,
-                                                 shownCount: visibleSongs.count,
-                                                 query: search.committed) {
-                            ListNoMatchRow(query: search.committed) { query = "" }
+                        if isNoMatch {
+                            ListNoMatchRow(query: search.committed) { search.clear() }
                         }
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             importedRow(song, index: index)

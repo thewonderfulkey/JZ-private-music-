@@ -43,6 +43,13 @@ struct FavoritesView: View {
             .map(\.1)
     }
 
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: library.favorites.count,
+                                 shownCount: filteredFavorites.count,
+                                 query: search.committed)
+    }
+
     var body: some View {
         Group {
             // 2026-11-27 真机 bug 修复：只有"真的一首都没收藏"才整页空态。
@@ -56,11 +63,9 @@ struct FavoritesView: View {
                         LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                             // 2026-11-27（老板）：搜索框出现后滑动列表必须一直可见 → 整块头部吸顶
                             Section {
-                                if SongListRules.noMatch(totalCount: library.favorites.count,
-                                                         shownCount: filteredFavorites.count,
-                                                         query: search.committed) {
+                                if isNoMatch {
                                     // 头部（含搜索框）仍然常驻，这里只替换列表区
-                                    ListNoMatchRow(query: search.committed) { query = "" }
+                                    ListNoMatchRow(query: search.committed) { search.clear() }
                                 } else {
                                 ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
                                 Button {

@@ -32,6 +32,13 @@ struct NeteasePlaylistView: View {
         SongListFilter.filter(page?.songs ?? [], query: search.committed)
     }
 
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: page?.songs.count ?? 0,
+                                 shownCount: visibleSongs.count,
+                                 query: search.committed)
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0,
@@ -58,10 +65,8 @@ struct NeteasePlaylistView: View {
     @ViewBuilder
     private var sectionContent: some View {
         if let page, !page.songs.isEmpty {
-            if SongListRules.noMatch(totalCount: page.songs.count,
-                                     shownCount: visibleSongs.count,
-                                     query: search.committed) {
-                ListNoMatchRow(query: search.committed) { query = "" }
+            if isNoMatch {
+                ListNoMatchRow(query: search.committed) { search.clear() }
             }
             ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                 Button {

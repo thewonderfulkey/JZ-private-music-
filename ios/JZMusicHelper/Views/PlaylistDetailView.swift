@@ -36,6 +36,13 @@ struct PlaylistDetailView: View {
         SongListFilter.filterItems(detail?.releases ?? [], query: search.committed) { $0.song }
     }
 
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: detail?.releases.count ?? 0,
+                                 shownCount: visibleReleases.count,
+                                 query: search.committed)
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -44,10 +51,8 @@ struct PlaylistDetailView: View {
                     // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
                     Section {
                     if let detail {
-                        if SongListRules.noMatch(totalCount: detail.releases.count,
-                                                 shownCount: visibleReleases.count,
-                                                 query: search.committed) {
-                            ListNoMatchRow(query: search.committed) { query = "" }
+                        if isNoMatch {
+                            ListNoMatchRow(query: search.committed) { search.clear() }
                         }
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             playlistRow(release, index: index)
