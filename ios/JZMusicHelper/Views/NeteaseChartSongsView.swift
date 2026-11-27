@@ -20,14 +20,23 @@ struct NeteaseChartSongsView: View {
 
     private var songs: [Song] { page?.songs ?? [] }
 
+    /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整榜
+    @State private var query = ""
+    private var visibleSongs: [Song] {
+        SongListFilter.filter(songs, query: query)
+    }
+
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0,
+                       pinnedViews: [.sectionHeaders]) {
+                // 2026-11-27（老板）：头部三件套吸顶（播放全部/随机原有 + 本页搜索新加）
+                Section {
                 if let page, !page.songs.isEmpty {
-                    header(page)
-                    ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
+                    ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
-                            play(page.songs, at: index)
+                            // 队列仍是整榜（搜索只筛显示）
+                            play(page.songs, at: page.songs.firstIndex(of: song) ?? index)
                         } label: {
                             SongRow(song: song,
                                     showsFavorite: true,
@@ -56,6 +65,17 @@ struct NeteaseChartSongsView: View {
                         Task { await load(force: true) }
                     }
                     .padding(.top, Tokens.Spacing.xl)
+                }
+                } header: {
+                    if let page, !page.songs.isEmpty {
+                        VStack(spacing: Tokens.Spacing.xs) {
+                            header(page)
+                            ListSearchField(text: $query)
+                                .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        }
+                        .padding(.bottom, Tokens.Spacing.xs)
+                        .background(Tokens.Palette.paper)
+                    }
                 }
             }
             .padding(.top, Tokens.Spacing.xs)

@@ -23,20 +23,30 @@ struct ChartSongsView: View {
     @State private var failed = false
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
+    /// 2026-11-27（老板）：本页搜索——只筛这一页的歌，不打网络；队列仍是整榜
+    @State private var query = ""
+
+    /// 搜索过滤后的曲目（空查询 = 全部）
+    private var visibleSongs: [Song] {
+        SongListFilter.filter(page?.songs ?? [], query: query)
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0,
+                           pinnedViews: [.sectionHeaders]) {
+                    // 2026-11-27（老板）：头部三件套吸顶（播放全部/随机原有 + 本页搜索新加）
+                    Section {
                     if let page {
-                        header(page)
-                        ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
+                        ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             // 第二十轮（老板："榜单页太丑、太细了"）：不再用 `DiscoverSongRow`（那是发现页
                             // 的紧凑行，副行只有歌手、没有专辑/平台/时长），改回**全 App 统一行样式** `SongRow`：
                             // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
                             // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
                             Button {
-                                play(page.songs, at: index)
+                                // 队列仍是整榜（搜索只筛显示），索引映射回原榜
+                                play(page.songs, at: page.songs.firstIndex(of: song) ?? index)
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
@@ -70,6 +80,17 @@ struct ChartSongsView: View {
                             Task { await load(force: true) }
                         }
                         .padding(.top, Tokens.Spacing.xl)
+                    }
+                    } header: {
+                        if let page {
+                            VStack(spacing: Tokens.Spacing.xs) {
+                                header(page)
+                                ListSearchField(text: $query)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .padding(.bottom, Tokens.Spacing.xs)
+                            .background(Tokens.Palette.paper)
+                        }
                     }
                 }
                 .padding(.top, Tokens.Spacing.xs)

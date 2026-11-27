@@ -25,14 +25,22 @@ struct ArtistDetailView: View {
     @State private var moreFailed = false
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
+    /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整位歌手的列表
+    @State private var query = ""
+    /// 搜索过滤后的行（空查询 = 全部）
+    private var visibleReleases: [KuwoPlaylist.Release] {
+        SongListFilter.filterItems(releases, query: query) { $0.song }
+    }
 
     private var songs: [Song] { releases.map(\.song) }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    header
+                LazyVStack(alignment: .leading, spacing: 0,
+                           pinnedViews: [.sectionHeaders]) {
+                    // 2026-11-27（老板）：头部三件套吸顶（播放全部/随机原有 + 本页搜索新加）
+                    Section {
                     if releases.isEmpty {
                         if loading {
                             SkeletonRows(count: 8)
@@ -52,9 +60,10 @@ struct ArtistDetailView: View {
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                             .padding(.top, Tokens.Spacing.s)
                             .padding(.bottom, Tokens.Spacing.xs)
-                        ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
+                        ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
-                                play(songs, at: index)
+                                // 队列仍是这位歌手的全部歌（搜索只筛显示）
+                                play(songs, at: songs.firstIndex(of: release.song) ?? index)
                             } label: {
                                 SongRow(song: release.song,
                                         showsFavorite: true,
@@ -77,6 +86,17 @@ struct ArtistDetailView: View {
                         moreFooter
                     }
                     MiniPlayerSpacer()
+                    } header: {
+                        if !releases.isEmpty {
+                            VStack(spacing: Tokens.Spacing.xs) {
+                                header
+                                ListSearchField(text: $query)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .padding(.bottom, Tokens.Spacing.xs)
+                            .background(Tokens.Palette.paper)
+                        }
+                    }
                 }
                 .padding(.top, Tokens.Spacing.xs)
                 .readableWidth()
