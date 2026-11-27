@@ -22,6 +22,14 @@ check("按专辑命中", SongListFilter.filter(pool, query: "魔杰座").map(\.p
 check("没命中给空", SongListFilter.filter(pool, query: "不存在").isEmpty)
 check("Live 版也能被「晴」搜到", SongListFilter.matches(s("晴天 (Live)", "周杰伦"), query: "晴"))
 
+print("— 播放范围口径（老板确认：筛选结果 / 无筛选＝整页）")
+let noFilter = SongListFilter.filter(pool, query: "")
+check("无筛选 → 与整页逐元素相同", noFilter.map(\.platformID) == pool.map(\.platformID),
+      "\(noFilter.map(\.platformID))")
+let filtered = SongListFilter.filter(pool, query: "周杰伦")
+check("有筛选 → 是整页子集", Set(filtered.map(\.platformID)).isSubset(of: Set(pool.map(\.platformID))))
+check("有筛选 → 严格更少", filtered.count < pool.count, "\(filtered.count)/\(pool.count)")
+
 print("— 计数文案（老板：无搜索词时不显示）")
 check("无搜索词 → nil", SongListFilter.filteredMetaText(shown: 4, total: 4, query: "") == nil)
 check("纯空格搜索词 → nil", SongListFilter.filteredMetaText(shown: 4, total: 4, query: "   ") == nil)

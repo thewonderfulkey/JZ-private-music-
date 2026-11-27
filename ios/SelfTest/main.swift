@@ -7029,6 +7029,18 @@ func r297SongListFilterAssertions() {
     check("繁简都能搜（晴 / 晴 天 的写法差异）",
           SongListFilter.matches(s("晴天 (Live)", "周杰伦"), query: "晴"))
 
+    // 2026-11-27（老板确认的口径）：播放范围 = 当前筛选结果；无筛选时 = 整页。
+    // 这三条把它变成可执行的不变量——谁把"整页队列"改回来（或把过滤改成不改列表），这里先红。
+    let noFilter = SongListFilter.filter(pool, query: "")
+    check("无筛选 → 结果与整页逐元素相同（播放范围 = 整页）",
+          noFilter.map(\.platformID) == pool.map(\.platformID),
+          "\(noFilter.map(\.platformID))")
+    let filtered = SongListFilter.filter(pool, query: "周杰伦")
+    check("有筛选 → 结果是整页的子集（播放范围 = 筛选结果）",
+          Set(filtered.map(\.platformID)).isSubset(of: Set(pool.map(\.platformID)))
+            && !filtered.isEmpty)
+    check("有命中也有未命中时，筛选结果严格更少",
+          filtered.count < pool.count, "\(filtered.count)/\(pool.count)")
     check("计数文案：空查询写共 N 首",
           SongListFilter.metaText(shown: 4, total: 4, query: "") == "共 4 首")
     check("无搜索词时计数行为空（不与页面头部重复）",

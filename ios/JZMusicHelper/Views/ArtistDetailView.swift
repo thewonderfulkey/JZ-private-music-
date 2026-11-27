@@ -27,6 +27,8 @@ struct ArtistDetailView: View {
     @State private var locator = SongLocator()
     /// 2026-11-27（老板）：本页搜索——只筛这一页，队列仍是整位歌手的列表
     @State private var query = ""
+    /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
+    /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索过滤后的行（空查询 = 全部）
     private var visibleReleases: [KuwoPlaylist.Release] {
         SongListFilter.filterItems(releases, query: query) { $0.song }

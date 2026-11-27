@@ -240,6 +240,8 @@ struct MyPlaylistDetailView: View {
 
     private var playlist: ImportedPlaylist? { store.playlist(id: playlistID) }
 
+    /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
+    /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索过滤后的行（队列仍是整份歌单）
     private var visibleSongs: [Song] {
         SongListFilter.filter(playlist?.songs ?? [], query: query)

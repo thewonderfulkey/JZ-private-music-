@@ -27,6 +27,8 @@ struct FavoritesView: View {
     /// 收藏页本地搜索（在去重后的列表上过滤）
     @State private var query = ""
 
+    /// 播放范围口径（老板 2026-11-27 确认）：**播放全部 / 随机 / 点行起播 都用这一份**——
+    /// 有搜索词时 = 筛选结果；没有搜索词时它 == 整页，所以行为与加搜索之前一致。**不要改回整页。**
     /// 搜索后的收藏（空查询 = 全部；有查询按命中强度排序，同分保持原顺序）
     private var filteredFavorites: [Song] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
