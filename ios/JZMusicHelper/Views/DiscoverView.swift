@@ -509,23 +509,42 @@ struct DiscoverView: View {
                         StatusLine(kind: .info("暂时没有合适的推荐"))
                             .padding(.horizontal, Tokens.Spacing.pageMargin)
                     } else {
-                        songListCard(count: feed.guessSongs.count) { index in
-                            let song = feed.guessSongs[index]
-                            Button {
-                                play(feed.guessSongs, at: index)
-                            } label: {
-                                DiscoverSongRow(song: song,
-                                                reason: guessReason(for: song),
-                                                showReason: true,
-                                                rank: nil)
+                        // 2026-11-27（老板）：换一套与现有版式区别开的样子——两列卡片网格 + 理由小标。
+                        // 不再是"三行一页的榜单行"（那是酷我/网易热歌榜的样子），也不再分页：
+                        // 一屏 6 张，够了；要更多就点「换一批」。
+                        LazyVGrid(columns: guessColumns,
+                                  alignment: .leading,
+                                  spacing: Tokens.Spacing.m) {
+                            ForEach(Array(feed.guessSongs.prefix(guessCardCount).enumerated()),
+                                    id: \.element.id) { index, song in
+                                Button {
+                                    play(feed.guessSongs, at: index)
+                                } label: {
+                                    GuessCard(song: song,
+                                              reason: guessReason(for: song),
+                                              side: guessCardSide)
+                                }
+                                .buttonStyle(.press)
                             }
-                            .buttonStyle(.press)
                         }
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
                     }
                 }
             }
         }
     }
+
+    /// 猜你喜欢的新版式：两列网格（2026-11-27）
+    private var guessColumns: [GridItem] {
+        [GridItem(.flexible(), spacing: Tokens.Spacing.s, alignment: .topLeading),
+         GridItem(.flexible(), spacing: Tokens.Spacing.s, alignment: .topLeading)]
+    }
+
+    /// 一屏露 6 张（3 行），再多就点「换一批」
+    private var guessCardCount: Int { 6 }
+
+    /// 封面边长：跟随 Dynamic Type，同时保证两列在 iPhone 常见宽度下几乎铺满
+    @ScaledMetric(relativeTo: .body) private var guessCardSide: CGFloat = 164
 
     /// 推荐理由：能对上最近播放的歌手就写「因为你在听 X」，否则退一句实话
     private func guessReason(for song: Song) -> String {
@@ -545,13 +564,10 @@ struct DiscoverView: View {
     private var hotSection: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
-                Text("热门音乐")
+                // 2026-11-27（老板）：既然下面已经有「网易热歌榜」，这块就叫「酷我热歌榜」；
+                // 原来那行小字「酷我热歌榜 · 每日更新」整条删掉——名字已经说清楚了，越简洁越好。
+                Text("酷我热歌榜")
                     .font(FontRole.sectionTitle)
-                // 副标题说实话：真榜就写「酷我热歌榜」，回落时就写「四平台合并」，
-                // 不把兜底结果也标成官方榜；还没加载完只写"每日更新"，别抢着报来源。
-                Text(hotMeta)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
                 Spacer()
                 if !feed.hotSongs.isEmpty {
                     NavigationLink("查看全部") { ChartSongsView(chart: .hot) }
@@ -585,12 +601,6 @@ struct DiscoverView: View {
                 }
             }
         }
-    }
-
-    /// 热门音乐的副标题：加载中只说"每日更新"，加载完再报来源（真榜 / 四平台兜底）
-    private var hotMeta: String {
-        guard feed.hotState == .loaded else { return "每日更新" }
-        return feed.hotFromChart ? "酷我热歌榜 · 每日更新" : "四平台合并 · 每日更新"
     }
 
     // MARK: 网易热歌榜（发现页 2.0 Task 7：热门音乐的第二行，与酷我榜并列）

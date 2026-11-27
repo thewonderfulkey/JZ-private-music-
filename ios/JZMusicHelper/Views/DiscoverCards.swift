@@ -113,7 +113,53 @@ struct PlaylistCoverCard: View {
     }
 }
 
-/// 网易歌单卡（2026-11-27，歌单广场的第二条腿）
+/// 猜你喜欢的卡（2026-11-27，老板："猜你喜欢的样式换一下，尽可能和现有样式区别开"）
+///
+/// 发现页里已有的版式：榜单是「三行一页的列表行」、最新单曲是「横滑宽卡」、
+/// 最近播放/歌手是「横滑方卡/圆头像」、广场是「横滑竖卡」。
+/// 这里用**两列网格 + 理由小标**：一眼就能看出这是"推荐"，不是又一个榜单。
+struct GuessCard: View {
+
+    let song: Song
+    let reason: String
+    /// 封面边长（外面按屏宽给，保证两列铺满且不缩放）
+    let side: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xxs) {
+            SongArtwork(song: song, size: side, radius: Tokens.Radius.artworkSmall)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(5)
+                        .background(.black.opacity(0.32), in: Circle())
+                        .padding(Tokens.Spacing.xs)
+                }
+            Text(song.name)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            HStack(spacing: 4) {
+                Text(song.singer)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Text(reason)
+                .font(.caption2)
+                .foregroundStyle(Tokens.Palette.vermilion)
+                .lineLimit(1)
+        }
+        .frame(width: side, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(song.name)，\(song.singer)，\(reason)")
+        .accessibilityHint("点一下播放")
+    }
+}
+
 ///
 /// 与 `PlaylistCoverCard` 同一套版式（封面 + 两行名 + 张数），只是数据来自网易
 /// （`NeteasePlaylistBrief`），点进去落到通用歌单页 `NeteasePlaylistView`。
