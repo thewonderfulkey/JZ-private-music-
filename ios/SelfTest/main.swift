@@ -6993,6 +6993,20 @@ func r295SearchSuggestAssertions() {
 }
 
 
+// MARK: 2026-11-27 滑动时不许触发点击反馈
+func r296PressFeedbackAssertions() {
+    section("滑动时不许点亮按压反馈")
+
+    check("只是按下（没滑）→ 亮",
+          PressFeedbackRules.showsHighlight(pressed: true, panning: false))
+    check("按下同时手指在滑 → 不亮",
+          !PressFeedbackRules.showsHighlight(pressed: true, panning: true))
+    check("没按下 → 不亮",
+          !PressFeedbackRules.showsHighlight(pressed: false, panning: false)
+            && !PressFeedbackRules.showsHighlight(pressed: false, panning: true))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -7013,6 +7027,7 @@ r292DiscoverTwoSourceAssertions()
 r293CoverFallbackAssertions()
 r294JunkAudioAssertions()
 r295SearchSuggestAssertions()
+r296PressFeedbackAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

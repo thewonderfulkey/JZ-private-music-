@@ -33,6 +33,8 @@ struct SearchView: View {
     @State private var seenKeys: Set<String> = []
     // 2026-11-27（智能搜索 v1：输入联想）
     @State private var suggestions: [Song] = []
+    /// 联想浮层是否处于激活态（与键盘焦点解耦：上滑收键盘后联想要留着）
+    @State private var suggestActive = false
     @State private var suggestTask: Task<Void, Never>?
     /// 当前结果对应的关键词（联想在"输入 != 已提交"时才盖住结果）
     @State private var submittedKeyword = ""
@@ -56,11 +58,17 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
-            if showsSuggestions {
-                suggestionList
-            } else {
+            // 2026-11-27（老板真机反馈）：联想列表**不许把搜索框往上挤**（原来挤到盖住返回按钮）。
+            // 现在它是盖在结果上的浮层：搜索框位置一帧都不动，联想自己滚自己的。
+            ZStack(alignment: .top) {
                 content
+                if showsSuggestions {
+                    suggestionPanel
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .zIndex(1)
+                }
             }
+            .animation(Tokens.Motion.panelSwap, value: showsSuggestions)
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle("")
@@ -85,9 +93,12 @@ struct SearchView: View {
 
     // MARK: 搜索联想（智能搜索 v1）
 
-    /// 联想被点/被提交之前，一直盖在结果上面
+    /// 联想浮层什么时候显示
+    ///
+    /// 不用 `fieldFocused` 当条件：上滑联想列表会立刻收键盘（老板要求），一收焦点就没了，
+    /// 拿焦点当条件等于"一滑就消失"。改成由输入自己控制（输入变了才更新）。
     private var showsSuggestions: Bool {
-        fieldFocused
+        suggestActive
             && SearchSuggestRules.shouldSuggest(keyword)
             && !suggestions.isEmpty
             && trimmedKeyword != submittedKeyword
@@ -99,8 +110,10 @@ struct SearchView: View {
         let query = keyword
         guard SearchSuggestRules.shouldSuggest(query) else {
             suggestions = []
+            suggestActive = false
             return
         }
+        suggestActive = true
         suggestTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(SearchSuggestRules.debounceMs) * 1_000_000)
             guard !Task.isCancelled else { return }
@@ -112,48 +125,65 @@ struct SearchView: View {
         }
     }
 
-    private var suggestionList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(suggestions) { song in
-                Button {
-                    // 点一条 = 拿它当关键词直接搜（不是直接播放：用户可能还想看别的平台版本）
-                    keyword = song.name
-                    submittedKeyword = ""
-                    fieldFocused = false
-                    runSearch()
-                } label: {
-                    HStack(spacing: Tokens.Spacing.s) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.footnote)
-                            .foregroundStyle(.tertiary)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(song.name)
-                                .font(.subheadline)
-                                .lineLimit(1)
-                            let sub = SearchSuggestRules.subtitle(for: song)
-                            if !sub.isEmpty {
-                                Text(sub)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.left")
-                            .font(.caption2)
-                            .foregroundStyle(.quaternary)
+    /// 联想浮层：卡片式、自己可滚、上滑立刻收键盘
+    private var suggestionPanel: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(suggestions) { song in
+                    Button {
+                        // 点一条 = 拿它当关键词直接搜（不是直接播放：用户可能还想看别的平台版本）
+                        suggestActive = false
+                        suggestions = []
+                        submittedKeyword = ""
+                        keyword = song.name
+                        fieldFocused = false
+                        runSearch()
+                    } label: {
+                        suggestionRow(song)
                     }
-                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.rowPress)
+                    .accessibilityLabel("搜索 \(song.name)")
+                    Divider()
+                        .padding(.leading, Tokens.Spacing.pageMargin + 22)
+                        .opacity(0.6)
                 }
-                .buttonStyle(.rowPress)
-                .accessibilityLabel("搜索 \(song.name)")
-                Divider().padding(.leading, Tokens.Spacing.pageMargin)
+            }
+        }
+        // 老板要求：手指一滑就收键盘，别让键盘压着联想结果
+        .scrollDismissesKeyboard(.immediately)
+        .frame(maxHeight: 330)
+        .background(Tokens.Palette.paper)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .padding(.top, Tokens.Spacing.xxs)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func suggestionRow(_ song: Song) -> some View {
+        HStack(spacing: Tokens.Spacing.s) {
+            Image(systemName: "magnifyingglass")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(song.name)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                let sub = SearchSuggestRules.subtitle(for: song)
+                if !sub.isEmpty {
+                    Text(sub)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, Tokens.Spacing.pageMargin)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     // MARK: 搜索框
@@ -179,6 +209,8 @@ struct SearchView: View {
                     songs = []
                     platformResults = []
                     isSearching = false
+                    suggestActive = false
+                    suggestions = []
                     fieldFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -383,6 +415,7 @@ struct SearchView: View {
         searchTask?.cancel()
         suggestTask?.cancel()
         suggestions = []
+        suggestActive = false
         submittedKeyword = trimmed
         songs = []
         platformResults = []

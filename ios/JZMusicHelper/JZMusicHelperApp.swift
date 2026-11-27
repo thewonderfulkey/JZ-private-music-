@@ -95,6 +95,13 @@ struct JZMusicHelperApp: App {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: library.favoriteNotice)
+            // 2026-11-27（老板）：滑动列表时不要点亮点击反馈——在根视图统一判"手指在拖"。
+            // `simultaneousGesture` 不会抢别的（滚动、翻页、拖动进度条都照常），只做广播。
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { _ in ScrollPanGuard.shared.begin() }
+                    .onEnded { _ in ScrollPanGuard.shared.end() }
+            )
             // 下载前发现本地已有同一首：问一句（并存 / 覆盖 / 取消）
             .confirmationDialog(
                 downloadFlow.duplicatePrompt.map { "本地已有《\($0.song.name)》" } ?? "",

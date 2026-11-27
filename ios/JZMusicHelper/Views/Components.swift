@@ -551,10 +551,13 @@ private struct PressVisual<Content: View>: View {
             .opacity(shown ? (reduceMotion ? min(dim, 0.62) : dim) : 1)
             .onChange(of: isPressed) { _, pressed in
                 releaseTask?.cancel()
-                if pressed {
+                // 2026-11-27（老板）：滑动时不许点亮。手指一落下 isPressed 就是 true，
+                // 但真正在滑列表时不该给点击反馈——用全局滚动闸门判一下。
+                if PressFeedbackRules.showsHighlight(pressed: pressed,
+                                                     panning: ScrollPanGuard.shared.panning) {
                     pressedAt = Date()
                     withAnimation(Tokens.Motion.pressDown) { shown = true }
-                } else {
+                } else if !pressed {
                     let hold = PressTiming.holdAfterRelease(
                         elapsed: Date().timeIntervalSince(pressedAt),
                         minVisible: PressTiming.minVisible)
@@ -665,14 +668,16 @@ struct RipplePressModifier: ViewModifier {
             )
             .onChange(of: isPressed) { _, pressed in
                 releaseTask?.cancel()
-                if pressed {
+                // 2026-11-27（老板）：滑动时不许点亮（行/卡片的高亮也不亮）。
+                if PressFeedbackRules.showsHighlight(pressed: pressed,
+                                                     panning: ScrollPanGuard.shared.panning) {
                     pressedAt = Date()
                     fastRestart = false
                     restartProgress = 0
                     activeOrigin = hasOrigin ? origin : nil
                     pressID += 1
                     glow = 1
-                } else {
+                } else if !pressed {
                     // 关键：短按也要**铺满整条**，只是比长按快——不是停在半截再淡出。
                     // 短按：从当前进度换一块 0.16s 的快速高亮接着长满；
                     // 长按：让 0.55s 的慢速高亮自己走完。
