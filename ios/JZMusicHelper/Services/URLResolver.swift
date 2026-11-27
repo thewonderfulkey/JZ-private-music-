@@ -172,62 +172,12 @@ enum SameSongCrossResolver {
                 }
                 picked = got.first { $0 != nil } ?? nil
             }
-            if picked != nil { return picked }
-
-            // ⑥ 变速/改编条目的原曲兜底（2026-11-27《烟火里的尘埃 0.8x》被跳过）
-            //
-            // 这类条目的「歌手」是上传者（「你是我的救赎」），原曲歌手（华晨宇/黄霄雲）永远对不上，
-            // 上面的身份闸必然把它们全拒；而这类条目在任何一个平台都只有"用户上传"，
-            // 官网榜单里通常没有可播源。削掉尾巴按**原曲名**再找一次，至少让它出声。
-            // 只认「原曲歌名键相等」，不要求歌手、不管时长（0.8x 的时长本来就和原曲不同）。
-            let variants = await variantCandidates(song: song)
-            for batch in variants.chunked(3) {
-                if let hit = await withTaskGroup(of: StreamSource?.self, returning: StreamSource?.self, body: { group in
-                    for c in batch {
-                        group.addTask {
-                            let r = await URLResolver.shared.resolveResult(song: c, quality: quality)
-                            return SourcePicker.pick(r.sources, want: quality).map { $0.matched(c) }
-                        }
-                    }
-                    for await s in group where s != nil { group.cancelAll(); return s }
-                    return nil
-                }) {
-                    picked = hit
-                    break
-                }
-            }
+            // 2026-11-27：这里原来有一条"变速条目拿原曲顶替"的兜底，已被老板否掉——
+            // 他的口径是「上传者的变速/剪辑条目一律不返回」，所以这类歌根本不会进到播放链
+            // （`JunkAudioRules` 在搜索/榜单/歌单/歌手页的解析处就已经滤掉）。
+            // 没有再留这条兜底：否则 0.8x 会播成正常速度，听起来是"放错歌"。
             return picked
         } ?? nil
-    }
-
-    /// 变速/改编条目能不能拿这个候选当"原曲"（纯函数，CI 断言）
-    ///
-    /// 只要求：① 这首歌本身带变速/版本尾巴（否则不该走到这条兜底）；
-    ///         ② 候选的**歌名键**与原曲名相等（繁简/全角/标点已折平）。
-    /// 刻意**不**要求歌手与时长——这正是这一档存在的理由（歌手是上传者、时长随倍速变）。
-    static func variantAccepts(originalName: String, candidateName: String) -> Bool {
-        let base = CoverFallbackRules.baseTitle(originalName)
-        guard !base.isEmpty, base != originalName else { return false }
-        let key = NameMatch.identityKey(base)
-        guard key.count >= 4 else { return false }
-        return NameMatch.identityKey(candidateName) == key
-    }
-
-    /// 按原曲名搜一批候选（只留歌名键相等的，排除本歌自己）
-    static func variantCandidates(song: Song) async -> [Song] {
-        let base = CoverFallbackRules.baseTitle(song.name)
-        guard !base.isEmpty, base != song.name else { return [] }
-        let results = await SearchService.shared.searchAll(keyword: base, limit: 20)
-        var out: [Song] = []
-        var seen = Set<String>()
-        for candidate in results.flatMap({ $0.songs }) {
-            if candidate.id == song.id { continue }
-            guard variantAccepts(originalName: song.name, candidateName: candidate.name) else { continue }
-            guard seen.insert(candidate.id).inserted else { continue }
-            out.append(candidate)
-            if out.count >= 6 { break }
-        }
-        return out
     }
 
     struct CrossOutcome: Sendable {

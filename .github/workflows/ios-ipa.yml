@@ -96,6 +96,7 @@ jobs:
             ios/JZMusicHelper/Services/LaunchGate.swift \
             ios/JZMusicHelper/Services/DiscoverLatestRules.swift \
             ios/JZMusicHelper/Services/CoverFallbackRules.swift \
+            ios/JZMusicHelper/Services/JunkAudioRules.swift \
             ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \
@@ -123,7 +124,7 @@ jobs:
             ios/JZMusicHelper/Services/ITunesCover.swift \
             ios/JZMusicHelper/Services/CoverResolver.swift \
             ios/SelfTest/LyricsFixtures.swift \
-            ios/SelfTest/main.swift 2>&1 | tee build/selftest-build.log
+            ios/SelfTest/main.swift
           ./build/jz-selftest 2>&1 | tee build/selftest.log
 
       - name: 接口实测（信息性，失败不算构建失败）

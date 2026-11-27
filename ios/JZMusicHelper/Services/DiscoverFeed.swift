@@ -176,7 +176,8 @@ final class DiscoverFeed {
         async let banner: Void = loadBannersIfNeeded()
         async let nHot: Void = loadNeteaseHotIfNeeded()
         async let nNew: Void = loadNeteaseNewIfNeeded()
-        _ = await (hot, fresh, banner, nHot, nNew)
+        async let nPl: Void = loadNeteasePlaylistsIfNeeded()
+        _ = await (hot, fresh, banner, nHot, nNew, nPl)
     }
 
     /// 下拉刷新：热门 / 最新单曲 / BANNER / 网易两条榜 / 猜你喜欢 一起重取（都强制，不吃缓存）
@@ -186,8 +187,9 @@ final class DiscoverFeed {
         async let banner: Void = refreshBanners()
         async let nHot: Void = refreshNeteaseHot()
         async let nNew: Void = refreshNeteaseNew()
+        async let nPl: Void = refreshNeteasePlaylists()
         async let guess: Void = refreshGuess(recent: recent)
-        _ = await (hot, fresh, banner, nHot, nNew, guess)
+        _ = await (hot, fresh, banner, nHot, nNew, nPl, guess)
     }
 
     // MARK: 网易榜（热门第二行 / 最新单曲第二条腿）
@@ -254,6 +256,49 @@ final class DiscoverFeed {
     /// 最新单曲那一排（酷我 + 网易交替合并）
     var latestReleases: [KuwoPlaylist.Release] {
         DiscoverLatestRules.latestRow(kuwo: newReleases, netease: neteaseNewSongs)
+    }
+
+    // MARK: 网易歌单（歌单广场的第二条腿）
+
+    private(set) var neteasePlaylists: [NeteasePlaylistBrief] = []
+    private(set) var neteasePlaylistState: LoadState = .idle
+    private var neteasePlaylistDay: Int = -1
+    private static let neteasePlaylistCacheKey = "discover_netease_playlists_v1"
+
+    private struct PlaylistCache: Codable {
+        let day: Int
+        let items: [NeteasePlaylistBrief]
+    }
+
+    func loadNeteasePlaylistsIfNeeded() async {
+        if neteasePlaylistState == .loading { return }
+        if neteasePlaylistDay == day, !neteasePlaylists.isEmpty { return }
+        if let cached = cachedPlaylists(), !cached.items.isEmpty {
+            neteasePlaylists = cached.items
+            neteasePlaylistState = .loaded
+            if cached.day == day { neteasePlaylistDay = day; return }
+        }
+        await refreshNeteasePlaylists()
+    }
+
+    func refreshNeteasePlaylists() async {
+        if neteasePlaylists.isEmpty { neteasePlaylistState = .loading }
+        let items = await NeteaseDiscover.playlists(limit: 30)
+        guard !items.isEmpty else {
+            neteasePlaylistState = neteasePlaylists.isEmpty ? .failed : .loaded
+            return
+        }
+        neteasePlaylists = items
+        neteasePlaylistDay = day
+        neteasePlaylistState = .loaded
+        if let data = try? JSONEncoder().encode(PlaylistCache(day: day, items: items)) {
+            defaults.set(data, forKey: Self.neteasePlaylistCacheKey)
+        }
+    }
+
+    private func cachedPlaylists() -> PlaylistCache? {
+        guard let data = defaults.data(forKey: Self.neteasePlaylistCacheKey) else { return nil }
+        return try? JSONDecoder().decode(PlaylistCache.self, from: data)
     }
 
     private func cachedChart(_ key: String) -> ChartCache? {

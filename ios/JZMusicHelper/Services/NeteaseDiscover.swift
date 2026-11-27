@@ -29,7 +29,8 @@ struct NeteaseBannerItem: Sendable, Equatable, Codable {
     let playlistID: String?
 }
 
-struct NeteasePlaylistBrief: Sendable, Equatable {
+/// 歌单摘要（广场第二条腿展示用）。`Codable` 是为了按天缓存。
+struct NeteasePlaylistBrief: Sendable, Equatable, Codable {
     let id: String
     let name: String
     let cover: String?
@@ -122,7 +123,8 @@ enum NeteaseDiscover {
         let playlist = (json["playlist"] as? [String: Any])
             ?? (json["result"] as? [String: Any]) ?? [:]
         let tracks = playlist["tracks"] as? [[String: Any]] ?? []
-        return tracks.compactMap(song(fromTrack:))
+        // 2026-11-27（老板）：榜单/歌单里也不许出现上传者的变速/剪辑条目
+        return JunkAudioRules.filter(tracks.compactMap(song(fromTrack:)))
     }
 
     /// 歌单/榜单详情页：名字 + 封面 + 曲目（v3 与 v1 同路径 `playlist.{name,coverImgUrl,tracks}`）

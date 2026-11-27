@@ -6888,23 +6888,55 @@ func r293CoverFallbackAssertions() {
     check("繁简/空格差异照样认",
           CoverFallbackRules.acceptsBaseCover(originalName: "煙火里的塵埃 0.8x",
                                               candidateName: "烟火里的尘埃"))
-
-    // —— 同一病根的另一面：这类条目**播放**也会被跳过（老板："这首歌也被跳过了"）——
-    section("变速条目兜底：按原曲名找可播源")
-    check("有尾巴的条目才允许走这条兜底",
-          SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                               candidateName: "烟火里的尘埃"))
-    check("没有尾巴的条目不许走（守住原来的身份闸）",
-          !SameSongCrossResolver.variantAccepts(originalName: "晴天", candidateName: "晴天"))
-    check("歌名对不上不许走",
-          !SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                                candidateName: "烟火"))
-    check("太短的歌名不兜底",
-          !SameSongCrossResolver.variantAccepts(originalName: "众 0.8x", candidateName: "众"))
-    check("原曲的 Live 版也认（总比直接跳过强）",
-          SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                               candidateName: "烟火里的尘埃 (Live)"))
 }
+
+
+// MARK: 2026-11-27 上传者垃圾音频过滤（老板："这类型的定一个规则全部拿掉"）
+func r294JunkAudioAssertions() {
+    section("垃圾上传音频：变速/剪辑条目一条都不返回")
+
+    check("0.8x 变速版 → 垃圾", JunkAudioRules.isJunk(name: "烟火里的尘埃 0.8x"))
+    check("1.25x 变速版 → 垃圾", JunkAudioRules.isJunk(name: "晴天 1.25x"))
+    check("全角 × 也认", JunkAudioRules.isJunk(name: "烟火里的尘埃 (0.8×版)"))
+    check("0.8 倍速 → 垃圾", JunkAudioRules.isJunk(name: "烟火里的尘埃 0.8 倍速"))
+    check("slowed → 垃圾", JunkAudioRules.isJunk(name: "Star Unkind slowed"))
+    check("sped up → 垃圾", JunkAudioRules.isJunk(name: "Star Unkind Sped Up"))
+    check("nightcore → 垃圾", JunkAudioRules.isJunk(name: "Star Unkind nightcore"))
+    check("把上传者写进歌名的 0.8×版 → 垃圾",
+          JunkAudioRules.isJunk(name: "你是我的救赎《烟火里的尘埃》 (0.8×版)"))
+    check("DJ版 → 垃圾", JunkAudioRules.isJunk(name: "红色高跟鞋 (DJ版)"))
+    check("抖音版 / 剪辑版 / 变速版 → 垃圾",
+          JunkAudioRules.isJunk(name: "晴天 抖音版")
+            && JunkAudioRules.isJunk(name: "晴天 剪辑版")
+            && JunkAudioRules.isJunk(name: "晴天 变速版"))
+    check("鬼畜 → 垃圾", JunkAudioRules.isJunk(name: "晴天 鬼畜版"))
+
+    // —— 不许误伤：正常歌必须留下 ——
+    check("正常歌名不动", !JunkAudioRules.isJunk(name: "烟火里的尘埃"))
+    check("Live 版是正式发行，不动", !JunkAudioRules.isJunk(name: "晴天 (Live)"))
+    check("remix 是正式发行，不动", !JunkAudioRules.isJunk(name: "晴天 (Club Remix)"))
+    check("带数字的歌名不动（24K / 7 rings）",
+          !JunkAudioRules.isJunk(name: "24K Magic")
+            && !JunkAudioRules.isJunk(name: "7 rings"))
+    check("英文歌名里的 x 不动（X&Y）", !JunkAudioRules.isJunk(name: "X&Y"))
+    check("专辑名参与判断",
+          JunkAudioRules.isJunk(name: "晴天", album: "抖音热歌 DJ版合集"))
+
+    // 批量过滤保持顺序
+    func s(_ n: String, _ id: String) -> Song {
+        Song.make(platform: .qq, platformID: id, name: n, singer: "x", album: "",
+                  duration: 200, picURL: nil)
+    }
+    let pool = [s("晴天", "1"), s("晴天 0.8x", "2"), s("稻香", "3"), s("稻香 slowed", "4")]
+    check("批量过滤只留正常歌",
+          JunkAudioRules.filter(pool).map(\.platformID) == ["1", "3"],
+          "\(JunkAudioRules.filter(pool).map(\.platformID))")
+    check("全被过滤就返回空（UI 按空态处理）",
+          JunkAudioRules.filter([s("晴天 0.8x", "2")]).isEmpty)
+}
+
+
+// MARK: - 汇总
 
 
 // MARK: - 汇总
@@ -6925,6 +6957,7 @@ r288BannerRulesAssertions()
 r290ArtistPagingAssertions()
 r292DiscoverTwoSourceAssertions()
 r293CoverFallbackAssertions()
+r294JunkAudioAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

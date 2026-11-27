@@ -124,7 +124,8 @@ enum KuwoChart {
     /// 而不是显示一个 0 首的"正常"页面。
     static func parsePage(_ json: [String: Any]) -> Page? {
         let list = json["musiclist"] as? [[String: Any]] ?? []
-        let songs = list.compactMap(song(from:))
+        // 2026-11-27（老板）：榜单里也不许出现上传者的变速/剪辑条目
+        let songs = JunkAudioRules.filter(list.compactMap(song(from:)))
         guard !songs.isEmpty else { return nil }
         return Page(
             name: (json["name"] as? String) ?? "",

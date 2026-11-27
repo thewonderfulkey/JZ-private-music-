@@ -42,20 +42,8 @@ check("繁简差异照样认",
       CoverFallbackRules.acceptsBaseCover(originalName: "煙火里的塵埃 0.8x",
                                           candidateName: "烟火里的尘埃"))
 
-print("— 播放兜底（同一病根）")
-check("有尾巴才允许",
-      SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                           candidateName: "烟火里的尘埃"))
-check("没尾巴不许（守住原身份闸）",
-      !SameSongCrossResolver.variantAccepts(originalName: "晴天", candidateName: "晴天"))
-check("歌名对不上不许",
-      !SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                            candidateName: "烟火"))
-check("太短不许",
-      !SameSongCrossResolver.variantAccepts(originalName: "众 0.8x", candidateName: "众"))
-check("Live 版也认",
-      SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
-                                           candidateName: "烟火里的尘埃 (Live)"))
+print("— 变速条目的播放兜底已下线（老板改口径：这类歌一律不返回）")
+print("  （原来「拿原曲顶替 0.8x」那一档已删除，相关断言移到 r294 的过滤规则里）")
 
 print("\n结果：通过 \(pass) / 失败 \(fail.count)")
 if !fail.isEmpty {

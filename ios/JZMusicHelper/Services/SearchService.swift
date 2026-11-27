@@ -55,8 +55,12 @@ final class SearchService {
                             inner.cancelAll()
                             return first
                         }
+                        // 2026-11-27（老板）：上传者搬运的变速/剪辑垃圾音频一律不返回。
+                        // 这里是所有搜索结果的唯一出口（搜索页、猜你喜欢、热门兜底、跨平台补源）——
+                        // 在这一处滤掉，等于把所有下游都挡住了。
+                        let clean = JunkAudioRules.filter(songs)
                         return PlatformResult(
-                            platform: adapter.platform, songs: songs, error: nil,
+                            platform: adapter.platform, songs: clean, error: nil,
                             elapsedMs: Int(Date().timeIntervalSince(started) * 1000))
                     } catch {
                         let msg = (error as? APIError) == APIError.timeout

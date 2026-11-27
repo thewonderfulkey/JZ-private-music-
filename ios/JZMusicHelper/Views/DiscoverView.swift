@@ -243,6 +243,41 @@ struct DiscoverView: View {
                     }
                 }
             }
+
+            // 2026-11-27（发现页 2.0 Task 7）：歌单广场的第二条腿——网易歌单。
+            // 老板口径是"两家内容都要出现"，所以并列一行；点进去落到通用歌单页。
+            neteasePlaylistRow
+        }
+    }
+
+    /// 网易歌单那一行（有内容才渲染；失败就不出现，不给广场添噪音）
+    @ViewBuilder
+    private var neteasePlaylistRow: some View {
+        switch feed.neteasePlaylistState {
+        case .idle, .loading:
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: Tokens.Spacing.s) {
+                    ForEach(0..<3, id: \.self) { _ in NeteasePlaylistCardSkeleton() }
+                }
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+            }
+        case .failed:
+            EmptyView()
+        case .loaded:
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: Tokens.Spacing.s) {
+                    ForEach(feed.neteasePlaylists.prefix(8), id: \.id) { brief in
+                        NavigationLink {
+                            NeteasePlaylistView(playlistID: brief.id, fallbackTitle: brief.name)
+                        } label: {
+                            NeteasePlaylistCard(brief: brief)
+                        }
+                        .buttonStyle(.pressSubtle)
+                    }
+                }
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+                .padding(.vertical, 2)
+            }
         }
     }
 

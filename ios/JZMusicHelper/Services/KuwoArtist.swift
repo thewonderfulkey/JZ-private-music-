@@ -169,7 +169,8 @@ enum KuwoArtist {
         if let code = number(json["code"]), code != 200 { return nil }
         guard let data = json["data"] as? [String: Any] else { return nil }
         let list = data["list"] as? [[String: Any]] ?? []
-        let releases = list.compactMap(release(from:))
+        // 2026-11-27（老板）：歌手页也不返回上传者的变速/剪辑条目
+        let releases = JunkAudioRules.filterReleases(list.compactMap(release(from:)))
         guard !releases.isEmpty else { return nil }
         return SongsPage(total: number(data["total"]) ?? releases.count, items: releases)
     }

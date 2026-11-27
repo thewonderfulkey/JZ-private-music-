@@ -137,6 +137,7 @@
 		B000000000000000000000A4 /* LaunchGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A3 /* LaunchGate.swift */; };
 		B000000000000000000000A5 /* DiscoverLatestRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A4 /* DiscoverLatestRules.swift */; };
 		B000000000000000000000A7 /* CoverFallbackRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A6 /* CoverFallbackRules.swift */; };
+		B000000000000000000000A8 /* JunkAudioRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A7 /* JunkAudioRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -269,6 +270,7 @@
 		F000000000000000000000A3 /* LaunchGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchGate.swift; sourceTree = "<group>"; };
 		F000000000000000000000A4 /* DiscoverLatestRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverLatestRules.swift; sourceTree = "<group>"; };
 		F000000000000000000000A6 /* CoverFallbackRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverFallbackRules.swift; sourceTree = "<group>"; };
+		F000000000000000000000A7 /* JunkAudioRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JunkAudioRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -404,6 +406,7 @@
 				F000000000000000000000A3 /* LaunchGate.swift */,
 				F000000000000000000000A4 /* DiscoverLatestRules.swift */,
 				F000000000000000000000A6 /* CoverFallbackRules.swift */,
+				F000000000000000000000A7 /* JunkAudioRules.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -736,6 +739,7 @@
 				B000000000000000000000A4 /* LaunchGate.swift in Sources */,
 				B000000000000000000000A5 /* DiscoverLatestRules.swift in Sources */,
 				B000000000000000000000A7 /* CoverFallbackRules.swift in Sources */,
+				B000000000000000000000A8 /* JunkAudioRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

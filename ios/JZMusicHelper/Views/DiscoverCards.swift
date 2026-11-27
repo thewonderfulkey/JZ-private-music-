@@ -113,8 +113,55 @@ struct PlaylistCoverCard: View {
     }
 }
 
-/// 广场页双列卡：封面 + 角标 + 两行歌名 + 「104 首 · 创建者」
-struct PlaylistGridCard: View {
+/// 网易歌单卡（2026-11-27，歌单广场的第二条腿）
+///
+/// 与 `PlaylistCoverCard` 同一套版式（封面 + 两行名 + 张数），只是数据来自网易
+/// （`NeteasePlaylistBrief`），点进去落到通用歌单页 `NeteasePlaylistView`。
+struct NeteasePlaylistCard: View {
+
+    let brief: NeteasePlaylistBrief
+    var width: CGFloat = 132
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            RemoteArtwork(url: brief.cover ?? "", size: width)
+            Text(brief.name)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Text(brief.trackCount > 0 ? "\(brief.trackCount) 首" : "网易歌单")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+        .frame(width: width, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(brief.name)，\(brief.trackCount) 首")
+        .accessibilityHint("打开歌单")
+    }
+}
+
+/// 网易歌单骨架（与 `PlaylistCoverCard` 一样高，避免加载时跳一下）
+struct NeteasePlaylistCardSkeleton: View {
+
+    var width: CGFloat = 132
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous)
+                .fill(Tokens.Palette.paperElevated)
+                .frame(width: width, height: width)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Tokens.Palette.paperElevated)
+                .frame(width: width * 0.7, height: 12)
+            Spacer(minLength: 0)
+        }
+        .frame(width: width, alignment: .leading)
+        .accessibilityHidden(true)
+    }
+}
+
 
     let summary: KuwoPlaylist.Summary
 
