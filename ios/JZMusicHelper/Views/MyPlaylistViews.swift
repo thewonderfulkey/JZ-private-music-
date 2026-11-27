@@ -27,13 +27,6 @@ struct MyPlaylistCard: View {
     private var cardWidth: CGFloat { max(cardHeight * 3, 1) }
     private var panelWidth: CGFloat { max(cardWidth - cardHeight, 1) }
 
-    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
-    private var isNoMatch: Bool {
-        SongListRules.noMatch(totalCount: playlist?.songs.count ?? 0,
-                                 shownCount: visibleSongs.count,
-                                 query: search.committed)
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             artwork
@@ -254,6 +247,13 @@ struct MyPlaylistDetailView: View {
     /// 搜索过滤后的行（队列仍是整份歌单）
     private var visibleSongs: [Song] {
         SongListFilter.filter(playlist?.songs ?? [], query: search.committed)
+    }
+
+    /// 是否处于"搜了但没命中"（抽成小属性：避免超长表达式让编译器推断超时）
+    private var isNoMatch: Bool {
+        SongListRules.noMatch(totalCount: playlist?.songs.count ?? 0,
+                             shownCount: visibleSongs.count,
+                             query: search.committed)
     }
 
     var body: some View {
