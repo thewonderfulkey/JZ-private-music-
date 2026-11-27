@@ -97,6 +97,7 @@ jobs:
             ios/JZMusicHelper/Services/DiscoverLatestRules.swift \
             ios/JZMusicHelper/Services/CoverFallbackRules.swift \
             ios/JZMusicHelper/Services/JunkAudioRules.swift \
+            ios/JZMusicHelper/Services/SearchSuggestRules.swift \
             ios/JZMusicHelper/Services/RecognizeScore.swift \
             ios/JZMusicHelper/Services/FingerprintPCM.swift \
             ios/JZMusicHelper/Services/NeteaseRecognizer.swift \

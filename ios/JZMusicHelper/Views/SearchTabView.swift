@@ -31,6 +31,11 @@ struct SearchView: View {
     @State private var isLoadingMore = false
     @State private var canLoadMore = true
     @State private var seenKeys: Set<String> = []
+    // 2026-11-27（智能搜索 v1：输入联想）
+    @State private var suggestions: [Song] = []
+    @State private var suggestTask: Task<Void, Never>?
+    /// 当前结果对应的关键词（联想在"输入 != 已提交"时才盖住结果）
+    @State private var submittedKeyword = ""
     private let pageSize = 20
     /// 一屏结果最多累到这个数就不再往下翻（2026-11-21：真机上翻到近千行后崩，
     /// 列表太长时 SwiftUI 的布局/封面加载会把主线程压垮）
@@ -51,7 +56,11 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
-            content
+            if showsSuggestions {
+                suggestionList
+            } else {
+                content
+            }
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
         .navigationTitle("")
@@ -63,10 +72,88 @@ struct SearchView: View {
             try? await Task.sleep(nanoseconds: 300_000_000)
             if !Task.isCancelled { fieldFocused = true }
         }
-        .onDisappear { searchTask?.cancel() }
+        .onDisappear {
+            searchTask?.cancel()
+            suggestTask?.cancel()
+        }
         // App Intent（「搜索歌曲」快捷指令）把词塞进 router，这里消费掉
         .onChange(of: router.pendingSearch) { _, _ in consumePendingSearch() }
         .task { consumePendingSearch() }
+        // 2026-11-27（智能搜索第一版）：边打边联想——防抖 280ms，停下才发请求
+        .onChange(of: keyword) { _, _ in scheduleSuggest() }
+    }
+
+    // MARK: 搜索联想（智能搜索 v1）
+
+    /// 联想被点/被提交之前，一直盖在结果上面
+    private var showsSuggestions: Bool {
+        fieldFocused
+            && SearchSuggestRules.shouldSuggest(keyword)
+            && !suggestions.isEmpty
+            && trimmedKeyword != submittedKeyword
+    }
+
+    /// 防抖：每次输入都取消上一轮，停了 `debounceMs` 才真发请求
+    private func scheduleSuggest() {
+        suggestTask?.cancel()
+        let query = keyword
+        guard SearchSuggestRules.shouldSuggest(query) else {
+            suggestions = []
+            return
+        }
+        suggestTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(SearchSuggestRules.debounceMs) * 1_000_000)
+            guard !Task.isCancelled else { return }
+            let result = await SearchService.shared.suggest(keyword: query)
+            guard !Task.isCancelled else { return }
+            // 结果回来时用户可能已经改了输入：只接受"当前输入"的结果
+            guard query == keyword else { return }
+            suggestions = result
+        }
+    }
+
+    private var suggestionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions) { song in
+                Button {
+                    // 点一条 = 拿它当关键词直接搜（不是直接播放：用户可能还想看别的平台版本）
+                    keyword = song.name
+                    submittedKeyword = ""
+                    fieldFocused = false
+                    runSearch()
+                } label: {
+                    HStack(spacing: Tokens.Spacing.s) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.footnote)
+                            .foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(song.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            let sub = SearchSuggestRules.subtitle(for: song)
+                            if !sub.isEmpty {
+                                Text(sub)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.left")
+                            .font(.caption2)
+                            .foregroundStyle(.quaternary)
+                    }
+                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.rowPress)
+                .accessibilityLabel("搜索 \(song.name)")
+                Divider().padding(.leading, Tokens.Spacing.pageMargin)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: 搜索框
@@ -294,6 +381,9 @@ struct SearchView: View {
         let trimmed = trimmedKeyword
         guard !trimmed.isEmpty else { return }
         searchTask?.cancel()
+        suggestTask?.cancel()
+        suggestions = []
+        submittedKeyword = trimmed
         songs = []
         platformResults = []
         seenKeys = []

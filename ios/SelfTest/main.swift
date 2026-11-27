@@ -6949,7 +6949,48 @@ func r294JunkAudioAssertions() {
 }
 
 
-// MARK: - 汇总
+// MARK: 2026-11-27 智能搜索 v1：输入联想
+func r295SearchSuggestAssertions() {
+    section("搜索联想：多短才联想 / 去重 / 过滤垃圾")
+
+    check("中文 1 个字就联想（「晴」要能出《晴天》）", SearchSuggestRules.shouldSuggest("晴"))
+    check("英文 1 个字母不联想（噪音太多）", !SearchSuggestRules.shouldSuggest("a"))
+    check("英文 2 个字母才联想", SearchSuggestRules.shouldSuggest("ab"))
+    check("空格不算输入", !SearchSuggestRules.shouldSuggest("   "))
+    check("前后空格不影响判断", SearchSuggestRules.shouldSuggest("  晴天  "))
+    check("日文假名 1 个字也联想", SearchSuggestRules.shouldSuggest("あ"))
+
+    func s(_ p: MusicPlatform, _ name: String, _ singer: String, _ id: String) -> Song {
+        Song.make(platform: p, platformID: id, name: name, singer: singer, album: "",
+                  duration: 200, picURL: nil)
+    }
+
+    let pool = [
+        s(.kuwo, "晴天", "周杰伦", "k1"),
+        s(.qq, "晴天", "周杰伦", "q1"),
+        s(.qq, "晴天 (Live)", "周杰伦", "q2"),
+        s(.netease, "晴天 0.8x", "上传者", "n1"),
+        s(.qq, "七里香", "周杰伦", "q3"),
+    ]
+    let refined = SearchSuggestRules.refine(pool)
+    check("跨平台同曲只留一条",
+          refined.filter { $0.name == "晴天" }.count == 1,
+          "\(refined.map(\.name))")
+    check("Live 版是另一条，保留", refined.contains { $0.name == "晴天 (Live)" })
+    check("变速垃圾条目不出现在联想里", !refined.contains { $0.name.contains("0.8x") })
+    check("顺序保持（酷我先来先留）", refined.first?.platform == .kuwo)
+
+    let many = (1...20).map { s(.kuwo, "歌\($0)", "x", "m\($0)") }
+    check("联想最多 8 条", SearchSuggestRules.refine(many).count == 8)
+    check("limit 生效", SearchSuggestRules.refine(many, limit: 3).count == 3)
+    check("空输入给空", SearchSuggestRules.refine([]).isEmpty)
+
+    check("歌名里已含歌手就不重复显示副标题",
+          SearchSuggestRules.subtitle(for: s(.qq, "华晨宇 (烟火里的尘埃)", "华晨宇", "z1")) == "")
+    check("正常显示歌手",
+          SearchSuggestRules.subtitle(for: s(.qq, "晴天", "周杰伦", "z2")) == "周杰伦")
+    check("没有歌手就不显示", SearchSuggestRules.subtitle(for: s(.qq, "晴天", "", "z3")) == "")
+}
 
 
 // MARK: - 汇总
@@ -6971,6 +7012,7 @@ r290ArtistPagingAssertions()
 r292DiscoverTwoSourceAssertions()
 r293CoverFallbackAssertions()
 r294JunkAudioAssertions()
+r295SearchSuggestAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

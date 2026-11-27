@@ -93,6 +93,32 @@ final class SearchService {
         return (ranked, results)
     }
 
+    /// 搜索联想（"智能搜索"第一版，2026-11-27）
+    ///
+    /// 只用**两条最快的腿**（酷我文本搜索 + QQ soso），并发、各 2.5s 超时：
+    /// 联想是"边打边出"，四家全叫一遍等于每个键都在等最慢那家（酷狗/网易常 1~2s）。
+    /// 结果统一过 `SearchSuggestRules.refine`：垃圾上传条目过滤 + 跨平台去重 + 截断。
+    func suggest(keyword: String, limit: Int = SearchSuggestRules.maxSuggestions) async -> [Song] {
+        let key = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard SearchSuggestRules.shouldSuggest(key) else { return [] }
+        let fast: [SearchAdapter] = [KuwoSearchAdapter(), QQSearchAdapter()]
+        let bucketLimit = max(limit * 2, 10)
+        let collected = await withTaskGroup(of: [Song].self) { group in
+            for adapter in fast {
+                group.addTask {
+                    let songs = await withTimeoutOrNil(2.5) {
+                        try await adapter.search(keyword: key, limit: bucketLimit, page: 1)
+                    } ?? []
+                    return songs
+                }
+            }
+            var out: [Song] = []
+            for await songs in group { out.append(contentsOf: songs) }
+            return out
+        }
+        return SearchSuggestRules.refine(collected, limit: limit)
+    }
+
     /// 流式搜索（边到边显示；UI 用）
     func search(keyword: String, limit: Int = 20, page: Int = 1) -> AsyncStream<SearchEvent> {
         AsyncStream { continuation in
