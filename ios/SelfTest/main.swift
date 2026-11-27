@@ -3513,6 +3513,9 @@ check("起手有起势：前 160ms 还不到一半",
 check("起笔前先空一拍（把启动那 100~200ms 的呈现延迟藏起来）",
       SplashTimeline.startDelay > 0.05 && SplashTimeline.startDelay < 0.3,
       "startDelay=\(SplashTimeline.startDelay)")
+check("总时长有上限（放慢不等于拖沓：含空拍 ≤ 1.85s）",
+      SplashTimeline.total + SplashTimeline.startDelay <= 1.85,
+      "total=\(SplashTimeline.total) + delay=\(SplashTimeline.startDelay)")
 check("起手曲线两端速度都收住（smootherstep：f'(0)=f'(1)=0）",
       SplashTimeline.smootherstep(0) == 0
         && abs(SplashTimeline.smootherstep(1) - 1) < 1e-9
