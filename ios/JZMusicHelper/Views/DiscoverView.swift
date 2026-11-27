@@ -31,6 +31,8 @@ struct DiscoverView: View {
     @State private var showSearch = false
     /// 助眠页（push 进导航栈，不是全屏 cover）
     @State private var showSleep = false
+    /// 网易歌单那行：用户点过 ✕ 就不再显示（本次运行内）
+    @State private var hideNeteaseRow = false
     /// 轻提示（换一批之后的确认）
     @State private var toast: String?
     @State private var toastTask: Task<Void, Never>?
@@ -108,7 +110,7 @@ struct DiscoverView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task {
-                await loadEverything()
+                await loadEverythingStaged()
                 await squareFeed.probeNewestIfNeeded()
             }
         }
