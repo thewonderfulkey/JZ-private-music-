@@ -21,15 +21,24 @@ struct NeteasePlaylistView: View {
     @State private var page: NeteaseTrackPage?
     @State private var loading = false
     @State private var failed = false
+    /// 2026-11-27（老板）：本页搜索——只筛这一页的歌，不打网络
+    @State private var query = ""
+
+    /// 搜索过滤后的曲目（队列仍是整页，搜索只改显示）
+    private var visibleSongs: [Song] {
+        SongListFilter.filter(page?.songs ?? [], query: query)
+    }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0,
+                       pinnedViews: [.sectionHeaders]) {
+                // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
+                Section {
                 if let page, !page.songs.isEmpty {
-                    header(page)
-                    ForEach(Array(page.songs.enumerated()), id: \.element.id) { index, song in
+                    ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
-                            play(page.songs, at: index)
+                            play(page.songs, at: page.songs.firstIndex(of: song) ?? index)
                         } label: {
                             SongRow(song: song,
                                     showsFavorite: true,
@@ -58,6 +67,17 @@ struct NeteasePlaylistView: View {
                         Task { await load(force: true) }
                     }
                     .padding(.top, Tokens.Spacing.xl)
+                }
+                } header: {
+                    if let page, !page.songs.isEmpty {
+                        VStack(spacing: Tokens.Spacing.xs) {
+                            header(page)
+                            ListSearchField(text: $query)
+                                .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        }
+                        .padding(.bottom, Tokens.Spacing.xs)
+                        .background(Tokens.Palette.paper)
+                    }
                 }
             }
             .padding(.top, Tokens.Spacing.xs)

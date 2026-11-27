@@ -21,20 +21,29 @@ struct PlaylistDetailView: View {
     @State private var updatedAt: Date?
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
+    /// 2026-11-27（老板）：本页搜索——只筛"这一页的歌"，不打网络
+    @State private var query = ""
 
     private var songs: [Song] {
         detail?.releases.map(\.song) ?? []
     }
 
+    /// 搜索过滤后的行（空查询 = 全部；队列仍是整张歌单，搜索只改显示）
+    private var visibleReleases: [KuwoPlaylist.Release] {
+        SongListFilter.filterItems(detail?.releases ?? [], query: query) { $0.song }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    header
+                LazyVStack(alignment: .leading, spacing: 0,
+                           pinnedViews: [.sectionHeaders]) {
+                    // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
+                    Section {
                     if let detail {
-                        ForEach(Array(detail.releases.enumerated()), id: \.element.id) { index, release in
+                        ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
-                                play(songs, at: index)
+                                play(songs, at: songs.firstIndex(of: release.song) ?? index)
                             } label: {
                                 SongRow(song: release.song,
                                         showsFavorite: true,
@@ -66,6 +75,15 @@ struct PlaylistDetailView: View {
                         .padding(.top, Tokens.Spacing.xl)
                     }
                     MiniPlayerSpacer()
+                    } header: {
+                        VStack(spacing: Tokens.Spacing.xs) {
+                            header
+                            ListSearchField(text: $query)
+                                .padding(.horizontal, Tokens.Spacing.pageMargin)
+                        }
+                        .padding(.bottom, Tokens.Spacing.xs)
+                        .background(Tokens.Palette.paper)
+                    }
                 }
                 .padding(.top, Tokens.Spacing.xs)
                 .readableWidth()

@@ -47,9 +47,10 @@ struct FavoritesView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 0) {
-                            header
-                            ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
+                        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            // 2026-11-27（老板）：搜索框出现后滑动列表必须一直可见 → 整块头部吸顶
+                            Section {
+                                ForEach(Array(filteredFavorites.enumerated()), id: \.element.id) { index, song in
                                 Button {
                                     // 第三十九轮：让行高亮先铺满，再起播/弹悬浮栏/开播放页
                                     RowTap.afterHighlight {
@@ -88,6 +89,9 @@ struct FavoritesView: View {
                             }
                             // 迷你条是浮层：末尾让出它的高度，最后一条收藏不会被压住
                             MiniPlayerSpacer()
+                            } header: {
+                                stickyListHeader
+                            }
                         }
                         .readableWidth()
                         .scrollTargetLayout()
@@ -123,6 +127,25 @@ struct FavoritesView: View {
     }
 
     // MARK: 头部
+
+    /// 吸顶头部：页面标题块（含已有的播放全部/随机）+ 本页搜索框
+    /// 2026-11-27（老板）：搜索框是这一轮新增的，播放/随机沿用原有实现，不重复加。
+    private var stickyListHeader: some View {
+        VStack(spacing: Tokens.Spacing.xs) {
+            header
+            ListSearchField(text: $query)
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+            Text(SongListFilter.metaText(shown: filteredFavorites.count,
+                                           total: library.favorites.count, query: query))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        .padding(.bottom, Tokens.Spacing.xs)
+        .background(Tokens.Palette.paper)
+    }
+
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.s) {

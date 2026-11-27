@@ -165,6 +165,8 @@ struct SongMetadataEditor: View {
                 }
             }
             .overlay { if busy { ProgressView().controlSize(.large) } }
+            // 2026-11-27（老板）：Sheet 里点键盘以外任何地方也收键盘（Sheet 是独立呈现层，根视图手势盖不到）
+            .dismissKeyboardOnTap()
             .task(id: photo?.itemIdentifier) { await loadPickedPhoto() }
             .task { await loadFileTruth() }
             .onAppear {

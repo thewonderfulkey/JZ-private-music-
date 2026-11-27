@@ -235,18 +235,27 @@ struct MyPlaylistDetailView: View {
 
     /// 第四十四轮：「定位到正在播放」的状态
     @State private var locator = SongLocator()
+    /// 2026-11-27（老板）：本页搜索——只筛这份歌单，不打网络
+    @State private var query = ""
 
     private var playlist: ImportedPlaylist? { store.playlist(id: playlistID) }
+
+    /// 搜索过滤后的行（队列仍是整份歌单）
+    private var visibleSongs: [Song] {
+        SongListFilter.filter(playlist?.songs ?? [], query: query)
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0,
+                           pinnedViews: [.sectionHeaders]) {
+                    // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
+                    Section {
                     if let playlist {
-                        header(playlist)
-                        ForEach(Array(playlist.songs.enumerated()), id: \.element.id) { index, song in
+                        ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             Button {
-                                play(playlist.songs, at: index)
+                                play(playlist.songs, at: playlist.songs.firstIndex(of: song) ?? index)
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
@@ -273,6 +282,17 @@ struct MyPlaylistDetailView: View {
                                        systemImage: "music.note.list",
                                        description: "回设置里重新导入一次")
                             .padding(.top, Tokens.Spacing.xl)
+                    }
+                    } header: {
+                        if let playlist {
+                            VStack(spacing: Tokens.Spacing.xs) {
+                                header(playlist)
+                                ListSearchField(text: $query)
+                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
+                            }
+                            .padding(.bottom, Tokens.Spacing.xs)
+                            .background(Tokens.Palette.paper)
+                        }
                     }
                 }
                 .padding(.top, Tokens.Spacing.xs)

@@ -128,6 +128,7 @@
 		B000000000000000000000A1 /* DiscoverBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A0 /* DiscoverBanner.swift */; };
 		B000000000000000000000A2 /* NeteasePlaylistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A1 /* NeteasePlaylistView.swift */; };
 		B000000000000000000000A6 /* NeteaseChartSongsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A5 /* NeteaseChartSongsView.swift */; };
+		B000000000000000000000AD /* SongListHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AC /* SongListHeader.swift */; };
 		B00000000000000000000085 /* SleepPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000085 /* SleepPresetStore.swift */; };
 		B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009B /* DiscoverMergeRules.swift */; };
 		B0000000000000000000009D /* NeteaseDiscover.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009C /* NeteaseDiscover.swift */; };
@@ -140,6 +141,8 @@
 		B000000000000000000000A8 /* JunkAudioRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A7 /* JunkAudioRules.swift */; };
 		B000000000000000000000A9 /* SearchSuggestRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A8 /* SearchSuggestRules.swift */; };
 		B000000000000000000000AA /* ScrollPanGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A9 /* ScrollPanGuard.swift */; };
+		B000000000000000000000AB /* SongListFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AA /* SongListFilter.swift */; };
+		B000000000000000000000AC /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AB /* KeyboardDismiss.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -263,6 +266,7 @@
 		F000000000000000000000A0 /* DiscoverBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverBanner.swift; sourceTree = "<group>"; };
 		F000000000000000000000A1 /* NeteasePlaylistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteasePlaylistView.swift; sourceTree = "<group>"; };
 		F000000000000000000000A5 /* NeteaseChartSongsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseChartSongsView.swift; sourceTree = "<group>"; };
+		F000000000000000000000AC /* SongListHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongListHeader.swift; sourceTree = "<group>"; };
 		F00000000000000000000085 /* SleepPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepPresetStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000009B /* DiscoverMergeRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverMergeRules.swift; sourceTree = "<group>"; };
 		F0000000000000000000009C /* NeteaseDiscover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseDiscover.swift; sourceTree = "<group>"; };
@@ -275,6 +279,8 @@
 		F000000000000000000000A7 /* JunkAudioRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JunkAudioRules.swift; sourceTree = "<group>"; };
 		F000000000000000000000A8 /* SearchSuggestRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchSuggestRules.swift; sourceTree = "<group>"; };
 		F000000000000000000000A9 /* ScrollPanGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollPanGuard.swift; sourceTree = "<group>"; };
+		F000000000000000000000AA /* SongListFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongListFilter.swift; sourceTree = "<group>"; };
+		F000000000000000000000AB /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -413,6 +419,8 @@
 				F000000000000000000000A7 /* JunkAudioRules.swift */,
 				F000000000000000000000A8 /* SearchSuggestRules.swift */,
 				F000000000000000000000A9 /* ScrollPanGuard.swift */,
+				F000000000000000000000AA /* SongListFilter.swift */,
+				F000000000000000000000AB /* KeyboardDismiss.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -457,6 +465,7 @@
 				F000000000000000000000A0 /* DiscoverBanner.swift */,
 				F000000000000000000000A1 /* NeteasePlaylistView.swift */,
 				F000000000000000000000A5 /* NeteaseChartSongsView.swift */,
+				F000000000000000000000AC /* SongListHeader.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -736,6 +745,7 @@
 				B000000000000000000000A1 /* DiscoverBanner.swift in Sources */,
 				B000000000000000000000A2 /* NeteasePlaylistView.swift in Sources */,
 				B000000000000000000000A6 /* NeteaseChartSongsView.swift in Sources */,
+				B000000000000000000000AD /* SongListHeader.swift in Sources */,
 				B00000000000000000000085 /* SleepPresetStore.swift in Sources */,
 				B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */,
 				B0000000000000000000009D /* NeteaseDiscover.swift in Sources */,
@@ -748,6 +758,8 @@
 				B000000000000000000000A8 /* JunkAudioRules.swift in Sources */,
 				B000000000000000000000A9 /* SearchSuggestRules.swift in Sources */,
 				B000000000000000000000AA /* ScrollPanGuard.swift in Sources */,
+				B000000000000000000000AB /* SongListFilter.swift in Sources */,
+				B000000000000000000000AC /* KeyboardDismiss.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -886,7 +898,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 306;
+				CURRENT_PROJECT_VERSION = 307;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -895,7 +907,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.128;
+				MARKETING_VERSION = 2.4.129;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -910,7 +922,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 306;
+				CURRENT_PROJECT_VERSION = 307;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -919,7 +931,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.128;
+				MARKETING_VERSION = 2.4.129;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -933,7 +945,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 306;
+				CURRENT_PROJECT_VERSION = 307;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -942,7 +954,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.128;
+				MARKETING_VERSION = 2.4.129;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -957,7 +969,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 306;
+				CURRENT_PROJECT_VERSION = 307;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -966,7 +978,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.128;
+				MARKETING_VERSION = 2.4.129;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

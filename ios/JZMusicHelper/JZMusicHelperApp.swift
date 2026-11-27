@@ -102,6 +102,9 @@ struct JZMusicHelperApp: App {
                     .onChanged { _ in ScrollPanGuard.shared.begin() }
                     .onEnded { _ in ScrollPanGuard.shared.end() }
             )
+            // 2026-11-27（老板）：点键盘以外任何地方都收键盘。同样只旁听，不吞业务点击。
+            .simultaneousGesture(TapGesture().onEnded { KeyboardDismiss.dismiss() })
+            .onAppear { KeyboardDismiss.install() }
             // 下载前发现本地已有同一首：问一句（并存 / 覆盖 / 取消）
             .confirmationDialog(
                 downloadFlow.duplicatePrompt.map { "本地已有《\($0.song.name)》" } ?? "",

@@ -7007,6 +7007,40 @@ func r296PressFeedbackAssertions() {
 }
 
 
+// MARK: 2026-11-27 歌曲集合页本地搜索（歌单/收藏/下载头部三件套里的搜索）
+func r297SongListFilterAssertions() {
+    section("本页搜索：歌名/歌手/专辑任意命中")
+
+    func s(_ name: String, _ singer: String, _ album: String = "", _ id: String = "x") -> Song {
+        Song.make(platform: .kuwo, platformID: id, name: name, singer: singer, album: album,
+                  duration: 200, picURL: nil)
+    }
+    let pool = [s("晴天", "周杰伦", "叶惠美", "1"), s("稻香", "周杰伦", "魔杰座", "2"),
+                s("七里香", "周杰伦", "七里香", "3"), s("起风了", "买辣椒也用券", "", "4")]
+
+    check("空查询 = 全部", SongListFilter.filter(pool, query: "").count == 4)
+    check("空白查询 = 全部", SongListFilter.filter(pool, query: "   ").count == 4)
+    check("按歌名命中", SongListFilter.filter(pool, query: "晴").map(\.platformID) == ["1"])
+    check("按歌手命中（周杰伦 → 三首）",
+          SongListFilter.filter(pool, query: "周杰伦").count == 3)
+    check("按专辑命中（魔杰座 → 稻香）",
+          SongListFilter.filter(pool, query: "魔杰座").map(\.platformID) == ["2"])
+    check("没命中给空", SongListFilter.filter(pool, query: "不存在").isEmpty)
+    check("繁简都能搜（晴 / 晴 天 的写法差异）",
+          SongListFilter.matches(s("晴天 (Live)", "周杰伦"), query: "晴"))
+
+    check("计数文案：空查询写共 N 首",
+          SongListFilter.metaText(shown: 4, total: 4, query: "") == "共 4 首")
+    check("计数文案：有查询写搜到 x / N",
+          SongListFilter.metaText(shown: 1, total: 4, query: "晴") == "搜到 1 / 4 首")
+
+    // 包装类型（歌单条目）也走同一套
+    let releases = pool.map { KuwoPlaylist.Release(song: $0, releaseDate: "") }
+    check("filterItems 对歌单条目同样有效",
+          SongListFilter.filterItems(releases, query: "稻香") { $0.song }.count == 1)
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -7028,6 +7062,7 @@ r293CoverFallbackAssertions()
 r294JunkAudioAssertions()
 r295SearchSuggestAssertions()
 r296PressFeedbackAssertions()
+r297SongListFilterAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")
