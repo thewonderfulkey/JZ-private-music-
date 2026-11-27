@@ -63,7 +63,8 @@ struct ArtistDetailView: View {
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
                                 // 队列仍是这位歌手的全部歌（搜索只筛显示）
-                                play(songs, at: songs.firstIndex(of: release.song) ?? index)
+                                // 队列 = 当前可见（筛选后）列表；空查询时就是这位歌手的全部歌
+                                play(visibleReleases.map(\.song), at: index)
                             } label: {
                                 SongRow(song: release.song,
                                         showsFavorite: true,
@@ -144,10 +145,10 @@ struct ArtistDetailView: View {
             }
 
             PlayAllButtons(isEnabled: !(songs.isEmpty)) {
-                play(songs, at: 0)
+                play(visibleReleases.map(\.song), at: 0)
             } onShuffle: {
                 // 抽一首直接起播，不弹播放页（停在歌手页看底部悬浮条）
-                player.replaceQueue(songs, shuffle: true)
+                player.replaceQueue(visibleReleases.map(\.song), shuffle: true)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

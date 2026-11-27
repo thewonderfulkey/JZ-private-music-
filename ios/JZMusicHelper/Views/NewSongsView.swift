@@ -47,9 +47,8 @@ struct NewSongsView: View {
                     } else {
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
                             Button {
-                                // 队列仍是整页（搜索只筛显示）
-                                let all = releases.map(\.song)
-                                play(all, at: all.firstIndex(of: release.song) ?? index)
+                                // 队列 = 当前可见（筛选后）列表；空查询时就是整页
+                                play(visibleReleases.map(\.song), at: index)
                             } label: {
                                 SongRow(song: release.song,
                                         showsFavorite: true,
@@ -121,10 +120,10 @@ struct NewSongsView: View {
             }
             Spacer(minLength: 0)
             PlayAllButtons(isEnabled: !(releases.isEmpty)) {
-                play(releases.map(\.song), at: 0)
+                play(visibleReleases.map(\.song), at: 0)
             } onShuffle: {
                 // 抽一首直接起播，不弹播放页（停在每日新歌页看底部悬浮条）
-                player.replaceQueue(releases.map(\.song), shuffle: true)
+                player.replaceQueue(visibleReleases.map(\.song), shuffle: true)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

@@ -255,7 +255,8 @@ struct MyPlaylistDetailView: View {
                     if let playlist {
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                             Button {
-                                play(playlist.songs, at: playlist.songs.firstIndex(of: song) ?? index)
+                                // 队列 = 当前可见（筛选后）列表；空查询时就是整份歌单
+                                play(visibleSongs, at: index)
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
@@ -329,10 +330,10 @@ struct MyPlaylistDetailView: View {
             }
             Spacer(minLength: 0)
             PlayAllButtons(isEnabled: !(playlist.songs.isEmpty)) {
-                play(playlist.songs, at: 0)
+                play(visibleSongs, at: 0)
             } onShuffle: {
                 // 抽一首直接起播，不弹播放页（停在歌单首页看底部悬浮条）
-                player.replaceQueue(playlist.songs, shuffle: true)
+                player.replaceQueue(visibleSongs, shuffle: true)
             }
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)

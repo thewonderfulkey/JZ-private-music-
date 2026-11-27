@@ -45,8 +45,8 @@ struct ChartSongsView: View {
                             // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
                             // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
                             Button {
-                                // 队列仍是整榜（搜索只筛显示），索引映射回原榜
-                                play(page.songs, at: page.songs.firstIndex(of: song) ?? index)
+                                // 队列 = 当前可见（筛选后）列表；空查询时就是整榜
+                                play(visibleSongs, at: index)
                             } label: {
                                 SongRow(song: song,
                                         showsFavorite: true,
@@ -132,10 +132,10 @@ struct ChartSongsView: View {
                 }
                 Spacer(minLength: 0)
                 PlayAllButtons(isEnabled: !(page.songs.isEmpty)) {
-                    play(page.songs, at: 0)
+                    play(visibleSongs, at: 0)
                 } onShuffle: {
                     // 抽一首直接起播，不弹播放页（停在榜单页看底部悬浮条）
-                    player.replaceQueue(page.songs, shuffle: true)
+                    player.replaceQueue(visibleSongs, shuffle: true)
                 }
             }
         }

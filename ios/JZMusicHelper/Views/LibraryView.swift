@@ -168,11 +168,11 @@ struct FavoritesView: View {
                     // 语义核对过：原来"播放全部"= play(queue:startAt:0)+记录+开播放页，
                     // "随机"= replaceQueue(shuffle:true)，与其它页用 `PlayAllButtons` 的写法完全一致。
                     PlayAllButtons(isEnabled: !library.favorites.isEmpty) {
-                        player.play(queue: library.favorites, startAt: 0)
-                        library.recordPlayed(library.favorites[0])
+                        player.play(queue: filteredFavorites, startAt: 0)
+                        library.recordPlayed(filteredFavorites[0])
                         router.showPlayer = true
                     } onShuffle: {
-                        player.replaceQueue(library.favorites, shuffle: true)
+                        player.replaceQueue(filteredFavorites, shuffle: true)
                     }
                     .padding(.top, 2)
 

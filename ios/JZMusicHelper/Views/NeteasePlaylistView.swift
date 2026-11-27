@@ -38,7 +38,8 @@ struct NeteasePlaylistView: View {
                 if let page, !page.songs.isEmpty {
                     ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
                         Button {
-                            play(page.songs, at: page.songs.firstIndex(of: song) ?? index)
+                            // 队列 = 当前可见（筛选后）列表；空查询时就是整页
+                            play(visibleSongs, at: index)
                         } label: {
                             SongRow(song: song,
                                     showsFavorite: true,
@@ -109,9 +110,9 @@ struct NeteasePlaylistView: View {
                 }
                 Spacer(minLength: 0)
                 PlayAllButtons(isEnabled: !page.songs.isEmpty) {
-                    play(page.songs, at: 0)
+                    play(visibleSongs, at: 0)
                 } onShuffle: {
-                    player.replaceQueue(page.songs, shuffle: true)
+                    player.replaceQueue(visibleSongs, shuffle: true)
                 }
             }
         }
