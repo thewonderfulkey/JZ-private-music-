@@ -42,26 +42,7 @@ struct PlaylistDetailView: View {
                     Section {
                     if let detail {
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
-                            Button {
-                                // 队列 = 当前可见（筛选后）列表；空查询时就是整张歌单
-                                play(visibleReleases.map(\.song), at: index)
-                            } label: {
-                                SongRow(song: release.song,
-                                        showsFavorite: true,
-                                        isFavorite: library.isFavorite(release.song),
-                                        onFavorite: {
-                                            Haptics.favorite()
-                                            withAnimation(Tokens.Motion.favorite) {
-                                                library.toggleFavorite(release.song)
-                                            }
-                                        })
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            }
-                            .buttonStyle(.rowPress)
-                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                            .id(release.song.id)
-                            .locatedFlash(active: locator.isHighlighted(release.song))
-                            .accessibilityHint("点一下以整张歌单为队列播放")
+                            playlistRow(release, index: index)
                         }
                     } else if loading {
                         SkeletonRows(count: 8)
@@ -175,6 +156,27 @@ struct PlaylistDetailView: View {
             library.recordPlayed(songs[index])
             router.showPlayer = true
         }
+    }
+
+    private func playlistRow(_ release: KuwoPlaylist.Release, index: Int) -> some View {
+        Button {
+            play(visibleReleases.map(\.song), at: index)
+        } label: {
+            SongRow(song: release.song,
+                    showsFavorite: true,
+                    isFavorite: library.isFavorite(release.song),
+                    onFavorite: {
+                        Haptics.favorite()
+                        withAnimation(Tokens.Motion.favorite) {
+                            library.toggleFavorite(release.song)
+                        }
+                    })
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        .buttonStyle(.rowPress)
+        .id(release.song.id)
+        .locatedFlash(active: locator.isHighlighted(release.song))
+        .accessibilityHint("点一下以整张歌单为队列播放")
     }
 
     // MARK: 取数

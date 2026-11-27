@@ -650,8 +650,9 @@ struct DownloadsTabView: View {
             // 2026-11-27（老板）：搜索框要**滚动时常驻**，不能一滑就被原生搜索栏收走。
         // `.navigationBarDrawer(displayMode: .always)` 是系统自带的"常驻"模式——
         // 不另造输入框（本页原有防抖过滤/歌手筛选/首帧分批一概不动）。
-        .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑 / 文件名",
-                    placement: .navigationBarDrawer(displayMode: .always))
+        .searchable(text: $query,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "搜歌名 / 歌手 / 专辑 / 文件名")
             .toolbar {
                 // 导入/整理的三个点在**外层**（`body` 的 toolbar 里），两个分支共用。
                 ToolbarItemGroup(placement: .topBarTrailing) {

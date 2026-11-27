@@ -66,8 +66,9 @@ struct SongListHeader<Title: View>: View {
     var searchPlaceholder: String = "搜索本页歌曲、歌手、专辑"
     /// 过滤后还剩几首（0 且查询非空时给一句"本页没有匹配"的提示位，由页面决定要不要用）
     var shownCount: Int? = nil
-    let onPlayAll: () -> Void
-    let onShuffle: () -> Void
+    /// 2026-11-27：给默认值——`showsPlayAll: false` 的页面（按钮已在自己标题块里）不用再传。
+    var onPlayAll: () -> Void = {}
+    var onShuffle: () -> Void = {}
     @ViewBuilder var title: () -> Title
 
     var body: some View {

@@ -40,32 +40,7 @@ struct ChartSongsView: View {
                     Section {
                     if let page {
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
-                            // 第二十轮（老板："榜单页太丑、太细了"）：不再用 `DiscoverSongRow`（那是发现页
-                            // 的紧凑行，副行只有歌手、没有专辑/平台/时长），改回**全 App 统一行样式** `SongRow`：
-                            // 52pt 封面 + 歌名 + 歌手·专辑 + 平台胶囊 + 时长 + 收藏，行高 72。
-                            // 名次用 `leadingRank` 放在行首（前三名朱砂），与其它榜单口径一致。
-                            Button {
-                                // 队列 = 当前可见（筛选后）列表；空查询时就是整榜
-                                play(visibleSongs, at: index)
-                            } label: {
-                                SongRow(song: song,
-                                        showsFavorite: true,
-                                        isFavorite: library.isFavorite(song),
-                                        onFavorite: {
-                                            Haptics.favorite()
-                                            withAnimation(Tokens.Motion.favorite) {
-                                                library.toggleFavorite(song)
-                                            }
-                                        },
-                                        leadingRank: index + 1)
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            }
-                            .buttonStyle(.rowPress)
-                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                            .id(song.id)
-                            .locatedFlash(active: locator.isHighlighted(song))
-                            .accessibilityLabel("第 \(index + 1) 名，\(song.name)，\(song.singer)")
-                            .accessibilityHint("点一下以整榜为队列播放")
+                            chartRow(song, index: index)
                         }
                         // 迷你条是浮层：末尾让出高度（第五轮反馈 ⑨）
                         MiniPlayerSpacer()
@@ -114,6 +89,29 @@ struct ChartSongsView: View {
             Haptics.prepare()
             await load(force: false)
         }
+    }
+
+    private func chartRow(_ song: Song, index: Int) -> some View {
+        Button {
+            play(visibleSongs, at: index)
+        } label: {
+            SongRow(song: song,
+                    showsFavorite: true,
+                    isFavorite: library.isFavorite(song),
+                    onFavorite: {
+                        Haptics.favorite()
+                        withAnimation(Tokens.Motion.favorite) {
+                            library.toggleFavorite(song)
+                        }
+                    },
+                    leadingRank: index + 1)
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        .buttonStyle(.rowPress)
+        .id(song.id)
+        .locatedFlash(active: locator.isHighlighted(song))
+        .accessibilityLabel("第 \(index + 1) 名，\(song.name)，\(song.singer)")
+        .accessibilityHint("点一下以整榜为队列播放")
     }
 
     // MARK: 头部

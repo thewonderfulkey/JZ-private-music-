@@ -254,27 +254,7 @@ struct MyPlaylistDetailView: View {
                     Section {
                     if let playlist {
                         ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
-                            Button {
-                                // 队列 = 当前可见（筛选后）列表；空查询时就是整份歌单
-                                play(visibleSongs, at: index)
-                            } label: {
-                                SongRow(song: song,
-                                        showsFavorite: true,
-                                        isFavorite: library.isFavorite(song),
-                                        onFavorite: {
-                                            Haptics.favorite()
-                                            withAnimation(Tokens.Motion.favorite) {
-                                                library.toggleFavorite(song)
-                                            }
-                                        },
-                                        leadingRank: index + 1)
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            }
-                            .buttonStyle(.rowPress)
-                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                            .id(song.id)
-                            .locatedFlash(active: locator.isHighlighted(song))
-                            .accessibilityHint("点一下以整张歌单为队列播放")
+                            importedRow(song, index: index)
                         }
                         MiniPlayerSpacer()
                     } else {
@@ -345,6 +325,28 @@ struct MyPlaylistDetailView: View {
         var parts = ["\(playlist.songs.count) 首", playlist.platform.displayName]
         if !playlist.creator.isEmpty { parts.append(playlist.creator) }
         return parts.joined(separator: " · ")
+    }
+
+    private func importedRow(_ song: Song, index: Int) -> some View {
+        Button {
+            play(visibleSongs, at: index)
+        } label: {
+            SongRow(song: song,
+                    showsFavorite: true,
+                    isFavorite: library.isFavorite(song),
+                    onFavorite: {
+                        Haptics.favorite()
+                        withAnimation(Tokens.Motion.favorite) {
+                            library.toggleFavorite(song)
+                        }
+                    },
+                    leadingRank: index + 1)
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        .buttonStyle(.rowPress)
+        .id(song.id)
+        .locatedFlash(active: locator.isHighlighted(song))
+        .accessibilityHint("点一下以整张歌单为队列播放")
     }
 
     // MARK: 播放

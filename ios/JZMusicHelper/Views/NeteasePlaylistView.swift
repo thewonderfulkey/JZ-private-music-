@@ -33,51 +33,10 @@ struct NeteasePlaylistView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0,
                        pinnedViews: [.sectionHeaders]) {
-                // 2026-11-27（老板）：头部三件套——播放全部/随机（原有）+ 搜索（新加），整块吸顶
                 Section {
-                if let page, !page.songs.isEmpty {
-                    ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
-                        Button {
-                            // 队列 = 当前可见（筛选后）列表；空查询时就是整页
-                            play(visibleSongs, at: index)
-                        } label: {
-                            SongRow(song: song,
-                                    showsFavorite: true,
-                                    isFavorite: library.isFavorite(song),
-                                    onFavorite: {
-                                        Haptics.favorite()
-                                        withAnimation(Tokens.Motion.favorite) {
-                                            library.toggleFavorite(song)
-                                        }
-                                    },
-                                    leadingRank: index + 1)
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
-                        }
-                        .buttonStyle(.rowPress)
-                        .accessibilityLabel("第 \(index + 1) 首，\(song.name)，\(song.singer)")
-                    }
-                    MiniPlayerSpacer()
-                } else if loading {
-                    SkeletonRows(count: 10)
-                        .padding(.top, Tokens.Spacing.xs)
-                } else if failed {
-                    EmptyStateView(title: "这个歌单暂时取不到",
-                                   systemImage: "music.note.list",
-                                   description: "换个网络或稍后再试",
-                                   actionTitle: "重试") {
-                        Task { await load(force: true) }
-                    }
-                    .padding(.top, Tokens.Spacing.xl)
-                }
+                    sectionContent
                 } header: {
-                    if let page, !page.songs.isEmpty {
-                        SongListHeader(songCount: page.songs.count,
-                                       query: $query,
-                                       showsPlayAll: false,
-                                       shownCount: visibleSongs.count) {
-                            header(page)
-                        }
-                    }
+                    stickyHeader
                 }
             }
             .padding(.top, Tokens.Spacing.xs)
@@ -88,6 +47,58 @@ struct NeteasePlaylistView: View {
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load(force: false) }
+    }
+
+    // MARK: 列表与吸顶头部（拆成小函数：编译器不再卡在超长表达式上，2026-11-27 CI 教训）
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        if let page, !page.songs.isEmpty {
+            ForEach(Array(visibleSongs.enumerated()), id: \.element.id) { index, song in
+                Button {
+                    // 队列 = 当前可见（筛选后）列表；空查询时就是整页
+                    play(visibleSongs, at: index)
+                } label: {
+                    SongRow(song: song,
+                            showsFavorite: true,
+                            isFavorite: library.isFavorite(song),
+                            onFavorite: {
+                                Haptics.favorite()
+                                withAnimation(Tokens.Motion.favorite) {
+                                    library.toggleFavorite(song)
+                                }
+                            },
+                            leadingRank: index + 1)
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                }
+                .buttonStyle(.rowPress)
+                .accessibilityLabel("第 \(index + 1) 首，\(song.name)，\(song.singer)")
+            }
+            MiniPlayerSpacer()
+        } else if loading {
+            SkeletonRows(count: 10)
+                .padding(.top, Tokens.Spacing.xs)
+        } else if failed {
+            EmptyStateView(title: "这个歌单暂时取不到",
+                           systemImage: "music.note.list",
+                           description: "换个网络或稍后再试",
+                           actionTitle: "重试") {
+                Task { await load(force: true) }
+            }
+            .padding(.top, Tokens.Spacing.xl)
+        }
+    }
+
+    @ViewBuilder
+    private var stickyHeader: some View {
+        if let page, !page.songs.isEmpty {
+            SongListHeader(songCount: page.songs.count,
+                           query: $query,
+                           showsPlayAll: false,
+                           shownCount: visibleSongs.count) {
+                header(page)
+            }
+        }
     }
 
     private var navTitle: String {

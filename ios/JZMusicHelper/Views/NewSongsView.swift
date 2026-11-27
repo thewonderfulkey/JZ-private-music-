@@ -46,26 +46,7 @@ struct NewSongsView: View {
                         }
                     } else {
                         ForEach(Array(visibleReleases.enumerated()), id: \.element.id) { index, release in
-                            Button {
-                                // 队列 = 当前可见（筛选后）列表；空查询时就是整页
-                                play(visibleReleases.map(\.song), at: index)
-                            } label: {
-                                SongRow(song: release.song,
-                                        showsFavorite: true,
-                                        isFavorite: library.isFavorite(release.song),
-                                        onFavorite: {
-                                            Haptics.favorite()
-                                            withAnimation(Tokens.Motion.favorite) {
-                                                library.toggleFavorite(release.song)
-                                            }
-                                        })
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
-                            }
-                            .buttonStyle(.rowPress)
-                            // 第四十四轮：行 id 要让 ScrollViewReader 找得到
-                            .id(release.song.id)
-                            .locatedFlash(active: locator.isHighlighted(release.song))
-                            .accessibilityHint("点一下以这页新歌为队列播放")
+                            newSongRow(release, index: index)
                         }
                         // 迷你条是浮层：末尾让出高度
                         MiniPlayerSpacer()
@@ -128,6 +109,27 @@ struct NewSongsView: View {
         }
         .padding(.horizontal, Tokens.Spacing.pageMargin)
         .padding(.bottom, Tokens.Spacing.s)
+    }
+
+    private func newSongRow(_ release: KuwoPlaylist.Release, index: Int) -> some View {
+        Button {
+            play(visibleReleases.map(\.song), at: index)
+        } label: {
+            SongRow(song: release.song,
+                    showsFavorite: true,
+                    isFavorite: library.isFavorite(release.song),
+                    onFavorite: {
+                        Haptics.favorite()
+                        withAnimation(Tokens.Motion.favorite) {
+                            library.toggleFavorite(release.song)
+                        }
+                    })
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+        }
+        .buttonStyle(.rowPress)
+        .id(release.song.id)
+        .locatedFlash(active: locator.isHighlighted(release.song))
+        .accessibilityHint("点一下以这页新歌为队列播放")
     }
 
     /// 副行写清楚来源：这是酷我单平台的官方歌单，不冒充"四平台合并"；
