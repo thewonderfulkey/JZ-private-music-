@@ -76,13 +76,12 @@ struct PlaylistDetailView: View {
                     }
                     MiniPlayerSpacer()
                     } header: {
-                        VStack(spacing: Tokens.Spacing.xs) {
+                        SongListHeader(songCount: detail?.releases.count ?? 0,
+                                       query: $query,
+                                       showsPlayAll: false,
+                                       shownCount: visibleReleases.count) {
                             header
-                            ListSearchField(text: $query)
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
                         }
-                        .padding(.bottom, Tokens.Spacing.xs)
-                        .background(Tokens.Palette.paper)
                     }
                 }
                 .padding(.top, Tokens.Spacing.xs)

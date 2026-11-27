@@ -285,13 +285,12 @@ struct MyPlaylistDetailView: View {
                     }
                     } header: {
                         if let playlist {
-                            VStack(spacing: Tokens.Spacing.xs) {
+                            SongListHeader(songCount: playlist.songs.count,
+                                           query: $query,
+                                           showsPlayAll: false,
+                                           shownCount: visibleSongs.count) {
                                 header(playlist)
-                                ListSearchField(text: $query)
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
-                            .padding(.bottom, Tokens.Spacing.xs)
-                            .background(Tokens.Palette.paper)
                         }
                     }
                 }

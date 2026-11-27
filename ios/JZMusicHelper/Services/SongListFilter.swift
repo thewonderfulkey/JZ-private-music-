@@ -49,4 +49,12 @@ enum SongListFilter {
         if q.isEmpty { return "共 \(total) 首" }
         return "搜到 \(shown) / \(total) 首"
     }
+
+    /// 吸顶头部下面那行计数：**只有真的在筛选时才返回文案**（老板 2026-11-27：
+    /// 没搜索词时别显示，否则和页面头部的「162 首」重复）
+    static func filteredMetaText(shown: Int, total: Int, query: String) -> String? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        return "共 \(shown) 首（筛选后 · 全部 \(total) 首）"
+    }
 }

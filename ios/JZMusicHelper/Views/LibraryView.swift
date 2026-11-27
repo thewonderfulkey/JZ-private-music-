@@ -120,7 +120,6 @@ struct FavoritesView: View {
             }
         }
         .navigationTitle("我的收藏")
-        .searchable(text: $query, prompt: "搜歌名 / 歌手 / 专辑")
         .onAppear { library.refreshDuplicateGroups() }
         .sheet(isPresented: $showDuplicates) { DuplicateReviewSheet() }
         // 第四轮（老板反馈 ③）：设置已经单独占一个 Tab，这里的齿轮撤掉，只留一个入口。
@@ -128,22 +127,17 @@ struct FavoritesView: View {
 
     // MARK: 头部
 
-    /// 吸顶头部：页面标题块（含已有的播放全部/随机）+ 本页搜索框
-    /// 2026-11-27（老板）：搜索框是这一轮新增的，播放/随机沿用原有实现，不重复加。
+    /// 吸顶头部：页面标题块（含公共「播放全部/随机」）+ 本页搜索框 + 计数（仅筛选时出现）
+    /// 2026-11-27（老板）：这一层统一走 `SongListHeader`，不再手写；标题块里有 96pt 封面与
+    /// 「收藏即得」，属于本页特殊结构，由本页提供（`showsPlayAll: false`，按钮已在标题块里）。
     private var stickyListHeader: some View {
-        VStack(spacing: Tokens.Spacing.xs) {
+        SongListHeader(songCount: library.favorites.count,
+                       query: $query,
+                       showsPlayAll: false,
+                       searchPlaceholder: "搜歌名 / 歌手 / 专辑",
+                       shownCount: filteredFavorites.count) {
             header
-            ListSearchField(text: $query)
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
-            Text(SongListFilter.metaText(shown: filteredFavorites.count,
-                                           total: library.favorites.count, query: query))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Tokens.Spacing.pageMargin)
         }
-        .padding(.bottom, Tokens.Spacing.xs)
-        .background(Tokens.Palette.paper)
     }
 
 
@@ -170,34 +164,15 @@ struct FavoritesView: View {
                     Text("\(library.favorites.count) 首 · 收藏即得")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: Tokens.Spacing.s) {
-                        Button {
-                            guard !library.favorites.isEmpty else { return }
-                            player.play(queue: library.favorites, startAt: 0)
-                            library.recordPlayed(library.favorites[0])
-                            router.showPlayer = true
-                        } label: {
-                            Label("播放全部", systemImage: "play.fill")
-                                .font(.footnote.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 34)
-                                .background(Capsule().fill(Tokens.Palette.paperElevated))
-                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-                        }
-                        .buttonStyle(.press)
-
-                        Button {
-                            guard !library.favorites.isEmpty else { return }
-                            player.replaceQueue(library.favorites, shuffle: true)
-                        } label: {
-                            Label("随机", systemImage: "shuffle")
-                                .font(.footnote)
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 34)
-                                .background(Capsule().fill(Tokens.Palette.paperElevated))
-                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-                        }
-                        .buttonStyle(.press)
+                    // 2026-11-27（老板）：手写的一对键换成公共 `PlayAllButtons`。
+                    // 语义核对过：原来"播放全部"= play(queue:startAt:0)+记录+开播放页，
+                    // "随机"= replaceQueue(shuffle:true)，与其它页用 `PlayAllButtons` 的写法完全一致。
+                    PlayAllButtons(isEnabled: !library.favorites.isEmpty) {
+                        player.play(queue: library.favorites, startAt: 0)
+                        library.recordPlayed(library.favorites[0])
+                        router.showPlayer = true
+                    } onShuffle: {
+                        player.replaceQueue(library.favorites, shuffle: true)
                     }
                     .padding(.top, 2)
 

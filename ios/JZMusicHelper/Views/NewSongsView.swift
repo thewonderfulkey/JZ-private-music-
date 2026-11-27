@@ -73,13 +73,12 @@ struct NewSongsView: View {
                     }
                     } header: {
                         if !releases.isEmpty {
-                            VStack(spacing: Tokens.Spacing.xs) {
+                            SongListHeader(songCount: releases.count,
+                                           query: $query,
+                                           showsPlayAll: false,
+                                           shownCount: visibleReleases.count) {
                                 header
-                                ListSearchField(text: $query)
-                                    .padding(.horizontal, Tokens.Spacing.pageMargin)
                             }
-                            .padding(.bottom, Tokens.Spacing.xs)
-                            .background(Tokens.Palette.paper)
                         }
                     }
                 }

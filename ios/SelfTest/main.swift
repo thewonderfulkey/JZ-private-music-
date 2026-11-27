@@ -7031,6 +7031,13 @@ func r297SongListFilterAssertions() {
 
     check("计数文案：空查询写共 N 首",
           SongListFilter.metaText(shown: 4, total: 4, query: "") == "共 4 首")
+    check("无搜索词时计数行为空（不与页面头部重复）",
+          SongListFilter.filteredMetaText(shown: 4, total: 4, query: "") == nil
+            && SongListFilter.filteredMetaText(shown: 4, total: 4, query: "   ") == nil)
+    check("有搜索词时写「共 N 首（筛选后）」",
+          SongListFilter.filteredMetaText(shown: 1, total: 4, query: "晴")
+            == "共 1 首（筛选后 · 全部 4 首）",
+          SongListFilter.filteredMetaText(shown: 1, total: 4, query: "晴") ?? "nil")
     check("计数文案：有查询写搜到 x / N",
           SongListFilter.metaText(shown: 1, total: 4, query: "晴") == "搜到 1 / 4 首")
 

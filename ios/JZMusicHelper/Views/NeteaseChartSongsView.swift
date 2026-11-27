@@ -68,13 +68,12 @@ struct NeteaseChartSongsView: View {
                 }
                 } header: {
                     if let page, !page.songs.isEmpty {
-                        VStack(spacing: Tokens.Spacing.xs) {
+                        SongListHeader(songCount: page.songs.count,
+                                       query: $query,
+                                       showsPlayAll: false,
+                                       shownCount: visibleSongs.count) {
                             header(page)
-                            ListSearchField(text: $query)
-                                .padding(.horizontal, Tokens.Spacing.pageMargin)
                         }
-                        .padding(.bottom, Tokens.Spacing.xs)
-                        .background(Tokens.Palette.paper)
                     }
                 }
             }

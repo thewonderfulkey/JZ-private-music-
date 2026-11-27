@@ -86,8 +86,13 @@ struct SongListHeader<Title: View>: View {
 
             if showsSearch {
                 ListSearchField(text: $query, placeholder: searchPlaceholder)
-                if let shownCount {
-                    Text(SongListFilter.metaText(shown: shownCount, total: songCount, query: query))
+                // 2026-11-27（老板）：没搜索词时不显示计数行——页面标题块里已经有「N 首」，
+                // 再来一行「共 N 首」就是重复；只有筛选时才出现，并写明是筛选后的。
+                if let shownCount,
+                   let text = SongListFilter.filteredMetaText(shown: shownCount,
+                                                               total: songCount,
+                                                               query: query) {
+                    Text(text)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
