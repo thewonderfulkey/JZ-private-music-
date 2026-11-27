@@ -55,20 +55,32 @@ enum SplashTimeline {
     ///
     /// 2026-11-23（老板："开屏整个过程刚开始略显突兀，像是突然出现"）：
     /// 以前第一帧就是硬边墨迹 + 已经画了一截的弧，加上系统启动转场的推近，读起来就是"啪一下出现"。
-    /// 现在整个图标先柔化登场（0.24s），墨的落笔再从这一层里长出来。
-    static let entrance = Beat(start: 0.00, duration: 0.24)
-    /// 左耳罩弹入（spring 0.40 / 0.72，落位时约 0.62s 后完全静止）
-    /// 2026-11-22 三改：0.34 → **0.30** —— 落笔尾巴（easeOut 收尾）本来就爬得慢，
-    /// 耳罩早 40ms 进来正好压住那段"只有头梁边缘在挪"的 2 帧。
-    static let cupLeft = Beat(start: 0.30, duration: 0.62)
+    /// 现在整个图标先柔化登场，墨的落笔再从这一层里长出来。
+    ///
+    /// **2026-11-27（老板："刚开始耳机出现的太突兀了，不够丝滑"）**：
+    /// 逐条曲线量下来，问题不在"落笔"（那条 0.10s 只画 5%，本来就慢），而在这层**开场淡入**：
+    /// 旧曲线 `easeOut` 0.24s 前 64ms 就把不透明度推到 **61%**，而那时笔才画 2%——
+    /// 观感是"一整枚耳机幽灵先糊上屏幕"，不是"一笔一笔长出来"。
+    /// 现在换 `smootherstep` 0.34s：前 64ms 只到 5%，前 160ms 到 45%，起手有"起势"。
+    static let entrance = Beat(start: 0.00, duration: 0.34)
+    /// 左耳罩弹入（**2026-11-27 改软**：spring 0.40/0.72 → 0.52/0.86，去掉那下过冲）
+    ///
+    /// 旧参数弹簧一起手就是最大速度，耳罩是"啪一下贴上来"；新参数落位约 0.39s、几乎不过冲，
+    /// 读起来是"长出来"。起手也跟着后挪 0.04s：先让整枚图标浮出来，再长耳罩。
+    static let cupLeft = Beat(start: 0.34, duration: 0.62)
     /// 右耳罩比左边晚 0.06s：两只同时落会像"啪"一下，错开才像"戴"
-    static let cupRight = Beat(start: 0.36, duration: 0.62)
-    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.60 → 1.20
-    static let sound = Beat(start: 0.60, duration: 0.60)
+    static let cupRight = Beat(start: 0.40, duration: 0.62)
+    /// 出声：第一道朱砂弧（从头梁/耳罩外侧荡开），0.58 → 1.18
+    ///
+    /// **2026-11-27（老板："那 130ms 也一起修了"）**：这里原来是 0.60，而头梁 0.58 就画完了、
+    /// 耳罩也刚好落位——两拍之间出现一段 58ms 完全不动（旧曲线量出来是 130ms）。
+    /// 现在让声波**落笔一结束就起**（0.58），正好接掉那一段。
+    static let sound = Beat(start: 0.58, duration: 0.60)
     /// 第二道（更外圈）晚 0.14s 起：两拍错开，画面一直动到退场（1.04）接上
-    static let soundSecond = Beat(start: 0.80, duration: 0.40)
-    /// 图标轻顶（scale 1 → 1.045 → 1），拉满一整拍到 1.02s
-    static let thump = Beat(start: 0.66, duration: 0.36)
+    static let soundSecond = Beat(start: 0.80, duration: 0.38)
+    /// 图标轻顶（scale 1 → 1.045 → 1），拉到 0.98s
+    /// 2026-11-27：0.66 → **0.62**，与声波一起把"耳罩落位"之后的空档填满
+    static let thump = Beat(start: 0.62, duration: 0.36)
     /// 退场：纸底淡出、首页从 0.985 涨到 1。
     /// 2026-11-22 三改：1.10 → **1.04**（声波还在 20% 透明度的时就起淡出，接掉"退场前那 2 帧"）
     static let exit = Beat(start: 1.04, duration: 0.42)
@@ -119,9 +131,11 @@ enum SplashTimeline {
         }
         return Snapshot(
             band: bandCurve(bandDraw.progress(at: time)),
-            entrance: easeOut(entrance.progress(at: time)),
-            cupLeft: spring(elapsed: time - cupLeft.start),
-            cupRight: spring(elapsed: time - cupRight.start),
+            entrance: smootherstep(entrance.progress(at: time)),
+            cupLeft: spring(elapsed: time - cupLeft.start,
+                            response: cupSpringResponse, damping: cupSpringDamping),
+            cupRight: spring(elapsed: time - cupRight.start,
+                             response: cupSpringResponse, damping: cupSpringDamping),
             wave1: sound.progress(at: time),
             wave2: soundSecond.progress(at: time),
             thump: thumpCurve(at: time),
@@ -136,6 +150,26 @@ enum SplashTimeline {
     static func easeOut(_ v: Double) -> Double {
         let m = 1 - clamp01(v)
         return 1 - m * m * m
+    }
+
+    /// 首尾都收住的三次平滑（0 → 1）：f'(0) = f'(1) = 0。
+    ///
+    /// 开场淡入专用（2026-11-27）：`easeOut` 的起点是**最大速度**，第一帧就把图糊上来；
+    /// 这条两端速度都为 0，起点有"起势"、收尾也不再是硬停——这就是"丝滑"在数学上的样子。
+    static func smootherstep(_ v: Double) -> Double {
+        let t = clamp01(v)
+        return t * t * t * (t * (t * 6 - 15) + 10)
+    }
+
+    /// 耳罩弹簧参数（2026-11-27 从 0.40/0.72 改软）
+    /// 0.40/0.72 的过冲约 4%，肉眼就是"弹一下"；0.52/0.86 的过冲 <0.5%，落位更沉。
+    static let cupSpringResponse: Double = 0.52
+    static let cupSpringDamping: Double = 0.86
+
+    /// 耳罩在某一时刻的落位（供 CI 断言用同一份参数）
+    static func cupProgress(at time: Double, left: Bool) -> Double {
+        let start = left ? cupLeft.start : cupRight.start
+        return spring(elapsed: time - start, response: cupSpringResponse, damping: cupSpringDamping)
     }
 
     /// 落笔的曲线：**起步慢、收尾快**（`1.9t² − 0.9t³`）。

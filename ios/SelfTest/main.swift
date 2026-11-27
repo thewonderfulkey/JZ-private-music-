@@ -3495,6 +3495,36 @@ check("声波透明度整拍匀速淡出（旧版把 easeOut 放进分母，0.1s
 check("开屏全程不许停：最长静止窗 < 150ms",
       SplashTimeline.longestStillWindow() < 0.15,
       "still=\(SplashTimeline.longestStillWindow())s")
+
+// MARK: 2026-11-27（老板："刚开始耳机出现的太突兀了，不够丝滑" + "那 130ms 也一起修了"）
+//
+// 量出来的两件事：
+//   ① 起手不丝滑：旧的开场淡入是 easeOut 0.24s，前 64ms 就把不透明度推到 61%，
+//      而那时落笔才画 2% —— 看到的是一整枚耳机"幽灵"糊上来。改成 smootherstep 0.34s。
+//   ② 130ms 空档：头梁 0.58 画完、耳罩 0.96 落位、声波 0.60 才起，中间空了一段。
+//      现在声波提前到 0.58、轻顶提前到 0.62，空档从 58ms 降到 17ms（<1 帧）。
+// 下面五条把这两件事钉住，谁把曲线改回"一上来就全亮"或再留空档，CI 先红。
+check("起手丝滑：前 64ms 整体不透明度 ≤ 15%（旧口径 61%）",
+      SplashTimeline.snapshot(at: 0.064).entrance <= 0.15,
+      "entrance(0.064)=\(SplashTimeline.snapshot(at: 0.064).entrance)")
+check("起手有起势：前 160ms 还不到一半",
+      SplashTimeline.snapshot(at: 0.16).entrance < 0.5,
+      "entrance(0.16)=\(SplashTimeline.snapshot(at: 0.16).entrance)")
+check("起手曲线两端速度都收住（smootherstep：f'(0)=f'(1)=0）",
+      SplashTimeline.smootherstep(0) == 0
+        && abs(SplashTimeline.smootherstep(1) - 1) < 1e-9
+        && SplashTimeline.smootherstep(0.01) < 0.01
+        && SplashTimeline.smootherstep(0.99) > 0.99)
+check("耳罩不过冲：整片里最大落位 ≤ 1.02（旧参数会弹到 1.04）",
+      stride(from: 0.0, through: SplashTimeline.total, by: 0.005)
+        .map { SplashTimeline.cupProgress(at: $0, left: true) }.max()! <= 1.02,
+      "max=\(stride(from: 0.0, through: SplashTimeline.total, by: 0.005).map { SplashTimeline.cupProgress(at: $0, left: true) }.max()!)")
+check("130ms 空档已填：最长静止窗 < 50ms（<2 帧）",
+      SplashTimeline.longestStillWindow() < 0.05,
+      "still=\(SplashTimeline.longestStillWindow() * 1000)ms")
+check("落笔一画完就出声（不留缝）",
+      SplashTimeline.sound.start <= SplashTimeline.bandDraw.end + 0.001,
+      "sound=\(SplashTimeline.sound.start) bandEnd=\(SplashTimeline.bandDraw.end)")
 check("进度两端夹紧（不许越界，也不许倒流）",
       SplashTimeline.bandDraw.progress(at: -1) == 0
         && SplashTimeline.bandDraw.progress(at: 99) == 1
