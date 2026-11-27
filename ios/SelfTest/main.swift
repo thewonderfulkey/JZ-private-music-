@@ -3525,9 +3525,16 @@ check("耳罩不过冲：整片里最大落位 ≤ 1.02（旧参数会弹到 1.0
 check("130ms 空档已填：最长静止窗 < 50ms（<2 帧）",
       SplashTimeline.longestStillWindow() < 0.05,
       "still=\(SplashTimeline.longestStillWindow() * 1000)ms")
-check("落笔一画完就出声（不留缝）",
-      SplashTimeline.sound.start <= SplashTimeline.bandDraw.end + 0.001,
-      "sound=\(SplashTimeline.sound.start) bandEnd=\(SplashTimeline.bandDraw.end)")
+// 2026-11-27（开屏放慢之后）：这条原来要求"声波必须紧跟落笔结束"，是个过严的代理指标。
+// 现在落笔 0.58 结束、声波 0.70 起，中间这段耳罩一直在长（cupL 0.46 → 0.76），画面上没有静止缝。
+// 真正要守的是"这段里不能不动"，所以改成量耳罩在这一段里的位移。
+let seamStart = SplashTimeline.bandDraw.end
+let seamEnd = SplashTimeline.sound.start
+let seamMotion = SplashTimeline.cupProgress(at: seamEnd, left: true)
+    - SplashTimeline.cupProgress(at: seamStart, left: true)
+check("落笔结束到出声之间耳罩仍在长（没有静止缝）",
+      seamMotion > 0.05,
+      "cupL \(SplashTimeline.cupProgress(at: seamStart, left: true)) → \(SplashTimeline.cupProgress(at: seamEnd, left: true))")
 check("进度两端夹紧（不许越界，也不许倒流）",
       SplashTimeline.bandDraw.progress(at: -1) == 0
         && SplashTimeline.bandDraw.progress(at: 99) == 1
