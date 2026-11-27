@@ -36,12 +36,9 @@ struct ListSearchField: View {
                 .font(.subheadline)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                // 老板：键盘上要有「搜索」键，点了就执行搜索并收键盘
+                // 实时过滤（老板第二次口径）：每敲一下就走；「搜索」键只是顺手收键盘
                 .submitLabel(.search)
-                .onSubmit {
-                    state.submit()
-                    KeyboardDismiss.dismiss()
-                }
+                .onSubmit { KeyboardDismiss.dismiss() }
                 .accessibilityLabel(placeholder)
             if !state.typed.isEmpty || state.isFiltering {
                 Button {

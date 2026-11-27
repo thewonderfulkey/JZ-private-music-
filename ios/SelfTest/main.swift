@@ -7086,46 +7086,37 @@ func r298SongListChromeAssertions() {
 
 // MARK: 2026-11-27 老板纠正：搜索必须是"提交式"，且空结果不是死路
 func r299ListSearchStateAssertions() {
-    section("输入不触发过滤 / 回车才过滤 / 清除回全量")
+    section("实时过滤：输入即筛、永远能清除、空结果搜索框仍在")
 
-    let pool = [Song.make(platform: .kuwo, platformID: "1", name: "晴天", singer: "周杰伦",
-                          album: "叶惠美", duration: 200, picURL: nil),
-                Song.make(platform: .kuwo, platformID: "2", name: "稻香", singer: "周杰伦",
-                          album: "魔杰座", duration: 200, picURL: nil)]
+    func s(_ name: String, _ singer: String, _ id: String) -> Song {
+        Song.make(platform: .kuwo, platformID: id, name: name, singer: singer, album: "",
+                  duration: 200, picURL: nil)
+    }
+    let pool = [s("晴天", "周杰伦", "1"), s("稻香", "周杰伦", "2")]
 
     var st = ListSearchState()
-    check("初始：没有筛选", !st.isFiltering && st.committed.isEmpty)
+    check("初始无筛选", !st.isFiltering && st.committed.isEmpty)
 
-    // ① 输入但未提交 → 列表不变
-    st.typed = "zh"
-    check("刚敲了「zh」还没回车 → 不进入筛选", !st.isFiltering)
-    check("刚敲了「zh」还没回车 → 列表仍是全量",
-          SongListFilter.filter(pool, query: st.committed).count == pool.count)
-
-    // ② 回车后才过滤
-    st.submit()
-    check("回车之后 → 进入筛选", st.isFiltering && st.committed == "zh")
-    check("回车之后 → 列表按关键词过滤（zh 无命中 = 空）",
-          SongListFilter.filter(pool, query: st.committed).isEmpty)
-
-    // ③ 空结果时搜索框仍在（由 SongListRules 保证头部常驻）
-    check("空结果 → 头部/搜索框仍要存在（可清除）",
+    // ① 实时（老板最终口径：不要提交式）
+    st.typed = "zzz"
+    check("① 敲 zzz → 实时进入筛选（不用回车）", st.isFiltering && st.committed == "zzz")
+    check("① 敲 zzz → 列表实时为空", SongListFilter.filter(pool, query: st.committed).isEmpty)
+    check("① 空结果时头部/搜索框仍在",
           SongListRules.showsChrome(totalCount: pool.count)
-            && SongListRules.noMatch(totalCount: pool.count,
-                                     shownCount: 0, query: st.committed))
+            && SongListRules.noMatch(totalCount: pool.count, shownCount: 0, query: st.committed))
 
-    // ④ 清除后恢复全量
+    // ② 清除 → 恢复全量（本次 bug 的核心：任何情况下都能一键回到全量）
     st.clear()
-    check("清除后 → 输入框和关键词都空", st.typed.isEmpty && st.committed.isEmpty)
-    check("清除后 → 列表恢复全量",
-          SongListFilter.filter(pool, query: st.committed).count == pool.count)
+    check("② 清除后 → 输入框与过滤都空", st.typed.isEmpty && st.committed.isEmpty)
+    check("② 清除后 → 恢复全量", SongListFilter.filter(pool, query: st.committed).count == 2)
 
-    // 再验一个真实命中的关键词（回车后应只剩 1 首）
-    st.typed = "稻香"
-    st.submit()
-    check("回车「稻香」→ 只剩 1 首", SongListFilter.filter(pool, query: st.committed).count == 1)
+    // 实时命中：边打边缩
+    st.typed = "稻"
+    check("实时「稻」→ 只剩 1 首", SongListFilter.filter(pool, query: st.committed).count == 1)
+
+    // ③ 有结果时滚动仍可见（吸顶由 pinnedViews 保证；规则层面 = 头部常驻）
+    check("③ 有结果时头部/搜索框显示", SongListRules.showsChrome(totalCount: pool.count))
 }
-
 
 // MARK: - 汇总
 

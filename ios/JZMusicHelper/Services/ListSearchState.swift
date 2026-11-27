@@ -1,40 +1,36 @@
 import Foundation
 
-// MARK: - 本页搜索的两段式状态（2026-11-27 老板纠正后重做）
+// MARK: - 本页搜索状态（2026-11-27 老板第二次纠正后定稿：**实时过滤**）
 //
-// 老板口径：**「zh」还没敲完、回车还没按，列表就被清空了**——不对。
-// 正确行为是：输入过程中**只改文字、不过滤**；按键盘上的「搜索/回车」才把关键词应用到列表。
+// 老板口径（最终版，覆盖"提交式"那版）：
+//   · **保持实时过滤**——边打边筛，不要按回车才搜；
+//   · 但**不能卡死**：搜索框常驻（吸顶）、自带清除入口、空结果只在列表区提示，
+//     任何情况下都能一键回到全量；
+//   · 切 Tab / 返回再进来不残留上次关键词（页面 `.onDisappear { search.clear() }`）。
 //
-// 所以搜索词有两份：
-//   · `typed`     —— 输入框里正在打的字（每敲一下就变，但**不影响列表**）
-//   · `committed` —— 已经按过回车的关键词（列表只认这一份）
-// 列表过滤、计数行、"没匹配"提示、播放范围，全部只看 `committed`。
-//
-// 「空结果不是死路」也靠这里保证：`clear()` 会同时清掉两份，
-// 输入框（常驻在头部）里那行字也一并清空，列表立刻回到全量。
-//
-// 放在 Services 层（纯 Foundation）而不是视图文件里：这样 CI 能直接断言它。
+// 为什么还留 `committed` 这个名字：各页面的过滤/计数/播放范围都写的是
+// `search.committed`，这里让它**永远等于正在输入的文字**，于是语义变回实时，
+// 而页面代码一行都不用改（少改一处就少一次编译风险）。
+// `submit()` 保留为空实现：键盘「搜索」键仍可点，只是不再需要它才生效。
 
 struct ListSearchState: Equatable {
 
-    /// 输入框里正在打的字（实时变，不过滤）
+    /// 输入框里正在打的字——**就是过滤依据**（实时）
     var typed: String = ""
-    /// 已提交（回车/搜索键）的关键词——列表只认它
-    var committed: String = ""
+
+    /// 兼容旧调用名：始终等于 `typed`，所以过滤是实时的
+    var committed: String { typed }
 
     /// 现在是否处于"筛选生效"状态
     var isFiltering: Bool {
-        !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// 回车 / 点键盘「搜索」：把正在打的字变成生效关键词
-    mutating func submit() {
-        committed = typed
-    }
+    /// 键盘「搜索」键：实时模式下无事可做（保留接口，避免改所有页面）
+    mutating func submit() {}
 
-    /// 清除：输入框和生效关键词一起清空（空状态里的「清除搜索」走这里）
+    /// 清除：输入框与过滤一起清空 → 立刻回到全量
     mutating func clear() {
         typed = ""
-        committed = ""
     }
 }
