@@ -127,6 +127,7 @@
 		B00000000000000000000084 /* DiscoverSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000084 /* DiscoverSidebar.swift */; };
 		B000000000000000000000A1 /* DiscoverBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A0 /* DiscoverBanner.swift */; };
 		B000000000000000000000A2 /* NeteasePlaylistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A1 /* NeteasePlaylistView.swift */; };
+		B000000000000000000000A6 /* NeteaseChartSongsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A5 /* NeteaseChartSongsView.swift */; };
 		B00000000000000000000085 /* SleepPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000085 /* SleepPresetStore.swift */; };
 		B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009B /* DiscoverMergeRules.swift */; };
 		B0000000000000000000009D /* NeteaseDiscover.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009C /* NeteaseDiscover.swift */; };
@@ -134,6 +135,8 @@
 		B000000000000000000000A0 /* BannerRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000009F /* BannerRules.swift */; };
 		B000000000000000000000A3 /* ArtistPaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A2 /* ArtistPaging.swift */; };
 		B000000000000000000000A4 /* LaunchGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A3 /* LaunchGate.swift */; };
+		B000000000000000000000A5 /* DiscoverLatestRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A4 /* DiscoverLatestRules.swift */; };
+		B000000000000000000000A7 /* CoverFallbackRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000A6 /* CoverFallbackRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -256,6 +259,7 @@
 		F00000000000000000000084 /* DiscoverSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverSidebar.swift; sourceTree = "<group>"; };
 		F000000000000000000000A0 /* DiscoverBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverBanner.swift; sourceTree = "<group>"; };
 		F000000000000000000000A1 /* NeteasePlaylistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteasePlaylistView.swift; sourceTree = "<group>"; };
+		F000000000000000000000A5 /* NeteaseChartSongsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseChartSongsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000085 /* SleepPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepPresetStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000009B /* DiscoverMergeRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverMergeRules.swift; sourceTree = "<group>"; };
 		F0000000000000000000009C /* NeteaseDiscover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseDiscover.swift; sourceTree = "<group>"; };
@@ -263,6 +267,8 @@
 		F0000000000000000000009F /* BannerRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BannerRules.swift; sourceTree = "<group>"; };
 		F000000000000000000000A2 /* ArtistPaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistPaging.swift; sourceTree = "<group>"; };
 		F000000000000000000000A3 /* LaunchGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchGate.swift; sourceTree = "<group>"; };
+		F000000000000000000000A4 /* DiscoverLatestRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverLatestRules.swift; sourceTree = "<group>"; };
+		F000000000000000000000A6 /* CoverFallbackRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverFallbackRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -396,6 +402,8 @@
 				F0000000000000000000009F /* BannerRules.swift */,
 				F000000000000000000000A2 /* ArtistPaging.swift */,
 				F000000000000000000000A3 /* LaunchGate.swift */,
+				F000000000000000000000A4 /* DiscoverLatestRules.swift */,
+				F000000000000000000000A6 /* CoverFallbackRules.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -439,6 +447,7 @@
 				F00000000000000000000084 /* DiscoverSidebar.swift */,
 				F000000000000000000000A0 /* DiscoverBanner.swift */,
 				F000000000000000000000A1 /* NeteasePlaylistView.swift */,
+				F000000000000000000000A5 /* NeteaseChartSongsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -717,6 +726,7 @@
 				B00000000000000000000084 /* DiscoverSidebar.swift in Sources */,
 				B000000000000000000000A1 /* DiscoverBanner.swift in Sources */,
 				B000000000000000000000A2 /* NeteasePlaylistView.swift in Sources */,
+				B000000000000000000000A6 /* NeteaseChartSongsView.swift in Sources */,
 				B00000000000000000000085 /* SleepPresetStore.swift in Sources */,
 				B0000000000000000000009C /* DiscoverMergeRules.swift in Sources */,
 				B0000000000000000000009D /* NeteaseDiscover.swift in Sources */,
@@ -724,6 +734,8 @@
 				B000000000000000000000A0 /* BannerRules.swift in Sources */,
 				B000000000000000000000A3 /* ArtistPaging.swift in Sources */,
 				B000000000000000000000A4 /* LaunchGate.swift in Sources */,
+				B000000000000000000000A5 /* DiscoverLatestRules.swift in Sources */,
+				B000000000000000000000A7 /* CoverFallbackRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

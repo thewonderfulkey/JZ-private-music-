@@ -114,6 +114,16 @@ actor CoverResolver {
                     url = cand
                 }
             }
+            // ⑤ 原曲封面兜底（2026-11-27 老板截屏：《烟火里的尘埃 0.8x》/「你是我的救赎」灰封面）
+            //    变速/改编/上传者版本的歌手与原曲永远不同，前四级要求"歌手有交集"必然全灭；
+            //    这一档只要求"原曲歌名键相等"，拿同一首歌的官方封面，见 `CoverFallbackRules`。
+            if url == nil {
+                if let cand = await Self.lookupQQCoverByBaseTitle(song: song, limit: limit,
+                                                                 timeout: timeout),
+                   await !self.isDead(cand, key: key) {
+                    url = cand
+                }
+            }
             await self.release()
             if let url {
                 await self.store(url, for: key)
@@ -195,6 +205,26 @@ actor CoverResolver {
             guard let pic = candidate.picURL, !pic.isEmpty else { continue }
             if isStrictMatch(name: song.name, singer: song.singer,
                              candidateName: candidate.name, candidateSinger: candidate.singer) {
+                return pic
+            }
+        }
+        return nil
+    }
+
+    /// 最后一档：用**原曲歌名**（削掉变速/版本尾巴）再搜一次 QQ，只认歌名键相等。
+    ///
+    /// 只在前面四级全空时才调用；不要求歌手对得上（这一档就是给"改编/变速/上传者"版本用的）。
+    static func lookupQQCoverByBaseTitle(song: Song, limit: Int = 10,
+                                        timeout: TimeInterval = 5) async -> String? {
+        let base = CoverFallbackRules.baseTitle(song.name)
+        guard !base.isEmpty, base != song.name else { return nil }
+        let candidates = await withTimeoutOrNil(timeout) {
+            try await QQSearchAdapter().search(keyword: base, limit: limit)
+        } ?? []
+        for candidate in candidates {
+            guard let pic = candidate.picURL, !pic.isEmpty else { continue }
+            if CoverFallbackRules.acceptsBaseCover(originalName: song.name,
+                                                   candidateName: candidate.name) {
                 return pic
             }
         }

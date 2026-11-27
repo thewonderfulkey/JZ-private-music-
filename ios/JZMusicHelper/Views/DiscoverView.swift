@@ -50,6 +50,8 @@ struct DiscoverView: View {
                 newSongsSection
                 guessSection
                 hotSection
+                // 发现页 2.0：热门音乐的第二行（网易官方热歌榜，与酷我榜并列）
+                neteaseHotSection
                 // 第三十五轮（老板）：歌单广场放到最下面
                 squareSection
                 // 迷你播放条是浮层（第五轮反馈 ⑨：它会压住最后一条），末尾显式让出高度
@@ -407,7 +409,7 @@ struct DiscoverView: View {
     /// 标题左边那叠圆头像（网易云是"你关注的艺人"，我们取前三首的封面）
     private var newSongsAvatars: some View {
         HStack(spacing: -8) {
-            ForEach(feed.newReleases.prefix(3)) { release in
+            ForEach(newSongs.prefix(3)) { release in
                 SongArtwork(song: release.song, size: 22, radius: 11)
                     .overlay(Circle().strokeBorder(Tokens.Palette.paper, lineWidth: 1.5))
             }
@@ -431,8 +433,11 @@ struct DiscoverView: View {
     }
 
     /// 模块里这一排：接口一页 100 首，只露前 12 张卡
+    ///
+    /// 2026-11-27（发现页 2.0 Task 7）：这里是**酷我 + 网易交替合并**的结果
+    /// （酷我「每日最新单曲推荐」+ 网易「新歌榜」），去重与交替顺序在 `DiscoverLatestRules`。
     private var newSongs: [KuwoPlaylist.Release] {
-        Array(feed.newReleases.prefix(KuwoPlaylist.moduleCards))
+        Array(feed.latestReleases.prefix(KuwoPlaylist.moduleCards))
     }
 
     // MARK: 猜你喜欢（反馈 ②：三行一页的列表卡）
@@ -551,6 +556,54 @@ struct DiscoverView: View {
     private var hotMeta: String {
         guard feed.hotState == .loaded else { return "每日更新" }
         return feed.hotFromChart ? "酷我热歌榜 · 每日更新" : "四平台合并 · 每日更新"
+    }
+
+    // MARK: 网易热歌榜（发现页 2.0 Task 7：热门音乐的第二行，与酷我榜并列）
+    //
+    // 为什么单独一块而不是把两个榜都塞进「热门音乐」：老板认过的是原来那块版式
+    // （3 行一页、7 页），塞两遍会把模块撑成两倍高；并列成"第二行独立模块"更清楚，
+    // 副标题也说实话（这是网易官方榜，不是四平台合并）。
+    private var neteaseHotSection: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: Tokens.Spacing.xs) {
+                Text("网易热歌榜")
+                    .font(FontRole.sectionTitle)
+                Text("每日更新")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if !feed.neteaseHot.isEmpty {
+                    NavigationLink("查看全部") { NeteaseChartSongsView() }
+                        .font(.footnote)
+                        .foregroundStyle(Tokens.Palette.vermilion)
+                }
+            }
+            .padding(.horizontal, Tokens.Spacing.pageMargin)
+
+            Group {
+                switch feed.neteaseHotState {
+                case .idle, .loading:
+                    SkeletonRows(count: 3)
+                case .failed:
+                    retryBlock("网易热歌榜暂时取不到，稍后再试") {
+                        Task { await feed.refreshNeteaseHot() }
+                    }
+                case .loaded:
+                    songListCard(count: min(feed.neteaseHot.count, DiscoverSourceIDs.hotRowLimit)) { index in
+                        let song = feed.neteaseHot[index]
+                        Button {
+                            play(Array(feed.neteaseHot.prefix(DiscoverSourceIDs.hotRowLimit)), at: index)
+                        } label: {
+                            DiscoverSongRow(song: song,
+                                            reason: song.singer,
+                                            showReason: false,
+                                            rank: index + 1)
+                        }
+                        .buttonStyle(.press)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: 卡片外壳

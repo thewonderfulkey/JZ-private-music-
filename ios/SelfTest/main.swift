@@ -6792,6 +6792,121 @@ func r290ArtistPagingAssertions() {
 }
 
 
+// MARK: 2026-11-27 发现页双源并列（热门第二行 / 最新单曲合并）
+func r292DiscoverTwoSourceAssertions() {
+    section("发现页双源：最新单曲交替合并 + 网易榜 id")
+
+    check("网易两个榜 id 是实测值",
+          DiscoverSourceIDs.neteaseHotChartID == "3778678"
+            && DiscoverSourceIDs.neteaseNewChartID == "3779629")
+    check("模块露出的条数是固定值（21 / 12）",
+          DiscoverSourceIDs.hotRowLimit == 21 && DiscoverSourceIDs.latestRowLimit == 12)
+
+    func rel(_ p: MusicPlatform, _ name: String, _ singer: String, _ id: String,
+             date: String = "") -> KuwoPlaylist.Release {
+        KuwoPlaylist.Release(song: Song.make(platform: p, platformID: id, name: name,
+                                             singer: singer, album: "", duration: 200,
+                                             picURL: nil),
+                             releaseDate: date)
+    }
+
+    let kuwo = [rel(.kuwo, "晴天", "周杰伦", "k1", date: "2026-11-26"),
+                rel(.kuwo, "七里香", "周杰伦", "k2", date: "2026-11-25")]
+    let netease = [Song.make(platform: .netease, platformID: "n1", name: "稻香", singer: "周杰伦",
+                             album: "", duration: 223, picURL: nil),
+                   Song.make(platform: .netease, platformID: "n2", name: "青花瓷", singer: "周杰伦",
+                             album: "", duration: 238, picURL: nil)]
+
+    let row = DiscoverLatestRules.latestRow(kuwo: kuwo, netease: netease)
+    check("两家交替：A1,B1,A2,B2",
+          row.map(\.song.platformID) == ["k1", "n1", "k2", "n2"],
+          "\(row.map(\.song.platformID))")
+    check("酷我那几条保留发行日（卡片要显示 11-26）",
+          row.first?.releaseDate == "2026-11-26" && row.first?.shortDate == "11-26")
+    check("网易那条没有发行日就留空（UI 不显示日期）",
+          row.first(where: { $0.song.platform == .netease })?.releaseDate == "")
+
+    // 跨源重复：同一首两家都有 → 只留先出现的（酷我）
+    let dup = DiscoverLatestRules.latestRow(
+        kuwo: [rel(.kuwo, "晴天", "周杰伦", "k1")],
+        netease: [Song.make(platform: .netease, platformID: "n9", name: "晴天", singer: "周杰伦",
+                            album: "", duration: 269, picURL: nil)])
+    check("跨源同一首只留一条且保留酷我", dup.count == 1 && dup[0].song.platform == .kuwo)
+
+    check("一家为空也照常显示另一家",
+          DiscoverLatestRules.latestRow(kuwo: [], netease: netease).count == 2
+            && DiscoverLatestRules.latestRow(kuwo: kuwo, netease: []).count == 2)
+    check("两家都空 → 空（模块隐藏）",
+          DiscoverLatestRules.latestRow(kuwo: [], netease: []).isEmpty)
+    check("条数受上限约束",
+          DiscoverLatestRules.latestRow(kuwo: kuwo, netease: netease, limit: 3).count == 3)
+    check("limit 0 不崩", DiscoverLatestRules.latestRow(kuwo: kuwo, netease: netease, limit: 0).isEmpty)
+
+    let big = (1...40).map { Song.make(platform: .netease, platformID: "h\($0)", name: "歌\($0)",
+                                       singer: "x", album: "", duration: 200, picURL: nil) }
+    check("第二行最多 21 首", DiscoverLatestRules.hotRow(big).count == 21)
+    check("第二行不足 21 首时原样给", DiscoverLatestRules.hotRow(Array(big.prefix(5))).count == 5)
+}
+
+
+// MARK: 2026-11-27 封面兜底：变速/改编版本的"原曲封面"（老板截屏《烟火里的尘埃 0.8x》灰封面）
+func r293CoverFallbackAssertions() {
+    section("封面兜底：削掉变速尾巴，按原曲歌名找图")
+
+    check("0.8x 尾巴被削掉",
+          CoverFallbackRules.baseTitle("烟火里的尘埃 0.8x") == "烟火里的尘埃",
+          CoverFallbackRules.baseTitle("烟火里的尘埃 0.8x"))
+    check("括号里的 0.8x 也削掉",
+          CoverFallbackRules.baseTitle("烟火里的尘埃（0.8x）") == "烟火里的尘埃",
+          CoverFallbackRules.baseTitle("烟火里的尘埃（0.8x）"))
+    check("1.25x / 倍速 都认",
+          CoverFallbackRules.baseTitle("晴天 1.25x") == "晴天"
+            && CoverFallbackRules.baseTitle("晴天 0.8 倍速") == "晴天",
+          CoverFallbackRules.baseTitle("晴天 0.8 倍速"))
+    check("slowed / sped up 也认",
+          CoverFallbackRules.baseTitle("晴天 (slowed)") == "晴天"
+            && CoverFallbackRules.baseTitle("晴天 sped up") == "晴天")
+    check("dj版 / 伴奏 / 翻唱 也认",
+          CoverFallbackRules.baseTitle("晴天 dj版") == "晴天"
+            && CoverFallbackRules.baseTitle("晴天（伴奏）") == "晴天"
+            && CoverFallbackRules.baseTitle("晴天 翻唱") == "晴天")
+    check("没有尾巴的歌名原样返回", CoverFallbackRules.baseTitle("晴天") == "晴天")
+    check("整名就是一个标记 → 放弃兜底（别拿空名去搜）",
+          CoverFallbackRules.baseTitle("0.8x").isEmpty)
+
+    check("原曲封面可用：正文对得上就收（不要求歌手）",
+          CoverFallbackRules.acceptsBaseCover(originalName: "烟火里的尘埃 0.8x",
+                                              candidateName: "烟火里的尘埃"))
+    check("原曲封面可用：Live 版封面也收",
+          CoverFallbackRules.acceptsBaseCover(originalName: "烟火里的尘埃 0.8x",
+                                              candidateName: "烟火里的尘埃 (Live)"))
+    check("歌名键不同 → 不收（别贴错图）",
+          !CoverFallbackRules.acceptsBaseCover(originalName: "烟火里的尘埃 0.8x",
+                                               candidateName: "烟火"))
+    check("太短的歌名不兜底（撞名概率高）",
+          !CoverFallbackRules.acceptsBaseCover(originalName: "众 0.8x", candidateName: "众"))
+    check("繁简/空格差异照样认",
+          CoverFallbackRules.acceptsBaseCover(originalName: "煙火里的塵埃 0.8x",
+                                              candidateName: "烟火里的尘埃"))
+
+    // —— 同一病根的另一面：这类条目**播放**也会被跳过（老板："这首歌也被跳过了"）——
+    section("变速条目兜底：按原曲名找可播源")
+    check("有尾巴的条目才允许走这条兜底",
+          SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
+                                               candidateName: "烟火里的尘埃"))
+    check("没有尾巴的条目不许走（守住原来的身份闸）",
+          !SameSongCrossResolver.variantAccepts(originalName: "晴天", candidateName: "晴天"))
+    check("歌名对不上不许走",
+          !SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
+                                                candidateName: "烟火"))
+    check("太短的歌名不兜底",
+          !SameSongCrossResolver.variantAccepts(originalName: "众 0.8x", candidateName: "众"))
+    check("原曲的 Live 版也认（总比直接跳过强）",
+          SameSongCrossResolver.variantAccepts(originalName: "烟火里的尘埃 0.8x",
+                                               candidateName: "烟火里的尘埃 (Live)"))
+}
+
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -6808,6 +6923,8 @@ r286NeteaseTrackPageAssertions()
 r287TitleKeyIdentityAssertions()
 r288BannerRulesAssertions()
 r290ArtistPagingAssertions()
+r292DiscoverTwoSourceAssertions()
+r293CoverFallbackAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

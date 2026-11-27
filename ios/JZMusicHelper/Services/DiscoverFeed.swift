@@ -76,6 +76,21 @@ final class DiscoverFeed {
         !hotSongs.isEmpty || !newReleases.isEmpty || !banners.isEmpty || !guessSongs.isEmpty
     }
 
+    // MARK: 发现页 2.0：网易的两条榜（热门第二行 / 最新单曲的第二条腿）
+    //
+    // 老板口径：发现页不再单点依赖酷我。这里两条都是网易**官方榜**（匿名可拉、带真实时长）：
+    //   · 热歌榜 3778678 → 热门音乐第二行
+    //   · 新歌榜 3779629 → 并进"最新单曲"那一排（与酷我每日最新交替）
+    // 不放进 init 预载（开屏那一下不要再解码无关内容），等开屏退场后再读缓存/拉网络。
+    private(set) var neteaseHot: [Song] = []
+    private(set) var neteaseHotState: LoadState = .idle
+    private var neteaseHotDay: Int = -1
+    private(set) var neteaseNewSongs: [Song] = []
+    private(set) var neteaseNewState: LoadState = .idle
+    private var neteaseNewDay: Int = -1
+    private static let neteaseHotCacheKey = "discover_netease_hot_chart_v1"
+    private static let neteaseNewCacheKey = "discover_netease_new_chart_v1"
+
 
     private let defaults = UserDefaults.standard
     /// v2：热门从"种子词结果"换成"榜单优先"，旧缓存（v1）必须失效，否则当天还会显示旧的 21 首
@@ -159,16 +174,96 @@ final class DiscoverFeed {
         async let hot: Void = loadHotIfNeeded()
         async let fresh: Void = loadNewSongsIfNeeded()
         async let banner: Void = loadBannersIfNeeded()
-        _ = await (hot, fresh, banner)
+        async let nHot: Void = loadNeteaseHotIfNeeded()
+        async let nNew: Void = loadNeteaseNewIfNeeded()
+        _ = await (hot, fresh, banner, nHot, nNew)
     }
 
-    /// 下拉刷新：热门 / 最新单曲 / BANNER / 猜你喜欢 一起重取（都强制，不吃缓存）
+    /// 下拉刷新：热门 / 最新单曲 / BANNER / 网易两条榜 / 猜你喜欢 一起重取（都强制，不吃缓存）
     func refreshAll(recent: [Song]) async {
         async let hot: Void = refreshHot()
         async let fresh: Void = refreshNewSongs()
         async let banner: Void = refreshBanners()
+        async let nHot: Void = refreshNeteaseHot()
+        async let nNew: Void = refreshNeteaseNew()
         async let guess: Void = refreshGuess(recent: recent)
-        _ = await (hot, fresh, banner, guess)
+        _ = await (hot, fresh, banner, nHot, nNew, guess)
+    }
+
+    // MARK: 网易榜（热门第二行 / 最新单曲第二条腿）
+
+    /// 一小段缓存：这条榜属于哪一天 + 歌曲
+    private struct ChartCache: Codable {
+        let day: Int
+        let songs: [Song]
+    }
+
+    func loadNeteaseHotIfNeeded() async {
+        if neteaseHotState == .loading { return }
+        if neteaseHotDay == day, !neteaseHot.isEmpty { return }
+        if let cached = cachedChart(Self.neteaseHotCacheKey), !cached.songs.isEmpty {
+            neteaseHot = DiscoverLatestRules.hotRow(cached.songs)
+            neteaseHotState = .loaded
+            if cached.day == day { neteaseHotDay = day; return }
+        }
+        await refreshNeteaseHot()
+    }
+
+    func refreshNeteaseHot() async {
+        if neteaseHot.isEmpty { neteaseHotState = .loading }
+        if let page = await NeteaseDiscover.playlistDetail(id: DiscoverSourceIDs.neteaseHotChartID) {
+            let songs = DiscoverLatestRules.hotRow(page.songs)
+            if !songs.isEmpty {
+                neteaseHot = songs
+                neteaseHotDay = day
+                neteaseHotState = .loaded
+                saveChart(Self.neteaseHotCacheKey, songs: songs)
+                return
+            }
+        }
+        // 拉空不清空已有内容（网易挂了不该让今天的第二行突然消失）
+        neteaseHotState = neteaseHot.isEmpty ? .failed : .loaded
+    }
+
+    func loadNeteaseNewIfNeeded() async {
+        if neteaseNewState == .loading { return }
+        if neteaseNewDay == day, !neteaseNewSongs.isEmpty { return }
+        if let cached = cachedChart(Self.neteaseNewCacheKey), !cached.songs.isEmpty {
+            neteaseNewSongs = cached.songs
+            neteaseNewState = .loaded
+            if cached.day == day { neteaseNewDay = day; return }
+        }
+        await refreshNeteaseNew()
+    }
+
+    func refreshNeteaseNew() async {
+        if neteaseNewSongs.isEmpty { neteaseNewState = .loading }
+        if let page = await NeteaseDiscover.playlistDetail(id: DiscoverSourceIDs.neteaseNewChartID) {
+            let songs = Array(page.songs.prefix(DiscoverSourceIDs.hotRowLimit))
+            if !songs.isEmpty {
+                neteaseNewSongs = songs
+                neteaseNewDay = day
+                neteaseNewState = .loaded
+                saveChart(Self.neteaseNewCacheKey, songs: songs)
+                return
+            }
+        }
+        neteaseNewState = neteaseNewSongs.isEmpty ? .failed : .loaded
+    }
+
+    /// 最新单曲那一排（酷我 + 网易交替合并）
+    var latestReleases: [KuwoPlaylist.Release] {
+        DiscoverLatestRules.latestRow(kuwo: newReleases, netease: neteaseNewSongs)
+    }
+
+    private func cachedChart(_ key: String) -> ChartCache? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(ChartCache.self, from: data)
+    }
+
+    private func saveChart(_ key: String, songs: [Song]) {
+        guard let data = try? JSONEncoder().encode(ChartCache(day: day, songs: songs)) else { return }
+        defaults.set(data, forKey: key)
     }
 
     // MARK: BANNER
