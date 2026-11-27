@@ -180,7 +180,6 @@ struct MyPlaylistsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Tokens.Palette.paper.ignoresSafeArea())
-        .onDisappear { search.clear() }
         .navigationTitle("我的歌单")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -305,6 +304,7 @@ struct MyPlaylistDetailView: View {
             }
         }
         .background(Tokens.Palette.paper.ignoresSafeArea())
+        .onDisappear { search.clear() }
         .navigationTitle(playlist?.name ?? "歌单")
         .navigationBarTitleDisplayMode(.inline)
     }
