@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-labelledby="readme-arch-title readme-arch-desc">
+<title id="readme-arch-title">JZ 音乐助手的数据层</title>
+<desc id="readme-arch-desc">五层客户端架构：交互、状态与引擎、服务、适配器、外部曲库，两侧是本地持久化与平台能力。</desc>
+<defs><linearGradient id="arch-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FAF8F3"/><stop offset="1" stop-color="#F5EFE3"/></linearGradient></defs>
+<rect width="1400" height="900" fill="url(#arch-bg)"/>
+<rect x="0.5" y="0.5" width="1399" height="899" fill="none" stroke="#1C1916" stroke-opacity="0.10"/>
+<text x="80" y="74" font-family="KaiTi, STKaiti, 'Noto Serif SC', serif" font-size="40" font-weight="700" text-anchor="start" fill="#1C1916">数据层：一个客户端，四家曲库</text>
+<text x="80" y="108" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="18" font-weight="400" text-anchor="start" fill="#6B6257">没有自建服务器 · 所有编排在客户端 · 失败就换源，验真才播放</text>
+<line x1="80" y1="132" x2="1320" y2="132" stroke="#1C1916" stroke-opacity="0.12"/>
+<text x="56" y="184" font-family="Consolas, 'SF Mono', monospace" font-size="18" font-weight="700" text-anchor="start" fill="#8A7F71">01</text>
+<rect x="80" y="150" width="860" height="92" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="104" y="182" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">交互层</text>
+<text x="104" y="208" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="14" font-weight="400" text-anchor="start" fill="#6B6257">SwiftUI（iOS）· Jetpack Compose（Android）· Compose Desktop（Windows）</text>
+<text x="104" y="232" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#8A7F71">5 个 Tab · 播放页 · 歌词 · 下载 · 设置</text>
+<text x="56" y="294" font-family="Consolas, 'SF Mono', monospace" font-size="18" font-weight="700" text-anchor="start" fill="#8A7F71">02</text>
+<rect x="80" y="260" width="860" height="84" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="104" y="292" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">状态与引擎</text>
+<text x="104" y="318" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="14" font-weight="400" text-anchor="start" fill="#6B6257">PlayerEngine · LibraryStore · SettingsStore · Router</text>
+<text x="56" y="394" font-family="Consolas, 'SF Mono', monospace" font-size="18" font-weight="700" text-anchor="start" fill="#B03A2E">03</text>
+<rect x="80" y="360" width="860" height="190" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="104" y="392" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">服务层</text>
+<text x="104" y="418" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="14" font-weight="400" text-anchor="start" fill="#6B6257">搜索 · 取流 · 缓存 · 歌词 · 识曲 · 下载</text>
+<text x="56" y="600" font-family="Consolas, 'SF Mono', monospace" font-size="18" font-weight="700" text-anchor="start" fill="#8A7F71">04</text>
+<rect x="80" y="566" width="860" height="100" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="104" y="598" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">适配层</text>
+<text x="104" y="624" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="14" font-weight="400" text-anchor="start" fill="#6B6257">4 个搜索适配器 · 10+ 个取流适配器 · 歌词 / 封面源</text>
+<text x="104" y="648" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#8A7F71">QQ / 网易 / 酷我 / 酷狗，各自协议各自解析</text>
+<text x="56" y="716" font-family="Consolas, 'SF Mono', monospace" font-size="18" font-weight="700" text-anchor="start" fill="#8A7F71">05</text>
+<rect x="80" y="682" width="860" height="84" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="104" y="714" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">外部曲库与开放服务</text>
+<text x="104" y="740" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="14" font-weight="400" text-anchor="start" fill="#6B6257">QQ 音乐 · 网易云 · 酷我 · 酷狗 · LDDC · LRCLIB · iTunes</text>
+<text x="104" y="764" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#8A7F71">公开接口，仅供个人学习</text>
+<rect x="104" y="440" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="116" y="460" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">SearchService</text>
+<rect x="374" y="440" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="386" y="460" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">URLResolver</text>
+<rect x="644" y="440" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="656" y="460" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">PlaybackCache</text>
+<rect x="104" y="478" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="116" y="498" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">LyricsService</text>
+<rect x="374" y="478" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="386" y="498" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">RecognizeScore</text>
+<rect x="644" y="478" width="258" height="30" rx="4" fill="#FAF6EC" stroke="#1C1916" stroke-opacity="0.10"/><text x="656" y="498" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">DownloadManager</text>
+<rect x="104" y="512" width="520" height="30" rx="4" fill="#B03A2E" fill-opacity="0.07" stroke="#B03A2E" stroke-opacity="0.45"/><text x="116" y="532" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#B03A2E">身份闸 · 字节验真 · 主结果时长闸门</text>
+<rect x="980" y="360" width="340" height="190" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="996" y="394" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">本地持久化</text>
+<text x="996" y="426" font-family="Consolas, 'SF Mono', monospace" font-size="13" font-weight="400" text-anchor="start" fill="#1C1916">JSON / UserDefaults / Files / Cache</text>
+<text x="996" y="452" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#6B6257">收藏 · 历史 · 设置 · 歌词 · 封面</text>
+<text x="996" y="486" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="13" font-weight="400" text-anchor="start" fill="#8A7F71">无账号 · 无服务端数据库</text>
+<rect x="980" y="566" width="340" height="100" rx="8" fill="#FFFDF8" stroke="#1C1916" stroke-opacity="0.16"/>
+<text x="996" y="600" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="20" font-weight="700" text-anchor="start" fill="#1C1916">平台能力</text>
+<text x="996" y="626" font-family="Consolas, 'SF Mono', monospace" font-size="12.5" font-weight="400" text-anchor="start" fill="#1C1916">AVFoundation / WKWebView + wasm</text>
+<text x="996" y="648" font-family="Consolas, 'SF Mono', monospace" font-size="12.5" font-weight="400" text-anchor="start" fill="#6B6257">MediaPlayer / 前台服务 / FFmpeg</text>
+<path d="M940 450 H980" fill="none" stroke="#1C1916" stroke-opacity="0.48" stroke-dasharray="5,4"/>
+<rect x="944" y="426" width="38" height="16" fill="#FFFDF8"/>
+<text x="948" y="438" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#6B6257">读写</text>
+<path d="M940 500 H960 V616 H980" fill="none" stroke="#1C1916" stroke-opacity="0.48" stroke-dasharray="5,4"/>
+<rect x="944" y="476" width="38" height="16" fill="#FFFDF8"/>
+<text x="948" y="488" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="12" font-weight="400" text-anchor="start" fill="#6B6257">能力</text>
+<text x="80" y="840" font-family="'Microsoft YaHei', 'PingFang SC', sans-serif" font-size="15" font-weight="400" text-anchor="start" fill="#6B6257">为什么没有服务端：收藏、历史、缓存都在本机；曲库通过客户端适配器直连，少一个中转就少一份隐私和可用性风险。</text>
+</svg>
