@@ -325,7 +325,7 @@ flowchart LR
 
 ## 工程亮点
 
-### 如果面试只聊三件事
+### 三个关键设计
 
 **第一，身份闸。** 多源聚合最危险的地方是“搜到别的歌”，不是“搜不到”。这个项目的默认口径是：歌名、歌手、专辑、时长、版本类证据一起看，宁可不对，不可错歌。`NameMatch` / `StudioPick` / `RecognizeResolveRules` 把这条口径做成纯函数，CI 里 1,700+ 条断言兜底。
 
@@ -441,6 +441,6 @@ cd desktop && ./gradlew packageReleaseDistributionForCurrentOS
 
 - GitHub：[@thewonderfulkey](https://github.com/thewonderfulkey)
 - 技术栈：Swift / SwiftUI · Kotlin / Compose · Python · GitHub Actions
-- 求职方向：实习开发（iOS / 客户端 / 全栈）
+- 这是一个个人开源项目，欢迎 Issue / PR。
 
 如果这个项目对你有帮助，欢迎 Star；有具体问题可以开 Issue，我会把复现步骤和日志一起看。
