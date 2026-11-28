@@ -23,9 +23,6 @@ final class LibraryStore {
     private(set) var recentSongs: [Song] = []
     private(set) var searchHistory: [String] = []
     private(set) var recognizeHistory: [Song] = []
-    /// 识曲历史每条的来源（`Song.id` → "external" / "internal"）。
-    /// 单独存一份映射，旧 `recognize_history.json` 的数组格式不动，升级不丢历史。
-    private(set) var recognizeSourceBySongID: [String: String] = [:]
 
     /// 收藏时间 / 搜索时间（`Song.id` / 关键词 → 时间）。
     ///
@@ -46,7 +43,6 @@ final class LibraryStore {
     private let recentURL = LibraryStore.docURL("recent_songs.json")
     private let searchURL = LibraryStore.docURL("search_history.json")
     private let recognizeURL = LibraryStore.docURL("recognize_history.json")
-    private let recognizeSourceURL = LibraryStore.docURL("recognize_sources.json")
     private let favoriteDatesURL = LibraryStore.docURL("favorite_dates.json")
     private let searchDatesURL = LibraryStore.docURL("search_dates.json")
 
@@ -237,30 +233,18 @@ final class LibraryStore {
 
     // MARK: 识曲历史
 
-    func recordRecognized(_ song: Song, source: String = RecognizeSource.external.rawValue) {
+    func recordRecognized(_ song: Song) {
         recognizeHistory.removeAll { $0.id == song.id }
         recognizeHistory.insert(song, at: 0)
         if recognizeHistory.count > Limits.recognize {
             recognizeHistory = Array(recognizeHistory.prefix(Limits.recognize))
         }
-        recognizeSourceBySongID[song.id] = source
-        let historyIDs = Set(recognizeHistory.map(\.id))
-        recognizeSourceBySongID = recognizeSourceBySongID.filter { historyIDs.contains($0.key) }
         save(recognizeHistory, to: recognizeURL)
-        save(recognizeSourceBySongID, to: recognizeSourceURL)
     }
 
     func clearRecognizeHistory() {
         recognizeHistory.removeAll()
-        recognizeSourceBySongID.removeAll()
         save(recognizeHistory, to: recognizeURL)
-        save(recognizeSourceBySongID, to: recognizeSourceURL)
-    }
-
-    /// 这条识曲历史是哪个音源；老数据（没有映射）返回 nil，界面不标。
-    func recognizeSource(for songID: String) -> RecognizeSource? {
-        guard let raw = recognizeSourceBySongID[songID] else { return nil }
-        return RecognizeSource(rawValue: raw)
     }
 
     // MARK: 持久化
@@ -303,16 +287,6 @@ final class LibraryStore {
         save(favorites, to: favoritesURL)
         save(recentSongs, to: recentURL)
         save(recognizeHistory, to: recognizeURL)
-        // 来源映射也跟着 id 换；不在历史里的旧键丢掉
-        for (oldID, newSong) in map {
-            if let source = recognizeSourceBySongID[oldID] {
-                recognizeSourceBySongID[newSong.id] = source
-                recognizeSourceBySongID.removeValue(forKey: oldID)
-            }
-        }
-        let historyIDs = Set(recognizeHistory.map(\.id))
-        recognizeSourceBySongID = recognizeSourceBySongID.filter { historyIDs.contains($0.key) }
-        save(recognizeSourceBySongID, to: recognizeSourceURL)
     }
 
     private func save<T: Encodable>(_ value: T, to url: URL) {
@@ -341,12 +315,6 @@ final class LibraryStore {
            let list = try? JSONDecoder().decode([Song].self, from: data) {
             recognizeHistory = Array(list.prefix(Limits.recognize))
         }
-        if let data = try? Data(contentsOf: recognizeSourceURL),
-           let map = try? JSONDecoder().decode([String: String].self, from: data) {
-            recognizeSourceBySongID = map
-        }
-        let historyIDs = Set(recognizeHistory.map(\.id))
-        recognizeSourceBySongID = recognizeSourceBySongID.filter { historyIDs.contains($0.key) }
         if let data = try? Data(contentsOf: favoriteDatesURL),
            let map = try? JSONDecoder().decode([String: Date].self, from: data) {
             favoriteDates = map

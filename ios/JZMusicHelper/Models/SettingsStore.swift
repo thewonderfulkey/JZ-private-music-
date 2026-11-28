@@ -68,7 +68,6 @@ final class SettingsStore {
         static let appearance = "appearance"
         static let lyricFont = "lyrics_font"
         static let recognizeSeconds = "rec_seconds"
-        static let recognizeSource = "rec_source"
         static let wifiOnlyDownload = "wifi_only"
         static let backgroundDownload = "bg_download"
         /// iCloud 备份（默认**关**：老板 2026-11-21 定。关掉后重装/换机会丢本地文件）
@@ -101,11 +100,6 @@ final class SettingsStore {
     /// 识曲聆听时长（12 / 15 / 20 秒，默认 12，与 Android 一致）
     var recognizeSeconds: Int {
         didSet { defaults.set(recognizeSeconds, forKey: Key.recognizeSeconds) }
-    }
-
-    /// 识曲音源（外部 / 机内）。首次默认外部；切过之后记住（与"听 12 秒"一致）。
-    var recognizeSource: RecognizeSource {
-        didSet { defaults.set(recognizeSource.rawValue, forKey: Key.recognizeSource) }
     }
 
     var wifiOnlyDownload: Bool {
@@ -242,7 +236,6 @@ final class SettingsStore {
         lyricFontScale = LyricFontScale(rawValue: d.string(forKey: Key.lyricFont) ?? "system") ?? .system
         let seconds = d.integer(forKey: Key.recognizeSeconds)
         recognizeSeconds = [12, 15, 20].contains(seconds) ? seconds : 12
-        recognizeSource = RecognizeSourceRules.source(from: d.string(forKey: Key.recognizeSource))
         wifiOnlyDownload = d.object(forKey: Key.wifiOnlyDownload) as? Bool ?? true
         backgroundDownload = d.object(forKey: Key.backgroundDownload) as? Bool ?? true
         iCloudBackup = d.object(forKey: Key.iCloudBackup) as? Bool ?? false

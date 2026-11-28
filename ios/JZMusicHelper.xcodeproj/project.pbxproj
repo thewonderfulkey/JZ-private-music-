@@ -147,7 +147,6 @@
 		B000000000000000000000AF /* ListSearchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AE /* ListSearchState.swift */; };
 		B000000000000000000000B0 /* LaunchBreadcrumbs.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AF /* LaunchBreadcrumbs.swift */; };
 		B000000000000000000000B1 /* DownloadNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000B0 /* DownloadNotifications.swift */; };
-		B000000000000000000000B2 /* RecognizeSourceRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000B1 /* RecognizeSourceRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -290,7 +289,6 @@
 		F000000000000000000000AE /* ListSearchState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListSearchState.swift; sourceTree = "<group>"; };
 		F000000000000000000000AF /* LaunchBreadcrumbs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchBreadcrumbs.swift; sourceTree = "<group>"; };
 		F000000000000000000000B0 /* DownloadNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadNotifications.swift; sourceTree = "<group>"; };
-		F000000000000000000000B1 /* RecognizeSourceRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeSourceRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -385,7 +383,6 @@
 				F00000000000000000000036 /* DiscoverRules.swift */,
 				F00000000000000000000037 /* DiscoverFeed.swift */,
 				F0000000000000000000003A /* RecognizeScore.swift */,
-				F000000000000000000000B1 /* RecognizeSourceRules.swift */,
 				F0000000000000000000003B /* KugouRecognizer.swift */,
 				F0000000000000000000003C /* AudioCapture.swift */,
 				F00000000000000000000040 /* FingerprintPCM.swift */,
@@ -706,7 +703,6 @@
 				B00000000000000000000034 /* DiscoverRules.swift in Sources */,
 				B00000000000000000000035 /* DiscoverFeed.swift in Sources */,
 				B00000000000000000000038 /* RecognizeScore.swift in Sources */,
-				B000000000000000000000B2 /* RecognizeSourceRules.swift in Sources */,
 				B00000000000000000000039 /* KugouRecognizer.swift in Sources */,
 				B0000000000000000000003A /* AudioCapture.swift in Sources */,
 				B0000000000000000000003E /* FingerprintPCM.swift in Sources */,
@@ -918,7 +914,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 315;
+				CURRENT_PROJECT_VERSION = 316;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -927,7 +923,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.137;
+				MARKETING_VERSION = 2.4.138;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -942,7 +938,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 315;
+				CURRENT_PROJECT_VERSION = 316;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -951,7 +947,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.137;
+				MARKETING_VERSION = 2.4.138;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -965,7 +961,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 315;
+				CURRENT_PROJECT_VERSION = 316;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -974,7 +970,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.137;
+				MARKETING_VERSION = 2.4.138;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -989,7 +985,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 315;
+				CURRENT_PROJECT_VERSION = 316;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -998,7 +994,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.137;
+				MARKETING_VERSION = 2.4.138;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

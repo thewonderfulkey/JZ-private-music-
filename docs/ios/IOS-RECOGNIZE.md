@@ -35,27 +35,33 @@
 
 ---
 
-## 1.5 音源切换：外部 / 机内（2026-11-28，v2.4.137）
+## 1.5 识曲采集：统一麦克风 + 本机外放混音（2026-11-28，v2.4.138）
 
-识曲页顶部加了「外部音源 / 机内音源」两段切换，**默认外部**；听/认的过程中不能切。
-两个模式不是"自动检测"，也不互相兜底：机内失败就报机内失败，用户自己切回外部。
+v2.4.137 曾经加过「外部音源 / 机内音源」两段切换。老板实测后确认不需要：
+两个模式本质都是"麦克风听空气"，分模式反而把一个简单问题拆成两个失败态——
+外部模式 B站后台有声音但识别不到；机内模式 B站能播放但被会话压成没声。
+v2.4.138 起只留**一个麦克风按钮**，不分音源。
 
-| | 外部音源 | 机内音源（便宜版） |
-|---|---|---|
-| 采集 | `AudioCapture` 麦克风，`.record` + `.measurement` | 麦克风，`.playAndRecord + .mixWithOthers + .defaultToSpeaker` |
-| 别的 App | 会被 `.record` 掐掉（本来就要听环境） | **继续用手机扬声器放**，麦克风听扬声器 |
-| 适用 | 另一台手机/音箱在放 | 本机音乐 App（QQ/网易/酷狗/酷我）切到后台继续放 |
-| 不适用 | — | 戴耳机/蓝牙/AirPlay（听不到）、视频类 App（切走就暂停）、环境太吵 |
-| 后端 | 酷狗 + 网易 → `RecognizeScore.fuse` | **同左，完全不变** |
+会话口径（`AudioCapture.start()`）：
 
-实现要点：
+- `.playAndRecord + .mixWithOthers + .defaultToSpeaker`，mode 用 **`.default`**。
+  不再用 `.record`（独占输入，别的 App 的后台声会被掐掉），也不再用 `.measurement`
+  （实测会把对方的播放压成没声）。
+- 激活后 `overrideOutputAudioPort(.speaker)` 强制走扬声器，避免被送到听筒。
+- 收尾切成**可混音的 `.playback`**，不掐对方；JZ 真起播时
+  `NowPlayingCenter.ensurePlaybackSession()` 再抢回独占，避免两边一起响。
+- 后端一行没动：酷狗 + 网易 → `RecognizeScore.fuse`，结果页/其他版本照旧。
 
-- `RecognizeSourceRules.swift` 是纯规则（默认值、文案、耳机拦截、静音阈值），CI 有断言。
-- `AudioCapture.start(source:)` 按模式开会话；机内收尾把类别切成**可混音的 playback**，不掐对方；
-  JZ 真起播时 `NowPlayingCenter.ensurePlaybackSession()` 再抢回独占，避免两边一起响。
-- 机内点开始前先用 `AudioCapture.currentOutputPort` + `RecognizeSourceRules.routeWarning` 拦耳机/蓝牙，
-  不录一段静音再报"没听到"。
-- 结果卡那行是「音源：机内/外部 · 识别依据：…」；识曲历史副行对机内条目补「· 机内」。
+适用与边界：
+
+| 场景 | 结果 |
+|---|---|
+| 手机外放（B站/音乐 App 后台继续放） | ✅ 目标场景；前提是对方 App 的音频会话允许混音 |
+| 另一台手机/音箱在放 | ✅ 和原来一样 |
+| 戴耳机/蓝牙/AirPlay | ❌ 麦克风听不到；界面文案已提示"戴耳机时麦克风听不到" |
+| 对方 App 把音频会话设成不可混音 | ❌ 系统仍会静音它，麦克风方案救不了，只能真内录 |
+| 环境吵 / 音量太小 | ❌ 靠麦克风听空气，识别率会掉 |
+
 - **不是真内录**：本质仍是麦克风听手机扬声器。真内录（别的 App 前台也能收、戴耳机也行）需要
   ReplayKit 广播扩展，另开一轮。
 
