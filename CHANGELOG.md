@@ -1,3 +1,35 @@
+### v2.4.138 / 316 · 识曲统一麦克风：去掉外部/机内切换，B站后台外放可录
+
+| 项 | 值 |
+|---|---|
+| 提交 | b7db300 |
+| CI | #319 ✅（logic tests 62 文件 + build unsigned ipa） |
+| 产物 | JZ-Music-v2.4.138-b7db300-r319-ios-unsigned.ipa · 4,131,231 B · sha256 a9a74ef2f03c3cfb… |
+| 主二进制 | 15,757,296 B · sha256 cddcfaceb1e0b6ae… |
+| 包内版本 | 2.4.138 / 316 |
+| 包内取证 | 新文案「手机外放，或靠近正在外放的音箱」「确认声源还在放、手机是外放」均在；旧「机内音源要外放」「外部音源」均不在 |
+| 出包闸 | 本地 check_ipa_identity.py → 与全部历史包不同 ✅（注意：先别把新包放进 releases 再比，会自己撞自己） |
+
+**老板实测（v2.4.137）**：外部模式 B站后台能播放、有声音，但识别不到；机内模式 B站能播放，
+但被会话压成没声，识别不到。结论：两个模式本质都是麦克风听空气，分模式没有意义。
+
+**改了什么**：
+
+- 去掉「外部/机内」切换、`SettingsStore.recognizeSource`、结果卡音源行、历史「· 机内」标签。
+- `AudioCapture.start()` 统一成 `.playAndRecord + .mixWithOthers + .defaultToSpeaker`，mode **`.default`**；
+  激活后 `overrideOutputAudioPort(.speaker)`。不再用 `.record`（独占输入，会掐对方后台声），
+  也不再用 `.measurement`（实测会把对方播放压成没声）。
+- 收尾切可混音 `.playback`，不掐对方；JZ 真起播时 `NowPlayingCenter.ensurePlaybackSession()` 抢回独占。
+- 后端完全不动：酷狗 + 网易 → `RecognizeScore.fuse`。
+
+**边界**：对方 App 自己把音频会话设成不可混音时，系统仍会静音它，麦克风方案救不了，
+只能真内录（ReplayKit 广播扩展）；戴耳机/蓝牙/AirPlay 麦克风听不到；环境吵/音量小会掉识别率。
+
+**待实机验证**：①B站后台放有声音的视频 → 回 JZ 点麦克风 → B站声音不断 → 6~9 秒出结果；
+②另一台设备/音箱仍能识；③识完 B站 还在放；④戴耳机时提示"麦克风听不到"，不硬录。
+
+---
+
 ### v2.4.137 / 315 · 识曲加「外部 / 机内音源」切换（机内 = 混音录音听本机外放）
 
 | 项 | 值 |
