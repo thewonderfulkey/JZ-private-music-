@@ -27,13 +27,34 @@ enum RecognizeResolveRules {
         }
         if let best = closest(studio, candidate) { return best }
 
+        // 2026-11-29 真机事故（v2.4.140《5:20AM》）：
+        //   候选 5:20AM(活凤版) / 礼崩乐不坏 / 193s，搜索里却把
+        //   5:20AM (河南话原版) / 夜晚助眠屋 / 191s 选成主结果——点播放时名字歌手全变。
+        //   原因是归一化歌名相等这一支**没有要求歌手**：两首去掉括号都是 520am，
+        //   时长只差 2s，另一个歌手的翻唱就过了闸。
+        // 口径：歌名/时长只负责"像"，歌手才是同一张录音的硬条件；两个分支都必须过歌手。
         let titleOnly = songs.filter {
             (NameMatch.normTitle(candidate.title) == NameMatch.normTitle($0.name)
-             || (NameMatch.titleMatches(candidate.title, $0.name)
-                 && NameMatch.singerMatches(candidate.artist, $0.singer)))
+             || NameMatch.titleMatches(candidate.title, $0.name))
+                && NameMatch.singerMatches(candidate.artist, $0.singer)
                 && durationOK($0, candidate)
         }
         return closest(titleOnly, candidate)
+    }
+
+    /// 合并「歌名 + 候选歌手」与「只搜歌名」两批结果：同一条录音去重，主搜索顺序优先。
+    /// 只用于把原唱/别的版本捞进「其他版本」，不参与主结果选择。
+    static func mergeSearchResults(primary: [Song], broad: [Song]) -> [Song] {
+        var seen = Set<String>()
+        var out: [Song] = []
+        for song in primary + broad {
+            let key = StudioPick.recordingKey(song)
+            let dedupeKey = key.isEmpty ? song.id : key
+            if seen.insert(dedupeKey).inserted {
+                out.append(song)
+            }
+        }
+        return out
     }
 
     /// 候选有真实时长、搜索结果也有时长时才卡；任一未知不硬拒（排序会排到后面）。

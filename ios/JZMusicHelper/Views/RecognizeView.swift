@@ -225,12 +225,12 @@ struct RecognizeView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text(recognized.title)
+                                Text(cardTitle)
                                     .font(.headline)
                                     .lineLimit(2)
                                     .layoutPriority(1)
-                                if mainIsOriginal {
-                                    Text("原唱")
+                                if let mainBadge {
+                                    Text(mainBadge)
                                         .font(.caption2.weight(.semibold))
                                         .foregroundStyle(Tokens.Palette.vermilion)
                                         .fixedSize()
@@ -241,13 +241,13 @@ struct RecognizeView: View {
                                         .transition(.opacity)
                                 }
                             }
-                            .animation(Tokens.Motion.stateChange, value: mainIsOriginal)
-                            Text(recognized.artist.isEmpty ? "未知歌手" : recognized.artist)
+                            .animation(Tokens.Motion.stateChange, value: mainBadge)
+                            Text(cardArtist.isEmpty ? "未知歌手" : cardArtist)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
-                            if !recognized.album.isEmpty {
-                                Text(recognized.album)
+                            if !cardAlbum.isEmpty {
+                                Text(cardAlbum)
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
                                     .lineLimit(1)
@@ -279,6 +279,16 @@ struct RecognizeView: View {
                         Spacer()
                     }
                     .padding(.horizontal, Tokens.Spacing.pageMargin)
+
+                    if resolved == nil {
+                        HStack(spacing: 4) {
+                            Text("找不到同一版本，试试其他版本")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, Tokens.Spacing.pageMargin)
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -329,6 +339,23 @@ struct RecognizeView: View {
                                               title: recognized.title,
                                               artist: recognized.artist,
                                               durationSec: recognized.durationSec)
+    }
+
+    // 卡面显示的必须是**将要播放的那条**（resolved）；候选只用于「识别依据」。
+    // 2026-11-29 v2.4.140：旧卡面显示候选、播放/封面用 resolved，两条 Song 会各说各话。
+    private var cardTitle: String { resolved?.name ?? recognized?.title ?? "" }
+    private var cardArtist: String { resolved?.singer ?? recognized?.artist ?? "" }
+    private var cardAlbum: String { resolved?.album ?? recognized?.album ?? "" }
+
+    /// 结果卡标签：翻唱/版本 > 原唱 > 无。
+    /// 通道自己标了翻唱（isOriginal == 2），或歌名带版本后缀/专辑是合辑，都不冒充原唱。
+    private var mainBadge: String? {
+        guard let recognized else { return nil }
+        if recognized.isOriginal == 2
+            || StudioPick.isCoverLike(title: recognized.title, album: recognized.album) {
+            return "翻唱/版本"
+        }
+        return mainIsOriginal ? "原唱" : nil
     }
 
     private func channelName(_ source: String) -> String {
@@ -583,8 +610,27 @@ struct RecognizeView: View {
     private func resolveVersions(_ candidate: RecognizeCandidate) async {
         isResolvingVersions = true
         let keyword = "\(candidate.title) \(candidate.artist)".trimmingCharacters(in: .whitespaces)
-        let ranked = await SearchService.shared.searchRanked(keyword: keyword, limit: 20)
-        let songs = ranked.songs
+        // 只搜"核心歌名"：去掉 (活凤版)/(Live) 这类后缀，才能把别的版本/原唱捞回来。
+        let coreTitle = StudioPick.coreName(candidate.title).trimmingCharacters(in: .whitespaces)
+        let titleKeyword = coreTitle.isEmpty
+            ? candidate.title.trimmingCharacters(in: .whitespaces)
+            : coreTitle
+
+        // 2026-11-29（v2.4.140，老板截图《潮汐》）：
+        // 候选是翻唱（潮汐 / 小青芽 / ACG 合辑）时，只搜「歌名 + 候选歌手」会把原唱
+        // （潮汐 / 安苏羽、傅梦彤）挡在结果集外。再按**歌名单独**搜一次，把原唱/别的版本
+        // 捞进「其他版本」；主结果仍保留"听到的那条"，不猜原唱。
+        let songs: [Song]
+        if !titleKeyword.isEmpty, titleKeyword != keyword {
+            async let primaryTask = SearchService.shared.searchRanked(keyword: keyword, limit: 20)
+            async let broadTask = SearchService.shared.searchRanked(keyword: titleKeyword, limit: 30)
+            let (primary, broad) = await (primaryTask, broadTask)
+            songs = RecognizeResolveRules.mergeSearchResults(primary: primary.songs,
+                                                             broad: broad.songs)
+        } else {
+            let primary = await SearchService.shared.searchRanked(keyword: keyword, limit: 20)
+            songs = primary.songs
+        }
 
         // 2026-11-28（v2.4.139，老板录屏《夜曲》）：主结果必须和候选时长对得上。
         // 旧逻辑 `songs.first { 歌名像 + 歌手对 + 裸名 }` 会把 1:48 的《夜曲 - A35》
@@ -607,21 +653,27 @@ struct RecognizeView: View {
             library.recordRecognized(resolved)
         }
 
-        // 同名不同版本最多 6 条：
+        // 同名不同版本最多 10 条：
         //   ① 先按核心歌名严格过滤（繁简折叠），把同歌手的**别的歌**挡在外面；
         //   ② 跨平台同一条录音去重，并剔掉主结果那条（含它在别的平台的副本）；
-        //   ③ 最多只挑一条原唱（时长对得上）；原唱优先、同歌手优先、裸名优先。
+        //   ③ 原唱优先、同歌手优先、裸名优先；v2.4.140 把上限从 6 提到 10，
+        //      让 title-only 搜索补进来的原唱有位置显示。
+        //   ④ 候选本身是翻唱/版本时，不再用"候选歌手"给任何一行打「原唱」——
+        //      那只是同一个翻唱上传者的另一条，不是这首歌的原唱。
+        let candidateIsCover = StudioPick.isCoverLike(title: candidate.title,
+                                                      album: candidate.album)
         let others = StudioPick.excludingRecording(of: resolved, from: distinct)
         let original = StudioPick.originalVersion(in: others,
                                                  title: candidate.title,
                                                  artist: candidate.artist,
                                                  durationSec: candidate.durationSec)
-        originalVersionID = original?.id
+        let originalForSort = candidateIsCover ? nil : original
+        originalVersionID = originalForSort?.id
 
         versions = others
             .sorted { a, b in
-                let oa = a.id == original?.id
-                let ob = b.id == original?.id
+                let oa = a.id == originalForSort?.id
+                let ob = b.id == originalForSort?.id
                 if oa != ob { return oa && !ob }
                 let sa = NameMatch.singerMatches(candidate.artist, a.singer)
                 let sb = NameMatch.singerMatches(candidate.artist, b.singer)
@@ -631,7 +683,7 @@ struct RecognizeView: View {
                 if ca != cb { return ca && !cb }
                 return a.duration < b.duration
             }
-            .prefix(6)
+            .prefix(10)
             .map { $0 }
         isResolvingVersions = false
     }

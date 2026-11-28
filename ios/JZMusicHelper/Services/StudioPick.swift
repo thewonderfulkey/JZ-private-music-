@@ -64,6 +64,16 @@ enum StudioPick {
         return coreName(n).compare(n, options: [.caseInsensitive]) == .orderedSame
     }
 
+    /// 识曲结果卡上的「翻唱/版本」标签：只影响文案，不参与主结果选择。
+    /// 判据：带版本后缀（Live / 活凤版 / 河南话原版 / 伴奏…）或专辑是合辑/翻唱集。
+    /// 宁可标「版本」，也不把翻唱冒充原唱；正常录音室歌曲（裸名 + 正式专辑）不标。
+    static func isCoverLike(title: String, album: String) -> Bool {
+        if !isCleanTitle(title) { return true }
+        let a = album.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !a.isEmpty else { return false }
+        return ["合辑", "翻唱", "cover", "伴奏", "纯音乐"].contains { a.contains($0) }
+    }
+
     /// 专辑是否来自现场/节目（空专辑不算现场，但也不加分）
     static func isLiveAlbum(_ album: String) -> Bool {
         let a = album.trimmingCharacters(in: .whitespacesAndNewlines)

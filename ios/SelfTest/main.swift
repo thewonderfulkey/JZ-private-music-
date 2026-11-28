@@ -1722,6 +1722,33 @@ check("差 6s 不选",
 check("未知时长不硬拒",
       RecognizeResolveRules.pick(from: [fixSong("unknown", "夜曲", 0)], candidate: nightCand)?.id == "kugou_unknown")
 
+// v2.4.140 真机《5:20AM》：歌名去掉括号一样，但歌手不同的另一个翻唱不能当主结果。
+section("识曲主结果：歌手硬闸 + title-only 版本（v2.4.140）")
+let coverCand = RecognizeCandidate(title: "5:20AM(活凤版)", artist: "礼崩乐不坏",
+                                   album: "5:20AM(活凤版)", durationSec: 193,
+                                   source: RecognizeScore.sourceNetease,
+                                   rank: 0, isOriginal: 0)
+let otherCover = fixSong("other", "5:20AM (河南话原版)", 191, "夜晚助眠屋", "5:20AM")
+let sameCover = fixSong("same", "5:20AM(活凤版)", 193, "礼崩乐不坏", "5:20AM(活凤版)")
+check("归一化歌名相同但歌手不同：不选",
+      RecognizeResolveRules.pick(from: [otherCover], candidate: coverCand) == nil)
+check("同歌手同版本：选它",
+      RecognizeResolveRules.pick(from: [otherCover, sameCover], candidate: coverCand)?.id == "kugou_same")
+
+let primaryCover = fixSong("m1", "潮汐", 178, "小青芽", "ACG 合辑")
+let broadOriginal = fixSong("m2", "潮汐 (Natural)", 212, "安苏羽、傅梦彤", "潮汐")
+let broadDup = fixSong("m3", "潮汐", 178, "小青芽", "ACG 合辑")
+let merged = RecognizeResolveRules.mergeSearchResults(primary: [primaryCover],
+                                                      broad: [broadOriginal, broadDup])
+check("title-only 合并：同一条录音去重", merged.count == 2, "\(merged.count)")
+check("title-only 合并：原唱被捞进来", merged.contains { $0.singer.contains("安苏羽") })
+check("合辑专辑标翻唱/版本",
+      StudioPick.isCoverLike(title: "潮汐", album: "ACG 合辑"))
+check("括号版本标翻唱/版本",
+      StudioPick.isCoverLike(title: "5:20AM(活凤版)", album: "5:20AM(活凤版)"))
+check("正常录音室不标",
+      !StudioPick.isCoverLike(title: "夜曲", album: "十一月的萧邦"))
+
 section("识曲打分：原唱标记 / 裸名 / 专辑 / 跨通道互证")
 
 do {
