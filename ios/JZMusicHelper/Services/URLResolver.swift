@@ -150,34 +150,87 @@ enum SameSongCrossResolver {
     static let maxExactKeep = 3
     static let totalTimeout: TimeInterval = 45
 
+    /// 「跨平台补位为什么空」的实况（2026-11-28 加）
+    ///
+    /// 以前只有一句「无可用候选（搜索为空 / 身份闸全丢）」，把**三种完全不同的情况**写成同一句：
+    ///   ① 搜索真的一条都没回来；
+    ///   ② 回来了，但身份闸把它们全丢了；
+    ///   ③ 闸放行了，但每条候选的取流腿都空 —— 真机《BABY ANGEL》就是 ③
+    ///      （QQ 回假链 403、酷狗不回 url、落月风控）。
+    /// 三者的下一步动作完全不同，所以必须分开写，否则下一轮排查还会被带偏。
+    struct PlayOutcome: Sendable {
+        let source: StreamSource?
+        /// 没拿到源时的一句话实况（拿到了就是空串）
+        let diagnostic: String
+    }
+
     /// 播放用：拿到一条可用源就返回
     static func resolve(song: Song, quality: QualityLevel,
                         triedKeys: TriedKeys) async -> StreamSource? {
+        await resolveWithDiagnostic(song: song, quality: quality, triedKeys: triedKeys).source
+    }
+
+    /// 播放用（带实况）：拿到一条可用源就返回，同时给出"为什么没拿到"
+    static func resolveWithDiagnostic(song: Song, quality: QualityLevel,
+                                      triedKeys: TriedKeys) async -> PlayOutcome {
         await withTimeoutOrNil(totalTimeout) {
-            let candidates = await candidateList(
-                song: song, quality: quality, triedKeys: triedKeys, forDownload: false).songs
+            let found = await candidateList(
+                song: song, quality: quality, triedKeys: triedKeys, forDownload: false)
+            let candidates = found.songs
+            guard !candidates.isEmpty else {
+                return PlayOutcome(source: nil, diagnostic: Self.emptyDiagnostic(found))
+            }
             var picked: StreamSource?
+            var failures: [String] = []
             for batch in candidates.chunked(3) {
                 if picked != nil { break }
-                let got = await withTaskGroup(of: StreamSource?.self) { group in
+                let got = await withTaskGroup(of: (StreamSource?, String).self) { group in
                     for c in batch {
                         group.addTask {
                             let r = await URLResolver.shared.resolveResult(song: c, quality: quality)
-                            return SourcePicker.pick(r.sources, want: quality).map { $0.matched(c) }
+                            if let s = SourcePicker.pick(r.sources, want: quality) {
+                                return (s.matched(c), "")
+                            }
+                            let reason = r.failed.map { "\($0.key):\($0.value)" }
+                                .joined(separator: "/")
+                            return (nil, "\(c.platform.shortName)·"
+                                        + (reason.isEmpty ? "无源" : reason))
                         }
                     }
-                    var out: [StreamSource?] = []
-                    for await s in group { out.append(s) }
+                    var out: [(StreamSource?, String)] = []
+                    for await o in group { out.append(o) }
                     return out
                 }
-                picked = got.first { $0 != nil } ?? nil
+                for (s, why) in got {
+                    if let s {
+                        if picked == nil { picked = s }
+                    } else if failures.count < 3 {
+                        failures.append(why)
+                    }
+                }
             }
             // 2026-11-27：这里原来有一条"变速条目拿原曲顶替"的兜底，已被老板否掉——
             // 他的口径是「上传者的变速/剪辑条目一律不返回」，所以这类歌根本不会进到播放链
             // （`JunkAudioRules` 在搜索/榜单/歌单/歌手页的解析处就已经滤掉）。
             // 没有再留这条兜底：否则 0.8x 会播成正常速度，听起来是"放错歌"。
-            return picked
-        } ?? nil
+            if let picked { return PlayOutcome(source: picked, diagnostic: "") }
+            return PlayOutcome(source: nil, diagnostic:
+                "候选 \(candidates.count) 条（搜索有货），但取流腿全空："
+                + failures.joined(separator: "；"))
+        } ?? PlayOutcome(source: nil, diagnostic: "跨平台超时（\(Int(totalTimeout))s）")
+    }
+
+    /// 候选为空时的三种实况（搜索空 / 闸全丢 / 歌手被当成上传者）
+    static func emptyDiagnostic(_ found: CandidateSet) -> String {
+        if found.rawCount == 0 {
+            return "搜索引擎一条都没回来（不是身份闸的问题）"
+        }
+        if found.uploaderSinger {
+            return "搜索回来 \(found.rawCount) 条；歌手被判成上传者/频道号，只留歌名一致的，"
+                + "被丢掉：" + found.uploaderDropped.joined(separator: "、")
+        }
+        return "搜索回来 \(found.rawCount) 条，身份闸全丢（样本："
+            + found.gateDropped.prefix(3).joined(separator: "、") + "）"
     }
 
     struct CrossOutcome: Sendable {
@@ -208,6 +261,10 @@ enum SameSongCrossResolver {
         var uploaderDropped: [String] = []
         /// 这一轮是不是把「歌手」认成了频道号/上传者（收紧只在这个条件下生效）
         var uploaderSinger: Bool = false
+        /// 过身份闸**之前**的原始条数：用来区分「搜索为空」和「闸全丢」（2026-11-28）
+        var rawCount: Int = 0
+        /// 被身份闸丢掉的候选样本（`歌名/歌手/时长s`，最多 3 条，诊断用）
+        var gateDropped: [String] = []
     }
 
     /// 下载用：一次遍历同时求「目标档」与「最高可得档」
@@ -301,7 +358,9 @@ enum SameSongCrossResolver {
         // 判据要整池（≥3 首互不相同、且一首都没对上源歌名），单条候选看不出来。
         let uploaderLike = NameMatch.looksLikeUploader(song, among: cands)
         out.uploaderSinger = uploaderLike
+        out.rawCount = cands.count          // 过闸前的条数（区分"搜索空"与"闸全丢"）
         var droppedByUploader: [String] = []
+        var droppedByGate: [String] = []
         cands = cands.filter { cand in
             let kept = sameSong(src: song, cand: cand, uploaderLike: uploaderLike)
             // 老口径放行、新口径挡掉 = 同一位上传者名下的"别的歌"，留痕给诊断
@@ -309,9 +368,16 @@ enum SameSongCrossResolver {
                droppedByUploader.count < 3 {
                 droppedByUploader.append("\(cand.name.prefix(14))|\(cand.durationSec)s")
             }
+            // 2026-11-28：闸丢掉的候选也留 3 条样本——这一格以前是空的，
+            // 导致"闸全丢"和"搜索没货"在日志里长得一模一样
+            if !kept, droppedByGate.count < 3 {
+                droppedByGate.append("\(cand.name.prefix(12))/\(cand.singer.prefix(10))/"
+                                     + "\(Int(cand.durationSec))s")
+            }
             return kept
         }
         out.uploaderDropped = droppedByUploader
+        out.gateDropped = droppedByGate
         // 按 key 去重（同曲可能在多个源里都出现），保留先出现的
         var seenKeys = Set<String>()
         cands = cands.filter { seenKeys.insert(candKey($0)).inserted }
@@ -803,11 +869,21 @@ enum DownloadResolver {
             for job in jobs {
                 group.addTask {
                     let t0 = Date()
-                    guard let src = await withTimeoutOrNil(budget, {
-                        try await job.adapter.resolve(song: job.song, quality: want)
-                    }) else {
-                        return .miss("\(job.adapter.name) 超时/失败 "
-                                     + "\(Int(Date().timeIntervalSince(t0) * 1000))ms")
+                    // 2026-11-28：这里以前一律写"超时/失败"，把适配器自己给的原因吞掉了。
+                    // 《BABY ANGEL》那次，妖狐明明搜到了真 FLAC，是它内部的歌手校验把源扔了，
+                    // 日志却只有"妖狐酷我 超时/失败 459ms"，排查被带着往网络方向跑了一整轮。
+                    let src: StreamSource
+                    do {
+                        src = try await withTimeoutThrowing(budget) {
+                            try await job.adapter.resolve(song: job.song, quality: want)
+                        }
+                    } catch {
+                        let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                        if (error as? APIError) == APIError.timeout {
+                            return .miss("\(job.adapter.name) 超时 \(ms)ms")
+                        }
+                        return .miss("\(job.adapter.name) 失败 \(ms)ms："
+                                     + URLResolver.shortError(error))
                     }
                     if job.song.id != song.id, !NameMatch.sameRecording(src: song, cand: job.song) {
                         return .miss("\(job.adapter.name) 身份不符")

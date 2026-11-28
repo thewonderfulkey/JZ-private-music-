@@ -160,7 +160,11 @@ enum NameMatch {
         if !candSingers.isEmpty {
             let hint = SearchQueryVariants.artistHint(from: src.name)
             let viaHint = hint.map { singerMatches($0, cand.singer) } ?? false
-            guard singerMatches(src.singer, cand.singer) || viaHint else { return false }
+            // 2026-11-28：歌手零交集不再直接否决。外文歌的**中文译名 vs 原名**（林娜琏 vs
+            // NAYEON (TWICE)）会让唯一有源的腿被当成"别的歌"扔掉，真机《BABY ANGEL》整首被跳过。
+            // 放宽只发生在歌手这一维，且要求更强的其它证据，见 `singerMismatchBridgedByTitle`。
+            guard singerMatches(src.singer, cand.singer) || viaHint
+                    || singerMismatchBridgedByTitle(src: src, cand: cand) else { return false }
         } else if srcSingers.isEmpty {
             // 两边都没有歌手信息：只能靠歌名
             return titleEvidence(src: src, cand: cand, requireDuration: false) != nil
@@ -284,6 +288,39 @@ enum NameMatch {
         let shorter = x.count <= y.count ? x : y
         let longer = x.count <= y.count ? y : x
         return shorter.count >= 3 && longer.contains(shorter)
+    }
+
+    /// 歌手写法完全对不上时，靠**歌名 + 专辑**把它认回来（2026-11-28《BABY ANGEL》被跳过）
+    ///
+    /// 事故现场：BANNER 点进去的网易歌单「一周韩语上新」第 04 首《BABY ANGEL》，
+    /// 网易把歌手写成「林娜琏」，而唯一拿得到直链的那条腿（妖狐酷我，真 FLAC 740kbps）
+    /// 写成「NAYEON (TWICE)」——两边零交集，于是身份闸判成"别的歌"，唯一有源的腿被扔掉，
+    /// 整首无源、转圈 17.4 秒后静默换歌。
+    ///
+    /// 为什么只放宽歌手这一维是安全的：要求的证据比**现有**那条 `.albumDuration` 译名通道更硬——
+    ///   ① 歌名身份键必须**完全相等**（繁简/全角/标点已折平；不是包含、不是相似度）；
+    ///   ② 版本类已经在 `sameRecording` 的 ① 拦过（live/伴奏/翻唱/粤语版… 一律进不来）；
+    ///   ③ 专辑一致就放行；专辑有一边缺才允许用「时长差 ≤1s」兜底；
+    ///      两边专辑都有却对不上 → **不放行**（专辑都不同，那是翻唱）。
+    /// 现有 `.albumDuration` 通道歌名可以完全不同、只靠"专辑 + 时长≤1s"就放行，
+    /// 所以这条不会比现状更激进（《众》vs《侧脸》那种同歌手不同歌也照样被拒：歌名键不等）。
+    ///
+    /// - Note: 调用方先用 `singerMatches` 判过；这个函数只在"歌手确实没交集"时才有意义。
+    static func singerMismatchBridgedByTitle(src: Song, cand: Song) -> Bool {
+        // 歌手对得上就不需要这座桥（也让"为什么放行"只有一个理由）
+        guard !singerMatches(src.singer, cand.singer) else { return false }
+        // ① 歌名身份键完全相等
+        let keyA = identityKey(src.name)
+        let keyB = identityKey(cand.name)
+        guard !keyA.isEmpty, keyA == keyB else { return false }
+        // ② 专辑一致（两边都非空且归一化后一致）
+        if albumMatches(src.album, cand.album) { return true }
+        // ③ 专辑信息缺一边时，才允许用时长兜底
+        let albumA = src.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        let albumB = cand.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard albumA.isEmpty || albumB.isEmpty else { return false }
+        guard src.durationSec > 0, cand.durationSec > 0 else { return false }
+        return Double(abs(src.durationSec - cand.durationSec)) <= albumDurationToleranceSec
     }
 
     /// 缓存/下载条目里的"候选身份"还对不对得上当前这首歌（2026-11-25）

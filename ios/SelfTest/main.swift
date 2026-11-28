@@ -7118,6 +7118,73 @@ func r299ListSearchStateAssertions() {
     check("③ 有结果时头部/搜索框显示", SongListRules.showsChrome(totalCount: pool.count))
 }
 
+// MARK: - 2026-11-28 BANNER 韩语歌单《BABY ANGEL》被跳过（歌手译名 vs 原名）
+//
+// 现场：BANNER → 网易歌单「一周韩语上新」第 04 首。网易写「林娜琏」，唯一有真 FLAC 的那条腿
+// （妖狐酷我）写「NAYEON (TWICE)」，两边零交集 → 身份闸判成"别的歌" → 唯一有源被扔掉 →
+// 整首无源、转圈 17.4 秒后静默换歌。
+//
+// 口径（只放宽歌手这一维，要求更强的其它证据）：歌名身份键完全相等 + 专辑一致
+// （专辑缺一边时才允许用「时长差 ≤1s」兜底；两边专辑都有却对不上 = 翻唱，拒）。
+func r317BannerArtistAssertions() {
+    section("身份闸：外文歌手译名 vs 原名（BABY ANGEL 被跳过）")
+
+    let src = Song.make(platform: .netease, platformID: "3462919608",
+                        name: "BABY ANGEL", singer: "林娜琏", album: "NA-sty",
+                        duration: 135, picURL: nil)
+    // 妖狐酷我不回时长，只回 album
+    let yaohu = Song.make(platform: .kuwo, platformID: "yaohu:1",
+                          name: "BABY ANGEL", singer: "NAYEON (TWICE)", album: "NA-sty",
+                          duration: 0, picURL: nil)
+    check("真机那一对要认（歌名+专辑一致，歌手译名不同）",
+          NameMatch.sameRecording(src: src, cand: yaohu))
+    check("桥本身成立", NameMatch.singerMismatchBridgedByTitle(src: src, cand: yaohu))
+    check("歌手对得上时桥不成立（不止一个理由）",
+          !NameMatch.singerMismatchBridgedByTitle(
+            src: src,
+            cand: Song.make(platform: .qq, platformID: "q0", name: "BABY ANGEL",
+                            singer: "林娜琏", album: "NA-sty", duration: 135, picURL: nil)))
+
+    // 专辑都对不上 = 翻唱/别版，拒
+    let coverOtherAlbum = Song.make(platform: .qq, platformID: "q1", name: "BABY ANGEL",
+                                    singer: "某翻唱歌手", album: "翻唱合集",
+                                    duration: 135, picURL: nil)
+    check("同名同时长但专辑不同 → 不收（翻唱）",
+          !NameMatch.sameRecording(src: src, cand: coverOtherAlbum))
+
+    // 两边专辑都空 → 只能靠时长，且要 ≤1s
+    let noAlbum = Song.make(platform: .netease, platformID: "n2", name: "BABY ANGEL",
+                            singer: "林娜琏", album: "", duration: 135, picURL: nil)
+    let noAlbumFar = Song.make(platform: .qq, platformID: "q2", name: "BABY ANGEL",
+                               singer: "NAYEON", album: "", duration: 139, picURL: nil)
+    let noAlbumNear = Song.make(platform: .qq, platformID: "q3", name: "BABY ANGEL",
+                                singer: "NAYEON", album: "", duration: 135, picURL: nil)
+    check("两边都没专辑、时长差 4s（>1s）→ 不收", !NameMatch.sameRecording(src: noAlbum, cand: noAlbumFar))
+    check("两边都没专辑、时长一致 → 收", NameMatch.sameRecording(src: noAlbum, cand: noAlbumNear))
+
+    // 版本类仍然优先拦（桥不能绕过版本闸）
+    let live = Song.make(platform: .qq, platformID: "q4", name: "BABY ANGEL (Live)",
+                         singer: "NAYEON (TWICE)", album: "NA-sty", duration: 135, picURL: nil)
+    check("Live 版照样拦（版本类在歌手之前）", !NameMatch.sameRecording(src: src, cand: live))
+
+    // 防回归：《众》vs《侧脸》——同歌手、歌名不同、时长差 2.3s
+    let zhong = Song.make(platform: .netease, platformID: "z1", name: "众", singer: "黄霄雲",
+                          album: "众", duration: 215.5, picURL: nil)
+    let ceLian = Song.make(platform: .qq, platformID: "z2", name: "侧脸", singer: "黄霄雲",
+                           album: "侧脸", duration: 217.8, picURL: nil)
+    check("防回归：众 ≠ 侧脸", !NameMatch.sameRecording(src: zhong, cand: ceLian))
+    // 防回归：同歌手不同歌、专辑还一样
+    let sameAlbumOtherSong = Song.make(platform: .qq, platformID: "z3", name: "侧脸",
+                                       singer: "黄霄雲", album: "众", duration: 217.8, picURL: nil)
+    check("防回归：同名专辑里的另一首也不收",
+          !NameMatch.sameRecording(src: zhong, cand: sameAlbumOtherSong))
+
+    section("诊断：跨平台「没拿到源」要说清是哪种")
+    check("搜索空 → 写明不是身份闸",
+          SameSongCrossResolver.emptyDiagnostic(
+            SameSongCrossResolver.CandidateSet()).contains("一条都没回来"))
+}
+
 // MARK: - 汇总
 
 r251CacheAssertions()
@@ -7142,6 +7209,7 @@ r296PressFeedbackAssertions()
 r297SongListFilterAssertions()
 r298SongListChromeAssertions()
 r299ListSearchStateAssertions()
+r317BannerArtistAssertions()
 
 print("\n================ 结果 ================")
 print("通过 \(passed) / 失败 \(failed)")

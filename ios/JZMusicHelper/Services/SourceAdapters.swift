@@ -722,10 +722,26 @@ struct YaohuKuwoAdapter: StreamSourceAdapter {
             let titlePart = NameMatch.yaohuTitle(respSong)
             let singerOK = NameMatch.singerMatches(song.singer, respSinger)
                 || (hint.map { NameMatch.singerMatches($0, respSinger) } ?? false)
+            // 2026-11-28：歌手译名对不上时别急着扔。真机《BABY ANGEL》——网易写「林娜琏」、
+            // 妖狐写「NAYEON (TWICE)」，两边零交集，于是这条**唯一吐得出真 FLAC 的腿**被扔掉，
+            // 整首判无源跳过。妖狐会回 `album`，歌名对上 + 专辑一致就是同一张母带，认它。
+            // 口径与 `NameMatch.sameRecording` 完全一致（同一个函数），不另立一套。
+            let respAlbum = (d["album"] as? String) ?? ""
+            var singerAccepted = singerOK
+            if !singerOK {
+                let probe = Song.make(platform: .kuwo, platformID: "yaohu:\(respSong)",
+                                      name: titlePart, singer: respSinger, album: respAlbum,
+                                      duration: 0, picURL: nil)
+                singerAccepted = NameMatch.singerMismatchBridgedByTitle(src: song, cand: probe)
+            }
             guard NameMatch.titleMatches(song.name, titlePart)
                     || NameMatch.titleMatches(stripped, titlePart),
-                  singerOK else {
-                lastReason = "妖狐酷我结果不匹配：\(respSong)/\(respSinger)"
+                  singerAccepted else {
+                // 2026-11-28：原因要**写在错误里**，别只写"不匹配"。妖狐适配器不在诊断链里
+                // （不能依赖 PlaybackTrace），但 `firstValidated` 现在会把这里的 message
+                // 原样记进 trace.log——真机那次就是这条被吞掉，排查被带去查网络。
+                lastReason = "妖狐酷我身份不符：\(respSinger)" + (respAlbum.isEmpty ? ""
+                    : " · 专辑 \(respAlbum)")
                 continue
             }
             // 版本防线（2026-11-19 修正口径）：只拦**版本类**（live/伴奏/inst/remix/翻唱/纯音乐…），

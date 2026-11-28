@@ -1410,24 +1410,30 @@ final class PlayerEngine {
         // 分不清是"搜索没搜到候选"还是"候选全被身份闸丢了"（《蓄势 ~GEAR UP~》那次就是后者）。
         // 现在无论如何都留一行，下一轮同类问题可以直接定位。
         stageBegan = Date()
-        let crossHit = await SameSongCrossResolver.resolve(
+        let cross = await SameSongCrossResolver.resolveWithDiagnostic(
             song: song, quality: PlayerEngine.playbackQuality, triedKeys: TriedKeys())
-        if let cross = crossHit, usable(cross) {
-            let gate = await validator(cross)
+        if let hit = cross.source, usable(hit) {
+            let gate = await validator(hit)
             if gate.reason == nil {
                 PlaybackTrace.shared.log("起播阶段", String(
                     format: "跨平台 %.1fs ← %@", Date().timeIntervalSince(stageBegan),
-                    cross.backendName))
-                return DownloadResolver.Resolved(source: cross, gate: gate)
+                    hit.backendName))
+                return DownloadResolver.Resolved(source: hit, gate: gate)
             }
             log("跨平台被拒：\(gate.reason ?? "")")
         } else {
-            PlaybackTrace.shared.log("跨平台", crossHit == nil
-                ? "无可用候选（搜索为空 / 身份闸全丢）"
+            // 2026-11-28：这句以前把"搜索为空 / 闸全丢 / 候选有但腿全空"写成同一句，
+            // 真机《BABY ANGEL》明明是第三种，日志却指向"搜索为空 / 身份闸"，排查被带偏。
+            PlaybackTrace.shared.log("跨平台", cross.source == nil
+                ? cross.diagnostic
                 : "候选被本地闸拒（体积·容器·档位）")
         }
 
         // ③ 无损兜底：只在前两步全空时放开 FLAC（"否则整首没声"才用）
+        //
+        // 2026-11-28：这一步空手而归时**一行日志都不留**，诊断里看完"跨平台 …"就断了，
+        // 只能靠猜。现在无论结果如何都留一句（《BABY ANGEL》的 FLAC 就是被这一步漏掉的）。
+        var losslessMiss = "也没有可用源"
         if let lossless = await DownloadResolver.firstPlayable(
             song: song, want: .lossless, allowLossless: true),
            usable(lossless.source, allowLossless: true) {
@@ -1438,7 +1444,9 @@ final class PlayerEngine {
                 return DownloadResolver.Resolved(source: lossless.source, gate: gate)
             }
             log("无损被拒：\(gate.reason ?? "")")
+            losslessMiss = "候选被拒：\(gate.reason ?? "")"
         }
+        PlaybackTrace.shared.log("无损兜底", losslessMiss)
         return nil
     }
 
