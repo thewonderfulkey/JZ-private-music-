@@ -586,23 +586,22 @@ struct RecognizeView: View {
         let ranked = await SearchService.shared.searchRanked(keyword: keyword, limit: 20)
         let songs = ranked.songs
 
-        let studio = songs.first {
-            NameMatch.titleMatches(candidate.title, $0.name)
-                && NameMatch.singerMatches(candidate.artist, $0.singer)
-                && StudioPick.isCleanTitle($0.name)
+        // 2026-11-28（v2.4.139，老板录屏《夜曲》）：主结果必须和候选时长对得上。
+        // 旧逻辑 `songs.first { 歌名像 + 歌手对 + 裸名 }` 会把 1:48 的《夜曲 - A35》
+        // 选成主结果（播放/封面/历史全错）；真正的 3:46 就在同一列表里。
+        let sameSong = StudioPick.sameSongVersions(songs, matching: candidate.title)
+        let distinct = StudioPick.dedupeRecordings(sameSong)
+
+        var best = RecognizeResolveRules.pick(from: songs, candidate: candidate)
+        if best == nil {
+            // 搜索列表里没有通过身份+时长闸门的条目：退到「其他版本」里按原唱规则找一条；
+            // 再没有就不给播放键（宁可不播，也不播错）。
+            best = StudioPick.originalVersion(in: distinct,
+                                             title: candidate.title,
+                                             artist: candidate.artist,
+                                             durationSec: candidate.durationSec)
         }
-        // 2026-11-22：主结果**必须**歌名对得上。
-        //   允许：归一化歌名一致（`下一个天亮` vs `下一个天亮 (Live)`，括号会被剥掉）；
-        //        或「歌名像 + 歌手对得上」（多歌手串/副标题差异）。
-        // 以前这里是 `titleMatches` 单条，且末尾还有 `?? songs.first` 兜底——
-        // 那一档**完全不校验身份**，《下一个天亮》这种"歌名被频道号/翻唱占满"的搜索页，
-        // 第一条常常是别的歌，识曲结果就"跳"了。
-        let titleOnly = songs.first {
-            NameMatch.normTitle(candidate.title) == NameMatch.normTitle($0.name)
-                || (NameMatch.titleMatches(candidate.title, $0.name)
-                    && NameMatch.singerMatches(candidate.artist, $0.singer))
-        }
-        resolved = studio ?? titleOnly
+        resolved = best
 
         if let resolved {
             library.recordRecognized(resolved)
@@ -612,8 +611,6 @@ struct RecognizeView: View {
         //   ① 先按核心歌名严格过滤（繁简折叠），把同歌手的**别的歌**挡在外面；
         //   ② 跨平台同一条录音去重，并剔掉主结果那条（含它在别的平台的副本）；
         //   ③ 最多只挑一条原唱（时长对得上）；原唱优先、同歌手优先、裸名优先。
-        let sameSong = StudioPick.sameSongVersions(songs, matching: candidate.title)
-        let distinct = StudioPick.dedupeRecordings(sameSong)
         let others = StudioPick.excludingRecording(of: resolved, from: distinct)
         let original = StudioPick.originalVersion(in: others,
                                                  title: candidate.title,

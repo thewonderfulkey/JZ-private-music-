@@ -147,6 +147,7 @@
 		B000000000000000000000AF /* ListSearchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AE /* ListSearchState.swift */; };
 		B000000000000000000000B0 /* LaunchBreadcrumbs.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000AF /* LaunchBreadcrumbs.swift */; };
 		B000000000000000000000B1 /* DownloadNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000B0 /* DownloadNotifications.swift */; };
+		B000000000000000000000B2 /* RecognizeResolveRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000000B1 /* RecognizeResolveRules.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -289,6 +290,7 @@
 		F000000000000000000000AE /* ListSearchState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListSearchState.swift; sourceTree = "<group>"; };
 		F000000000000000000000AF /* LaunchBreadcrumbs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchBreadcrumbs.swift; sourceTree = "<group>"; };
 		F000000000000000000000B0 /* DownloadNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadNotifications.swift; sourceTree = "<group>"; };
+		F000000000000000000000B1 /* RecognizeResolveRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizeResolveRules.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -360,6 +362,7 @@
 				F00000000000000000000015 /* SearchRanker.swift */,
 				F00000000000000000000016 /* NameMatch.swift */,
 				F00000000000000000000017 /* StudioPick.swift */,
+				F000000000000000000000B1 /* RecognizeResolveRules.swift */,
 				F00000000000000000000018 /* KuwoParser.swift */,
 				F00000000000000000000019 /* PlaybackRules.swift */,
 				F0000000000000000000006C /* HeartbeatRules.swift */,
@@ -662,6 +665,7 @@
 				B00000000000000000000013 /* SearchRanker.swift in Sources */,
 				B00000000000000000000014 /* NameMatch.swift in Sources */,
 				B00000000000000000000015 /* StudioPick.swift in Sources */,
+				B000000000000000000000B2 /* RecognizeResolveRules.swift in Sources */,
 				B00000000000000000000016 /* KuwoParser.swift in Sources */,
 				B00000000000000000000017 /* PlaybackRules.swift in Sources */,
 				B0000000000000000000006E /* HeartbeatRules.swift in Sources */,
@@ -914,7 +918,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 316;
+				CURRENT_PROJECT_VERSION = 317;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -923,7 +927,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.138;
+				MARKETING_VERSION = 2.4.139;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -938,7 +942,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 316;
+				CURRENT_PROJECT_VERSION = 317;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -947,7 +951,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.138;
+				MARKETING_VERSION = 2.4.139;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -961,7 +965,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 316;
+				CURRENT_PROJECT_VERSION = 317;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -970,7 +974,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.138;
+				MARKETING_VERSION = 2.4.139;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -985,7 +989,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 316;
+				CURRENT_PROJECT_VERSION = 317;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = JZWidgets/Info.plist;
@@ -994,7 +998,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.4.138;
+				MARKETING_VERSION = 2.4.139;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jz.musichelper.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

@@ -1700,6 +1700,28 @@ do {
 
 // MARK: - 识曲打分（P3）
 
+section("识曲主结果：时长闸门（v2.4.139）")
+func fixSong(_ id: String, _ name: String, _ dur: Double,
+             _ singer: String = "周杰伦", _ album: String = "十一月的萧邦") -> Song {
+    Song(platform: .kugou, platformID: id, name: name, singer: singer,
+         album: album, duration: dur, picURL: nil)
+}
+let nightCand = RecognizeCandidate(title: "夜曲", artist: "周杰伦",
+                                   album: "十一月的萧邦", durationSec: 226,
+                                   source: RecognizeScore.sourceKugou,
+                                   rank: 0, isOriginal: 1)
+let nightClip = fixSong("clip", "夜曲 - A35", 108)
+let nightReal = fixSong("real", "夜曲", 226)
+check("1:48 剪辑不选", RecognizeResolveRules.pick(from: [nightClip], candidate: nightCand) == nil)
+check("3:46 正版选它",
+      RecognizeResolveRules.pick(from: [nightClip, nightReal], candidate: nightCand)?.id == nightReal.id)
+check("差 4s 仍选",
+      RecognizeResolveRules.pick(from: [fixSong("near", "夜曲", 222)], candidate: nightCand)?.id == "kugou_near")
+check("差 6s 不选",
+      RecognizeResolveRules.pick(from: [fixSong("far", "夜曲", 232)], candidate: nightCand) == nil)
+check("未知时长不硬拒",
+      RecognizeResolveRules.pick(from: [fixSong("unknown", "夜曲", 0)], candidate: nightCand)?.id == "kugou_unknown")
+
 section("识曲打分：原唱标记 / 裸名 / 专辑 / 跨通道互证")
 
 do {
