@@ -16,19 +16,19 @@
   <img alt="iOS 17+" src="https://img.shields.io/badge/iOS-17%2B-1C1916?style=flat-square&labelColor=FAF8F3">
   <img alt="Swift / SwiftUI" src="https://img.shields.io/badge/Swift-SwiftUI-B03A2E?style=flat-square&labelColor=FAF8F3">
   <img alt="Kotlin / Compose" src="https://img.shields.io/badge/Kotlin-Compose-1C1916?style=flat-square&labelColor=FAF8F3">
-  <img alt="CI #320" src="https://img.shields.io/badge/CI-%23320-2E7D32?style=flat-square&labelColor=FAF8F3">
+  <img alt="CI #321" src="https://img.shields.io/badge/CI-%23321-2E7D32?style=flat-square&labelColor=FAF8F3">
   <img alt="1,700+ assertions" src="https://img.shields.io/badge/assertions-1700%2B-B03A2E?style=flat-square&labelColor=FAF8F3">
-  <img alt="v2.4.139" src="https://img.shields.io/badge/version-2.4.139-1C1916?style=flat-square&labelColor=FAF8F3">
+  <img alt="v2.4.140" src="https://img.shields.io/badge/version-2.4.140-1C1916?style=flat-square&labelColor=FAF8F3">
 </p>
 
 <p align="center">
-  <a href="https://github.com/thewonderfulkey/JZ-private-music-/releases/tag/v2.4.139">最新安装包</a> ·
+  <a href="https://github.com/thewonderfulkey/JZ-private-music-/releases/tag/v2.4.140">最新安装包</a> ·
   <a href="#先读这一屏">先读这一屏</a> ·
   <a href="#功能地图">功能地图</a> ·
   <a href="CHANGELOG.md">更新记录</a>
 </p>
 
-**3 端** · **4 家曲库** · **550+ commits** · **1,700+ 断言** · **138 个 iOS 包** · **120+ 次版本迭代**
+**3 端** · **4 家曲库** · **550+ commits** · **1,700+ 断言** · **139 个 iOS 包** · **120+ 次版本迭代**
 
 
 ## 先读这一屏
@@ -41,7 +41,7 @@
 > **最值得看的三件事**：
 > 1. **身份闸**：先证明是同一条录音（歌名 / 歌手 / 专辑 / 时长 / 版本），再谈播放。
 > 2. **取流验真**：三级取流 + 字节、文件头、码率校验；占位、加密包、假 320k 不进出口。
-> 3. **交付闸门**：1,700+ 断言、pbxproj / 界面卫生检查、IPA 二进制身份闸；138 个 iOS 包，不是“构建成功就发”。
+> 3. **交付闸门**：1,700+ 断言、pbxproj / 界面卫生检查、IPA 二进制身份闸；139 个 iOS 包，不是“构建成功就发”。
 >
 > **只读三分钟**：看完这一屏，跳到 [架构](#架构) 和 [工程亮点](#工程亮点)；想深挖再看 [模块深挖](#模块深挖) 和 [真实故障复盘](#真实故障复盘)。
 
@@ -69,7 +69,7 @@
 <p align="center">
   <img src="docs/images/ios-ui.jpg" alt="iPhone 界面：发现 / 播放 / 下载 / 识曲 / 收藏 / 设置" width="100%">
   <br>
-  <sub>iPhone 版界面（v2.4.17 截图；版式沿用，功能已到 2.4.139）。</sub>
+  <sub>iPhone 版界面（v2.4.17 截图；版式沿用，功能已到 2.4.140）。</sub>
 </p>
 
 | 模块 | iOS | Android | Windows | 关键点 |
@@ -89,7 +89,7 @@
 | 跨端同构 | ✅ | ✅ | ✅ | 同一套领域模型/算法，界面各自原生 |
 
 > [!NOTE]
-> **iOS 是当前主力**：`2.4.139 / 317`，CI #320。Android / Windows 最新包是 `2.4.35`，部分 iOS 专属能力（心动模式、歌单导入、本地标签写回）没有回移；差异以这张表为准，不把三端写成一样。
+> **iOS 是当前主力**：`2.4.140 / 318`，CI #321。Android / Windows 最新包是 `2.4.35`，部分 iOS 专属能力（心动模式、歌单导入、本地标签写回）没有回移；差异以这张表为准，不把三端写成一样。
 
 
 ## 架构
@@ -282,7 +282,7 @@ flowchart LR
 
 ## 真实故障复盘
 
-这三次故障，根子都是**少了一道闸**，不是某一行写错。现在它们都变成了机器会检查的东西。
+这四次故障，根子都是**少了一道闸**（或一段被错误歌手收窄的搜索范围），不是某一行写错。现在它们都变成了机器会检查的东西。
 
 ### 7.1 v2.4.39 · 空包：版本号对了，代码没进包
 
@@ -312,6 +312,17 @@ flowchart LR
 | **后来怎么防** | 5 条 CI 断言 + 本地 mini；主结果和「其他版本」共用同一套时长证据。 |
 
 
+### 7.4 v2.4.140 · 识别对了却播不了：翻唱候选与“不播错”的代价
+
+| | |
+|---|---|
+| **现象** | 《5:20AM》：卡面是 `5:20AM(活凤版)/礼崩乐不坏/193s`，点播放却变成 `5:20AM(河南话原版)/夜晚助眠屋/3:11`；《潮汐》：卡面歌手是翻唱 `小青芽`，原唱 `安苏羽、傅梦彤` 找不到。 |
+| **根因** | ① 指纹候选本身是翻唱，搜索又用「歌名 + 候选歌手」收窄，原唱进不来；② `RecognizeResolveRules.pick` 的 `titleOnly` 第一支 `normTitle` 相等就放行，没要求歌手——两首去掉括号都是 `520am`，193 vs 191 只差 2s，另一个翻唱过闸；卡面显示候选、播放/封面用 `resolved`。 |
+| **修法** | `titleOnly` 两个分支都要求 `singerMatches`；没有同歌手版本就 `resolved = nil`，不给播放键；卡面统一显示 `resolved`，候选只进「识别依据」；加「翻唱/版本」标签；核心歌名 title-only 搜索把原唱放进「其他版本」（6→10）。 |
+| **后来怎么防** | CI 断言：归一化歌名相同但歌手不同 → 不选、同歌手同版本 → 选、合并去重、标签；「宁可不播，也不播错」写进结果卡。 |
+| **边界** | 如果识别到的就是 B站 独家 remix（四家曲库没有同一录音），App 不会拿别的版本顶替——主卡没有播放键，用户得在「其他版本」里挑完整版，或回 B站；这是这一版接受的代价。 |
+
+
 ## 工程亮点
 
 ### 如果面试只聊三件事
@@ -332,7 +343,7 @@ flowchart LR
 | 三端同构 | SwiftUI / Compose / Compose Desktop，同一套领域规则 | 134 个 Swift / 109 个 Kotlin 文件 |
 | 设计一致性 | 纸墨朱砂 tokens + 统一动效 + Reduce Motion | 39 个界面文件的卫生检查 |
 | 无服务端 | 本机 JSON / 文件 / UserDefaults | 无账号、无上传、无服务端数据库 |
-| 测试与交付 | 1,700+ 断言 + 工程结构/界面/包身份检查 | CI #320；138 个 iOS 包 |
+| 测试与交付 | 1,700+ 断言 + 工程结构/界面/包身份检查 | CI #321；139 个 iOS 包 |
 
 
 ## 技术栈
@@ -378,11 +389,11 @@ flowchart LR
 
 | 平台 | 版本 | 文件 | 安装 |
 |---|---|---|---|
-| iOS | 2.4.139 / 317 | `JZ-Music-v2.4.139-67fb630-r320-ios-unsigned.ipa` | 未签名 IPA，Sideloadly / AltStore / 全能签 自签 |
+| iOS | 2.4.140 / 318 | `JZ-Music-v2.4.140-959e730-r321-ios-unsigned.ipa` | 未签名 IPA，Sideloadly / AltStore / 全能签 自签 |
 | Android | 2.4.35 | `JZ-Music-v2.4.35-android.apk` | Android 8.0+，覆盖安装 |
 | Windows | 2.4.35 | `JZ-Music-2.4.35-windows-portable.exe` | Windows 10/11，免安装单文件 |
 
-三个包都在 [v2.4.139 Release](https://github.com/thewonderfulkey/JZ-private-music-/releases/tag/v2.4.139)；逐步安装、自签、权限说明见 [QUICKSTART.md](docs/QUICKSTART.md)，常见问题见 [FAQ.md](docs/FAQ.md)，Windows 安装版见 [INSTALL.md](docs/INSTALL.md)。
+三个包都在 [v2.4.140 Release](https://github.com/thewonderfulkey/JZ-private-music-/releases/tag/v2.4.140)；逐步安装、自签、权限说明见 [QUICKSTART.md](docs/QUICKSTART.md)，常见问题见 [FAQ.md](docs/FAQ.md)，Windows 安装版见 [INSTALL.md](docs/INSTALL.md)。
 
 ### 本地构建
 
