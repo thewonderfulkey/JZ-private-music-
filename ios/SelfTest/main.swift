@@ -1700,6 +1700,19 @@ do {
 
 // MARK: - 识曲打分（P3）
 
+section("识曲音源（外部/机内）")
+check("默认音源是外部", RecognizeSourceRules.defaultSource == .external)
+check("空值回外部", RecognizeSourceRules.source(from: nil) == .external)
+check("未知值回外部", RecognizeSourceRules.source(from: "xxx") == .external)
+check("机内值能读回", RecognizeSourceRules.source(from: "internal") == .internalAudio)
+check("机内提示要外放", RecognizeSource.internalAudio.idleDetail.contains("外放"))
+check("扬声器不拦", RecognizeSourceRules.routeWarning(port: "Speaker") == nil)
+check("耳机要拦", RecognizeSourceRules.routeWarning(port: "Headphones") != nil)
+check("蓝牙要拦", RecognizeSourceRules.routeWarning(port: "BluetoothA2DPOutput") != nil)
+check("机内静音门槛更低",
+      RecognizeSourceRules.isSilent(peak: 0.007, source: .external)
+        && !RecognizeSourceRules.isSilent(peak: 0.007, source: .internalAudio))
+
 section("识曲打分：原唱标记 / 裸名 / 专辑 / 跨通道互证")
 
 do {

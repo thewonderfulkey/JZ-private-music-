@@ -39,6 +39,8 @@ struct RecognizeView: View {
 
     @State private var task: Task<Void, Never>?
     @State private var capture = AudioCapture()
+    /// 这次识别实际用的音源（结果卡/历史标签用它；用户中途切 toggle 不会改已出的结果）
+    @State private var usedSource: RecognizeSource = .external
     /// 单通道失败的原因（两条都空时用它决定文案，避免把网络问题说成"没听出来"）
     @State private var channelError: String?
 
@@ -46,8 +48,20 @@ struct RecognizeView: View {
     private let earlySeconds = 6
 
     var body: some View {
+        @Bindable var settings = settings
         ScrollView {
             VStack(spacing: Tokens.Spacing.l) {
+                // 音源切换：默认外部；听/认的时候不能切，避免"录到一半换源"。
+                // 两个模式的失败文案、音频会话、戴耳机拦截都不一样，不做自动检测。
+                Picker("音源", selection: $settings.recognizeSource) {
+                    ForEach(RecognizeSource.allCases) { source in
+                        Text(source.title).tag(source)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(phase == .listening || phase == .recognizing)
+                .padding(.horizontal, Tokens.Spacing.pageMargin)
+
                 // 第三十二轮：舞台从"整页渐变的一颗圈"换成 RecognizeStage（声波/频谱/倒计时/雷达）。
                 RecognizeStage(phase: phase,
                                level: level,
@@ -136,17 +150,16 @@ struct RecognizeView: View {
             switch phase {
             case .idle:
                 phaseMessage(title: "点一下麦克风，开始听",
-                             detail: "把手机靠近正在外放的音箱")
+                             detail: settings.recognizeSource.idleDetail)
             case .listening:
-                phaseMessage(title: "正在聆听…",
-                             detail: "还能听 \(remaining) 秒 · 再点一下可取消")
+                phaseMessage(title: "正在聆听…", detail: listeningDetail)
             case .recognizing:
                 phaseMessage(title: "正在辨认…", detail: "比对曲库中")
             case .result:
                 phaseMessage(title: "听出来了", detail: nil)
             case .noMatch:
                 retryMessage(title: "这次没听出来",
-                             detail: "靠近一点、音量别太小，或者换个安静点的地方再试",
+                             detail: settings.recognizeSource.noSoundDetail,
                              actionTitle: "再听一次")
             case .failed(let message):
                 retryMessage(title: "识别没成功",
@@ -156,6 +169,13 @@ struct RecognizeView: View {
         }
         .frame(maxWidth: .infinity)
         .animation(Tokens.Motion.textSwap, value: phase)
+    }
+
+    /// 正在听的第二行：机内模式多一句"手机外放，别锁屏/别切走"
+    private var listeningDetail: String {
+        let base = "还能听 \(remaining) 秒 · 再点一下可取消"
+        guard let hint = settings.recognizeSource.listeningHint else { return base }
+        return "\(base) · \(hint)"
     }
 
     private func phaseMessage(title: String, detail: String?) -> some View {
@@ -314,6 +334,7 @@ struct RecognizeView: View {
     private var scoreNote: String {
         guard let recognized else { return "" }
         var parts: [String] = []
+        parts.append("音源：\(usedSource.shortTitle)")
         parts.append("识别依据：\(channelName(recognized.source))")
         if recognized.isOriginal == 1 { parts.append("通道标为原唱") }
         if recognized.isOriginal == 2 { parts.append("通道标为翻唱/他人版本") }
@@ -413,7 +434,7 @@ struct RecognizeView: View {
                         Button {
                             play(song)
                         } label: {
-                            SongRow(song: song)
+                            SongRow(song: song, subtitle: historySubtitle(song))
                         }
                         .padding(.horizontal, Tokens.Spacing.pageMargin)
                         .buttonStyle(.rowPress)
@@ -422,6 +443,14 @@ struct RecognizeView: View {
                 }
             }
         }
+    }
+
+    /// 识曲历史副行：原来的"歌手 · 专辑"；机内识别再补一个"· 机内"，
+    /// 让「最近识过」里两种音源不混在一起看。
+    private func historySubtitle(_ song: Song) -> String {
+        let base = song.album.isEmpty ? song.singer : "\(song.singer) · \(song.album)"
+        guard library.recognizeSource(for: song.id) == .internalAudio else { return base }
+        return "\(base) · 机内"
     }
 
     // MARK: 状态机
@@ -441,6 +470,7 @@ struct RecognizeView: View {
         resolved = nil
         versions = []
         originalVersionID = nil
+        usedSource = settings.recognizeSource
         remaining = settings.recognizeSeconds
         task = Task { await listen() }
     }
@@ -466,6 +496,14 @@ struct RecognizeView: View {
         }
         if Task.isCancelled { return }
 
+        // 机内是"麦克风听手机扬声器"：耳机/蓝牙/AirPlay 时根本听不到，点开始前就拦住，
+        // 不录一段静音再报"没听到"。
+        if usedSource == .internalAudio,
+           let warning = RecognizeSourceRules.routeWarning(port: AudioCapture.currentOutputPort) {
+            phase = .failed(warning)
+            return
+        }
+
         // 识曲前一定先暂停自己的播放（否则麦克风收的是自己放的歌）。
         // 第四十轮：这条不再是设置项——不暂停就根本识别不了，没得选。
         if player.isPlaying {
@@ -479,7 +517,7 @@ struct RecognizeView: View {
             level = level * 0.55 + boosted * 0.45
         }
         do {
-            try capture.start()
+            try capture.start(source: usedSource)
         } catch {
             phase = .failed(error.localizedDescription)
             return
@@ -514,8 +552,8 @@ struct RecognizeView: View {
             phase = .failed("麦克风没采到声音（可能是被别的 App 占着），再试一次。")
             return
         }
-        if final.peak < 0.008 {
-            phase = .failed("几乎没听到声音。把手机靠近音箱、音量开大一点再试。")
+        if RecognizeSourceRules.isSilent(peak: final.peak, source: usedSource) {
+            phase = .failed(RecognizeSourceRules.noSoundMessage(usedSource))
             return
         }
         await recognizeChannels(pcm: final.pcm)
@@ -605,7 +643,7 @@ struct RecognizeView: View {
         resolved = studio ?? titleOnly
 
         if let resolved {
-            library.recordRecognized(resolved)
+            library.recordRecognized(resolved, source: usedSource.rawValue)
         }
 
         // 同名不同版本最多 6 条：

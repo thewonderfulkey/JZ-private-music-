@@ -420,11 +420,15 @@ final class PlayerEngine {
 
     /// 首次播放前把锁屏/远程命令/进度观察装起来（幂等）
     private func attachSystemIfNeeded() {
-        guard !systemAttached else { return }
-        systemAttached = true
-        NowPlayingCenter.shared.attach(engine: self)
-        installTimeObserver()
-        startLyricTicker()
+        if !systemAttached {
+            systemAttached = true
+            NowPlayingCenter.shared.attach(engine: self)
+            installTimeObserver()
+            startLyricTicker()
+        }
+        // 每次起播都重抢一次会话：机内识曲收尾是"可混音 playback"，
+        // 不抢回来的话 JZ 会和另一个 App 一起响。
+        NowPlayingCenter.shared.ensurePlaybackSession()
     }
 
     // MARK: 播放入口

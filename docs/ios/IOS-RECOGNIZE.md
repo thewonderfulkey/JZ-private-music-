@@ -35,6 +35,32 @@
 
 ---
 
+## 1.5 音源切换：外部 / 机内（2026-11-28，v2.4.137）
+
+识曲页顶部加了「外部音源 / 机内音源」两段切换，**默认外部**；听/认的过程中不能切。
+两个模式不是"自动检测"，也不互相兜底：机内失败就报机内失败，用户自己切回外部。
+
+| | 外部音源 | 机内音源（便宜版） |
+|---|---|---|
+| 采集 | `AudioCapture` 麦克风，`.record` + `.measurement` | 麦克风，`.playAndRecord + .mixWithOthers + .defaultToSpeaker` |
+| 别的 App | 会被 `.record` 掐掉（本来就要听环境） | **继续用手机扬声器放**，麦克风听扬声器 |
+| 适用 | 另一台手机/音箱在放 | 本机音乐 App（QQ/网易/酷狗/酷我）切到后台继续放 |
+| 不适用 | — | 戴耳机/蓝牙/AirPlay（听不到）、视频类 App（切走就暂停）、环境太吵 |
+| 后端 | 酷狗 + 网易 → `RecognizeScore.fuse` | **同左，完全不变** |
+
+实现要点：
+
+- `RecognizeSourceRules.swift` 是纯规则（默认值、文案、耳机拦截、静音阈值），CI 有断言。
+- `AudioCapture.start(source:)` 按模式开会话；机内收尾把类别切成**可混音的 playback**，不掐对方；
+  JZ 真起播时 `NowPlayingCenter.ensurePlaybackSession()` 再抢回独占，避免两边一起响。
+- 机内点开始前先用 `AudioCapture.currentOutputPort` + `RecognizeSourceRules.routeWarning` 拦耳机/蓝牙，
+  不录一段静音再报"没听到"。
+- 结果卡那行是「音源：机内/外部 · 识别依据：…」；识曲历史副行对机内条目补「· 机内」。
+- **不是真内录**：本质仍是麦克风听手机扬声器。真内录（别的 App 前台也能收、戴耳机也行）需要
+  ReplayKit 广播扩展，另开一轮。
+
+---
+
 ## 2 与 Android 的口径对照
 
 | 能力 | Android | iOS | 是否等价 |

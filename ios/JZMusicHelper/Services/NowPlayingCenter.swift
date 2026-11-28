@@ -58,6 +58,13 @@ final class NowPlayingCenter {
     }
 
     private func configureAudioSession() {
+        ensurePlaybackSession()
+    }
+
+    /// 每次真正起播前都再确认一次：机内识曲收尾会把类别切成"可混音的 playback"
+    /// （见 `AudioCapture.restorePlaybackSession`）。不重新抢回独占的话，JZ 起播会和
+    /// 另一个 App 叠在一起。正常播放仍是标准的独占 playback，不受影响。
+    func ensurePlaybackSession() {
         let session = AVAudioSession.sharedInstance()
         do {
             // 播放类 App 的标准配置：后台继续、静音键不打断、支持 AirPlay

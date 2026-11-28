@@ -34,6 +34,14 @@ final class AudioCapture {
     private var outFormat: AVAudioFormat?
     private var pcm = Data()
     private var peak: Float = 0
+    /// 这次采集是外部还是机内；stop 时按它决定怎么把音频会话还回去
+    private var source: RecognizeSource = .external
+
+    /// 当前出声设备（`AVAudioSession.Port.rawValue`，如 "Speaker" / "Headphones"）。
+    /// 机内模式点开始前用它拦"戴耳机听不到"——纯规则在 `RecognizeSourceRules.routeWarning`。
+    static var currentOutputPort: String? {
+        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue
+    }
 
     private(set) var isRunning = false
 
@@ -53,11 +61,24 @@ final class AudioCapture {
 
     // MARK: 采集
 
-    func start() throws {
+    func start(source: RecognizeSource = .external) throws {
         discardInput()
+        self.source = source
         let session = AVAudioSession.sharedInstance()
-        // 用 measure 模式：关掉大部分 AGC/降噪，音乐不会被削平（Android 那边选 VOICE_RECOGNITION 是同一目的）
-        try session.setCategory(.record, mode: .measurement, options: [])
+        // 用 measure 模式：关掉大部分 AGC/降噪，音乐不会被削平（Android 那边选 VOICE_RECOGNITION 是同一目的）。
+        // 机内模式多用 mixWithOthers：别的 App 继续用扬声器放，我们只听、不抢占它的会话。
+        if source == .internalAudio {
+            do {
+                try session.setCategory(.playAndRecord, mode: .measurement,
+                                        options: [.mixWithOthers, .defaultToSpeaker])
+            } catch {
+                // measurement + playAndRecord 在个别系统版本会被拒；退 default 也要保住混音
+                try session.setCategory(.playAndRecord, mode: .default,
+                                        options: [.mixWithOthers, .defaultToSpeaker])
+            }
+        } else {
+            try session.setCategory(.record, mode: .measurement, options: [])
+        }
         try session.setActive(true, options: [])
 
         let engine = AVAudioEngine()
@@ -89,6 +110,8 @@ final class AudioCapture {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            // 启动失败也要把会话还回去，否则机内模式会留下一个"录音中"的会话
+            restorePlaybackSession(source: source)
             throw CaptureError.engineFailed(error.localizedDescription)
         }
         self.engine = engine
@@ -117,7 +140,9 @@ final class AudioCapture {
         isRunning = false
         let result = snapshot()
         discardInput()
-        if wasRunning { restorePlaybackSession() }
+        let endedSource = source
+        if wasRunning { restorePlaybackSession(source: endedSource) }
+        source = .external
         return result
     }
 
@@ -178,12 +203,20 @@ final class AudioCapture {
         }
     }
 
-    private func restorePlaybackSession() {
+    private func restorePlaybackSession(source: RecognizeSource) {
         let session = AVAudioSession.sharedInstance()
         // 注意：这里**不能**先 setActive(false, .notifyOthersOnDeactivation)。
         // 那一下会把"当前正在播但已暂停"的音频会话整个掐掉，等再 setActive(true) 时
         // AVPlayer 不会自己恢复——用户看到的就是"切个 Tab/识个曲，歌停了"。
-        // 只要把类别切回 playback 并确保会话是激活的，下一次 play 就能出声。
+        if source == .internalAudio {
+            // 机内：另一个 App 还在放，收尾只能把类别切回**可混音**的 playback。
+            // 不能再独占，否则识别完就把对方掐了；等 JZ 真起播时 `NowPlayingCenter`
+            // 会重新抢回独占（见 `AudioPlayer.attachSystemIfNeeded`）。
+            try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try? session.setActive(true, options: [])
+            return
+        }
+        // 外部：保持原来的收尾，下一次 JZ 起播就能出声。
         try? session.setCategory(.playback, mode: .default, options: [])
         try? session.setActive(true, options: [])
     }
