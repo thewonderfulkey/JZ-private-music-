@@ -300,10 +300,13 @@ enum NameMatch {
     /// 为什么只放宽歌手这一维是安全的：要求的证据比**现有**那条 `.albumDuration` 译名通道更硬——
     ///   ① 歌名身份键必须**完全相等**（繁简/全角/标点已折平；不是包含、不是相似度）；
     ///   ② 版本类已经在 `sameRecording` 的 ① 拦过（live/伴奏/翻唱/粤语版… 一律进不来）；
-    ///   ③ 专辑一致就放行；专辑有一边缺才允许用「时长差 ≤1s」兜底；
-    ///      两边专辑都有却对不上 → **不放行**（专辑都不同，那是翻唱）。
-    /// 现有 `.albumDuration` 通道歌名可以完全不同、只靠"专辑 + 时长≤1s"就放行，
-    /// 所以这条不会比现状更激进（《众》vs《侧脸》那种同歌手不同歌也照样被拒：歌名键不等）。
+    ///   ③ **两边专辑都必须有值且一致**——这是唯一放行通道，没有"时长差不多就算"的兜底。
+    /// ③ 为什么这么紧：2026-11-28 CI 撞红过一条老断言「两边都对不上 → 不认」——
+    /// 那句源歌名是《茶花开了，该回家了(说唱版-王睿卓&加木)》、候选是《茶花开了，该回家了》，
+    /// 歌手「小酒」vs「别的歌手」。两边 `normTitle` 都会剥掉括号，歌名键因此**相等**，
+    /// 时长也一样（221s），于是"时长兜底"把它放回来了。这正是绝不能放的一类：
+    /// 括号里的『王睿卓&加木』才是真歌手，"别的歌手"不是这首歌。
+    /// 专辑是唯一能把"同名不同录音"分开的证据，所以它必须是硬条件。
     ///
     /// - Note: 调用方先用 `singerMatches` 判过；这个函数只在"歌手确实没交集"时才有意义。
     static func singerMismatchBridgedByTitle(src: Song, cand: Song) -> Bool {
@@ -313,14 +316,8 @@ enum NameMatch {
         let keyA = identityKey(src.name)
         let keyB = identityKey(cand.name)
         guard !keyA.isEmpty, keyA == keyB else { return false }
-        // ② 专辑一致（两边都非空且归一化后一致）
-        if albumMatches(src.album, cand.album) { return true }
-        // ③ 专辑信息缺一边时，才允许用时长兜底
-        let albumA = src.album.trimmingCharacters(in: .whitespacesAndNewlines)
-        let albumB = cand.album.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard albumA.isEmpty || albumB.isEmpty else { return false }
-        guard src.durationSec > 0, cand.durationSec > 0 else { return false }
-        return Double(abs(src.durationSec - cand.durationSec)) <= albumDurationToleranceSec
+        // ② 专辑一致（两边都非空且归一化后一致）——硬条件，没有兜底
+        return albumMatches(src.album, cand.album)
     }
 
     /// 缓存/下载条目里的"候选身份"还对不对得上当前这首歌（2026-11-25）

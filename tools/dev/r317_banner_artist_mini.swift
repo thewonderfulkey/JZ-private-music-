@@ -46,7 +46,19 @@ let noAlbumNear = Song.make(platform: .qq, platformID: "q3", name: "BABY ANGEL",
                             singer: "NAYEON", album: "", duration: 135, picURL: nil)
 check("两边都没专辑、时长差 4s → 不收",
       !NameMatch.sameRecording(src: noAlbum, cand: noAlbumFar))
-check("两边都没专辑、时长一致 → 收", NameMatch.sameRecording(src: noAlbum, cand: noAlbumNear))
+check("两边都没专辑、时长一致也不收（专辑是硬条件，没有时长兜底）",
+      !NameMatch.sameRecording(src: noAlbum, cand: noAlbumNear))
+
+// CI #316 撞红的那条老断言，原样搬过来钉住：
+// 源名带括号歌手提示、两边 normTitle 都剥掉括号 → 歌名键相等、时长也相等，
+// 但括号里『王睿卓&加木』才是真歌手，「别的歌手」不是这首歌。
+let chahua = Song.make(platform: .netease, platformID: "c1",
+                       name: "茶花开了，该回家了(说唱版-王睿卓&加木)", singer: "小酒",
+                       album: "", duration: 221, picURL: nil)
+let chahuaWrong = Song.make(platform: .qq, platformID: "c2", name: "茶花开了，该回家了",
+                            singer: "别的歌手", album: "", duration: 221, picURL: nil)
+check("防回归：歌名键相等但专辑都没有、歌手不同 → 不认",
+      !NameMatch.sameRecording(src: chahua, cand: chahuaWrong))
 
 let live = Song.make(platform: .qq, platformID: "q4", name: "BABY ANGEL (Live)",
                      singer: "NAYEON (TWICE)", album: "NA-sty", duration: 135, picURL: nil)

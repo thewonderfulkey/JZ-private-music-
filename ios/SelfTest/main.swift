@@ -7152,15 +7152,26 @@ func r317BannerArtistAssertions() {
     check("同名同时长但专辑不同 → 不收（翻唱）",
           !NameMatch.sameRecording(src: src, cand: coverOtherAlbum))
 
-    // 两边专辑都空 → 只能靠时长，且要 ≤1s
+    // 两边专辑都空 → 不收（专辑是硬条件，没有"时长差不多就算"的兜底）
     let noAlbum = Song.make(platform: .netease, platformID: "n2", name: "BABY ANGEL",
                             singer: "林娜琏", album: "", duration: 135, picURL: nil)
     let noAlbumFar = Song.make(platform: .qq, platformID: "q2", name: "BABY ANGEL",
                                singer: "NAYEON", album: "", duration: 139, picURL: nil)
     let noAlbumNear = Song.make(platform: .qq, platformID: "q3", name: "BABY ANGEL",
                                 singer: "NAYEON", album: "", duration: 135, picURL: nil)
-    check("两边都没专辑、时长差 4s（>1s）→ 不收", !NameMatch.sameRecording(src: noAlbum, cand: noAlbumFar))
-    check("两边都没专辑、时长一致 → 收", NameMatch.sameRecording(src: noAlbum, cand: noAlbumNear))
+    check("两边都没专辑、时长差 4s → 不收", !NameMatch.sameRecording(src: noAlbum, cand: noAlbumFar))
+    check("两边都没专辑、时长一致也不收（专辑是硬条件）",
+          !NameMatch.sameRecording(src: noAlbum, cand: noAlbumNear))
+
+    // CI #316 撞红的那条：源名带括号歌手提示，两边 normTitle 都剥掉括号 →
+    // 歌名键相等、时长也相等，但括号里『王睿卓&加木』才是真歌手，「别的歌手」不是这首歌。
+    let chahua = Song.make(platform: .netease, platformID: "c1",
+                           name: "茶花开了，该回家了(说唱版-王睿卓&加木)", singer: "小酒",
+                           album: "", duration: 221, picURL: nil)
+    let chahuaWrong = Song.make(platform: .qq, platformID: "c2", name: "茶花开了，该回家了",
+                                singer: "别的歌手", album: "", duration: 221, picURL: nil)
+    check("防回归：歌名键相等但没专辑、歌手不同 → 不认",
+          !NameMatch.sameRecording(src: chahua, cand: chahuaWrong))
 
     // 版本类仍然优先拦（桥不能绕过版本闸）
     let live = Song.make(platform: .qq, platformID: "q4", name: "BABY ANGEL (Live)",
